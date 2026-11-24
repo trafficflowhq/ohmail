@@ -4,7 +4,7 @@ import {
   type Tx,
 } from "@trafficflow/db";
 import type { Db } from "@trafficflow/services/mail";
-import { errorResponse, jsonResponse } from "./responses.js";
+import { errorResponse, jsonResponse, type Refused, type Replayed } from "./responses.js";
 
 /** `expires_at = now + 24h`. The TTL itself lives in `packages/db`. */
 export const idempotencyExpiry = dbIdempotencyExpiry;
@@ -96,12 +96,12 @@ export function storedResponse(found: StoredIdempotent): Response {
  * gone and so is the request's hash, which nothing may then compare. 410, the code every erased door
  * answers. Then a different request under the key is 409; the same one replays.
  */
-export function replayOf(found: StoredIdempotent, requestHash: string): Response {
+export function replayOf(found: StoredIdempotent, requestHash: string): Refused | Replayed {
   if (found.erasedAt !== null) {
     return errorResponse("erased", 410, "this request's result has been erased; it cannot be replayed");
   }
   if (found.requestHash !== requestHash) {
     return errorResponse("idempotency_replay", 409, "idempotency key reused with a different request");
   }
-  return storedResponse(found);
+  return storedResponse(found) as Replayed;
 }

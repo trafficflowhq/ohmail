@@ -10,9 +10,8 @@
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
-import type { JunkWire } from "../../webapp/app/shell/junk-window";
 import { junkVia } from "./junk-wire.js";
 
 export { JunkBridgeError, junkVia } from "./junk-wire.js";
 
-export const junkOverBridge: JunkWire = junkVia(bridgeFetch);
+export const junkOverBridge = junkVia(bridgeFetch);

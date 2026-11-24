@@ -8,9 +8,9 @@ import type { NativeLocator } from "@trafficflow/core";
 import type { MailboxAdapter, WriteDoor, WriteDoorAnswer } from "@trafficflow/core/adapters/imap";
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { startWorker } from "../src/index.js";
-import { hasLeaseIo } from "../src/lease.js";
+import { hasLeaseIo } from "@ohmail/organizer/lease";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * A READER CYCLE ON THE HOSTED WORKER RIDES A READER'S AUTHORITY — never an old permit, never none.
@@ -37,7 +37,7 @@ async function seedMailbox(db: Db, consented: boolean): Promise<{ accountId: str
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };
@@ -53,7 +53,7 @@ async function seedPendingReadMark(db: Db, mb: { accountId: string; mailboxId: s
     bodyHash: `ra-hash-${tag}`, nativeLocator: locator, unread: false,
   }).returning();
   await db.insert(flagState).values({
-    messageId: m!.id, desiredSeen: true, observedSeen: false, lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredSeen: true, observedSeen: false, lastSetBy: "us",
     reconcileStatus: "pending", conflict: false, attempts: 0, nextAttemptAt: null,
   });
   await db.insert(messageInstances).values({

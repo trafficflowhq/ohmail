@@ -3,7 +3,7 @@
  *
  * TypeScript calls a repeated property TS1117 — in the programs it compiles. Census maps live in
  * `test/` directories, and `scripts/typecheck-test-dirs.mjs` pins fourteen of those as UNREACHED
- * (CLAUDE.md): there a second `foo:` overwrites the first in silence, and the census counts one
+ * (AGENTS.md): there a second `foo:` overwrites the first in silence, and the census counts one
  * fewer sink than it lists while reading green.
  *
  * Measured at this file's own base: `IN_SINKS` in `packages/api/test/input-bounds-census.test.ts`
@@ -12,7 +12,7 @@
  * the census that reads that map passed throughout. One site exists in the source; the two entries
  * are now one.
  *
- * The root `test/` directory is in no tsconfig project (CLAUDE.md), so `pnpm typecheck` says
+ * The root `test/` directory is in no tsconfig project (AGENTS.md), so `pnpm typecheck` says
  * nothing about this file; the module under test is plain `.mjs`.
  */
 import { execFileSync } from "node:child_process";

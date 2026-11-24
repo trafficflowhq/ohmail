@@ -4,8 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import { useStableCallback } from "../app/shell/stable-callback";
-import { shellFrameOf } from "./source-anchor.js";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 
 /**
  * THE ONE CONVERSION THAT IS NOT A RENAME: a callback that is a FACTORY.
@@ -109,22 +108,14 @@ describe("a stable factory's consumers", () => {
   });
 
   it("the shell's two stream commits apply the factory inside the call", () => {
-    /* The two lines moved to `shell-open-state.ts` with the batchers they close over; the frame
-       is resolved from the manifest, so the verbatim match follows them. */
-    const shell = shellFrameOf("commitReadsSeen").source;
+    // Both stream seats use the current input at the time the leave happens.
+    const stream = read("../../../packages/app-logic/src/streams/use-stream.ts");
+    expect(stream).toContain("inputRef.current.onLeaveSeen(c)");
+    expect(stream).not.toMatch(/^\s*const \w+ = useMemo\(\(\) => commitFeedSeen\(/m);
 
-    for (const [name, view] of [["commitReadsSeen", "reads"], ["commitReceiptsSeen", "receipts"]] as const) {
-      expect(
-        shell,
-        `${name} must apply commitFeedSeen per call, not memoise the application`,
-      ).toContain(`const ${name} = useStableCallback((commit: FeedSeenCommit) => commitFeedSeen("${view}")(commit));`);
-    }
-
-    /* And the shape it must NOT go back to. Named explicitly so a revert is caught by this test
-       rather than by a reader noticing mail stops being marked seen.
-       Anchored on a DECLARATION at the start of a line, because the block comment above those two
-       lines quotes the broken shape in order to explain it — and an unanchored match reads that
-       explanation as the defect. A comment line begins `*`, never `const`. */
-    expect(shell).not.toMatch(/^\s*const \w+ = useMemo\(\(\) => commitFeedSeen\(/m);
+    // The writer is recreated when either the account engine or the stream changes.
+    const writes = read("../../../packages/app-logic/src/streams/writes.ts");
+    expect(writes).toContain('{ kind: "feed_mark_seen", view, upToId: commit.upToId, messageIds: [...commit.messageIds] }');
+    expect(writes).toContain("}, [batch, engine, view, mutateAndReport, undoToast, words]);");
   });
 });

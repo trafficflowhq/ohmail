@@ -2,10 +2,10 @@ import net from "node:net";
 import { afterAll, describe, expect, it } from "vitest";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
-import { DatabaseFaultError } from "../src/dead-letter.js";
+import { DatabaseFaultError } from "@ohmail/organizer/dead-letter";
 import { isShardConnectionFault } from "../src/db-fault.js";
 import { tailStageRunner } from "../src/tail-stage.js";
-import { senderCheckRetirement } from "../src/sender-check-backfill.js";
+import { senderCheckRetirement } from "@ohmail/organizer/sender-check-backfill";
 import { makeAwayReplySweep } from "../src/away-reply-sweep.js";
 
 /**
@@ -123,7 +123,8 @@ describe("the in-pass catches hand a dead database to the hook", () => {
   it("the away-reply sweep's per-account catch", async () => {
     const r = recorded();
     const note = r.tailFaultNote("fixture.away");
-    const run = await makeAwayReplySweep().runOnce(await deadDb(), ["acct-1", "acct-2"], {
+    const dead = await deadDb();
+    const run = await makeAwayReplySweep().runOnce(() => dead, ["acct-1", "acct-2"], {
       onError: (_a, err) => { note(err); r.lines.push("away_failed"); },
     });
     expect(run.failed, "the sweep did not go on to the second account").toBe(2);

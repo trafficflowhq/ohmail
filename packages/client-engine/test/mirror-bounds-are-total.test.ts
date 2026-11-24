@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   BODY_CACHE_MAX,
@@ -9,9 +10,7 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
   type KnownMirrorEntityType,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";
@@ -102,7 +101,9 @@ describe("the table answers for every type", () => {
     // 19 → 20: `store_page` (ARCHIVE-024) — History's store pages, in memory, ceiling-bound.
     // 20 → 21: `mailbox_profile` — a read mailbox's organizer rules, one row per read mailbox.
     // 21 → 22: `screener_waiting` — the store's Screener queue page, client-local and REPLACED.
-    expect(MIRROR_ENTITY_TYPES.length).toBe(22);
+    // 22 → 26: the calendar's four kinds — a connection and a calendar bounded by the person, an
+    // event by the span around today, a suggestion cascaded with its letter.
+    expect(MIRROR_ENTITY_TYPES.length).toBe(26);
     expect(new Set(MIRROR_ENTITY_TYPES).size).toBe(MIRROR_ENTITY_TYPES.length);
     for (const t of MIRROR_ENTITY_TYPES) {
       expect(MIRROR_BOUNDS[t], `${t} has a bound`).toBeDefined();
@@ -163,7 +164,61 @@ describe("the table answers for every type", () => {
   /** The arms that claim a MECHANISM are the ones driven below; the list is derived, not typed. */
   it("names which types the prune pass cascades to", () => {
     expect(CASCADE_TYPES.map((c) => c.type).sort())
-      .toEqual(["approval", "message_state", "routing_decision", "screener_suggestion", "thread"]);
+      .toEqual(["approval", "calendar_suggestion", "message_state", "routing_decision", "screener_suggestion", "thread"]);
+  });
+});
+
+// ── THE SPAN, DRIVEN ───────────────────────────────────────────────────────────────────────
+
+describe("a calendar event is held while it can touch the span around today", () => {
+  const event = (id: string, startDays: number, endDays: number | null, over: Record<string, unknown> = {}) =>
+    create("calendar_event", id, {
+      id, calendarId: "cal", startsAt: daysAgo(-startDays), endsAt: endDays === null ? null : daysAgo(-endDays),
+      occurrenceAt: null, thisAndFuture: false, ...over,
+    });
+
+  /**
+   * Driven through a real engine's prune pass, in the store mode that keeps all mail: the span is
+   * the calendar's own bound, not the mail window's. WATCHED RED by dropping the span pass from
+   * `pruneToPolicy`: the two far events stay.
+   */
+  it("keeps what meets the span, a series that never ends, and a moved occurrence's replacement; lets the far ones go", async () => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    await store.applyChanges([
+      // The switch on: a mirror that holds the calendar holds the record that says so, or lets it go.
+      create("settings", "acct", { accountId: "acct", calendarEnabledAt: NOW.toISOString() }),
+      event("today", 0, 0.05),
+      event("next-year", 700, 700.1),
+      event("too-far", 800, 800.1),
+      event("long-ago", -400, -399.9),
+      event("endless-series", -900, null, { repeat: { rules: ["FREQ=WEEKLY"], excluded: [], added: [] } }),
+      // Starts far ahead, but replaces an occurrence inside the span: it must stay to hide it.
+      event("moved-out", 900, 900.1, { recurrenceId: "1", occurrenceAt: daysAgo(-3) }),
+    ]);
+    const engine = new OhmailEngine({ adapter: adapterOf(), store, now: () => NOW, storePolicy: { mode: "full" } as never });
+    await engine.syncOnce();
+    expect(idsOf(store, "calendar_event")).toEqual(["endless-series", "moved-out", "next-year", "today"]);
+  });
+
+  /** A second net under the server's own deletions: WATCHED RED with the store's calendar cascade taken out. */
+  it("a connection's delete takes its calendars and their events, a calendar's its events, and nothing else", async () => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    await store.applyChanges([
+      create("calendar_connection", "c1", { id: "c1" }), create("calendar_connection", "c2", { id: "c2" }),
+      create("calendar", "k1", { id: "k1", connectionId: "c1" }), create("calendar", "k2", { id: "k2", connectionId: "c2" }),
+      create("calendar", "k3", { id: "k3", connectionId: "c2" }),
+      event("e1", 0, 0.1, { calendarId: "k1" }), event("e2", 0, 0.1, { calendarId: "k2" }), event("e3", 0, 0.1, { calendarId: "k3" }),
+    ]);
+    await store.applyChanges([
+      { type: "calendar_connection", op: "delete", id: "c1", seq: 100, updatedAt: NOW.toISOString() },
+      { type: "calendar", op: "delete", id: "k3", seq: 101, updatedAt: NOW.toISOString() },
+    ]);
+    const live = (type: string) => store.entries(type).filter((r) => r.entity !== null).map((r) => r.id).sort();
+    expect(live("calendar")).toEqual(["k2"]);
+    expect(live("calendar_event")).toEqual(["e2"]);
+    expect(live("calendar_connection")).toEqual(["c2"]);
   });
 });
 
@@ -322,6 +377,7 @@ describe("a type with no mechanism says what its size is a function of", () => {
     const stated = MIRROR_ENTITY_TYPES
       .filter((t) => MIRROR_BOUNDS[t].by === "person").sort();
     expect(stated).toEqual([
+      "calendar", "calendar_connection",
       "draft", "folder", "mailbox", "mailbox_profile", "outbox_abandoned", "outbox_entry",
       "rule", "screener_sender", "tag", "triage_item",
     ]);

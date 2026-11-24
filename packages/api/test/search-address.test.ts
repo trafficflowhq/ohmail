@@ -234,6 +234,14 @@ describe("GET /search?address= — one correspondent, from the archive", () => {
     // The address answer's shape, not the text search's — no facets, and a direction.
     expect(body.direction).toBe("from");
     expect(body.facets).toBeUndefined();
+
+    // The person filters of a text search do not take it over: still the address answer.
+    const beside = await (await H(
+      req("GET", "/search?q=invoice&address=info@acme.test&direction=from&to=bob@acme.test&party=bob@acme.test", { bearer: s.token }),
+      deps,
+    )).json();
+    expect({ ids: beside.items.map((m: { id: string }) => m.id), direction: beside.direction, facets: beside.facets })
+      .toEqual({ ids: [hers.id], direction: "from", facets: undefined });
   });
 
   it("requires a session — the arm is behind the default pipeline like the rest of /search", async () => {

@@ -21,13 +21,12 @@ import type { StandaloneEngine } from "./standalone-door";
  * Wire the engine this app just opened to the app's own lifecycle. Answers whether THIS call is
  * the live session — see `startOrganizerSession`.
  *
- * `address` is the mailbox the notification names. It is the ONE runtime value in the notice and
- * it is passed rather than read from a row, because at this moment the door has just opened and no
- * mirror row exists yet — a notice composed from an unread row would name nothing.
+ * No mailbox address is handed in: the notification does not name the mailbox it organizes, because a
+ * notice is read on a locked screen by whoever stands there; its body is the deck's own sentence
+ * (`organizer-notice.ts`).
  */
 export function startOrganizerSessionNative(
   engine: StandaloneEngine,
-  address: string,
   /**
    * THE LAUNCH THIS SESSION BELONGS TO. Passed through, never decided here: this module supplies
    * platform facts and nothing else, and the refusal it licenses is `startOrganizerSession`'s.
@@ -63,10 +62,10 @@ export function startOrganizerSessionNative(
     /* RE-READ PER START, so a language switch between two backgrounds is picked up. */
     notice: () => ({
       channelName: Copy.stateOrganizing,
-      body: organizerNoticeBody(address, engine.runtimes().organizer),
+      body: organizerNoticeBody(engine.runtimes().organizer),
       stopLabel: Copy.notifStop,
       /* AND THE BODY A STOP THAT COULD NOT COMPLETE LEAVES — composed here for the ordinary
-         body's reason: the deck is the app's, the address is runtime data. */
+         body's reason: the deck is the app's, read in the language of this start. */
       stopFailedBody: Copy.notifStopFailed,
     }),
     appPhases: (listener) => {

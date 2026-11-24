@@ -1,9 +1,10 @@
+import type { AiCallOptions } from "../../ai-call-report.js";
 import { randomUUID } from "node:crypto";
 import {
-  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, ModelDeclinedError,
+  CLASSIFY_RESULT_SCHEMA, DRAFT_RESULT_SCHEMA, ModelDeclinedError,
   SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
-  draftUserPayload,
+  draftSystemPrompt, draftUserPayload,
 } from "../../mail.js";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
@@ -103,6 +104,7 @@ export function opencodeGoTransport(opts: AiKeyTransportOptions): AiTransport {
     name: string,
     schema: StrictObjectSchema,
     what: string,
+    options?: AiCallOptions,
   ): Promise<unknown> => {
     /* Each call is a self-contained prompt with its full context; no follow-up turn reuses it.
        Give that one-shot conversation an opaque Go session, never a mail/thread ID or content. */
@@ -110,6 +112,7 @@ export function opencodeGoTransport(opts: AiKeyTransportOptions): AiTransport {
     const meter = usageMeter(opts.onUsage, model);
     let envelope: unknown;
     try {
+      if (options?.beforeDispatch) await options.beforeDispatch();
       meter.attempt();
       const response = await fetchWithDeadline(opts.fetchImpl, OPENCODE_GO_CHAT_URL, {
         method: "POST",
@@ -148,29 +151,29 @@ export function opencodeGoTransport(opts: AiKeyTransportOptions): AiTransport {
   };
 
   return {
-    async classify(input: ClassifierInput): Promise<ClassifierResult> {
+    async classify(input: ClassifierInput, options?: AiCallOptions): Promise<ClassifierResult> {
       const payload = classifyUserPayload(input);
       const raw = await call(
         opts.classifyModel, 512, TAXONOMY_PREFIX, payload,
-        "routing", CLASSIFY_RESULT_SCHEMA, "classifier",
+        "routing", CLASSIFY_RESULT_SCHEMA, "classifier", options,
       );
       return coerceClassifierResult(raw);
     },
 
-    async screen(input: ClassifierInput): Promise<ClassifierResult> {
+    async screen(input: ClassifierInput, options?: AiCallOptions): Promise<ClassifierResult> {
       const payload = classifyUserPayload(input);
       const raw = await call(
         opts.classifyModel, 512, SCREENING_PREFIX, payload,
-        "screening", SCREENING_RESULT_SCHEMA, "screener",
+        "screening", SCREENING_RESULT_SCHEMA, "screener", options,
       );
       return coerceScreeningResult(raw);
     },
 
-    async draft(input: DraftInput): Promise<DraftResult> {
+    async draft(input: DraftInput, options?: AiCallOptions): Promise<DraftResult> {
       const payload = draftUserPayload(input);
       const raw = await call(
-        opts.draftModel, 2048, DRAFT_PREFIX, payload,
-        "reply_draft", DRAFT_RESULT_SCHEMA, "drafter",
+        opts.draftModel, 2048, draftSystemPrompt(input), payload,
+        "reply_draft", DRAFT_RESULT_SCHEMA, "drafter", options,
       );
       return coerceDraftResult(raw);
     },

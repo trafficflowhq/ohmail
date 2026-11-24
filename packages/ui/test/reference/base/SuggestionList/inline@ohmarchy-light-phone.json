@@ -1,0 +1,289 @@
+{
+  "component": "SuggestionList",
+  "state": "inline",
+  "look": "ohmarchy-light-phone",
+  "place": "cell",
+  "target": [24, 48, 340, 260.5938],
+  "clip": [24, 48, 340, 261],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "17.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "17.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "15px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 3 56066793629a" },
+    { "before.backgroundColor": "rgb(195, 193, 184)" },
+    {
+      "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; stroke rgb(56, 54, 53) 2.2px square miter 4; shapes 4 819f0b9c8ffd"
+    },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 3 49dff42e4c4a" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 2 877dbc0c8604" }
+  ],
+  "nodes": [
+    {
+      "role": "listbox",
+      "name": "Suggestions",
+      "box": [4, 4, 332, 229.8],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      }
+    },
+    {
+      "role": "group",
+      "name": "Your places",
+      "box": [4, 4, 332, 76.8],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Your places", "type": 0 }]
+    },
+    {
+      "role": "option",
+      "name": "Kino Seeblick",
+      "box": [4, 32.8, 332, 48],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Kino", "type": 1 },
+        { "said": "See", "type": 2 },
+        { "said": "blick", "type": 1 }
+      ],
+      "surfaces": [{ "box": [18, 46.8, 20, 20], "paint": 0 }]
+    },
+    {
+      "role": "group",
+      "name": "",
+      "box": [4, 84.8, 332, 149],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "surfaces": [{ "box": [4, 84.8, 332, 149], "paint": 1, "parts": { "before": [308, 1] } }]
+    },
+    {
+      "role": "option",
+      "name": "Seen Winterthur, Zurich",
+      "box": [4, 89.8, 332, 48],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "See", "type": 2 },
+        { "said": "n", "type": 1 },
+        { "said": "Winterthur, Zurich", "type": 3 }
+      ],
+      "surfaces": [{ "box": [18, 103.8, 20, 20], "paint": 2 }]
+    },
+    {
+      "role": "option",
+      "name": "Seestrasse 8002 Zurich",
+      "box": [4, 137.8, 332, 48],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "See", "type": 2 },
+        { "said": "strasse", "type": 1 },
+        { "said": "8002 Zurich", "type": 3 }
+      ],
+      "surfaces": [{ "box": [18, 151.8, 20, 20], "paint": 3 }]
+    },
+    {
+      "role": "option",
+      "name": "Seebad Enge Mythenquai 9, 8002 Zurich",
+      "box": [4, 185.8, 332, 48],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "See", "type": 2 },
+        { "said": "bad Enge", "type": 1 },
+        { "said": "Mythenquai 9, 8002 Zurich", "type": 3 }
+      ],
+      "surfaces": [{ "box": [18, 199.8, 20, 20], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "© OpenStreetMap contributors",
+      "box": [122.4, 237.8, 201.6, 16.8],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "text": [{ "said": "© OpenStreetMap contributors", "type": 4 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

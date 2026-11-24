@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as stamps from "../packages/client-engine/src/stamp.js";
+import { headStamp } from "../packages/app-logic/src/reader/head-model.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +11,8 @@ import { fileURLToPath } from "node:url";
  * "When did this arrive" is answered on six surfaces that share no renderer: the browser's list
  * rows and its open message, the desktop's (the same shell), the phone's rows, its open message,
  * and the earlier messages inside a thread. The rule they answer with — today shows a clock, the
- * last six days show a weekday and a clock, beyond that a date — lives in exactly one module,
+ * last six days show a weekday and a clock, beyond that a date — and the parts the open letter
+ * combines into a fuller stamp live in one module,
  * `packages/client-engine/src/stamp.ts`.
  *
  * IT DID NOT USED TO. A time of day was composed in seven places across three packages and the
@@ -42,7 +45,7 @@ import { fileURLToPath } from "node:url";
  *
  * A guard that fires on innocent content is the same failure as one that cannot fire, and dearer,
  * because it discards real work. Several files here DISCUSS these APIs: `locale.ts` explains why
- * account dates go through `toLocaleDateString` while mail stamps do not, `RulesView` says its
+ * account dates go through `toLocaleDateString` while mail stamps do not, the rule list (`packages/app-logic/src/press/rule-list.ts`) says its
  * date is "deliberately not `toLocaleDateString`", and `MessageActions` names `toDateString()`
  * with its parentheses as the fallback it uses.
  *
@@ -51,7 +54,7 @@ import { fileURLToPath } from "node:url";
  *
  *  1. **Call-shape anchoring** carries all three of those. Every pattern requires a receiver (`.`
  *     or `Intl.`) and an opening paren, and prose writes these names in backticks with neither.
- *     Counted raw, `RulesView` yields nothing and `MessageActions` yields exactly its two real
+ *     Counted raw, the rule list (`packages/app-logic/src/press/rule-list.ts`) yields nothing and `MessageActions` yields exactly its two real
  *     calls — the `toDateString()` in its comment does not match, because a backtick is not a dot.
  *  2. **{@link stripComments}** carries the case anchoring cannot see: real code that has been
  *     COMMENTED OUT. `// return d.toLocaleDateString(locale);` is a perfect call shape, and a
@@ -98,7 +101,7 @@ describe("every door renders the shared mail stamp", () => {
   });
 
   it("THE BROWSER AND DESKTOP SHELL delegates its row stamp to the rule", () => {
-    const src = stripComments(read("apps/webapp/app/shell/format.ts"));
+    const src = stripComments(read("packages/app-logic/src/text/format.ts"));
     expect(src).toContain(RULE_EXPORT);
     // Not merely imported: `displayTime` is the app-side name every view calls, and it must be a
     // delegation rather than a reimplementation that happens to sit next to the import.
@@ -107,11 +110,29 @@ describe("every door renders the shared mail stamp", () => {
     );
   });
 
-  it("THE READING HEADER in the shell renders that same stamp", () => {
-    // The open message and the row it was opened from must agree; they do so by calling one
-    // function, not by two functions that currently produce the same string.
-    const src = stripComments(read("apps/webapp/app/shell/MessageCard.tsx"));
-    expect(src).toContain("displayTime(message, now)");
+  it("the open letter renders its date and time from the shared stamp formatters", () => {
+    const header = stripComments(read("packages/app/src/reader/LetterHead.tsx"));
+    const letter = stripComments(read("packages/app/src/reader/Letter.tsx"));
+    expect(header).toMatch(/const stamp = headStamp\(letterStampInstant\(message\)/);
+    expect(letter).toMatch(/when: full \? stamp\.full : props\.narrow \? stamp\.short : stamp\.when/);
+    // Parts distinct from the real calendar expose a second formatter even if its dates normally agree.
+    const date = "2001-02-03T12:00:00.000Z";
+    const now = new Date("2002-02-04T12:00:00.000Z");
+    vi.spyOn(stamps, "clock").mockReturnValue("08:19");
+    vi.spyOn(stamps, "weekdayClock").mockReturnValue("Weekday 08:19");
+    vi.spyOn(stamps, "dateClock").mockReturnValue("24 Month, 08:19");
+    vi.spyOn(stamps, "fullDateTime").mockImplementation((at) =>
+      at.getTime() === now.getTime() ? "Weekday 4 Month 2099, 08:19" : "Weekday 24 Month 2088, 08:19",
+    );
+    try {
+      expect(headStamp(date, now, "UTC", "en", { yesterday: (time) => time })).toEqual({
+        when: "Weekday 24 Month 2088 08:19",
+        short: "24 Month",
+        full: "Weekday 24 Month 2088, 08:19",
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("THE PHONE's rows, open message and thread history all render that stamp", () => {
@@ -139,8 +160,9 @@ describe("every door renders the shared mail stamp", () => {
 
 /* ── HALF B: THE CENSUS ───────────────────────────────────────────────────────────────────── */
 
-/** The trees a mail stamp could hide in — every surface that renders a message. */
-const TREES = ["apps/webapp/app", "packages/ui/src", "apps/mobile/src", "apps/mobile/app"];
+/** The trees a mail stamp could hide in — every surface that renders a message. `packages/app/src` is the new
+ * shell's own (its frame, its ground, its places), which every host mounts since the switch. */
+const TREES = ["apps/webapp/app", "packages/app/src", "packages/app-logic/src", "packages/letter-body/src", "packages/ui/src", "apps/mobile/src", "apps/mobile/app"];
 
 /**
  * EVERY date-formatting call in those trees, by file, with the kind it is.
@@ -163,31 +185,75 @@ const PINNED: Record<string, { calls: number; why: string }> = {
       + "phone's own zone read uses the same constructor and formats nothing. Every message stamp "
       + "in this file goes through the rule; neither of these is a message's date.",
   },
-  "apps/mobile/src/ui/day-stamp.ts": {
-    calls: 5,
-    why: "The phone twin of `format.ts`'s `dayStamp`, and pinned for the same reason: the day a "
-      + "standing fact became true — a closure's date on the wall and its strips — with no clock "
-      + "on it. Its second call is the reduced-ICU fallback on a runtime that refuses the locale. "
-      + "The third is `monthStamp`: the month text is kept from, in the emptied-text notice. The "
-      + "last two are `longDayStamp` and its fallback: the day a trial's storage floor ends.",
+  "apps/mobile/src/ui/MailFoundEvents.tsx": {
+    calls: 1,
+    why: "A suggested calendar event shows its event day in UTC so it stays on the same day in every device time zone.",
   },
-  "apps/webapp/app/shell/format.ts": {
+  "apps/mobile/src/ui/day-stamp.ts": {
+    calls: 6,
+    why: "The phone's `dayStamp` labels account dates in weekday and medium formats, with a "
+      + "fallback on runtimes that refuse the locale. `longDayStamp` and its fallback label "
+      + "the day a trial's storage floor ends. `monthStamp` labels the month text is kept from.",
+  },
+  "packages/app-logic/src/text/format.ts": {
     calls: 2,
     why: "`agoStamp`'s absolute tooltip (when a MAILBOX last synced) and `dayStamp` (the day a "
       + "standing fact became true, deliberately with no clock on it). Neither is a message's date.",
   },
-  "apps/webapp/app/shell/AppShell.tsx": {
-    calls: 1,
-    why: "`holderSince` — the day an install became a mailbox's organizer. An account date.",
-  },
-  "apps/webapp/app/(product)/mailbox/AboutSection.tsx": {
-    calls: 1,
-    why: "A build/version date in the About pane. An account-and-app date, not mail.",
+  "packages/app-logic/src/mailboxes/pane/stamps.ts": {
+    calls: 2,
+    why: "The Mailboxes pane's `agoStamp` tooltip and `dayStamp`, over the locale and zone "
+      + "the shell hands in: when a MAILBOX last synced, and the day a standing fact became true. Neither is a "
+      + "message's date.",
   },
   "packages/ui/src/primitives/DatePicker.tsx": {
     calls: 3,
     why: "The picker's own month and weekday NAMES for a calendar grid — a date being chosen, "
       + "never a date being reported.",
+  },
+  "packages/app-logic/src/calendar/grid/words.ts": {
+    calls: 2,
+    why: "The calendar's weekday heads, short and full, for the Week and Day grid: a calendar day's name, "
+      + "never a mail stamp.",
+  },
+  "packages/app-logic/src/calendar/spans/format.ts": {
+    calls: 1,
+    why: "The calendar's span and day labels (Month, Year, Agenda, Search): a calendar day being shown, "
+      + "never a mail stamp.",
+  },
+
+  /* THE NEW SHELL's OWN TREE (`packages/app/src`), read since the switch mounts it on every host. */
+  "packages/app/src/calendar/EventActionQuestion.tsx": {
+    calls: 3,
+    why: "The Calendar confirmation sheet formats recurrence weekdays and the date of the change. These are event dates.",
+  },
+  "packages/app/src/stream/StreamList.tsx": {
+    calls: 1,
+    why: "The stream menu formats the unread count using the reader's digit grouping. No date is formatted here.",
+  },
+  "packages/app/src/frame/connection.ts": {
+    calls: 1,
+    why: "`dayIn`: the calendar day of an instant as a comparable `en-CA` key, to tell whether the copy last synced "
+      + "today or before. A comparison key, never shown; the sentence's own clock and date come from the rule.",
+  },
+  "packages/app/src/history/months.ts": {
+    calls: 2,
+    why: "History's month rail: a month's short and long NAMES (\"Nov\", \"November 2026\") over a month key at noon "
+      + "UTC. A month being walked to, never a letter's date.",
+  },
+  "packages/app/src/mailboxes/first-run/Seat.ts": {
+    calls: 1,
+    why: "`dateOf`: the day a standing fact of a mailbox became true (from when mail is brought in), with no clock "
+      + "on it, in the reader's zone: the first run's twin of `format.ts`'s `dayStamp`. An account date, not mail.",
+  },
+  "packages/app/src/reader/actions/use-verbs.ts": {
+    calls: 1,
+    why: "`whenLabel`: the time a letter is set to come back (\"resurfaces Tuesday 4 Nov, 09:00\"), said in the "
+      + "toast of the Resurface verb. A SET TIME the person chose, never the date a letter was written or received.",
+  },
+  "packages/app/src/settings/about/AboutPane.tsx": {
+    calls: 1,
+    why: "The build date shown in About uses the viewer's local date and time. It is an app version date.",
   },
 
   /* `toLocaleString` ON A NUMBER. It cannot be told from the date form without types, and it is
@@ -198,6 +264,14 @@ const PINNED: Record<string, { calls: number; why: string }> = {
     calls: 3,
     why: "A byte figure in the reader's digit grouping, the MONTH text is kept from "
       + "(\"April 2019\") and the day a trial's storage floor ends — storage sentences, never a mail stamp.",
+  },
+  "packages/app/src/ohbox/OhboxHead.tsx": {
+    calls: 2,
+    why: "The mark-all-read menu and the Screener doorbell show counts in the reader's digit grouping.",
+  },
+  "packages/app/src/search/verdict-words.ts": {
+    calls: 1,
+    why: "The search limit is a count shown in the reader's digit grouping.",
   },
 };
 
@@ -268,8 +342,8 @@ describe("nothing outside the rule formats a mail date", () => {
     expect(formattersIn(stripComments(prose))).toEqual([]);
 
     // The real file that provoked it, read as it is on disk, with comments intact.
-    const rules = read("apps/webapp/app/views/RulesView.tsx");
-    expect(formattersIn(rules), "RulesView only MENTIONS a formatter").toEqual([]);
+    const rules = read("packages/app-logic/src/press/rule-list.ts");
+    expect(formattersIn(rules), "the rule list only MENTIONS a formatter").toEqual([]);
     /* A FILE THAT BOTH MENTIONS AND USES THEM, AND WHOSE MENTION HAS PARENTHESES. This was
        `MessageActions` until 0.22 moved its stamps behind the shared rule and left it with no
        formatter at all — a control whose subject lost the property under test, which is the one

@@ -1,3 +1,5 @@
+import { markupOf, runsOf } from "../compose/formatting";
+import { compareSearchRows, matchesSearchFacets, type SearchFilters, type SearchOrder } from "./search-facets";
 /**
  * The live world — what the mail screens render and dispatch when the connection is live; the
  * one seam between screens and engine. Reads are the shared selectors, never re-derived
@@ -8,11 +10,30 @@
  * doctrine); the release family rewrites the sender's own holding rule, or writes an address rule
  * beside a domain rule (`releaseRules`), beside physical `move`s. Mutations read the raw mirror ({@link presentedOf} is for renders); no React, no I/O, no network.
  */
+import type {
+  BodyState,
+  ComposeAttachment,
+  EmailAddress,
+  EngineDraft,
+  EngineMessage,
+  EngineMutation,
+  FailedAtGateDTO,
+  FeedView,
+  Folder,
+  FolderEntity,
+  MessageBody,
+  RuleEntity as RuleDTO,
+  ScreenDest,
+  ScreenerSenderDTO,
+  StayedWhy,
+  TagEntity as TagDTO,
+  UnscreenedPileWire,
+  WithheldMarker,
+} from "@ohmail/wire";
 import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
-import { authScreens, failedAtGateOf, type FailedAtGateDTO } from "@ohmail/client-engine";
+import { authScreens, failedAtGateOf } from "@ohmail/client-engine";
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
 import type { ScheduleFilesAnswer } from "@ohmail/client-engine";
-import type { UnscreenedPileWire } from "@ohmail/client-engine";
 import { calendarEventsOf, withoutCalendarBodies, type DistinctCalendarEvent } from "@ohmail/client-engine";
 import { DRAFT_BODY_MAX_BYTES, SENT_FORWARD_MAX_PARTS, draftOverCeiling } from "@ohmail/client-engine";
 import { addressBook, formatRecipient, matchAddresses, type AddressBookEntry } from "@ohmail/client-engine";
@@ -81,17 +102,7 @@ import {
   type AddressCounts,
   type AddressDirection,
   isJunkHuskLeaving,
-  type BodyState,
-  type WithheldMarker,
-  type EmailAddress,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMutation,
-  type ComposeAttachment,
   type EntityReader,
-  type FeedView,
-  type Folder,
-  type FolderEntity,
   type MutationResult,
   type OhmailEngine,
   StoreSearchWalker,
@@ -100,10 +111,6 @@ import {
   type ServerSearchOpts,
   type ServerAddressOutcome,
   type PressVerdict,
-  type RuleDTO,
-  type ScreenDest,
-  type ScreenerSenderDTO,
-  type StayedWhy,
   feedLineUndo,
   inverseMutations,
   pileRowIdsOf,
@@ -122,7 +129,6 @@ import {
   type MailboxScreening,
   type ScreeningSource,
   type SendAndDonePlan,
-  type TagDTO,
   type TrashRowWire,
   type WallClockVerdict,
   type WithdrawOutcome,
@@ -158,7 +164,6 @@ import {
   unsubscribeClaim,
   unsubscribeLetterOf,
   NO_WAITING,
-  type MessageBody,
   type UnsubscribeClaim,
   type WaitingSend,
 } from "@ohmail/client-engine";
@@ -615,6 +620,7 @@ export type WorldMail = Omit<Mail, "earlier"> & {
    * {@link canReplyAll} is false.
    */
   replyAllHead: { to: string; cc: string } | null;
+  recipients?: { to: readonly EmailAddress[]; cc: readonly EmailAddress[] };
   /** `sensitivity.no_forward` — Forward is still offered; the press asks first (`forwardAsk`). */
   noForward: boolean;
   /** Why a Forward press asks once before the composer opens (`forwardPress`); `null` opens it. */
@@ -724,7 +730,7 @@ function displayName(r: EmailAddress): string {
 }
 
 function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail {
-  return mailRow(reader, m, v, bodyOf(reader, m));
+  return { ...mailRow(reader, m, v, bodyOf(reader, m)), recipients: { to: m.to, cc: m.cc } };
 }
 
 /** A list row carries no body: a body is drawn by the surface that subscribes to it (`useBodyStamp`). */
@@ -844,6 +850,10 @@ function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: Mes
     ...(body.state === "withheld" && body.withheld ? { bodyWithheld: body.withheld } : {}),
     ...(isJunkHuskLeaving(body, physical) ? { bodyJunkLeaving: true as const } : {}),
     snippet: m.snippet,
+    ...(m.hasAttachments ? { hasAttachments: true } : {}),
+    ...(v.ownAddresses?.some((own) => m.to?.some((to) => to.address.toLowerCase() === own.toLowerCase()))
+      ? { toYou: true as const } : {}),
+    ...(m.remoteContent === "blocked" ? { imagesBlocked: true as const } : {}),
     /* READ STATE AS DRAWN, not as stored — the one shared derivation, so the phone bolds
        exactly the rows the desktop and the browser do (owner ruling 2026-08-31: a resurfaced
        message reads unread until Done or a reply releases it). `markSeen` below is unaffected:
@@ -1002,7 +1012,7 @@ export function replyAllRecipients(
 }
 
 /**
- * WHERE A MESSAGE CAN BE MOVED — the webapp's `MOVE_TARGETS` (MessagePane.tsx), the same
+ * WHERE A MESSAGE CAN BE MOVED — the webapp's `MOVE_TARGETS` (`packages/app-logic/src/press/actions.ts`), the same
  * vocabulary in the same order; `test/action-parity.test.ts` compares the two.
  */
 export type MoveTarget = "ohbox" | "reads" | "receipts" | "screened" | "spam";
@@ -1170,6 +1180,7 @@ export interface WorldScheduled {
   id: string;
   /** "Fri 18:00" / "12 Sep, 18:00" in the reader's zone, or `null` — see {@link liveScheduled}. */
   when: string | null;
+  sendAt?: string;
   /** The subject, or the empty-subject stand-in the mail lists already use. */
   subject: string;
   /** The recipients, as one readable line ("Alice, bob@example.org"). */
@@ -1217,6 +1228,7 @@ export function liveScheduled(reader: EntityReader, v: WorldView): WorldSchedule
   return [...scheduledSendsList(reader), ...failed].map((d) => ({
     id: d.id,
     when: d.status === "scheduled" && d.sendAt ? scheduleLabel(d.sendAt, v.now, v.zone) : null,
+    ...(d.status === "scheduled" && d.sendAt ? { sendAt: d.sendAt } : {}),
     subject: d.subject.trim() === "" ? Copy.scheduledNoSubject : d.subject,
     to: d.to.map((a) => a.name ?? a.address).join(", "),
     /* A row whose text this mirror never received previews as nothing — see `EngineDraft.body`.
@@ -1303,6 +1315,7 @@ export interface WorldDraftEdit {
   bcc: string;
   /** The subject of record, empty where none — never the list's stand-in. */
   subject: string;
+  html?: string;
   /** The message a forward draft forwards; `null` for every other draft. */
   forwardOf: string | null;
   /** The original's files the row keeps, beside a forward (another device's choice included); `null`: every file. */
@@ -1330,6 +1343,14 @@ export type KeptReply =
   | { kind: "aside" }
   | { kind: "resume"; draft: { id: string; body: string } & WorldDraftEdit };
 
+/** Untouched markup remains read-only unless the phone can round-trip it. */
+function editableMarkup(draft: EngineDraft): string | null | undefined {
+  const html = (draft as { html?: unknown }).html;
+  if (typeof html !== "string" || html === "") return undefined;
+  const runs = typeof draft.body === "string" ? runsOf(draft.body, html) : null;
+  return runs !== null && markupOf(runs) !== undefined ? html : null;
+}
+
 const addressSet = (list: readonly EmailAddress[]): string =>
   [...new Set(list.map((a) => a.address.trim().toLowerCase()))].sort().join("\n");
 
@@ -1347,37 +1368,37 @@ export function keptReplyOf(
   const subject = replySubject(parent.subject).trim();
   const audiences = envelopes.map((e) => [addressSet(e.to), addressSet(e.cc)].join("|"));
   const row = rows.find((d) => {
-    const markup = (d as { html?: unknown }).html;
     return d.status === "draft" && draftBodyKnown(d)
-      && !(typeof markup === "string" && markup !== "") && d.pendingCreate === undefined
+      && editableMarkup(d) !== null && d.pendingCreate === undefined
       && (d.forwardOfMessageId ?? null) === null && d.bcc.length === 0 && !named.has(d.id)
       && d.mailboxId === parent.mailboxId && d.subject.trim() === subject
       && audiences.includes([addressSet(d.to), addressSet(d.cc)].join("|"));
   });
   if (!row) return { kind: "aside" };
+  const html = editableMarkup(row);
   return {
     kind: "resume",
     draft: {
       id: row.id, body: row.body ?? "", mailboxId: row.mailboxId, to: typedRecipients(row.to), cc: typedRecipients(row.cc), bcc: "",
-      subject: row.subject, forwardOf: null, forwardParts: null, revision: row.contentRevision ?? null,
+      subject: row.subject, ...(html ? { html } : {}), forwardOf: null, forwardParts: null, revision: row.contentRevision ?? null,
     },
   };
 }
 
 /**
- * WHICH DRAFTS THE PHONE EDITS: a plain `draft` whose text this mirror holds, with no markup, and
+ * WHICH DRAFTS THE PHONE EDITS: a draft whose text and formatting the phone can keep whole, with
  * copies only on a new mail (the composer shows Cc and Bcc there). A save or a send writes the row
  * whole, so opening any other draft here would drop part of it without a word.
  */
 export function draftEditOf(d: EngineDraft): WorldDraftEdit | null {
-  const markup = (d as { html?: unknown }).html;
+  const html = editableMarkup(d);
   const copies = d.cc.length > 0 || d.bcc.length > 0;
   if (d.status !== "draft" || !draftBodyKnown(d)) return null;
   if (copies && (d.inReplyToMessageId !== null || (d.forwardOfMessageId ?? null) !== null)) return null;
-  if (typeof markup === "string" && markup !== "") return null;
+  if (html === null) return null;
   if (typeof d.mailboxId !== "string" || d.mailboxId === "") return null;
   return {
-    mailboxId: d.mailboxId, to: typedRecipients(d.to), cc: typedRecipients(d.cc), bcc: typedRecipients(d.bcc), subject: d.subject,
+    mailboxId: d.mailboxId, to: typedRecipients(d.to), cc: typedRecipients(d.cc), bcc: typedRecipients(d.bcc), subject: d.subject, ...(html ? { html } : {}),
     forwardOf: d.forwardOfMessageId ?? null,
     forwardParts: d.forwardOfMessageId ? d.forwardParts ?? null : null,
     revision: d.contentRevision ?? null,
@@ -1568,11 +1589,15 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
     const tid = r.openTarget.threadId;
     const marks = tid ? marksIndex.get(tid) : undefined;
     const marksKey = marks ? marks.join(" ") : "";
+    const authors = new Set(r.members.filter((member) => !isOwnOutbound(member)).map((member) => senderKey(member.from.address)));
+    const additionalPeople = Math.max(0, authors.size - 1);
+    const hasAttachments = r.members.some((member) => member.hasAttachments);
     /* THE SAME ROW OBJECT while nothing it shows moved — see {@link toListRow}. */
     const hit = ohboxRowMemo.get(r.openTarget);
     if (hit !== undefined && hit.mail === mail && hit.face === face && hit.subject === subject
       && hit.unread === unread && hit.newSince === newSince && hit.members === members && hit.key === r.key
-      && hit.marks === marksKey) return hit.row;
+      && hit.marks === marksKey && (hit.row.additionalPeople ?? 0) === additionalPeople
+      && hit.row.hasAttachments === hasAttachments) return hit.row;
     const { sentTo: _openTargetFace, ...open } = mail;
     const row: WorldMail = {
       ...open,
@@ -1583,6 +1608,8 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
       unread,
       rowKey: r.key,
       memberIds: r.members.map((m) => m.id),
+      ...(additionalPeople ? { additionalPeople } : {}),
+      hasAttachments,
       ...(newSince > 0 ? { newSince } : {}),
       ...(marks ? { marks } : {}),
     };
@@ -2412,7 +2439,7 @@ export interface WorldAddressAnswer {
 
 export interface WorldSearch {
   /** The instant device answer — the engine's mirror index, synchronous, no wire. */
-  query(q: string, limit?: number): WorldSearchAnswer;
+  query(q: string, limit?: number, filters?: SearchFilters, order?: SearchOrder): WorldSearchAnswer;
   /** Every message on this device involving one address, by direction, with all three counts. */
   address(addr: string, direction: AddressDirection): WorldAddressAnswer;
   /** Build the index off the keystroke path — called when the search surface opens. */
@@ -2434,8 +2461,20 @@ export function liveSearch(engine: OhmailEngine, base: EntityReader, v: WorldVie
       .filter((h) => base.get<EngineMessage>("message", h.message.id) !== undefined)
       .map((h) => toListRow(base, h.message, v));
   return {
-    query(q, limit) {
-      const r = engine.search(q, limit === undefined ? {} : { limit });
+    query(q, limit, filters, order = "relevance") {
+      const narrowed = filters && Object.values(filters).some((value) => value !== undefined);
+      const accept = narrowed ? (message: EngineMessage) => {
+        const shown = base.get<EngineMessage>("message", message.id);
+        return shown !== undefined && matchesSearchFacets(shown, filters);
+      } : undefined;
+      const compare = order === "relevance" ? undefined : compareSearchRows(order);
+      if (q.trim() === "" && accept) {
+        const letters = base.list<EngineMessage>("message");
+        const hits = letters.filter((message) => matchesSearchFacets(message, filters!))
+          .sort(compare ?? compareSearchRows("date_desc")).slice(0, limit ?? 50);
+        return { items: hits.map((message) => toListRow(base, message, v)), similar: [], coverageMessages: letters.length, indexing: false };
+      }
+      const r = engine.search(q, { ...(limit === undefined ? {} : { limit }), ...(accept ? { accept } : {}), ...(compare ? { compare } : {}) });
       return {
         items: rows(r.items),
         similar: rows(r.similar),
@@ -3462,6 +3501,7 @@ export interface DraftKeep {
   bcc?: EmailAddress[];
   subject: string;
   body: string;
+  html?: string | null;
   /** Files kept with the draft on this phone (a draft row holds no bytes). */
   files: number;
   /** Files the close named as past what this phone keeps, discarded with the second close. */
@@ -3682,8 +3722,9 @@ export interface LiveDeps {
 export type { AbandonedMutation, EntityReader, MutationResult, QueuedChange, WaitingSend } from "@ohmail/client-engine";
 export { NO_WAITING } from "@ohmail/client-engine";
 /* The sheet's step reads the press's forecast and the rules in play by this door too. */
+export type { RuleEntity as WorldRule } from "@ohmail/wire";
 export type {
-  ConflictGroup, ConsentOptions, PressForecast, RuleDTO as WorldRule, RuleLine, RulesInPlay,
+  ConflictGroup, ConsentOptions, PressForecast, RuleLine, RulesInPlay,
 } from "@ohmail/client-engine";
 /* Where the Ohbox's mail went (`ohbox-where.ts`): the projection and the line read it by this door. */
 export {
@@ -3773,13 +3814,15 @@ export interface LiveWorldActions {
    * A waiting sender's decision — the five destinations, "&read", sender/domain scope. `peers`, the
    * waiting rows on screen: a whole-domain press files their letters at that domain too.
    */
-  decide(row: ScreenerRow, dest: Destination, read: boolean, scope: Scope, peers?: readonly ScreenerRow[]): Promise<boolean>;
+  decide(row: ScreenerRow, dest: Destination, read: boolean, scope: Scope, peers?: readonly ScreenerRow[], unsubscribeIds?: readonly string[]): Promise<boolean>;
   /** What that press files beyond the row's own letters, before it is made ({@link cardReach}). */
   reachOf(row: ScreenerRow, peers: readonly ScreenerRow[], scope: Scope): CardReach;
   /** What a Screen out or Spam press on the row says about the one-click unsubscribe, before it is made. */
   unsubClaimOf(row: ScreenerRow, peers: readonly ScreenerRow[], scope: Scope): UnsubscribeClaim;
+  unsubscribeIdsOf(row: ScreenerRow, peers: readonly ScreenerRow[], scope: Scope): readonly string[];
   /** The same, for the open message's screening sheet: `none` where the press is not a decide. */
   screeningUnsubClaim(messageId: string, scope: Scope): UnsubscribeClaim;
+  screeningUnsubscribeIds(messageId: string, scope: Scope): readonly string[];
   /** Allow / Not-spam: release the held bag to a place, REWRITING the holding rules. */
   release(row: ScreenerRow, dest: Place, segment: "screened" | "spam"): Promise<boolean>;
   /** The message screen's triage: Answer Later / Park / Resurface. */
@@ -3887,6 +3930,7 @@ export interface LiveWorldActions {
     base?: string | null,
     /** The keys of the composer's own saves of that row ({@link DraftKeep.waited}). */
     waited?: readonly string[],
+    html?: string | null,
   ): Promise<SendResult>;
   /**
    * IS THE SECOND SEND ACTION OFFERED for a reply or forward of this message? The engine's one
@@ -3908,6 +3952,7 @@ export interface LiveWorldActions {
     base?: string | null,
     /** The keys of the composer's own saves of that row ({@link DraftKeep.waited}). */
     waited?: readonly string[],
+    html?: string | null,
   ): Promise<SendResult>;
   /**
    * A MAIL THAT ANSWERS NOTHING — the same `mail_send` with no parent: `inReplyTo` null,
@@ -3930,6 +3975,7 @@ export interface LiveWorldActions {
     base?: string | null,
     /** The keys of the composer's own saves of that row ({@link DraftKeep.waited}). */
     waited?: readonly string[],
+    html?: string | null,
   ): Promise<SendResult>;
   /**
    * WITHDRAW A QUEUED SEND — Cancel, on the intent. `withdrawn` is the cancellation;
@@ -4000,7 +4046,7 @@ export interface LiveWorldActions {
    * SCREENING from the open message: where THIS SENDER's mail goes — the webapp sender sheet's
    * rule ladder (`sender-screening.ts#planScreeningChange`), in the phone's idiom.
    */
-  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress): Promise<boolean>;
+  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress, unsubscribeIds?: readonly string[]): Promise<boolean>;
   /** The press before it is made — where the lists would show the sender's mail afterwards. */
   screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
   /** "Their rules": every rule deciding the sender's mail today, as the lists place it. */
@@ -4070,10 +4116,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       letters: heldIds.map((id) => unsubscribeLetterOf(reader, id)),
     });
   };
-  /** The press's sentence with the unsubscribe arm, if any: `held` while Undo is still to come. */
-  const withUnsub = (said: Refusal, claim: UnsubscribeClaim, held: boolean): Refusal =>
-    claim === "none" ? said
-      : refuse("liveAlsoUnsubscribing", said, held ? (claim === "sends" ? "sends" : "may") : (claim === "sends" ? "sent" : "maysent"));
+  const unsubscribeCandidates = (ids: readonly string[]): string[] => {
+    const reader = engine.read();
+    return [...new Set(ids)].filter((id) => {
+      const { posture, authVerdict } = unsubscribeLetterOf(reader, id);
+      return (posture === null || posture === "one_click") && (authVerdict == null || authVerdict === "pass");
+    });
+  };
+  /** Requests come from the confirmed press, so the receipt says whether the send was conditional. */
+  const withUnsub = (said: Refusal, claim: UnsubscribeClaim): Refusal =>
+    claim === "none" ? said : refuse("liveAlsoUnsubscribing", said, claim === "sends" ? "sent" : "maysent");
   /**
    * Everything swept per stream DURING THE CURRENT VISIT — the leave commit's anchor pool.
    * CONSUMED by {@link leaveFeed}: a visit's sweep may not leak into the next one, or a
@@ -4648,25 +4700,29 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return pressClaim(atGate, "no", heldInScope(row, peers, scope));
   };
 
+  const unsubscribeIdsOf = (row: ScreenerRow, peers: readonly ScreenerRow[], scope: Scope): string[] =>
+    unsubClaimOf(row, peers, scope) === "none" ? [] : unsubscribeCandidates(heldInScope(row, peers, scope));
+
   const decide = async (
     row: ScreenerRow, dest: Destination, read: boolean, pressed: Scope, peers: readonly ScreenerRow[] = [],
+    unsubscribeIds: readonly string[] = [],
   ): Promise<boolean> => {
     const scope: Scope = domainScopeOffered(row.address) ? pressed : "sender";
-    const rep = engine.read().get<EngineMessage>("message", row.id);
     const decision = decisionOf(dest as ScreenDest);
     const target = scope === "domain" ? `@${domainOf(row.address)}` : row.address;
     // A whole-domain card files the other waiting senders' INBOX letters it named, too.
     const own = new Set(row.held.map((h) => h.id));
     const also = scope === "domain" ? reachOf(row, peers, scope).inboxIds.filter((id) => !own.has(id)) : [];
+    const grants = decision === "no" && unsubscribeIds.length > 0
+      ? unsubscribeIdsOf(row, peers, scope).filter((id) => unsubscribeIds.includes(id)) : [];
+    if (grants.length) return decideNow(row, dest, read, scope, also, grants);
     const intent: DecideIntent = {
       v: 3, verb: "decide", id: deps.uuid ? deps.uuid() : `${row.id}:${now().getTime()}`, seedId: row.id,
       address: row.address, scope, dest: dest as ScreenDest, read,
       messageIds: row.held.map((h) => h.id), ...(also.length > 0 ? { alsoIds: also } : {}), at: now().getTime(),
     };
     const decidedSaid = decidedSaidOf(row, dest, scope, target);
-    const atGate = rep === undefined || physicalFolderOf(rep) === FOLDER_OF_VIEW.screener;
-    const claim = claimsOnly(row, scope) ? "none" : pressClaim(atGate, decision, heldInScope(row, peers, scope));
-    const pressSaid = withUnsub(decidedSaid, claim, true);
+    const pressSaid = decidedSaid;
     let spoke = false;
     const hold = deps.leaveWaiting?.({ address: row.address, scope });
     const opened = await holdScreenRouting(intent, (a) => {
@@ -4692,7 +4748,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     });
     // Sent by the window itself (its record refused): the answer above speaks for the press.
     if (opened.sent) return true;
-    if (!opened.held) { hold?.(); return decideNow(row, dest, read, scope, also, heldInScope(row, peers, scope)); }
+    if (!opened.held) { hold?.(); return decideNow(row, dest, read, scope, also); }
     spoke = true;
     const subject = routingSubject(intent);
     toast(pressSaid, {
@@ -4712,7 +4768,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /** The same decision with no window to hold it: sent now, and the sentence waits for the answer. */
   const decideNow = async (
     row: ScreenerRow, dest: Destination, read: boolean, scope: Scope, also: readonly string[] = [],
-    heldIds: readonly string[] = row.held.map((h) => h.id),
+    unsubscribeIds: readonly string[] = [],
   ): Promise<boolean> => {
     const raw = engine.read();
     const rep = raw.get<EngineMessage>("message", row.id);
@@ -4749,6 +4805,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(decision === "yes" ? { read } : {}),
         scope,
         applyRetro: false,
+        ...(unsubscribeIds.length ? { unsubscribeIds } : {}),
       }).then(
         (r) => {
           queuedWith = r.pendingWith ?? null;
@@ -4812,7 +4869,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return said(
       v,
       // Sent at once: no Undo is on offer, so the request is said as gone.
-      withUnsub(decidedSaid, claimsOnly(row, scope) ? "none" : pressClaim(decideRoute, decision, heldIds), false),
+      withUnsub(decidedSaid, claimsOnly(row, scope) ? "none" : pressClaim(decideRoute && unsubscribeIds.length > 0, decision, unsubscribeIds)),
       refuse("liveDecideFailed", row.address),
     );
   };
@@ -5146,7 +5203,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) {
       parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_CHUNK), unread: false })));
     }
-    /* The waterline commit rides the SAME press (the webapp's ReadsView shape): an empty
+    /* The waterline commit rides the SAME press (the web app's stream shape): an empty
        `messageIds` with the anchor alone, so a fresh-only stream ("2 new", nothing unread)
        still has a control that clears its line. No undo on this half — the line moves once. */
     if (feed !== undefined) {
@@ -5761,6 +5818,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     draftId: string | null = null,
     base: string | null = null,
     waited: readonly string[] = [],
+    html?: string | null,
   ): Promise<SendResult> => {
     const elsewhere = sentElsewhere(draftId);
     if (elsewhere) return elsewhere;
@@ -5793,6 +5851,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         kind: "mail_send" as const,
         inReplyTo: messageId,
         body: text,
+        ...(html === undefined ? {} : { html }),
         ...(env ? { to: env.to, cc: env.cc } : {}),
         // Present ⇒ an appointment, absent ⇒ a delivery. Spread rather than written as
         // `sendAt: sendAt ?? undefined` so an ordinary reply's mutation is byte-identical to
@@ -5805,7 +5864,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         // The version the words are based on: a row moved elsewhere refuses the send.
         ...(draftId && base ? { ifContentRevision: base } : {}),
       }, sig);
-    if (draftOverCeiling(signed.body)) return tooLongSend();
+    if (draftOverCeiling(signed.body, signed.html)) return tooLongSend();
     const sentSay = sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.replySent;
     return sent(
       dispatchSend(signed, plan),
@@ -5824,7 +5883,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : undefined,
       draftId === null ? undefined : keepChangedWords(draftId, {
         mailboxId: m.mailboxId, inReplyToMessageId: messageId, threadId: m.threadId ?? null,
-        subject: replySubject(m.subject), body: text, to: env ? env.to : [m.from], cc: env ? env.cc : [], bcc: [],
+        subject: replySubject(m.subject), body: text, ...(html === undefined ? {} : { html }), to: env ? env.to : [m.from], cc: env ? env.cc : [], bcc: [],
       }, waited),
     );
   };
@@ -5992,7 +6051,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const draftSent = (draftId: string): boolean =>
     engine.read().get<{ status?: unknown }>("draft", draftId)?.status === "sent";
 
-  /** The drain stamp at each row's last sighting — see {@link LiveWorldActions.draftLeft}. */
+  /** The drain at each row's last sighting. A tombstone also settles deletion in the same clock tick. */
   const draftSeenAt = new Map<string, string | null>();
   const draftLeft = (draftId: string): "sent" | "deleted" | null => {
     const row = engine.read().get<{ status?: unknown }>("draft", draftId);
@@ -6002,7 +6061,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       return row.status === "sent" ? "sent" : null;
     }
     const seen = draftSeenAt.get(draftId);
-    return seen !== undefined && drained !== null && drained !== seen ? "deleted" : null;
+    return seen !== undefined && (engine.draftIsGone(draftId) || (drained !== null && drained !== seen)) ? "deleted" : null;
   };
 
   /** PAST THE DRAFT LIMIT, signature included: refused before the wire, and said. */
@@ -6061,7 +6120,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const mailboxId = k.mailboxId ?? parent?.mailboxId ?? null;
     if (mailboxId === null || (k.messageId !== null && !parent)) return "refused";
     // The server's 413 judges the same bytes: asked here, nothing goes on the wire.
-    if (draftOverCeiling(k.body)) return "tooLong";
+    if (draftOverCeiling(k.body, k.html)) return "tooLong";
     const reply = k.mode === "reply" || k.mode === "replyAll";
     const env = k.mode === "replyAll" && parent
       ? replyAllRecipients(parent, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES)
@@ -6084,7 +6143,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(k.mode === "forward" && parent ? { forwardOfMessageId: parent.id } : {}),
         ...(k.mode === "forward" && parent && k.forwardParts ? { forwardParts: [...k.forwardParts] } : {}),
         // A reply's copies are its envelope's, never the ones a resumed row seeded the sheet with.
-        subject, body: k.body, to, cc: env ? env.cc : reply && parent ? [] : (k.cc ?? []), bcc: reply && parent ? [] : (k.bcc ?? []),
+        subject, body: k.body, ...(k.html === undefined ? {} : { html: k.html }), to, cc: env ? env.cc : reply && parent ? [] : (k.cc ?? []), bcc: reply && parent ? [] : (k.bcc ?? []),
       })
       .then((res) => res, () => null);
     /* A ROW ANOTHER DEVICE SENT OR DELETED TAKES NO NEW WORDS (`draft_sent`, 404). What is on
@@ -6136,6 +6195,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [],
     andDone = false, confirmed = false, draftId: string | null = null, opts: ForwardOpts = {},
     base: string | null = null, waited: readonly string[] = [],
+    html?: string | null,
   ): Promise<SendResult> => {
     const elsewhere = sentElsewhere(draftId);
     if (elsewhere) return elsewhere;
@@ -6164,13 +6224,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         // A forward has no parent-derived From of its own, and the send refuses without one.
         mailboxId: m.mailboxId,
         body,
+        ...(html === undefined ? {} : { html }),
         to,
         ...(attachments.length > 0 ? { attachments } : {}),
         ...(draftId ? { draftId } : {}),
         // The version the words are based on: a row moved elsewhere refuses the send.
         ...(draftId && base ? { ifContentRevision: base } : {}),
       }, sig);
-    if (draftOverCeiling(signed.body)) return tooLongSend();
+    if (draftOverCeiling(signed.body, signed.html)) return tooLongSend();
     const r = await sent(
       dispatchSend(signed, plan),
       Copy.forwarded,
@@ -6178,7 +6239,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       true,
       undefined,
       draftId === null ? undefined : keepChangedWords(draftId, {
-        mailboxId: m.mailboxId, forwardOfMessageId: messageId, subject: forwardSubject(m.subject), body, to, cc: [], bcc: [],
+        mailboxId: m.mailboxId, forwardOfMessageId: messageId, subject: forwardSubject(m.subject), body, ...(html === undefined ? {} : { html }), to, cc: [], bcc: [],
         ...(opts.forwardParts !== undefined ? { forwardParts: [...opts.forwardParts] } : {}),
       }, waited),
     );
@@ -6199,6 +6260,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     copies: { cc: EmailAddress[]; bcc: EmailAddress[] } = { cc: [], bcc: [] },
     base: string | null = null,
     waited: readonly string[] = [],
+    html?: string | null,
   ): Promise<SendResult> => {
     const elsewhere = sentElsewhere(draftId);
     if (elsewhere) return elsewhere;
@@ -6225,6 +6287,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         mailboxId,
         subject: subject.trim(),
         body: text,
+        ...(html === undefined ? {} : { html }),
         to,
         ...(copies.cc.length > 0 ? { cc: copies.cc } : {}),
         ...(copies.bcc.length > 0 ? { bcc: copies.bcc } : {}),
@@ -6234,7 +6297,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         // The version the words are based on: a row moved elsewhere refuses the send.
         ...(draftId && base ? { ifContentRevision: base } : {}),
       }, sig);
-    if (draftOverCeiling(signed.body)) return tooLongSend();
+    if (draftOverCeiling(signed.body, signed.html)) return tooLongSend();
     const sentSay = sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.composeSent;
     return sent(
       dispatchSend(signed),
@@ -6243,7 +6306,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       true,
       sendAt ? sentSay : undefined,
       draftId === null ? undefined : keepChangedWords(draftId, {
-        mailboxId, subject: subject.trim(), body: text, to, cc: copies.cc, bcc: copies.bcc,
+        mailboxId, subject: subject.trim(), body: text, ...(html === undefined ? {} : { html }), to, cc: copies.cc, bcc: copies.bcc,
       }, waited),
     );
   };
@@ -6553,22 +6616,27 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return brand ? { brand } : null;
   };
   /** The open message's sheet, before a press: what Screen out or Spam would say about the unsubscribe. */
-  const screeningUnsubClaim = (messageId: string, scope: Scope): UnsubscribeClaim => {
+  const screeningUnsubscribeScope = (messageId: string, scope: Scope): string[] => {
     const m = messageOf(messageId);
-    if (!m || isOwn(messageId)) return "none";
+    if (!m || isOwn(messageId)) return [];
     const address = m.from.address.trim().toLowerCase();
     const match = scope === "domain" ? domainOf(address).toLowerCase() : address;
-    if (match === "") return "none";
+    if (match === "") return [];
     const subject = engine.read().list<EngineMessage>("message").filter((x) => (scope === "domain"
       ? domainOf(x.from.address.trim().toLowerCase()).toLowerCase() === match
       : x.from.address.trim().toLowerCase() === match));
-    if (listClaimAt(address, scope, subject) !== null) return "none";
-    const held = heldOfSubject(subject);
-    return pressClaim(held.length > 0, "no", held);
+    return listClaimAt(address, scope, subject) === null ? heldOfSubject(subject) : [];
   };
+  const screeningUnsubClaim = (messageId: string, scope: Scope): UnsubscribeClaim => {
+    const ids = screeningUnsubscribeScope(messageId, scope);
+    return pressClaim(ids.length > 0, "no", ids);
+  };
+  const screeningUnsubscribeIds = (messageId: string, scope: Scope): string[] =>
+    deps.autoUnsubscribe?.() === false ? [] : unsubscribeCandidates(screeningUnsubscribeScope(messageId, scope));
 
   const screenSender = async (
     messageId: string, dest: Destination, scope: Scope, applyRetro = true, press?: PhoneScreenPress,
+    unsubscribeIds: readonly string[] = [],
   ): Promise<boolean> => {
     const raw = engine.read();
     const m = messageOf(messageId);
@@ -6598,6 +6666,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const decision: "yes" | "no" = dest === "screened" || dest === "spam" ? "no" : "yes";
     // Read before the press: its overlay takes the sender's row off the store's page.
     const claims = waiting && decision === "no" ? listClaimAt(address, scope, subject) : null;
+    const granted = waiting && decision === "no" && claims === null && unsubscribeIds.length > 0
+      ? screeningUnsubscribeIds(messageId, scope).filter((id) => unsubscribeIds.includes(id)) : [];
 
     /* AN ADDRESS PRESS PAST THE GATE IS HELD, like a Move (`held-routing.ts`): the mail the list
        will show at the place moves now, the rules are a v2 intent committed when the window
@@ -6614,6 +6684,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // The past-mail answer rides the decision, because the rule it promotes is the only rule
       // this press writes — the webapp's ruling, on the same wire.
       applyRetro,
+      ...(granted.length ? { unsubscribeIds: granted } : {}),
     } : undefined;
     let ruled: Promise<PressVerdict[]>;
     if (decide) {
@@ -6660,7 +6731,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       : stay ?? refuse("liveDecided", destDone(dest), target);
     return saidAll(
       verdicts,
-      withUnsub(pressSaid, claims !== null ? "none" : pressClaim(waiting !== undefined, decision, heldOfSubject(subject)), false),
+      withUnsub(pressSaid, claims !== null ? "none" : pressClaim(granted.length > 0, decision, granted)),
       ownAddressOr(verdicts, refuse("liveDecideFailed", m.from.address)),
     );
   };
@@ -6711,7 +6782,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     openMessage, leaveMessage, hydrateMessage, forwardFetch, forwardFiles, forwardPartsSupported, scheduleFilesKept, sendSurface, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
     watchLists, openAttachmentBytes,
     releaseAttachments,
-    sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, screeningUnsubClaim, release, setPile,
+    sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, unsubscribeIdsOf, screeningUnsubClaim, screeningUnsubscribeIds, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markRowSeen, markGlanced, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, leaveSend, cancelWaitingSend, cancelSchedule, tagToggle, tagCreate,
@@ -6769,13 +6840,15 @@ export interface WorldActions {
   holdFiles(ids: string[]): void;
   releaseFiles(ids: string[]): void;
   /** `peers`: the waiting rows on screen, whose letters at the domain a whole-domain press files too. */
-  decide(row: ScreenerRow, dest: Destination, read: boolean, peers?: readonly ScreenerRow[]): void;
+  decide(row: ScreenerRow, dest: Destination, read: boolean, peers?: readonly ScreenerRow[], unsubscribeIds?: readonly string[]): void;
   /** What a press on `row` files beyond its own letters, at the row's scope, before it is made. */
   reachOf(row: ScreenerRow, peers: readonly ScreenerRow[]): CardReach;
   /** What Screen out or Spam on `row` says about the one-click unsubscribe, at the row's scope. */
   unsubClaimOf(row: ScreenerRow, peers: readonly ScreenerRow[]): UnsubscribeClaim;
+  unsubscribeIdsOf(row: ScreenerRow, peers: readonly ScreenerRow[]): readonly string[];
   /** The same for the open message's screening sheet, at `scope`. */
   screeningUnsubClaim(messageId: string, scope: Scope): UnsubscribeClaim;
+  screeningUnsubscribeIds(messageId: string, scope: Scope): readonly string[];
   setScope(row: ScreenerRow, scope: Scope): void;
   /** Allow (screened) / Not spam (spam): release the whole held bag to a place. */
   allow(row: ScreenerRow, dest: Place): void;
@@ -6816,42 +6889,12 @@ export interface WorldActions {
    * `sendAt` makes it a Send-later appointment instead of a delivery — see
    * {@link LiveWorldActions.sendReply}; `sent` then means "scheduled", and the toast says so.
    */
-  sendReply(
-    messageId: string,
-    body: string,
-    all: boolean,
-    sig?: string | null,
-    sendAt?: string | null,
-    attachments?: ComposeAttachment[],
-    andDone?: boolean,
-    draftId?: string | null,
-    base?: string | null,
-    waited?: readonly string[],
-  ): Promise<SendResult>;
+  sendReply: LiveWorldActions["sendReply"];
   /** Is Send + Done offered for this source? See {@link LiveWorldActions.sendAndDoneOffered}. */
   sendAndDoneOffered(messageId: string): boolean;
-  sendForward(
-    messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean,
-    confirmed?: boolean, draftId?: string | null, opts?: ForwardOpts,
-    /** The bound row's version the words are based on ({@link WorldDraftEdit.revision}). */
-    base?: string | null,
-    /** The keys of the composer's own saves of that row ({@link DraftKeep.waited}). */
-    waited?: readonly string[],
-  ): Promise<SendResult>;
+  sendForward: LiveWorldActions["sendForward"];
   /** A mail with no parent — see {@link LiveWorldActions.sendNew}. */
-  sendNew(
-    mailboxId: string | null,
-    to: EmailAddress[],
-    subject: string,
-    body: string,
-    sig?: string | null,
-    sendAt?: string | null,
-    attachments?: ComposeAttachment[],
-    draftId?: string | null,
-    copies?: { cc: EmailAddress[]; bcc: EmailAddress[] },
-    base?: string | null,
-    waited?: readonly string[],
-  ): Promise<SendResult>;
+  sendNew: LiveWorldActions["sendNew"];
   /** Withdraw a queued send — Cancel. See {@link LiveWorldActions.withdrawSend}. */
   withdrawSend(key: string): Promise<WithdrawOutcome>;
   /** See {@link LiveWorldActions.leaveSend}. */
@@ -6880,7 +6923,7 @@ export interface WorldActions {
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
   tagCreate(messageId: string, name: string): void;
-  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress): void;
+  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress, unsubscribeIds?: readonly string[]): void;
   screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
   screeningRules(messageId: string, scope: Scope): RulesInPlay | null;
   screeningStayed(messageId: string, scope: Scope): StayedAsk | null;
@@ -6931,10 +6974,12 @@ export function stableActions(current: () => WorldActions): WorldActions {
     hydrateHeld: (ids) => current().hydrateHeld(ids),
     holdFiles: (ids) => current().holdFiles(ids),
     releaseFiles: (ids) => current().releaseFiles(ids),
-    decide: (row, dest, read, peers) => current().decide(row, dest, read, peers),
+    decide: (row, dest, read, peers, ids) => current().decide(row, dest, read, peers, ids),
     reachOf: (row, peers) => current().reachOf(row, peers),
     unsubClaimOf: (row, peers) => current().unsubClaimOf(row, peers),
     screeningUnsubClaim: (id, scope) => current().screeningUnsubClaim(id, scope),
+    unsubscribeIdsOf: (row, peers) => current().unsubscribeIdsOf(row, peers),
+    screeningUnsubscribeIds: (id, scope) => current().screeningUnsubscribeIds(id, scope),
     setScope: (row, scope) => current().setScope(row, scope),
     allow: (row, dest) => current().allow(row, dest),
     notSpam: (row, dest) => current().notSpam(row, dest),
@@ -6953,12 +6998,9 @@ export function stableActions(current: () => WorldActions): WorldActions {
     deleteMessage: (id, opts) => void current().deleteMessage(id, opts),
     trashList: (cursor) => current().trashList(cursor),
     trashRestore: (id) => current().trashRestore(id),
-    sendReply: (id, body, all, sig, sendAt, attachments, andDone, draftId, base, waited) =>
-      current().sendReply(id, body, all, sig, sendAt, attachments, andDone, draftId, base, waited),
-    sendForward: (id, to, body, sig, attachments, andDone, confirmed, draftId, opts, base, waited) =>
-      current().sendForward(id, to, body, sig, attachments, andDone, confirmed, draftId, opts, base, waited),
-    sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies, base, waited) =>
-      current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies, base, waited),
+    sendReply: (...args) => current().sendReply(...args),
+    sendForward: (...args) => current().sendForward(...args),
+    sendNew: (...args) => current().sendNew(...args),
     sendAndDoneOffered: (id) => current().sendAndDoneOffered(id),
     withdrawSend: (key) => current().withdrawSend(key),
     leaveSend: (key) => current().leaveSend(key),
@@ -6975,7 +7017,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
     tagCreate: (id, name) => void current().tagCreate(id, name),
-    screenSender: (id, dest, scope, applyRetro, press) => void current().screenSender(id, dest, scope, applyRetro, press),
+    screenSender: (id, dest, scope, applyRetro, press, ids) => void current().screenSender(id, dest, scope, applyRetro, press, ids),
     screeningForecast: (id, dest, scope, applyRetro) => current().screeningForecast(id, dest, scope, applyRetro),
     screeningRules: (id, scope) => current().screeningRules(id, scope),
     screeningStayed: (id, scope) => current().screeningStayed(id, scope),

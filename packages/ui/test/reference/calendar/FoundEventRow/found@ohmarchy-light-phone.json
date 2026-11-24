@@ -1,0 +1,139 @@
+{
+  "component": "FoundEventRow",
+  "state": "found",
+  "look": "ohmarchy-light-phone",
+  "place": "cell",
+  "target": [42, 64, 464, 67.9688],
+  "clip": [42, 64, 464, 68],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(255, 252, 240)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "15.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "boxDecorationBreak": "clone", "borderRadius": "5.6px" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 1 447c0f4542bb" },
+    { "outline": "1px dashed color(srgb 0.219608 0.211765 0.207843 / 0.6) -1px" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 3 8c8578e2e715" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Add",
+      "box": [363.6, 23.1, 36.4, 21.8],
+      "drawn": {
+        "color": "rgb(255, 252, 240)",
+        "backgroundColor": "rgb(32, 94, 166)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "600",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "5.6px",
+        "paddingTop": "1.12px",
+        "paddingRight": "5.6px",
+        "paddingBottom": "1.12px",
+        "paddingLeft": "5.6px",
+        "borderColor": "rgb(255, 252, 240)"
+      },
+      "text": [{ "said": "Add", "type": 0 }],
+      "surfaces": [{ "box": [363.6, 23.1, 36.4, 21.8], "paint": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Dismiss",
+      "box": [412, 12, 44, 44],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "14px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [{ "box": [424, 24, 20, 20], "paint": 1 }]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "Sat 21 Nov, 11:00", "type": 1 },
+      { "said": "Wabi-sabi for web people", "type": 2 },
+      { "said": "Makersfest, main hall", "type": 3 }
+    ],
+    "surfaces": [
+      { "box": [0, 0, 464, 68], "paint": 2 },
+      { "box": [12, 24, 20, 20], "paint": 3 }
+    ]
+  }
+}

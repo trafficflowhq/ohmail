@@ -4,9 +4,10 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { mailboxes } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
-import { messageService, syncService } from "@trafficflow/services";
+import { dbFor, messageService, syncService } from "@trafficflow/services";
+import { statementSeam } from "./helpers/statement-seam.js";
 import type { ServiceContext } from "@trafficflow/services";
 import { pgTestUrl, realPgAvailable } from "@trafficflow/db/testing";
 
@@ -27,15 +28,28 @@ const db = brandDialect(drizzle(client, {
   schema, logger: { logQuery: (query, params) => { logged.push({ query, params }); } },
 }), "pg");
 
+// The context's handle is the factory's: the binder takes a server handle only from the factory that
+// registered its door.
+const owned = makeOwnedDb(URL);
+
 const ACCOUNT = randomUUID();
 const GROWN = 20_000;
 const NOW = new Date("2026-09-29T08:00:00.000Z");
-const ctx = (): ServiceContext => ({ db, accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "arrival-plan" });
+/* The census rides the context's own handle: a seam at the drizzle builder of the account's handle
+   sees each statement the service sends, text and parameters, as the logger saw them on the raw one. */
+const ctx = (): ServiceContext => ({
+  db: statementSeam(dbFor(owned.db, ACCOUNT), (query, params) => { logged.push({ query, params }); return null; }),
+  accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "arrival-plan",
+});
 
 /** The one statement a read issued that walks the arrival order — the page's own keyset select. */
 function pageStatement(from: number): { query: string; params: unknown[] } {
-  const hits = logged.slice(from).filter((l) => /"messages"\."arrived_at"/.test(l.query) && /order by/i.test(l.query) && /limit/i.test(l.query));
-  expect(hits, "the read issued no arrival-ordered page statement").toHaveLength(1);
+  const hits = logged.slice(from).filter(({ query }) => {
+    // Materializing the selected letters can also order and limit a subquery for an earlier invitation.
+    const finalOrder = query.slice(query.toLowerCase().lastIndexOf("order by "));
+    return /"messages"\."arrived_at"/.test(finalOrder) && / limit \$\d+$/i.test(finalOrder);
+  });
+  expect(hits, "the read must issue one arrival-ordered page statement").toHaveLength(1);
   return hits[0]!;
 }
 
@@ -71,8 +85,8 @@ describe.skipIf(!PG_UP)("the arrival order's deep page is one range of its index
         jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g), 'hi', true
       from generate_series(1, ${GROWN}) g`, [ACCOUNT, mb!.id]);
     await client.unsafe(`
-      insert into folder_state (message_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
-      select id, 'INBOX', 'INBOX', 'us', 'reconciled', false from messages where account_id = $1::uuid`, [ACCOUNT]);
+      insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
+      select id, account_id, 'INBOX', 'INBOX', 'us', 'reconciled', false from messages where account_id = $1::uuid`, [ACCOUNT]);
     await client.unsafe("analyze messages");
     await client.unsafe("analyze folder_state");
   }, 120_000);
@@ -80,6 +94,7 @@ describe.skipIf(!PG_UP)("the arrival order's deep page is one range of its index
     await client.unsafe("delete from folder_state where message_id in (select id from messages where account_id = $1::uuid)", [ACCOUNT]);
     await client.unsafe("delete from messages where account_id = $1::uuid", [ACCOUNT]);
     await client.unsafe("delete from mailboxes where account_id = $1::uuid", [ACCOUNT]);
+    await owned.close();
     await client.end({ timeout: 5 });
   });
 

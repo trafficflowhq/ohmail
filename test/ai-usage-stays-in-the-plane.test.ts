@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { publishedSourceRoots } from "./support/published-roots.js";
 import { withoutComments } from "../scripts/lib/source-scan.mjs";
+import { readSource } from "../apps/worker/test/_start-function.js";
 
 /**
  * THE COST TABLES, THEIR WRITER AND THEIR READERS ARE THE PLANE'S. The open side sends usage
@@ -29,7 +29,7 @@ describe("the plane's AI cost machinery stays out of every published root", () =
   });
 
   it("names neither table nor the plane writer outside a comment", () => {
-    const found = files.filter((f) => hitsIn(readFileSync(f, "utf8")) > 0);
+    const found = files.filter((f) => hitsIn(readSource(f)) > 0);
     expect(found).toEqual([]);
   });
 

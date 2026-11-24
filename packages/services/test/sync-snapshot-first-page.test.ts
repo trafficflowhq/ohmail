@@ -1,10 +1,11 @@
+import type { SnapshotResponse } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { folderState, mailboxes, messages, tags } from "@trafficflow/db";
 import {
-  SNAPSHOT_FIRST_PAGE_MESSAGES, SyncService,
-  type ServiceContext, type SnapshotResponse,
+  SNAPSHOT_FIRST_PAGE_MESSAGES, SyncService, dbFor,
+  type ServiceContext,
 } from "../src/index.js";
 
 /**
@@ -31,7 +32,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `a-${accountId}@x.example`,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "snap" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "snap" };
   return { db, accountId, mailboxId: mb!.id, ctx };
 }
 
@@ -45,7 +46,7 @@ async function seedMessages(
       subject: `s${i}`, fromAddress: "f@x.example", date: new Date(NOW.getTime() - i * MINUTE),
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     });
   }
 }

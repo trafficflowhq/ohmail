@@ -12,6 +12,7 @@ import { Icon, type IconName } from "../Icon";
 import { Tap } from "../base";
 import { a11yRole } from "../a11y-role";
 import { badgeAtScale } from "../../theme/type";
+import { mailColors } from "../../theme/mail";
 
 export function GlassIconButton({
   icon,
@@ -20,6 +21,7 @@ export function GlassIconButton({
   onPress,
   on,
   accent,
+  inkFill = false,
   badge,
   badgeHot,
   role = "button",
@@ -35,6 +37,7 @@ export function GlassIconButton({
   on?: boolean;
   /** The one solid fill — Compose, Reply. */
   accent?: boolean;
+  inkFill?: boolean;
   badge?: number;
   /** A hot badge is solid accent (Ohbox, Screener); a quiet one the tint track. */
   badgeHot?: boolean;
@@ -44,7 +47,9 @@ export function GlassIconButton({
 }) {
   const t = useTheme();
   const badgeSize = badgeAtScale(useWindowDimensions().fontScale);
-  const color = accent ? t.c.onAccent : on ? t.c.accentInk : t.c.ink2;
+  const paper = inkFill ? mailColors(t) : null;
+  const badgeColors = t.mail ? mailColors(t) : null;
+  const color = paper?.["on-solid"] ?? (accent ? t.c.onAccent : on ? t.c.accentInk : t.c.ink2);
   return (
     <Tap
       accessibilityRole={a11yRole(role, Platform.OS === "ios" ? "ios" : "android")}
@@ -58,7 +63,7 @@ export function GlassIconButton({
         borderRadius: t.radius.pill,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: accent ? t.c.accent : on ? t.c.accentSoft : pressed ? t.c.tint : "transparent",
+        backgroundColor: paper?.solid ?? (accent ? t.c.accent : on ? t.c.accentSoft : pressed ? t.c.tint : "transparent"),
       })}
     >
       {glyph !== undefined ? (
@@ -78,7 +83,7 @@ export function GlassIconButton({
             borderRadius: t.radius.pill,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: badgeHot ? t.c.accent : t.c.tint2,
+            backgroundColor: badgeHot ? t.c.accent : badgeColors?.solid ?? t.c.tint2,
             borderWidth: 1.5,
             borderColor: t.c.float,
           }}
@@ -93,7 +98,7 @@ export function GlassIconButton({
               {
                 includeFontPadding: false,
                 textAlignVertical: "center",
-                color: badgeHot ? t.c.onAccent : t.c.ink3,
+                color: badgeHot ? t.c.onAccent : badgeColors?.["on-solid"] ?? t.c.ink3,
                 fontVariant: ["tabular-nums"],
               },
             ]}

@@ -7,7 +7,7 @@ import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, type Logger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * A CYCLE-TAIL STAGE THAT MEETS A DEAD DATABASE SAYS SO. Per stage, the REAL pass is handed a database
@@ -18,7 +18,12 @@ import { FakeAdapterFleet } from "./_fakeadapter.js";
  * database calls carry no tag yet (a gap row names it).
  */
 const fault = vi.hoisted(() => {
-  const s = { stage: "", db: null as unknown, err: null as unknown, calls: new Map<string, number>() };
+  const s = {
+    stage: "", db: null as unknown, err: null as unknown, calls: new Map<string, number>(),
+    /** The binder's own reading and binding, set once the real module is loaded (below). */
+    binding: (_h: unknown): { account: string | null } | undefined => undefined,
+    bind: (h: unknown, _account: string | null): unknown => h,
+  };
   /** Wrap one pass: armed for `stage`, its next call meets `err` or runs on the dead `db` once. */
   const wrap = <A extends unknown[], R>(
     stage: string, real: (...a: A) => Promise<R>,
@@ -29,7 +34,18 @@ const fault = vi.hoisted(() => {
     const { db, err } = s;
     s.stage = ""; s.db = null; s.err = null;
     if (err !== null) throw err;
-    return real(...swap(a, db));
+    return real(...swap(a, boundAs(a, db)));
+  };
+  /**
+   * The dead pool's handle, bound as the handle it replaces was bound (the pass's first argument, or
+   * the `db` of an options object there): the worker hands each pass a bound handle, and a plain one
+   * is refused before it ever meets the dead database.
+   */
+  const boundAs = (a: unknown[], dead: unknown): unknown => {
+    const first = a[0] as Record<string, unknown> | undefined;
+    const held = (s.binding(first) === undefined && first !== null && typeof first === "object" && "db" in first)
+      ? s.binding(first.db) : s.binding(first);
+    return held === undefined ? dead : s.bind(dead, held.account);
   };
   type Mod = Record<string, unknown>;
   /** A module factory: the named passes wrapped, everything else the real module's. */
@@ -45,7 +61,13 @@ const fault = vi.hoisted(() => {
   return Object.assign(s, { wrap, mocked });
 });
 
-vi.mock("@trafficflow/db", (load) => fault.mocked({ pruneIdempotencyKeys: "global_maintenance" })(load));
+vi.mock("@trafficflow/db", async (load) => {
+  const real = await (load as () => Promise<typeof import("@trafficflow/db")>)();
+  fault.binding = (h) => real.bindingOf(h);
+  fault.bind = (h, account) => account === null
+    ? real.bindDb(h as object, { account: null }) : real.bindDb(h as object, { account });
+  return fault.mocked({ pruneIdempotencyKeys: "global_maintenance" })(async () => real);
+});
 vi.mock("@trafficflow/db/cloud", (load) => fault.mocked({
   owedSuggestAccounts: "screener_suggest_owed", pruneErasedNotices: "erased_notices",
 })(load));
@@ -53,8 +75,8 @@ vi.mock("@trafficflow/core/mail", (load) => fault.mocked({ searchIndexOwedAccoun
 vi.mock("../src/bubble-up-cron.js", (load) => fault.mocked({ bubbleUpPass: "bubble_up" })(load));
 vi.mock("../src/workflow-cron.js", (load) => fault.mocked({ workflowTimeScanPass: "workflow" })(load));
 vi.mock("../src/gate-release.js", (load) => fault.mocked({ gateReleasePass: "gate_release" })(load));
-vi.mock("../src/sender-check-backfill.js", async (load) => {
-  const real = await (load as () => Promise<typeof import("../src/sender-check-backfill.js")>)();
+vi.mock("@ohmail/organizer/sender-check-backfill", async (load) => {
+  const real = await (load as () => Promise<typeof import("@ohmail/organizer/sender-check-backfill")>)();
   return {
     ...real,
     senderCheckRetirement: (opts: Parameters<typeof real.senderCheckRetirement>[0] = {}) => real.senderCheckRetirement({
@@ -62,22 +84,22 @@ vi.mock("../src/sender-check-backfill.js", async (load) => {
     }),
   };
 });
-vi.mock("../src/list-address-backfill.js", (load) => fault.mocked({ listAddressBackfillPass: "list_address_backfill" })(load));
-vi.mock("../src/act-admission-retire.js", (load) => fault.mocked({ retireActAdmissionsPass: "act_admission_retire" })(load));
-vi.mock("../src/rule-retro.js", (load) => fault.mocked({ ruleRetroPass: "rule_retro" })(load));
-vi.mock("../src/gap-catchup.js", (load) => fault.mocked({ gapCatchupPass: "gap_catchup" })(load));
+vi.mock("@ohmail/organizer/list-address-backfill", (load) => fault.mocked({ listAddressBackfillPass: "list_address_backfill" })(load));
+vi.mock("@ohmail/organizer/act-admission-retire", (load) => fault.mocked({ retireActAdmissionsPass: "act_admission_retire" })(load));
+vi.mock("@ohmail/organizer/rule-retro", (load) => fault.mocked({ ruleRetroPass: "rule_retro" })(load));
+vi.mock("@ohmail/organizer/gap-catchup", (load) => fault.mocked({ gapCatchupPass: "gap_catchup" })(load));
 vi.mock("../src/ohbox-tidy.js", (load) => fault.mocked({ ohboxTidyPass: "ohbox_tidy" })(load));
-vi.mock("../src/thread-join-heal.js", (load) => fault.mocked({ threadJoinHealPass: "thread_join_heal" },
+vi.mock("@ohmail/organizer/thread-join-heal", (load) => fault.mocked({ threadJoinHealPass: "thread_join_heal" },
   { threadJoinHealPass: (a, db) => [{ ...(a[0] as object), db }] })(load));
-vi.mock("../src/inbound-quiet.js", (load) => fault.mocked({ inboundQuietPass: "inbound_quiet" })(load));
+vi.mock("@ohmail/organizer/inbound-quiet", (load) => fault.mocked({ inboundQuietPass: "inbound_quiet" })(load));
 vi.mock("../src/away-reply-flag-redeliver.js", (load) => fault.mocked({ awayReplyFlagRedeliverPass: "away_reply_flag_redeliver" })(load));
 // The test worker meters nothing, so the evictor would stop at the cap; armed, it is handed one.
-vi.mock("../src/storage-evict.js", (load) => fault.mocked({ storageEvictPass: "storage_evict" },
+vi.mock("@ohmail/organizer/storage-evict", (load) => fault.mocked({ storageEvictPass: "storage_evict" },
   { storageEvictPass: (a, db) => [db, { ...(a[1] as object), storageCap: async () => 1_000_000 }, a[2]] })(load));
-vi.mock("../src/screener-correspondent-retro.js", (load) => fault.mocked({ screenerCorrespondentRetroPass: "screener_correspondent_retro" })(load));
-vi.mock("../src/screener-auto-act.js", (load) => fault.mocked({ screenerAutoActPass: "screener_auto_act" })(load));
+vi.mock("@ohmail/organizer/screener-correspondent-retro", (load) => fault.mocked({ screenerCorrespondentRetroPass: "screener_correspondent_retro" })(load));
+vi.mock("@ohmail/organizer/screener-auto-act", (load) => fault.mocked({ screenerAutoActPass: "screener_auto_act" })(load));
 vi.mock("../src/mailbox-erasure-pass.js", (load) => fault.mocked({ mailboxErasurePass: "mailbox_erasure" })(load));
-vi.mock("../src/gone-letter-tidy.js", (load) => fault.mocked({ goneLetterTidyAccounts: "gone_letter_tidy" })(load));
+vi.mock("@ohmail/organizer/gone-letter-tidy", (load) => fault.mocked({ goneLetterTidyAccounts: "gone_letter_tidy" })(load));
 
 const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 7));
 let DB = "";
@@ -171,7 +193,7 @@ async function organizingWorker(events: string[]) {
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   const fleet = new FakeAdapterFleet();

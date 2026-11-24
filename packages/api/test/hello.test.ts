@@ -59,7 +59,7 @@ describe("GET /hello — the frozen wire shape", () => {
     );
     expect(Object.keys(body.auth).sort()).toEqual(["password", "publicSignup", "totp", "webauthn"]);
     expect(Object.keys(body.features).sort())
-      .toEqual(["accountHeader", "ai", "forwardParts", "pairing", "remoteImages", "scheduleFiles", "sse", "staging"]);
+      .toEqual(["accountHeader", "ai", "forwardParts", "invitationAnswer", "pairing", "remoteImages", "scheduleFiles", "searchPeople", "sse", "staging"]);
     expect(body).toEqual({
       product: "ohmail",
       flavor: "managed",
@@ -72,6 +72,10 @@ describe("GET /hello — the frozen wire shape", () => {
         sse: false, staging: true, ai: true, pairing: false, remoteImages: true, accountHeader: true,
         // A forward may name the parts it sends (`forwardParts`); a fixed fact of this build.
         forwardParts: true,
+        // An invitation may be answered by mail here (mail 0204); a fixed fact of this build.
+        invitationAnswer: true,
+        // Search takes a person, unread and the days, and a blank question with a filter; a fixed fact of this build.
+        searchPeople: true,
         // Cloud keeps no letter's files for a later send (mail 0179): the host's own word.
         scheduleFiles: false,
       },
@@ -87,7 +91,7 @@ describe("GET /hello — the frozen wire shape", () => {
     // `scheduleFiles` stays false, so a client that predates the horizon keeps refusing.
     expect(server.features).toMatchObject({ scheduleFiles: false, scheduleFilesDays: 7 });
     expect(Object.keys(server.features).sort()).toEqual(
-      ["accountHeader", "ai", "forwardParts", "pairing", "remoteImages", "scheduleFiles", "scheduleFilesDays", "sse", "staging"],
+      ["accountHeader", "ai", "forwardParts", "invitationAnswer", "pairing", "remoteImages", "scheduleFiles", "scheduleFilesDays", "searchPeople", "sse", "staging"],
     );
     const desktop = await (await H(req("GET", "/hello"), {
       ...deps, hello: { ...MANAGED, flavor: "local", features: { ...MANAGED.features, scheduleFiles: true } },
@@ -265,6 +269,7 @@ describe("the composition census — every table mounts /hello, and self-host ho
       "DELETE /pair/:id",
       "GET /pair",
       "POST /pair",
+      "POST /pair/handoff",
       "POST /pair/redeem",
       "POST /pair/state",
     ]);
@@ -287,6 +292,7 @@ describe("the composition census — every table mounts /hello, and self-host ho
       "DELETE /pair/:id",
       "GET /pair",
       "POST /pair",
+      "POST /pair/handoff",
       "POST /pair/redeem",
       "POST /pair/state",
     ]);

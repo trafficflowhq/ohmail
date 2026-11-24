@@ -1,10 +1,13 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, within } from "@testing-library/react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { chordKeys, modGlyph } from "../app/shell/keymap";
+import { NONE } from "@ohmail/app/host";
+import { WEB_PANE_PARTS } from "../app/(product)/mailbox/pane-parts";
+import { chordKeys, modGlyph } from "@ohmail/app-logic/keys/keymap";
 
 /**
  * THE KEYMAP CENSUS (ohmarchy Phase 1) — the one-table grammar, asserted through the sheet.
@@ -78,10 +81,12 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-/** The shipped shell on the fixture world, wrapped exactly as the desktop entry wraps it. */
-async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+/** The mounted mail shell on the demo fixture, with the web Account entry. */
+async function shell(): Promise<void> {
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+  const { account } = WEB_PANE_PARTS;
+  if (account === NONE) throw new Error("the web app did not supply Account settings");
 
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -96,17 +101,16 @@ async function shell(): Promise<HTMLElement> {
         timeZone: "UTC",
         now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true, accountDoors: account }) }),
         }),
       }),
     );
   });
-  return container;
 }
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(
+    (document.activeElement ?? document).dispatchEvent(
       new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
     );
   });
@@ -119,17 +123,21 @@ const go = async (hash: string): Promise<void> => {
   });
 };
 
-/**
- * Every chord the open sheet lists, as `chordKeys(...).join("")` — the sheet's own notation.
- * A row may carry more than one chord (`1 · g o` both go to the Ohbox), so the unit is the
- * `.ks-chord` span, never the row: a chord folded into a shared row is still listed.
- */
-function sheetCaps(container: HTMLElement): string[] {
-  const sheet = container.querySelector(".ks");
-  expect(sheet, "the ? sheet is not open").toBeTruthy();
-  return [...sheet!.querySelectorAll(".ks-chord")].map(
-    (el) => [...el.querySelectorAll("kbd")].map((k) => k.textContent ?? "").join(""),
-  );
+/** Move focus out of the composition field so typing ? invokes the shortcut sheet. */
+function focusWriteControl(): void {
+  screen.getByRole("button", { name: messages.write.marks.bold }).focus();
+}
+
+/** Each shortcut sentence can carry more than one chord. */
+function sheetRows(): Array<{ label: string; chords: string[] }> {
+  const sheet = within(screen.getByRole("dialog", { name: messages.shortcuts.title }));
+  return sheet.getAllByRole("paragraph").map((row) => {
+    const label = row.querySelector(".oh-keyhelp-label")?.textContent ?? "";
+    const chords = [...row.querySelectorAll(".oh-keyhelp-chord")].map(
+      (chord) => [...chord.querySelectorAll("kbd")].map((key) => key.textContent ?? "").join(""),
+    );
+    return { label, chords };
+  });
 }
 
 /* The modifier's cap is the PLATFORM's (`modGlyph`) — jsdom announces no Mac, so the sheet
@@ -137,19 +145,22 @@ function sheetCaps(container: HTMLElement): string[] {
 const cap = (chord: string): string => chordKeys(chord, modGlyph()).join("");
 
 /** Assert every chord in `expected` has a row in the open sheet, naming the missing one. */
-function expectListed(container: HTMLElement, expected: string[]): void {
-  const caps = new Set(sheetCaps(container));
-  for (const chord of expected) {
-    expect(caps.has(cap(chord)), `the sheet no longer lists \`${chord}\``).toBe(true);
-  }
+function expectListed(expected: string[]): void {
+  const caps = new Set(sheetRows().flatMap((row) => row.chords));
+  const missing = expected.filter((chord) => !caps.has(cap(chord)));
+  expect(missing, `shortcuts missing from the sheet: ${missing.join(", ")}`).toEqual([]);
 }
 
 describe("the keymap census — the one table, surface by surface", () => {
   it("the Ohbox sheet carries the whole global grammar", async () => {
-    const container = await shell();
+    await shell();
+    await key("j");
+    await key("j");
+    await key("Enter");
+    await key("x");
     await key("?");
 
-    expectListed(container, [
+    expectListed([
       // go — places: the g leader, complete
       "g o", "g r", "g e", "g s",
       "g l", "g p", "g b", "g d", "g h", "g ,",
@@ -159,26 +170,35 @@ describe("the keymap census — the one table, surface by surface", () => {
       // focus — the tiles: arrows and their vim twins
       "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "h", "l",
       // act on the open message — `⇧F` is Forward, beside the two reply verbs. `f` is the Reply
-      // Run and stays where it is; the shifted variant is the convention `⇧R`/`⇧U` set, and the
+      // Run across mail; the shifted variant is the convention `⇧R`/`⇧U` set, and the
       // pill's own Forward keycap is generated from this same registry entry.
-      "r", "shift+r", "shift+f", "mod+Enter", "a", "e", "b", "s", "m", "d",
+      "r", "shift+r", "shift+f", "a", "e", "b", "s", "m", "d",
       "t", "x", "u", "shift+i", "shift+u",
-      // list & app — `w` is the layout cycle (classic ⇄ Zero, OHMARCHY-PLAN §3b),
-      // registered unconditionally so the sheet documents it on every face
-      "j", "k", "Enter", "c", "f", "p", "w", "?", "Escape",
+      // list & app
+      "j", "k", "Enter", "c", "?", "Escape",
     ]);
+    const caps = sheetRows().flatMap((row) => row.chords);
+    expect(sheetRows().find(({ label }) => label === messages.triage.keyReplyRun)?.chords).toContain(cap("f"));
+    // The design lists Pull new mail, and the mail rail binds it to the Pull action.
+    expect(sheetRows().filter(({ label }) => label === messages.shortcuts.pull).map(({ chords }) => chords))
+      .toEqual([[cap("p")]]);
+    expect(caps).not.toContain(cap("w"));
+
+    await key("Escape");
+    await key("x");
+    await key("r");
+    focusWriteControl();
+    await key("?");
+    expectListed(["mod+Enter"]);
   });
 
   it("one row per sentence: a place with two chords is listed once, wearing both", async () => {
     // `1` and `g o` both go to the Ohbox. The digit binding borrows the `g` chord's sentence
     // so the sheet folds the two into one row instead of listing every destination twice under
     // two spellings — and a chord folded into a shared row is still a chord the sheet lists.
-    const container = await shell();
+    await shell();
     await key("?");
-    const rows = [...container.querySelectorAll(".ks li")].map((li) => ({
-      label: li.querySelector(".ks-lab")!.textContent ?? "",
-      chords: [...li.querySelectorAll(".ks-chord")].map((c) => [...c.querySelectorAll("kbd")].map((k) => k.textContent).join("")),
-    }));
+    const rows = sheetRows();
     const labels = rows.map((r) => r.label);
     expect(new Set(labels).size, `a sentence is listed twice: ${labels.filter((l, i) => labels.indexOf(l) !== i).join(" · ")}`).toBe(labels.length);
     const ohbox = rows.find((r) => r.chords.includes(cap("g o")));
@@ -209,43 +229,51 @@ describe("the keymap census — the one table, surface by surface", () => {
   });
 
   it("the Screener sheet carries the decision letters and the section walk", async () => {
-    const container = await shell();
+    await shell();
     await go("#/screener");
+    await key("j");
     await key("?");
 
-    expectListed(container, [
-      "[", "]", // sections — waiting · screened out · junk
+    expectListed([
+      "]", // advance from Waiting to Screened out
       "o", "r", "c", "n", "x", // the five destinations
       "shift+o", "shift+r", "shift+c", // the read twins (demoting ones have none)
       "a", "s", "j", "k", "Enter", "Escape",
     ]);
     // `s` is one sender here as in the reader; no key decides every waiting sender.
-    const labels = [...container.querySelectorAll(".ks li")].map((li) => ({
-      label: li.querySelector(".ks-lab")!.textContent ?? "",
-      caps: [...li.querySelectorAll(".ks-chord")].map((c) => [...c.querySelectorAll("kbd")].map((k) => k.textContent).join("")),
-    }));
-    expect(labels.find((r) => r.caps.includes(cap("s")))?.label).toBe(messages.shortcuts.screen);
+    const labels = sheetRows();
+    expect(labels.find((r) => r.chords.includes(cap("s")))?.label).toBe(messages.shortcuts.screen);
     expect(labels.map((r) => r.label)).not.toContain("Mark every waiting sender spam");
+
+    await key("Escape");
+    await go("#/screener/screened");
+    await key("?");
+    expectListed(["["]); // the previous section is reachable from Screened out
   });
 
   it("the Compose sheet carries send, schedule and the send-later digits", async () => {
-    const container = await shell();
+    await shell();
     await go("#/compose");
+    focusWriteControl();
     await key("?");
 
-    expectListed(container, [
-      "mod+Enter", // send (and, with the picker open, schedule — two entries, one cap)
-      "1", "2", "3", "4", // the send-later presets
-      "Escape",
-    ]);
+    expectListed(["mod+Enter", "1", "2", "3", "4", "Escape"]);
+    const rows = sheetRows();
+    expect(rows).toContainEqual({ label: messages.write.keys.send, chords: [cap("mod+Enter")] });
+    // The four presets share one line in the sheet. Rail digits cannot stand in for it.
+  expect(rows.filter(({ label }) => label === messages.write.keys.later)).toEqual([
+    { label: messages.write.keys.later, chords: ["1", "2", "3", "4"].map(cap) },
+  ]);
+  expect(rows).toContainEqual({ label: messages.write.keys.leave, chords: [cap("Escape")] });
   });
 
   it("the collision policy holds — no Super, no Alt, no F-keys, anywhere on the sheet", async () => {
-    const container = await shell();
+    await shell();
     for (const hash of ["", "#/screener", "#/compose"]) {
       if (hash) await go(hash);
+      if (hash === "#/compose") focusWriteControl();
       await key("?");
-      for (const caps of sheetCaps(container)) {
+      for (const caps of sheetRows().flatMap((row) => row.chords)) {
         expect(caps, "an F-key is advertised").not.toMatch(/F\d+/);
         expect(caps, "an Alt chord is advertised").not.toMatch(/alt/i);
         expect(caps, "a Super chord is advertised").not.toMatch(/super|meta|⊞|win/i);

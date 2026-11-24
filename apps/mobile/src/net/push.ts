@@ -1,4 +1,7 @@
 import type { ConnectedSession } from "./pairing.js";
+
+/** What the wake's requests read of a session: its profile and its stamped transport. The shell's session has both. */
+export type WakeSession = Pick<ConnectedSession, "profile" | "fetch">;
 /* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
 import { requestBase } from "./request-base";
 /**
@@ -102,7 +105,7 @@ const HOSTED_FLAVORS = new Set(["managed", "selfhost", "self-host"]);
  * path exists to avoid — an operator who rotates their keypair must have the next
  * registration pick up the new one.
  */
-export async function serverVapidKey(session: ConnectedSession): Promise<string | null> {
+export async function serverVapidKey(session: WakeSession): Promise<string | null> {
   try {
     const res = await session.fetch(`${requestBase(session)}/push/vapid-key`, {
       method: "GET",
@@ -129,7 +132,7 @@ export async function serverVapidKey(session: ConnectedSession): Promise<string 
  * endpoint the distributor produced.
  */
 export async function registerWake(
-  session: ConnectedSession, distributor: UnifiedPushDistributor,
+  session: WakeSession, distributor: UnifiedPushDistributor,
 ): Promise<WakeState> {
   if (!HOSTED_FLAVORS.has(session.profile.flavor)) return { k: "not_supported_here" };
   if (!distributor.available()) return { k: "no_distributor" };
@@ -236,7 +239,7 @@ export type WakeDrop = { ok: true } | { ok: false; reason: string };
  * using, and this call discharges it. Never throws — a take-back must not fail in the user's
  * face over an unreachable server, and a quiet endpoint's row is pruned server-side.
  */
-export async function dropWakeRow(session: ConnectedSession, id: string | null): Promise<WakeDrop> {
+export async function dropWakeRow(session: WakeSession, id: string | null): Promise<WakeDrop> {
   if (id === null) return { ok: true };
   let res: Response;
   try {
@@ -271,7 +274,7 @@ export interface WakeDebtStore {
  * background switch to show it on. Never throws.
  */
 export async function dropWakeRowOrOwe(
-  session: ConnectedSession, id: string, profiles: WakeDebtStore,
+  session: WakeSession, id: string, profiles: WakeDebtStore,
 ): Promise<WakeDrop> {
   /**
    * The debt is written before the attempt, not after. Recording it afterwards made the
@@ -302,7 +305,7 @@ export async function dropWakeRowOrOwe(
  * the pane can stop claiming a removal it did not get.
  */
 export async function forgetWake(
-  session: ConnectedSession, distributor: UnifiedPushDistributor, id: string | null,
+  session: WakeSession, distributor: UnifiedPushDistributor, id: string | null,
   /**
    * REQUIRED, so a caller cannot take a row down without the debt behind it. Turning wakes off
    * explicitly went through this function and NOT through the debt queue, so a refused delete

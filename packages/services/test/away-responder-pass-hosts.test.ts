@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * WHERE THE AWAY RESPONDER'S PASS RUNS — a source census, because the failure it guards against is
@@ -31,7 +32,7 @@ import { tmpdir } from "node:os";
  */
 
 const REPO = existsSync("packages/services") ? "." : "../..";
-const read = (p: string): string => readFileSync(join(REPO, p), "utf8");
+const read = (p: string): string => readAsUnit(join(REPO, p));
 
 /**
  * CODE ONLY — comments and string literals removed.
@@ -77,7 +78,7 @@ function codeOnly(src: string): string {
   return out;
 }
 
-const mentionsInCode = (p: string, name: string): boolean => codeOnly(readFileSync(p, "utf8")).includes(name);
+const mentionsInCode = (p: string, name: string): boolean => codeOnly(readAsUnit(p)).includes(name);
 
 /**
  * Directories this walk never enters. All three are generated output rather than source, so
@@ -137,7 +138,7 @@ const HOSTS: ReadonlyArray<{ file: string; why: string }> = [
     why: "the standalone desktop — the drain, with this machine's own SMTP dial",
   },
   {
-    file: "apps/server/src/index.ts",
+    file: "apps/server/src/clocks.ts",
     why: "self-host — the always-on send clock's tick",
   },
 ];
@@ -154,6 +155,9 @@ describe("the away responder's pass runs on exactly the three hosts that can dia
     const callers = [
       ...sources("apps"), ...sources("packages"),
     ].filter((p) => !p.includes("node_modules") && !p.includes("/dist/") && !/\.test\.tsx?$/.test(p))
+      // A test folder holds no host: a fixture that runs the pass is a test of it, not a door.
+      .filter((p) => !/[\\/]test[\\/]/.test(p))
+      .filter((p) => !isEnginePart(p))
       .filter((p) => !p.endsWith("away-responder-pass.ts"))      // the definition itself
       .filter((p) => !p.endsWith("packages/services/src/index.ts"))   // the two barrels
       .filter((p) => !p.endsWith("packages/services/src/mail.ts"))
@@ -168,7 +172,8 @@ describe("the away responder's pass runs on exactly the three hosts that can dia
 
 describe("the worker no longer contains a responder it cannot deliver from", () => {
   it("no file under apps/worker/src calls the pass", () => {
-    const offenders = sources("apps/worker/src")
+    // And the organizer's package, where the worker's passes moved (ruling:organizer-cut).
+    const offenders = [...sources("apps/worker/src"), ...sources("packages/organizer/src")]
       .filter((p) => mentionsInCode(p, "runAwayResponderPass"));
     expect(offenders).toEqual([]);
   });
@@ -259,7 +264,7 @@ describe("the hosted door injects the eligibility gate; the unmetered doors do n
   });
 
   for (const [name, file] of [
-    ["the self-host clock", "apps/server/src/index.ts"],
+    ["the self-host clock", "apps/server/src/clocks.ts"],
     ["the standalone drain", "apps/sidecar/src/engine.ts"],
   ] as const) {
     it(`${name} injects nothing — no program, nobody parked, and a gate here would be decoration`, () => {

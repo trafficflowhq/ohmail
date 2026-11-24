@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { accounts, users, sessions, mailboxes, messages, messageBodies } from "@trafficflow/db";
@@ -65,7 +66,7 @@ const TRANSFER_CEILING = 4 * ONE_MIB + ONE_MIB + 256 * 1024;
 
 function depsOn(db: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
+  return perRequest({
     db,
     now: () => FIXED_NOW,
     requestId: `pg-${randomUUID()}`,
@@ -101,7 +102,7 @@ function depsOn(db: Db): ApiDeps {
       workflows: workflowsService,
       proposals: proposalsService,
     },
-  };
+  });
 }
 
 /** Bytes of every string the driver handed back, summed across every statement. */
@@ -192,6 +193,14 @@ describe.skipIf(!AVAILABLE)("GET /messages/bodies bounds the TRANSFER, not just 
       next[i] = (handle: Record<string, unknown>) => { arm(handle); return fn(handle); };
       return origBegin(...next);
     };
+    // A statement on the request's bound handle runs on a connection RESERVED for its flight, the
+    // same reason as `begin` above: that connection's handle is armed as it is handed out.
+    const origReserve = (client.reserve as (...a: unknown[]) => Promise<Record<string, unknown>>).bind(client);
+    client.reserve = async (...args: unknown[]) => {
+      const handle = await origReserve(...args);
+      arm(handle);
+      return handle;
+    };
     arm(client);
   }, 180_000);
 
@@ -227,7 +236,7 @@ describe.skipIf(!AVAILABLE)("GET /messages/bodies bounds the TRANSFER, not just 
         date: new Date(FIXED_NOW.getTime() - i * 60_000),
       }).returning();
       await db.insert(messageBodies).values({
-        messageId: m!.id,
+        messageId: m!.id, accountId: m!.accountId,
         text: randomBytesHex(ONE_MIB),
         html: null,
       });
@@ -313,7 +322,7 @@ describe.skipIf(!AVAILABLE)("GET /messages/bodies bounds the TRANSFER, not just 
         bodyHash: `bbs-${i}`, dedupKey: `bbs:${randomUUID()}`,
         subject: `small ${i}`, fromAddress: "friend@example.com",
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: `hello ${i}`, html: `<p>hello ${i}</p>` });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `hello ${i}`, html: `<p>hello ${i}</p>` });
     }
 
     const body = await (await app.handle(get("/messages/bodies?limit=100", token), depsOn(db))).json() as

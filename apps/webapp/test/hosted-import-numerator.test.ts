@@ -6,8 +6,8 @@ import {
   seedGrowth,
   type MailStateInputs,
   type MailboxFacts,
-} from "../app/shell/mail-state";
-import { pullEtaMs, pullRate, pullRemaining, pullSampleStep } from "../app/shell/pull-rate";
+} from "@ohmail/app-logic/mail-state/mail-state";
+import { pullEtaMs, pullRate, pullRemaining, pullSampleStep } from "@ohmail/app-logic/mailboxes/first-run/pull-rate";
 
 /**
  * ═══ THE HOSTED FIRST RUN'S NUMERATOR ══════════════════════════════════════════════════════
@@ -62,6 +62,7 @@ const inputs = (over: Partial<MailStateInputs> = {}): MailStateInputs => ({
   growth: importingTo(FLOOR),
   now: NOW,
   demo: false,
+  scope: null,
   ...over,
   pulled: over.pulled ?? over.mirrored ?? FLOOR,
 });

@@ -3,10 +3,10 @@ import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { messages, folderState } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
-import { runSyncCycle } from "../src/sync.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
 import { reconcileOnRestart } from "../src/restart.js";
-import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, dbUrlFor } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 
@@ -37,7 +37,7 @@ describe("reconcile-on-restart (crash-safety)", () => {
         await c.messageCopy([uid], "ohmail.News", { uid: true }); await c.messageDelete([uid], { uid: true });
       });
     } finally { lock.release(); }
-    await h.db.insert(folderState).values({ messageId: msg.id, desiredFolder: "ohmail/News", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending" })
+    await h.db.insert(folderState).values({ messageId: msg.id, accountId: msg.accountId, desiredFolder: "ohmail/News", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending" })
       .onConflictDoUpdate({ target: folderState.messageId, set: { desiredFolder: "ohmail/News", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending" } });
 
     // RESTART

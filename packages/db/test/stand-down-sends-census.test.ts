@@ -5,6 +5,11 @@ import { describe, expect, it } from "vitest";
 import {
   STAND_DOWN_SEND_SENTENCES, REMOVED_MAILBOX_SEND_SENTENCE,
 } from "../src/stand-down-sends.js";
+import { readSource as readStartFunction } from "../../../apps/worker/test/_start-function.js";
+import { isEnginePart, readingTheUnit } from "../../../test/support/engine-unit.js";
+
+/** The worker's start function and the desktop's engine each read as one text. */
+const readSource = readingTheUnit(readStartFunction);
 
 /**
  * EVERY STAND-DOWN CLOSES THE APPOINTMENTS IT ORPHANS — the structural half of
@@ -38,8 +43,8 @@ const REPO = fileURLToPath(new URL("../../..", import.meta.url));
  * A STAND-DOWN WRITE, in the two spellings that exist.
  *
  * Cloud goes through the fenced lifecycle helper; the desktop writes its own row inline, because
- * its store has no shard, no leader and therefore no fence to apply. `markMailboxStoodDown(db,`
- * and not the bare name, so the helper's own DEFINITION in `apps/worker/src/mailboxes.ts` is not
+ * its store has no shard, no leader and therefore no fence to apply. `markMailboxStoodDown(` with
+ * the handle it is called on, and not the bare name, so the helper's own DEFINITION in `apps/worker/src/mailboxes.ts` is not
  * counted as a stand-down — it is the write, not a decision to stand down, and it has no mailbox
  * whose appointments it could close.
  *
@@ -69,7 +74,10 @@ const REPO = fileURLToPath(new URL("../../..", import.meta.url));
  * both needle sets now run over source with comments removed.
  */
 const STAND_DOWN_NEEDLES = [
-  /markMailboxStoodDown\(db,/,
+  // The call with the handle it writes on as its first argument: `db`, or a handle read off one
+  // account's view (`scope.forAccount(mb.accountId).db` in the worker's start file, read here as
+  // `forAccount(mb.accountId).db`), since every statement of the worker rides the account it is for.
+  /markMailboxStoodDown\([\w.()]*\bdb,/,
   // The INLINE demotion — the role AND the holder it names, adjacent. Both terms are needed and
   // the second is what makes it a demotion: `MailboxService.create` writes `organizerRole:
   // "reader"` too, because a NEW mailbox is a consent-less reader (mail 0083), and that is a
@@ -83,7 +91,7 @@ const STAND_DOWN_NEEDLES = [
  *
  * `apps/worker/src/mailboxes.ts` holds `markMailboxStoodDown` itself, so it necessarily contains
  * the inline spelling the second needle looks for. It is the same carve-out the FIRST needle
- * makes with `(db,` rather than the bare name, and for the same stated reason: it is the write,
+ * makes with the call's handle rather than the bare name, and for the same stated reason: it is the write,
  * not a decision to stand down, and it has no mailbox whose appointments it could close.
  *
  * A path exclusion rather than a cleverer regex, because the alternative is a needle that has to
@@ -141,7 +149,7 @@ function* walk(dir: string): Generator<string> {
     const st = statSync(p);
     if (st.isDirectory()) yield* walk(p);
     else if (name.endsWith(".ts") || name.endsWith(".tsx")) {
-      if (name.endsWith(".test.ts") || name.endsWith(".test.tsx")) continue;
+      if (name.endsWith(".test.ts") || name.endsWith(".test.tsx") || isEnginePart(p)) continue;
       yield p;
     }
   }
@@ -186,7 +194,7 @@ function filesContaining(
     for (const file of walk(root)) {
       const rel = relative(REPO, file);
       if (exclude.has(rel)) continue;
-      const src = readFileSync(file, "utf8");
+      const src = readSource(file);
       if (needles.some((n) => n.test(withoutComments(src)))) found.set(rel, src);
     }
   }
@@ -241,7 +249,7 @@ describe("a stand-down closes the appointments it orphans", () => {
         STAND_DOWN_SEND_SENTENCES["organized_elsewhere:local"]],
     ];
     for (const [rel, sentence] of quoting) {
-      const src = readFileSync(join(REPO, rel), "utf8");
+      const src = readSource(join(REPO, rel));
       // The test files wrap the sentence across source lines, so the comparison is over the
       // whitespace-collapsed text rather than the literal — a `+`-joined string in TypeScript is
       // one sentence to a reader and two lines to a scanner.

@@ -9,8 +9,8 @@ import { eq } from "drizzle-orm";
 import { drafts, mailboxes } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { makeDb } from "@trafficflow/db/cloud";
-import { SendService, type ServiceContext } from "@trafficflow/services";
-import { greenmailPorts, rawClient, refuseDriftedSharedDb, uidInFolder, dbUrlFor } from "./_workerenv.js";
+import { dbFor, SendService, type ServiceContext } from "@trafficflow/services";
+import { greenmailPorts, rawClient, refuseDriftedSharedDb, uidInFolder, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 
@@ -64,7 +64,7 @@ async function fixture(proxyPort: number) {
   const accountId = randomUUID();
   const user = `w-${randomUUID()}@trafficflow.test`;
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: user }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => new Date(), requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: "r" };
   // A DISTINCT message per press: the duplicate-content fence refuses the same words twice
   // within its window, which would read as a failed press rather than the LOGIN count.
   const draft = async (): Promise<string> => {

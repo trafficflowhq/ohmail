@@ -2,10 +2,12 @@ import { and, eq, exists, inArray, isNotNull, isNull, ne, notExists, or, sql, ty
 import type { Dialect } from "./dialect/index.js";
 import {
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
-  approvals, attachments, auditLog, awayReplies, awayResponderSent, drafts, flagState, folderOps,
+  approvals, attachments, auditLog, awayReplies, drafts, flagState, folderOps,
   folderState, junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, mailboxes,
-  messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messageTags, messages,
-  organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends, routingDecisions, scheduledSendFiles,
+  messageBodies, messageFailures, messageInstances, messageInvitations, messageSearch, messageStates, messageTags,
+  messages,
+  organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends, passProgress, routingDecisions,
+  scheduledSendFiles,
   threadNotes, threads, trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "./schema-mail.js";
 import { recordChanges, recordMailboxRemoved, type LedgerTx, type Tx } from "./change-log.js";
@@ -13,6 +15,7 @@ import { eraseIdempotentResponses } from "./idempotency.js";
 import { SETTINGS_HASH_KEYS, settingsHashRows } from "./profile-import-ask.js";
 import { readAccountErasedAt } from "./erasure-fence.js";
 import { rowsAffected as n } from "./rows-affected.js";
+import { sweepMailboxCalendarStep } from "./calendar/erasure.js";
 import { lockAccountStorage, recomputeAccountStorage, releaseBodyBytes } from "./storage.js";
 
 /**
@@ -156,6 +159,16 @@ export async function sweepMailboxStep(
     .limit(ERASE_BATCH);
   if (page.length > 0) return out({ ...(await eraseMessages(tx, d, accountId, mailboxId, page, drop)), done: false });
 
+  /* THE CALENDAR THAT RIDES THIS MAILBOX, a step at a time until it answers done, so the finish
+     stamp below means the calendar too (`calendar/erasure.ts`). A store of the Postgres dialect
+     holds the calendar's tables; a phone's own store holds none, and its build substitutes a twin
+     for that module which answers done at once. */
+  if (d.name === "pg") {
+    const calendar = await sweepMailboxCalendarStep(tx, d, { accountId, mailboxId });
+    for (const [table, rows] of Object.entries(calendar.deleted)) await drop(table, Promise.resolve({ rowCount: rows }));
+    if (!calendar.done) return out({ seq: calendar.seq, done: false });
+  }
+
   /* ── THE MAILBOX'S OWN STATE, AND THE FINISH ──
    * These tables scale with a mailbox's folders, lists and correspondents, not with its messages.
    * `mailbox_profile_mirror` and `organizer_requests` carry no foreign key, so nothing else ever
@@ -195,6 +208,9 @@ export async function sweepMailboxStep(
   // Idempotent: the removal this rides already deleted the credential rows.
   await drop("mailbox_credentials", tx.delete(mailboxCredentials)
     .where(eq(mailboxCredentials.mailboxId, mailboxId)));
+  // Where this mailbox's one-time passes stood (mail 0203): keyed by the mailbox as their subject.
+  await drop("pass_progress", tx.delete(passProgress)
+    .where(and(eq(passProgress.accountId, accountId), eq(passProgress.subjectId, mailboxId))));
   deleted["idempotency_keys"] = await eraseIdempotentResponses(tx, accountId, now, { mailboxId });
   const seq = await recordMailboxRemoved(tx, accountId, mailboxId);
   // The receipt retains nothing for the mailbox, its signature included, nor a hash of it or the settings.
@@ -260,11 +276,12 @@ async function eraseMessages(
   await drop("message_tags", tx.delete(messageTags).where(inArray(messageTags.messageId, ids)));
   // scoped-by: ids — a page of this mailbox's messages read by the step
   await drop("message_states", tx.delete(messageStates).where(inArray(messageStates.messageId, ids)));
+  // The invitation's identity a letter carried (mail 0204): an organizer's address and an event's id.
+  await drop("message_invitations", tx.delete(messageInvitations).where(and(
+    eq(messageInvitations.accountId, accountId), inArray(messageInvitations.messageId, ids))));
   await drop("tracker_events", tx.delete(trackerEvents).where(and(
     eq(trackerEvents.accountId, accountId), inArray(trackerEvents.messageId, ids))));
   // A CORRESPONDENT's address, held because this mailbox answered them.
-  await drop("away_responder_sent", tx.delete(awayResponderSent).where(and(
-    eq(awayResponderSent.accountId, accountId), inArray(awayResponderSent.messageId, ids))));
   await drop("away_replies", tx.delete(awayReplies).where(and(
     eq(awayReplies.accountId, accountId), inArray(awayReplies.messageId, ids))));
   // scoped-by: ids — a page of this mailbox's messages read by the step

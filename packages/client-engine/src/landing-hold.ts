@@ -1,7 +1,7 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { canonicalDestination } from "@trafficflow/core/destinations";
 import type { EntityReader } from "./store.js";
 import type { MutationStatus } from "./engine.js";
-import type { EngineMessage, Folder, RuleDTO } from "./types.js";
 
 /**
  * HOW LONG A COMMITTED PRESS MAY HOLD ITS ROWS AT THE PLACE without the walk saying it is done.

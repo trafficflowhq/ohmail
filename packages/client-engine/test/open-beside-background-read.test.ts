@@ -1,3 +1,4 @@
+import type { EngineMessage, MessageBodyRecord, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
@@ -7,9 +8,6 @@ import {
   SqlMirrorStore,
   type BaseMirrorStore,
   type EngineAdapter,
-  type EngineMessage,
-  type MessageBodyRecord,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";

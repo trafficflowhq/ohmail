@@ -1,0 +1,51 @@
+{
+  "component": "LetterColumns",
+  "state": "ledger",
+  "look": "paper-light-desktop",
+  "place": "block",
+  "target": [720, 248.4219, 676, 169.5781],
+  "clip": [720, 248, 676, 170],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "ui-monospace, \"JetBrains Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "20.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "whiteSpaceCollapse": "preserve",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [{ "backgroundColor": "rgb(240, 235, 227)", "borderRadius": "12px" }],
+  "nodes": [],
+  "loose": {
+    "text": [
+      {
+        "said": "Date Text Debit Credit 02.01.2026 Opening balance 12,480.00 03.01.2026 Rent studio January 1,650.00 05.01.2026 Clay, 250 kg 412.50 06.01.2026 Workshop «Glaze & Fire», 12 places 1,440.00 08.01.2026 Electricity kiln, December 286.40 …",
+        "type": 0
+      }
+    ],
+    "surfaces": [{ "box": [0, 0, 676, 169.6], "paint": 0 }]
+  }
+}

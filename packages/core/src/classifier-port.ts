@@ -1,4 +1,5 @@
-import type { Destination, EmailAddress } from "./types.js";
+import type { EmailAddress } from "@ohmail/wire";
+import type { Destination } from "./types.js";
 import type { AiCallOptions } from "./ai-call-report.js";
 
 /**

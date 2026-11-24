@@ -69,6 +69,19 @@ describe("CI actually runs the gate", () => {
   });
 });
 
+it("uses the project guest's browser libraries and verifies Chromium starts", () => {
+  const chromium = jobText("suite")
+    .split("      - name: Install Chromium for the layout tests\n")[1]
+    ?.split("\n      - name:")[0];
+  expect(chromium).toContain("BROWSER_RUNNER_ENVIRONMENT: ${{ runner.environment }}");
+  const [project, hosted] = chromium?.split("\n          else\n") ?? [];
+  expect(project).toContain('if [ "$BROWSER_RUNNER_ENVIRONMENT" = self-hosted ]; then');
+  expect(project).toContain("./node_modules/.bin/playwright install chromium");
+  expect(project).not.toContain("--with-deps");
+  expect(project).toContain("await chromium.launch()");
+  expect(hosted?.split("\n          fi")[0]).toBe("            npx playwright install --with-deps chromium");
+});
+
 /* The web build's own check: next build exits 0 over a missing export, and the web bundle ships it undefined. */
 const CHECK = publicPath("github/scripts/webapp-build-check.mjs");
 const check = () => import(pathToFileURL(CHECK).href) as Promise<{
@@ -78,11 +91,11 @@ const check = () => import(pathToFileURL(CHECK).href) as Promise<{
 const WARNED = [
   " ⚠ Compiled with warnings in 12.1s",
   "",
-  "./app/shell/kept-piles.tsx",
+  "./app/(product)/mailbox/CloudShell.tsx",
   "Attempted import error: 'Activity' is not exported from 'react' (imported as 'Activity').",
   "",
   "Import trace for requested module:",
-  "./app/shell/kept-piles.tsx",
+  "./app/(product)/mailbox/CloudShell.tsx",
   "",
   " ✓ Generating static pages (16/16)",
 ].join("\n");
@@ -91,7 +104,7 @@ describe("the webapp next build job refuses a missing export", () => {
   it("names the module and the import a build log warns about", async () => {
     const { importErrors } = await check();
     expect(importErrors(WARNED)).toEqual([
-      "./app/shell/kept-piles.tsx: Attempted import error: 'Activity' is not exported from 'react' (imported as 'Activity').",
+      "./app/(product)/mailbox/CloudShell.tsx: Attempted import error: 'Activity' is not exported from 'react' (imported as 'Activity').",
     ]);
     expect(importErrors(" ✓ Compiled successfully in 12.3s\n ✓ Generating static pages (16/16)")).toEqual([]);
   });

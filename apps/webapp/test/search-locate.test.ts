@@ -1,31 +1,13 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { EngineMessage } from "@ohmail/wire";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { openTargetFor, type OpenTarget } from "../app/shell/AppShell";
-import type { EngineMessage } from "@ohmail/client-engine";
-/* `openMessage` is read as source below, anchored on its DECLARED NAME. This file's anchor had
-   already been re-spelled once when a codemod renamed the hook; the helper is what ends that. */
-import { shellFrameOf, sliceOfDeclaration } from "./source-anchor.js";
-
-/**
- * A SEARCH HIT ARRIVES SOMEWHERE VISIBLE.
- *
- * Reported as: opening a result *"brings me to the mail in the screener but does not highlight
- * / select it"*. The routing was already right — `openTargetFor` picks the pile and
- * `openMessage` sets that pile's cursor — and the ARRIVAL was silent. You were handed a list
- * with a cursor somewhere in it and no indication which row you had just asked for, which on
- * the Screener (rows are SENDERS, the queue is long) is indistinguishable from being dropped
- * at the top of a queue of strangers.
- *
- * ── WHAT IS ASSERTED, AND WHY IT IS SPLIT THIS WAY ────────────────────────────────────
- *
- * The DECISION — which pile, which cursor — is a pure function and is tested as one, per view
- * shape. The ARRIVAL is a DOM effect over a contract every view already keeps (`.row[data-id]`),
- * and is tested against that contract directly: the shell finds a row, scrolls it, marks it,
- * and unmarks it. Splitting them keeps four view-shape cases cheap and still watches the one
- * mechanism they all share.
- */
+import { openTargetFor, type OpenTarget } from "@ohmail/app-logic/search/open-target";
+import { screen, within } from "@testing-library/react";
+import { rowOf } from "../../../packages/app/src/ohbox/keyboard.js";
+import { act, goTo, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
+import { click, mountThread, msg as threadMessage, settle } from "./fixtures/thread-read-shell.js";
 
 const read = (rel: string): string =>
   readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -202,107 +184,99 @@ describe("the decision: a message parked in a bottom pile opens in the reader", 
 });
 
 describe("the arrival: the shell locates the row it navigated to", () => {
-  /* The open and the flash that follows it are one region, and it lives in `shell-open-state.ts`
-     since ARCH-022 — asked of the frame that DECLARES `openMessage` rather than of a path, so a
-     later move re-aims this by itself and a second declaration of the name refuses. */
-  const shell = shellFrameOf("openMessage").source;
-
-  it("every arm of openMessage names the row it is taking you to", () => {
-    /* THIS ANCHOR HAD ALREADY BEEN RE-SPELLED ONCE — `useCallback` to `useStableCallback`, after
-       the render-identity codemod turned it into -1 — which is the stopgap that holds until the
-       next rename. The declared name is the anchor that does not need re-spelling, and it is also
-       far narrower here: a fraction of the bytes this window ran to `startFR`, most of
-       which was other callbacks. All three arms below are inside `openMessage` itself. */
-    const open = sliceOfDeclaration(shell, "openMessage");
-    // Ohbox, stream and screener each set it. The `default` arm opens the reader over
-    // wherever you are, so there is no list row to locate — deliberately absent.
-    expect(open).toMatch(/setOhboxSel\(target\.id\);[\s\S]{0,200}setLocated\(target\.id\)/);
-    expect(open).toMatch(/setJump\(\{ view: target\.view[\s\S]{0,120}setLocated\(target\.id\)/);
-    // The Screener's is the SENDER row's id, which is what that view puts in `data-id`. It is
-    // `target.row`, non-null by construction — a rowless hit is routed to the reader by
-    // `openTargetFor`, so this arm never locates nothing.
-    expect(open).toMatch(/setLocated\(target\.row\)/);
+  it("every mounted Search destination receives the selected row or letter", () => {
+    expect(read("../../../packages/app/src/ohbox/Seat.tsx")).toContain("args.entered.letter");
+    expect(read("../../../packages/app-logic/src/streams/live.ts"))
+      .toMatch(/useTakeEntered\(\s*entered,[\s\S]*?id === model\.openId/);
+    expect(read("../../../packages/app/src/screener/ScreenerList.tsx")).toContain("view.select(row.id, null, id)");
   });
 
-  it("reads the row through the selector every view already keeps", () => {
-    // Four views find their own cursor this way to scroll it, and the `s` binding anchors the
-    // screening popover on it. This is a fifth reader of an established contract, which is
-    // what lets a view added later be located without being taught anything.
-    expect(shell).toMatch(/\.view \.row\[data-id="\$\{CSS\.escape\(located\)\}"\]/);
-    expect(shell).toMatch(/scrollIntoView\(\{ block: "center" \}\)/);
-    expect(shell).toMatch(/classList\.add\("is-located"\)/);
+  it("the Ohbox reveals the arrived row through its own row marks", () => {
+    const source = read("../../../packages/app-logic/src/ohbox/window.ts");
+    expect(source).toMatch(/querySelectorAll<HTMLElement>\(input\.rowSelector\)/);
+    expect(source).toMatch(/dataset\.id === selectedId/);
+    expect(source).toMatch(/revealInScroller\(scroller, mounted\)/);
+    expect(read("../../../packages/app/src/ohbox/OhboxGroup.tsx"))
+      .toMatch(/located=\{beside\.located != null && row\.members\.some/);
   });
 
   it("gives up rather than looping forever", () => {
-    // A row that never appears is a message that has left that pile. Without the deadline the
-    // rAF loop would stay alive for the life of the tab.
-    expect(shell).toMatch(/const LOCATE_TIMEOUT_MS = \d+/);
-    expect(shell).toMatch(/Date\.now\(\) > deadline/);
-  });
-
-  it("unmarks on unmount, so leaving mid-flash cannot leave a row marked", () => {
-    const eff = shell.slice(shell.indexOf("useEffect(() => {\n    if (!located) return;"), shell.indexOf("const startFR"));
-    expect(eff).toMatch(/cancelAnimationFrame\(raf\)/);
-    expect(eff).toMatch(/found\?\.classList\.remove\("is-located"\)/);
+    const source = read("../../../packages/app-logic/src/ohbox/window.ts");
+    const reveal = source.slice(source.indexOf("export function useRevealSelection("));
+    expect(reveal).toMatch(/if \(idx < 0 \|\| rowIdx < 0\) return/);
+    expect(reveal).toMatch(/\}, \[selectedId, listScrollerRef\]\);/);
+    expect(reveal).not.toMatch(/requestAnimationFrame|setTimeout|setInterval/);
   });
 
   it("the flash is a fading wash, and reduced motion still gets the colour", () => {
-    // The information is the colour, not the movement — a reduced-motion reader must still be
-    // told which row, they simply are not animated at.
-    const css = read("../app/app.css");
-    expect(css).toMatch(/\.row\.is-located \{\s*animation: locate-flash/);
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]{0,160}\.row\.is-located/);
+    const css = read("../../../packages/ui/src/mail/Lists/row.css");
+    expect(css).toMatch(/\.oh-row\[data-located\] \{\s*animation: oh-row-located/);
+    expect(css).toMatch(/@keyframes oh-row-located \{\s*from \{\s*background: var\(--wash\)/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.oh-row\[data-located\] \{\s*animation: none;\s*background: var\(--wash\)/);
   });
 });
 
-/* ── the mechanism, against the contract the views keep ─────────────────────────────── */
+describe("the Search arrival wash in the mounted Ohbox", () => {
+  beforeEach(installShellEnv);
+  afterEach(teardownShellEnv);
+
+  it("unmarks on unmount, so leaving mid-flash cannot leave a row marked", async () => {
+    const first = threadMessage("a", 30, { threadId: "a", subject: "Invoice a" });
+    const second = threadMessage("b", 0, { threadId: "b", subject: "Invoice b" });
+    await mountThread([first, second]);
+    const fetchMail = globalThis.fetch;
+    globalThis.fetch = (input, init) =>
+      /\/search\?/.test(String(input))
+        ? Promise.resolve(Response.json({ items: [first.entity, second.entity], total: 2, totalExact: true, ms: 4 }))
+        : fetchMail(input, init);
+
+    await goTo("search");
+    const box = screen.getByRole<HTMLInputElement>("textbox", { name: "Search" });
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setValue.call(box, "invoice");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await tick(1_000);
+    await settle();
+    const hit = screen.getAllByRole("listitem").find((item) => item.dataset.hit === "b")!;
+    await click(within(hit).getByRole("button", { name: /Invoice b/ }), "the second hit");
+    expect(window.location.hash).toBe("#/search/m/b?q=invoice");
+    expect(document.querySelector('[data-hit="b"] .oh-row[data-open]')).not.toBeNull();
+    expect(rowOf(document, "b")).toBeNull();
+
+    await goTo("history");
+    await goTo("ohbox/m/b");
+    await settle();
+    expect(rowOf(document, "b")?.hasAttribute("data-located")).toBe(false);
+  });
+});
 
 describe("the locate effect, run against real rows", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    document.body.innerHTML = "";
-    // jsdom has no `CSS` object. The shell harness stubs it the same way; the escape is real
-    // (it is what stops an id with a quote in it breaking out of the selector), so the stub
-    // has to actually escape rather than pass through.
-    (globalThis as unknown as { CSS?: unknown }).CSS ??= {
-      escape: (v: string) => v.replace(/["\\\]]/g, (c) => `\\${c}`),
-    };
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-    document.body.innerHTML = "";
-  });
+  afterEach(() => { document.body.innerHTML = ""; });
 
-  /** The row shape all four views render. */
-  function listWith(ids: string[]): HTMLElement {
-    const view = document.createElement("div");
-    view.className = "view";
+  function listWith(ids: string[]): void {
+    const view = document.createElement("section");
+    view.className = "fr-list";
     for (const id of ids) {
       const row = document.createElement("div");
-      row.className = "row";
-      row.setAttribute("data-id", id);
-      row.scrollIntoView = vi.fn();
+      row.className = "oh-row";
+      row.dataset.id = id;
       view.appendChild(row);
     }
     document.body.appendChild(view);
-    return view;
   }
 
   it("the selector finds the right row among many, and only that one", () => {
-    // The contract this whole feature rests on. If a view ever stops putting the id in
-    // `data-id`, this is the assertion that says so rather than the flash quietly never firing.
     listWith(["a", "b", "c"]);
-    const hit = document.querySelector(`.view .row[data-id="${CSS.escape("b")}"]`);
-    expect(hit).not.toBeNull();
-    expect(hit!.getAttribute("data-id")).toBe("b");
-    expect(document.querySelectorAll(".view .row.is-located")).toHaveLength(0);
+    expect(rowOf(document, "b")?.dataset.id).toBe("b");
+    expect(rowOf(document, "absent")).toBeNull();
+    expect(document.querySelectorAll(".oh-row[data-located]")).toHaveLength(0);
   });
 
   it("an id with quotes or a slash cannot break out of the selector", () => {
-    // `CSS.escape` is why this is safe. Message ids come from the server and screener row ids
-    // are derived from sender addresses; neither is a literal this may interpolate raw.
     listWith(['a"b', "c/d"]);
-    expect(document.querySelector(`.view .row[data-id="${CSS.escape('a"b')}"]`)).not.toBeNull();
-    expect(document.querySelector(`.view .row[data-id="${CSS.escape("c/d")}"]`)).not.toBeNull();
+    expect(rowOf(document, 'a"b')?.dataset.id).toBe('a"b');
+    expect(rowOf(document, "c/d")?.dataset.id).toBe("c/d");
   });
 });

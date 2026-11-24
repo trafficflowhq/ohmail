@@ -1,0 +1,20 @@
+{
+  "accountSecurity": {
+    "setupQr": "QR-Code zum Einrichten der Authenticator-App",
+    "notRead": "Nicht gelesen",
+    "notDone": "Nicht ausgeführt",
+    "cancelled": "Abgebrochen",
+    "codesUnused": "Einige unbenutzt",
+    "codesNoneUnused": "Keine unbenutzt",
+    "on": "An",
+    "notSetUp": "Nicht eingerichtet",
+    "generate": "Erzeugen",
+    "replace": "Ersetzen",
+    "setUp": "Einrichten",
+    "remove": "Entfernen",
+    "byHandLabel": "Oder gib den Schlüssel von Hand ein",
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "copyFailed": "Kopieren fehlgeschlagen"
+  }
+}

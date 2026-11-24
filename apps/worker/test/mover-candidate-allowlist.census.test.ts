@@ -46,7 +46,7 @@ const src = (rel: string): string => readFileSync(`${HERE}../../../${rel}`, "utf
 /* `passName`, not `pass`: the push gate reads a quoted value under a `pass` key as a password. */
 const MOVERS: ReadonlyArray<{ passName: string; file: string }> = [
   { passName: "ohbox-tidy", file: "apps/worker/src/ohbox-tidy.ts" },
-  { passName: "rule-retro", file: "apps/worker/src/rule-retro.ts" },
+  { passName: "rule-retro", file: "packages/organizer/src/rule-retro.ts" },
   { passName: "junk-sweep", file: "packages/db/src/junk-sweep.ts" },
 ];
 

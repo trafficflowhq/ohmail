@@ -123,12 +123,12 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
   });
 
   it("the pictures are written only into a document whose length was read inside the ceiling first", () => {
-    expect(FRAME).toContain("const bare = useMemo(() => (folding ? folded : sanitizeGuarded(html, { frame })), [folding, folded, html, frame]);");
+    expect(FRAME).toContain("const bare = useMemo(() => (folding ? folded : sanitizeGuarded(html, { frame, highlight })), [folding, folded, html, frame, highlight]);");
     expect(FRAME).toMatch(/if \(!pictured \|\| bare === UNREADABLE\) return null;\s*try \{\s*return drawnLength\(html, pictures, bare, drawnTheme\);/);
     expect(FRAME).toContain("const tooLong = drawnChars !== null && drawnChars > ceiling;");
     expect(FRAME).toContain("(lengthThrew ? UNREADABLE : pictured && !tooLong && bare !== UNREADABLE ? sanitizeGuarded(html, pictures) : bare)");
     // The bare document, the pictured one, and the picture-free fold reading (`{ fold: true }`), each guarded.
-    expect(FRAME).toContain("const folded = useMemo(() => sanitizeGuarded(html, { fold: true, subject: m.subject, frame }), [html, m.subject, frame]);");
+    expect(FRAME).toContain("const folded = useMemo(() => sanitizeGuarded(html, { fold: true, subject: m.subject, frame, highlight }), [html, m.subject, frame, highlight]);");
     expect(code(FRAME).split("sanitizeGuarded(").length - 1).toBe(4);
     expect(code(FRAME).split("sanitizeMailHtmlPhone(").length - 1).toBe(1);
     expect(code(FRAME).split("drawnLength(").length - 1).toBe(1);

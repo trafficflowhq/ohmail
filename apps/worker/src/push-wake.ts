@@ -1,6 +1,7 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, eq, gte, inArray, lte, notInArray, sql } from "drizzle-orm";
 import { pushSubscriptions } from "@trafficflow/db/cloud";
-import type { Tx } from "@trafficflow/db";
+import { CALENDAR_RECORD_KINDS, changeLog, type Tx } from "@trafficflow/db";
 import {
   SsrfRefusal, pinnedHttpRequest, makePushEndpointGuard, nodeHostResolver,
   encryptWebPushBody, vapidIdentityFromEnv,
@@ -8,25 +9,14 @@ import {
 } from "@trafficflow/core/net";
 
 /**
- * THE WAKE SENDER — a content-free "something changed", and NOTHING ELSE, ever. `push_subscriptions`
- * gains its sender here: when an account's `change_log` advances, POST a CONSTANT to every registered
- * endpoint; the device then pulls `/sync` over its own authenticated connection. {@link WAKE_BODY} is a
- * module-level `const` with no interpolation — a wake travels through a third party (often somebody's
- * `ntfy`), so no count/folder/sender rides it; the only thing learned from the hub is `(accountId, seq)`,
- * the id used only to SELECT rows and `seq` dropped. Two wire forms: a row with `p256dh` AND `auth` gets
- * the constant SEALED (RFC 8291 `aes128gcm`) and signed (RFC 8292 VAPID); neither gets `application/json`,
- * fifteen bytes. NOT here: a wake to a DEAD process (`{"type":"wake"}` has no `id`, connector renders
- * nothing) and desktop-host wake (`push_subscriptions` is cloud-half) — both need native/foreground work. */
-
-/**
- * THE WAKE. Byte-identical, forever, on every deployment.
- *
- * A `const` and not a function, and not `JSON.stringify({ type: "wake" })`: a stringify call is a
- * place a second key can be added by editing an object literal that reads like configuration,
- * whereas this is fifteen bytes that a diff shows changing. The census asserts the literal AND
- * its byte length, so widening it is not something a reviewer has to notice.
+ * Wakes carry no mail content. UnifiedPush keeps its original constant. A browser wake
+ * seals an opaque digest of the registration's account and session family alongside the type.
  */
 export const WAKE_BODY = '{"type":"wake"}';
+
+function browserWakeBinding(accountId: string, familyId: string): string {
+  return createHash("sha256").update(JSON.stringify([accountId, familyId])).digest("hex");
+}
 
 /** {@link WAKE_BODY}'s length in bytes — pinned separately so a same-length swap is still caught. */
 export const WAKE_BODY_BYTES = 15;
@@ -77,8 +67,13 @@ export interface WakeSource {
 }
 
 export interface PushWakeDeps {
-  /** The worker's own db handle. Reads `push_subscriptions`, deletes dead rows, nothing else. */
-  db: Tx;
+  /**
+   * THE HANDLE OF THE ACCOUNT A WAKE IS FOR. Asked only after {@link ownsAccount} answered that the
+   * account is this shard's (a wake's account is a hint until then), once per wake: the account's
+   * registrations are read, a dead one deleted, and `change_log` asked one question per window ("is
+   * there a record here that is not the calendar's") by the literal `1`, there and nowhere else.
+   */
+  dbOf: (accountId: string) => Tx;
   /** The change-wake hub. Every account's advances, one subscription — see `ChangeWakeFanout`. */
   source: WakeSource;
   /**
@@ -129,7 +124,7 @@ export interface PushWakeDeps {
  * were offered and the plaintext constant goes out.
  */
 export type PushWakePost = (
-  url: string, pin: readonly string[], keys: WebPushKeys | null,
+  url: string, pin: readonly string[], keys: WebPushKeys | null, binding?: string,
 ) => Promise<{ status: number }>;
 
 export interface RunningPushWake {
@@ -163,7 +158,7 @@ function makeDefaultPost(
 ): PushWakePost {
   const vapid = opts.vapid;
   return async function post(
-    url: string, pin: readonly string[], keys: WebPushKeys | null,
+    url: string, pin: readonly string[], keys: WebPushKeys | null, binding?: string,
   ): Promise<{ status: number }> {
     /**
      * SEAL, OR DO NOT — and the headers follow from that one decision. `sealed === null` is the
@@ -178,7 +173,8 @@ function makeDefaultPost(
     let sealedHeaders: Record<string, string> = {};
     if (keys !== null) {
       if (vapid === null) throw new Error("cannot seal a wake without a VAPID identity");
-      sealed = encryptWebPushBody(WAKE_BODY, keys);
+      const payload = binding === undefined ? WAKE_BODY : `{"type":"wake","binding":"${binding}"}`;
+      sealed = encryptWebPushBody(payload, keys);
       sealedHeaders = {
         "content-encoding": "aes128gcm",
         // RFC 8292. The audience is derived from THIS url's origin inside `authorizationFor`, so a
@@ -264,7 +260,7 @@ export function vapidFromEnv(env: NodeJS.ProcessEnv = process.env): VapidFromEnv
  * everybody's mail with it.
  */
 export function startPushWake(deps: PushWakeDeps): RunningPushWake {
-  const { db, source, guard, ownsAccount, log } = deps;
+  const { dbOf, source, guard, ownsAccount, log } = deps;
   const debounceMs = deps.debounceMs ?? WAKE_DEBOUNCE_MS;
   const minIntervalMs = deps.minIntervalMs ?? WAKE_MIN_INTERVAL_MS;
   const timeoutMs = deps.timeoutMs ?? WAKE_TIMEOUT_MS;
@@ -310,8 +306,11 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
   const stopping = new AbortController();
   const post = deps.post ?? makeDefaultPost({ signal: stopping.signal, timeoutMs, vapid });
 
-  /** One pending debounce per account. The VALUE is a timer and nothing else — no payload. */
-  const pending = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * One pending window per account: its timer, and the lowest and the highest seq the hub named in
+   * it. Two numbers, used once to bound the deciding read in {@link fire}, never sent and never logged.
+   */
+  const pending = new Map<string, { timer: ReturnType<typeof setTimeout>; lowest: bigint; highest: bigint }>();
   /** Last successful POST per endpoint URL, for {@link WAKE_MIN_INTERVAL_MS}. */
   const lastSentAt = new Map<string, number>();
   let sentCount = 0;
@@ -327,17 +326,8 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
    */
   let warnedNoVapid = false;
 
-  /**
-   * Dial one account's endpoints.
-   *
-   * The account id is used ONCE — as the SELECT predicate — and never leaves this function. The
-   * rows it reads are `{ id, endpoint, p256dh, auth }` and nothing else: the projection is narrow
-   * on purpose, so that a future edit which wants a message-derived value has to widen the SELECT,
-   * which the census sees. The two key columns are in it because sealing needs them and for no
-   * other reason — they are the device's own material, they are never logged, and they never leave
-   * this function except as the encryptor's input.
-   */
-  const fire = async (accountId: string): Promise<void> => {
+  /** Dial only the wake's account, keeping the session family and endpoint from the same row snapshot. */
+  const fire = async (accountId: string, lowest: bigint, highest: bigint): Promise<void> => {
     /**
      * IS THIS ACCOUNT OURS? Asked before the query, not after.
      *
@@ -349,12 +339,16 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
      */
     if (!await ownsAccount(accountId)) return;
     if (stopped) return;
+    // The wake's account is the shard's own now: its handle, for its read and its prune.
+    const db = dbOf(accountId);
 
     const rows = await db.select({
       id: pushSubscriptions.id,
       endpoint: pushSubscriptions.endpoint,
       p256dh: pushSubscriptions.p256dh,
       auth: pushSubscriptions.auth,
+      transport: pushSubscriptions.transport,
+      familyId: pushSubscriptions.sessionFamilyId,
     }).from(pushSubscriptions).where(and(
       eq(pushSubscriptions.accountId, accountId),
       /**
@@ -365,10 +359,28 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
        * fix; the sender needed no change because a `webpush` row carries both key columns and takes the
        * SEALED arm. `apns` stays out and its absence is load-bearing: an Apple device token is not an
        * endpoint URL, so it cannot be POSTed to, and it is refused by omission until that sender exists.
-       * The payload does not move — both arms send the same closed constant, and the census keeps saying so.
        */
       inArray(pushSubscriptions.transport, ["unifiedpush", "webpush"]),
     ));
+    if (rows.length === 0) return;
+
+    /**
+     * DID THIS WINDOW HOLD ANYTHING BUT THE CALENDAR'S RECORDS? Asked once, after the registrations
+     * are read and only when there are any. A closed app draws its one fixed notice for a wake, and
+     * that notice says new mail: a calendar that moved must not ring it, so a window of calendar
+     * records alone dials nothing, and the device finds the change when it next syncs. The answer is
+     * the literal `1` or no row: no column of the log is read. The kinds are the calendar's own list,
+     * which does not compile while a kind of the wire's union is missing from it. Bounded by the
+     * window's two seqs: a batch names its highest, and the calendar's writers record their kinds in
+     * batches of their own.
+     */
+    const held = await db.select({ one: sql<number>`1` }).from(changeLog).where(and(
+      eq(changeLog.accountId, accountId),
+      gte(changeLog.seq, lowest),
+      lte(changeLog.seq, highest),
+      notInArray(changeLog.entityType, [...CALENDAR_RECORD_KINDS]),
+    )).limit(1);
+    if (held.length === 0) return;
 
     for (const row of rows) {
       /**
@@ -381,6 +393,9 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
        */
       if (stopped) return;
 
+      const binding = row.transport === "webpush" && row.familyId
+        ? browserWakeBinding(accountId, row.familyId)
+        : undefined;
       const url = row.endpoint;
       if (!url) continue;                        // a unifiedpush row with no endpoint is unusable
 
@@ -399,6 +414,7 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
       const keys: WebPushKeys | null = row.p256dh !== null && row.auth !== null
         ? { p256dh: row.p256dh, auth: row.auth }
         : null;
+      if (row.transport === "webpush" && (binding === undefined || keys === null)) continue;
 
       /**
        * A KEYED REGISTRATION ON A DEPLOYMENT THAT CANNOT SEAL IS SKIPPED, NOT DOWNGRADED.
@@ -447,7 +463,7 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
 
       let status: number;
       try {
-        ({ status } = await post(url, pin, keys));
+        ({ status } = await (binding === undefined ? post(url, pin, keys) : post(url, pin, keys, binding)));
       } catch {
         // A socket error, a timeout, an abort. Not evidence about the registration — retried on
         // the next wake. Deliberately not logged per failure: a distributor outage would otherwise
@@ -471,6 +487,9 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
           await db.delete(pushSubscriptions).where(and(
             eq(pushSubscriptions.id, row.id),
             eq(pushSubscriptions.accountId, accountId),
+            row.transport === "webpush" && row.familyId
+              ? eq(pushSubscriptions.sessionFamilyId, row.familyId)
+              : undefined,
           ));
           lastSentAt.delete(url);
           log?.info("push_wake_endpoint_pruned", { status });
@@ -482,24 +501,30 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
     }
   };
 
-  const unsubscribe = source.subscribeAll((accountId) => {
-    // `seq` IS DELIBERATELY NOT DESTRUCTURED. It is a per-account activity counter and this
-    // function has no use for one; the parameter is dropped at the boundary so there is nothing
-    // in scope for a later edit to reach for. The wake is "something changed", full stop.
+  const unsubscribe = source.subscribeAll((accountId, seq) => {
+    // `seq` is a per-account activity counter. It is kept as the window's two bounds and handed to
+    // the deciding read alone: it reaches no request and no log line. The wake stays "something
+    // changed", full stop.
     if (stopped) return;
-    if (pending.has(accountId)) return;          // already coalescing this account's window
+    const open = pending.get(accountId);
+    if (open !== undefined) {                     // already coalescing this account's window
+      if (seq < open.lowest) open.lowest = seq;
+      if (seq > open.highest) open.highest = seq;
+      return;
+    }
 
     const timer = setTimeout(() => {
       pending.delete(accountId);
       if (stopped) return;
       // `void` + a terminal catch: nothing awaits this, so an escaped rejection would be an
       // unhandled rejection inside the always-on worker. See the header — degradation, never a crash.
-      void fire(accountId).catch((err: unknown) => {
+      void fire(accountId, window.lowest, window.highest).catch((err: unknown) => {
         log?.warn("push_wake_pass_failed", { err });
       });
     }, debounceMs);
     (timer as unknown as { unref?: () => void }).unref?.();
-    pending.set(accountId, timer);
+    const window = { timer, lowest: seq, highest: seq };
+    pending.set(accountId, window);
   });
 
   return {
@@ -507,7 +532,7 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
       if (stopped) return;
       stopped = true;
       unsubscribe();
-      for (const t of pending.values()) clearTimeout(t);
+      for (const open of pending.values()) clearTimeout(open.timer);
       pending.clear();
       // The socket, not just the schedule. A POST already on the wire is cut here; `fire`'s
       // per-row check stops the ones that had not started.

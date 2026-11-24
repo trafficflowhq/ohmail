@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { users } from "@trafficflow/db";
+import { bindDb, users } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import {
-  AuthService, makeTestAuthDeps, MailService, SpyMailer, throttleKeysFor, type ServiceContext,
+  AuthService, dbFor, makeTestAuthDeps, MailService, SpyMailer, throttleKeysFor, type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -30,8 +30,10 @@ async function harness(ttlMs?: number) {
   });
   const deps = makeTestAuthDeps({ publicSignup: true, maxPublicRegistrationsPerWindow: 50 }, mail);
   const svc = new AuthService(deps);
+  // A door before sign-in holds a handle bound to nothing; a call that carries an account, that account's.
   const ctx = (o: Partial<ServiceContext> = {}): ServiceContext => ({
-    db, accountId: "", userId: null, now: () => NOW, requestId: "r", ip: "1.2.3.4", ...o,
+    db: o.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, o.accountId),
+    accountId: "", userId: null, now: () => NOW, requestId: "r", ip: "1.2.3.4", ...o,
   });
   const register = (email: string, locale?: unknown) =>
     svc.register(ctx(), { email, password: PW, displayName: "Stranger", ...(locale === undefined ? {} : { locale }) });
@@ -45,15 +47,15 @@ describe("the verification mail and its twin, in the signup's language", () => {
     await h.register("neu@example.com", "de");
     const [verify, exists] = h.spy.sent;
     expect(verify!.template).toBe("email_verification");
-    expect(verify!.rendered.subject).toBe("Bestätige deine E-Mail-Adresse für ohmail");
-    expect(verify!.rendered.text).toContain("Öffne diesen Link: https://ohmail.app/verify-email?token=");
+    expect(verify!.rendered.subject).toBe("Bestätige deine Adresse für ohmail");
+    expect(verify!.rendered.text).toContain("Adresse bestätigen:\nhttps://ohmail.app/verify-email?token=");
     expect(verify!.rendered.text).toContain("läuft in 24 Stunden ab");
-    expect(verify!.rendered.html).toContain('<html lang="de">');
+    expect(verify!.rendered.html).toContain('<html lang="de" ');
     expect(verify!.rendered.html).toContain("Adresse bestätigen");
     expect(exists!.template).toBe("account_exists");
-    expect(exists!.rendered.subject).toBe("Du hast schon einen ohmail-Account");
-    expect(exists!.rendered.html).toContain('<html lang="de">');
-    expect(exists!.rendered.text).toContain("Anmelden: https://ohmail.app/login");
+    expect(exists!.rendered.subject).toBe("Du hast schon ein ohmail-Konto");
+    expect(exists!.rendered.html).toContain('<html lang="de" ');
+    expect(exists!.rendered.text).toContain("Bei ohmail anmelden:\nhttps://ohmail.app/login");
   });
 
   it("en, no word, or a word outside the set: English, as before", async () => {
@@ -61,8 +63,8 @@ describe("the verification mail and its twin, in the signup's language", () => {
     for (const [i, locale] of (["en", undefined, "fr", 7, ["de"], "DE"] as unknown[]).entries()) {
       await h.register(`a${i}@example.com`, locale);
     }
-    expect(h.spy.sent.map((s) => s.rendered.subject)).toEqual(Array(6).fill("Verify your email for ohmail"));
-    expect(h.spy.sent.every((s) => s.rendered.html.includes('<html lang="en">'))).toBe(true);
+    expect(h.spy.sent.map((s) => s.rendered.subject)).toEqual(Array(6).fill("Confirm your address for ohmail"));
+    expect(h.spy.sent.every((s) => s.rendered.html.includes('<html lang="en" '))).toBe(true);
     expect(h.spy.sent[0]!.rendered.text).toContain("expires in 24 hours");
   });
 
@@ -85,8 +87,8 @@ describe("the verification mail and its twin, in the signup's language", () => {
     await h.svc.resendVerification(as);
     await h.svc.resendVerification(as, { locale: "es" });
     expect(h.spy.sent.map((s) => s.rendered.subject)).toEqual([
-      "Verify your email for ohmail", "Bestätige deine E-Mail-Adresse für ohmail",
-      "Verify your email for ohmail", "Verify your email for ohmail",
+      "Confirm your address for ohmail", "Bestätige deine Adresse für ohmail",
+      "Confirm your address for ohmail", "Confirm your address for ohmail",
     ]);
   });
 });

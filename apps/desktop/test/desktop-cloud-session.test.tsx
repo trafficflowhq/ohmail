@@ -15,7 +15,7 @@ import {
 } from "../src/cloud-session.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
 import messages from "../../webapp/messages/en.json";
-import { replyDraftKey } from "../../webapp/app/shell/mail-send";
+import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
 import { expectKept, expectSwept, seedWindowKeys } from "./_window-keys.js";
 
 /**
@@ -134,6 +134,8 @@ function fakeShell(health: Record<string, unknown>, opts: {
   wait?: boolean; reads?: number; status?: EngineStatus;
   /** The hosted `GET /auth/session` answer, relayed on the account door; absent answers no account. */
   hosted?: Record<string, unknown>;
+  /** `GET /mailboxes`'s items; absent answers none connected. */
+  mailboxes?: unknown[];
 } = {}): {
   move(next: Record<string, unknown>): void;
   refusedReads(): number;
@@ -176,7 +178,7 @@ function fakeShell(health: Record<string, unknown>, opts: {
           snapshots++;
           return encode(200, EMPTY_SNAPSHOT);
         }
-        if (url.startsWith("/mailboxes")) return encode(200, JSON.stringify({ items: [] }));
+        if (url.startsWith("/mailboxes")) return encode(200, JSON.stringify({ items: opts.mailboxes ?? [] }));
         return encode(200, EMPTY_PAGE);
       }
       return null;
@@ -228,7 +230,8 @@ function holdsFocus(card: Element | null, cause: string, where: string): void {
 }
 /** The engine-down notice — never the answer to a refused Cloud session. */
 const engineDown = (el: HTMLElement): boolean => text(el).includes(DOOR_COPY.gateCannotOpen);
-const RETRYING = (messages as { sync: { failing: string } }).sync.failing;
+/* The strip's retrying sentence, as the frame's notice says the same state. */
+const RETRYING = (messages as { frame: { connection: { reconnecting: { title: string } } } }).frame.connection.reconnecting.title;
 
 /** Real time, in small turns, until `ok` holds or `ms` passes; answers how long it took. */
 async function within(ms: number, ok: () => boolean): Promise<number | null> {
@@ -254,35 +257,45 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+/**
+ * A mailbox connected and synced: no mailbox connected outranks the host's line in the frame's one slot, so the cases
+ * that read the host's sentence connect one.
+ */
+const CONNECTED = [{
+  id: "mb-1", address: "ada@example.org", displayName: null, status: "active", errorCode: null,
+  createdAt: "2026-10-01T08:00:00.000Z", lastSyncAt: new Date().toISOString(),
+  initialImportCompletedAt: "2026-10-01T08:10:00.000Z",
+}];
+
 describe("the gate over each session state", () => {
   it("renewing past the grace: the mail stays, no dialog, and the rail says Cloud is being retried", async () => {
-    fakeShell({ signedIn: true, sessionExpired: false, session: reading("renewing", "http_403") });
+    fakeShell({ signedIn: true, sessionExpired: false, session: reading("renewing", "http_403") }, { mailboxes: CONNECTED });
     const el = await render();
     expect(mounted(el), "the mail app over a session that is only renewing").toBe(true);
     expect(dialog(el), "a firewall's 403 never opens the sign-in dialog").toBe(false);
-    expect(text(el)).toContain(DOOR_COPY.cloudUnreachableTitle);
+    expect(await within(2_000, () => text(el).includes(DOOR_COPY.cloudUnreachableTitle.replace(/\.$/u, "")))).not.toBeNull();
+  });
+
+  it("a save the disk refused while signed in: the mail stays and the rail names the seal", async () => {
+    fakeShell({ signedIn: true, sessionExpired: false, sealed: false, session: reading("seal_failed", "seal_write_failed") }, { mailboxes: CONNECTED });
+    const el = await render();
+    expect(mounted(el)).toBe(true);
+    expect(dialog(el)).toBe(false);
+    expect(await within(2_000, () => text(el).includes(DOOR_COPY.cloudSealPausedTitle(machineWord()).replace(/\.$/u, "")))).not.toBeNull();
   });
 
   it("the positive control: inside the grace, and when live, the rail says nothing", async () => {
-    fakeShell({ signedIn: true, sessionExpired: false, session: reading("unreachable", "network", 1_000) });
+    fakeShell({ signedIn: true, sessionExpired: false, session: reading("unreachable", "network", 1_000) }, { mailboxes: CONNECTED });
     const early = await render();
     expect(mounted(early)).toBe(true);
     expect(text(early)).not.toContain(DOOR_COPY.cloudUnreachableTitle);
     await act(async () => { root!.unmount(); });
     mountPoint?.remove();
     root = null;
-    fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) });
+    fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { mailboxes: CONNECTED });
     const live = await render();
     expect(mounted(live)).toBe(true);
     expect(text(live)).not.toContain(DOOR_COPY.cloudUnreachableTitle);
-  });
-
-  it("a save the disk refused while signed in: the mail stays and the rail names the seal", async () => {
-    fakeShell({ signedIn: true, sessionExpired: false, sealed: false, session: reading("seal_failed", "seal_write_failed") });
-    const el = await render();
-    expect(mounted(el)).toBe(true);
-    expect(dialog(el)).toBe(false);
-    expect(text(el)).toContain(DOOR_COPY.cloudSealPausedTitle(machineWord()));
   });
 
   for (const [code, lead] of [
@@ -449,23 +462,31 @@ describe("a session refused while the mail is on screen", () => {
     expect(dialog(await render())).toBe(true);
     expectSwept(keys, "the next launch");
     await quit();
-    localStorage.setItem(replyDraftKey("msg-2"), "a reply begun since");
+    localStorage.setItem(replyDraftKey("msg-2", "mbx-2"), "a reply begun since");
     fakeShell(revoked, { status: { ...CLOUD_SERVING, mailboxId: "mbx-2" } });
     expect(dialog(await render())).toBe(true);
-    expect(localStorage.getItem(replyDraftKey("msg-2")), "swept again at the launch after").toBe("a reply begun since");
+    expect(localStorage.getItem(replyDraftKey("msg-2", "mbx-2")), "swept again at the launch after").toBe("a reply begun since");
   });
 
   it("gives focus back to where it stood once the session is live again and the card closes", async () => {
     const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { wait: true });
     const el = await render();
-    const stood = el.querySelector<HTMLElement>(".shell button")!;
+    // Where focus stood: the rail's Ohbox entry, found by its landmark's role and its own name (what is said: the
+    // entry's digit is drawn beside its name, unsaid).
+    const said = (b: HTMLElement): string => {
+      const copy = b.cloneNode(true) as HTMLElement;
+      copy.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+      return copy.textContent ?? "";
+    };
+    const stood = [...el.querySelectorAll<HTMLElement>('nav[aria-label="Places"] button')]
+      .find((b) => (b.getAttribute("aria-label") ?? said(b)).trim() === "Ohbox")!;
     stood.focus();
     shell.move({ signedIn: false, sessionExpired: true, session: reading("refused", "refresh_expired", 0) });
     expect(await within(2_000, () => dialog(el))).not.toBeNull();
     expect(el.querySelector(".session-end")!.contains(document.activeElement)).toBe(true);
     shell.move({ signedIn: true, sessionExpired: false, session: reading("live", null) });
     expect(await within(2_000, () => el.querySelector(".session-end") === null)).not.toBeNull();
-    expect([...el.querySelectorAll(".app-root, .app-root ~ *")].filter((n) => n.hasAttribute("inert")), "the mail stayed inert").toEqual([]);
+    expect([...el.querySelectorAll(".fr-frame, .fr-frame ~ *")].filter((n) => n.hasAttribute("inert")), "the mail stayed inert").toEqual([]);
     expect(document.activeElement).toBe(stood);
   });
 
@@ -623,18 +644,33 @@ describe("the reuse sweeps a new sign-in is told of", () => {
   const S = (messages as { settings: Record<string, string> }).settings;
   const okButton = (el: HTMLElement): HTMLButtonElement | undefined =>
     [...el.querySelectorAll("button")].find((b) => b.textContent === S.reuseSweepsOk);
+  /* The strip is a notice in the frame's one slot, standing by its rank: where another stands in front, the slot's
+     line lists it and a press brings it forward. */
+  const fronted = async (el: HTMLElement): Promise<void> => {
+    const line = [...el.querySelectorAll<HTMLButtonElement>("button[aria-haspopup='menu']")].find((b) => /more notice/.test(b.getAttribute("aria-label") ?? ""));
+    if (!line || okButton(el)) return;
+    await act(async () => { line.click(); });
+    const item = [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find((m) => /sign-in|Anmeldung/i.test(m.textContent ?? ""));
+    if (item) await act(async () => { item.click(); });
+  };
 
+  /* The notice says the count and OK; the per-sweep details left with the strip. OK takes it away at once, as 1.0's
+     strip did, with no session read between. */
   it("is shown once, acknowledged over the bridge with its id, and goes", async () => {
-    const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { hosted: hosted([SWEEP]) });
+    const answer = hosted([SWEEP]);
+    const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { hosted: answer });
     const el = await render();
-    const details = () => [...el.querySelectorAll("button")].find((b) => b.textContent === S.reuseSweepsDetails);
-    expect(await within(2_000, () => details() !== undefined), "the strip never came").not.toBeNull();
-    await act(async () => { details()!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(text(el).split(S.reuseClientLinux!).length - 1, "said once").toBe(1);
+    await within(2_000, () => [...el.querySelectorAll("button[aria-haspopup='menu']")].length > 0 || okButton(el) !== undefined);
+    await fronted(el);
+    expect(await within(2_000, () => okButton(el) !== undefined), "the strip never came").not.toBeNull();
+    const said = "An older copy of your sign-in ended";
+    expect(text(el).split(said).length - 1, "said once").toBe(1);
+    expect([...el.querySelectorAll("button")].filter((b) => b.textContent === S.reuseSweepsOk), "one OK").toHaveLength(1);
     await act(async () => { okButton(el)!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(await within(1_000, () => shell.acks().length > 0)).not.toBeNull();
+    expect(await within(1_000, () => shell.acks().length > 0), "OK told the server nothing").not.toBeNull();
     expect(shell.acks()).toEqual([{ ids: [SWEEP.id] }]);
-    expect(text(el)).not.toContain(S.reuseClientLinux);
+    expect(okButton(el), "the notice outlived its OK").toBeUndefined();
+    expect(text(el)).not.toContain(said);
     expect(mounted(el)).toBe(true);
   });
 
@@ -642,6 +678,8 @@ describe("the reuse sweeps a new sign-in is told of", () => {
     const answer = hosted([SWEEP]);
     const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { hosted: answer });
     const el = await render();
+    await within(2_000, () => [...el.querySelectorAll("button[aria-haspopup='menu']")].length > 0 || okButton(el) !== undefined);
+    await fronted(el);
     expect(await within(2_000, () => okButton(el) !== undefined), "the strip never came").not.toBeNull();
     delete answer.reuseSweeps;
     // Past the return debounce, then back to the window.

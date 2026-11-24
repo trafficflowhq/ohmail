@@ -1,8 +1,9 @@
+import type { AuthVerdict } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { planChange, commitChange , UNMETERED_STORAGE_CAP, signaturesForCycle } from "../src/pipeline.js";
 import { FakeRepo } from "./fakes.js";
 import type { Change } from "../src/ports.js";
-import type { AuthVerdict, Rule } from "../src/rules.js";
+import type { Rule } from "../src/rules.js";
 import { providerAuthservIds } from "../src/authserv-ids.js";
 import { fakeKeys, letter, nodemailerSign, rsaKey } from "./fixtures/dkim-signed.js";
 
@@ -22,7 +23,7 @@ import { fakeKeys, letter, nodemailerSign, rsaKey } from "./fixtures/dkim-signed
  *
  * A test that constructs the input to the unit under test cannot see a caller that never
  * supplies it. So every case here goes through the REAL `planChange` → `commitChange` pair
- * — the same two calls `apps/worker/src/sync.ts` makes — and asserts on `folder_state`, which
+ * — the same two calls `packages/organizer/src/sync.ts` makes — and asserts on `folder_state`, which
  * is where a routing decision actually lands.
  *
  * ── THE ASYMMETRY IS THE SUBJECT OF THIS FILE, NOT A CAVEAT IN IT ─────────────────────────
@@ -312,7 +313,7 @@ describe("§3 — with no trusted set, THE DAY THIS SHIPS CHANGES NO ROUTING", (
     const repo = new FakeRepo();
     repo.rules = [allowRule("partner@bank.example")];
 
-    // No `trustedAuthservIds` key at all: what `apps/worker/src/sync.ts` passes today.
+    // No `trustedAuthservIds` key at all: what `packages/organizer/src/sync.ts` passes today.
     const out = await ingest(
       repo, eml({ from: "partner@bank.example", authResults: [TRUSTED_DKIM_FAIL] }), undefined,
     );

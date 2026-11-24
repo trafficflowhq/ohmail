@@ -1,0 +1,22 @@
+{
+  "settingsAi": {
+    "notRead": "Nicht gelesen",
+    "notChanged": "Nicht geändert",
+    "on": "An",
+    "off": "Aus",
+    "notSetUp": "Nicht eingerichtet",
+    "model": "Modell",
+    "where": "Wo das Modell läuft",
+    "cloud": "ohmail Cloud",
+    "working": "Betriebsbereit",
+    "draftCost": "{credits, number} Credits pro Entwurf",
+    "draftReply": "Antwort entwerfen",
+    "budget": "Verbleibendes KI-Budget",
+    "creditsAmount": "{remaining, number} von {total, number}",
+    "creditsLeft": "Noch {remaining, number} von {total, number}",
+    "creditsDetail": "{remaining, number} von {total, number} Credits",
+    "creditsEmpty": "0 Credits",
+    "plans": "Tarife",
+    "creditsBalance": "Noch {remaining, number} Credits"
+  }
+}

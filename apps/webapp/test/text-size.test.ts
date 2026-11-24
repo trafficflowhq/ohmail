@@ -20,7 +20,6 @@ import {
   stampTextSize,
   textSizeBootScript,
 } from "../app/shell/text-size";
-import { setTextSize } from "../app/shell/TextSizeRow";
 import { UI_ZOOM_VAR as UI_ZOOM_VAR_OF_UI, uiZoom } from "@ohmail/ui";
 
 const root = (): HTMLElement => document.documentElement;
@@ -137,12 +136,5 @@ describe("the host's door", () => {
     expect(taken).toEqual([110]);
     expect(stamp()).toEqual({ zoom: "", ui: "" });
   });
-
-  it("the row's press stores the size, then applies it through the door", () => {
-    const order: string[] = [];
-    installTextSizeApplier((n) => order.push(`apply ${n} stored=${localStorage.getItem(TEXT_SIZE_KEY)}`));
-    setTextSize(125);
-    expect(localStorage.getItem(TEXT_SIZE_KEY)).toBe("125");
-    expect(order).toEqual(["apply 125 stored=125"]);
-  });
+  // The row's press (today's TextSizeRow, the General pane's) moved word for word to `text-size-row.test.ts`.
 });

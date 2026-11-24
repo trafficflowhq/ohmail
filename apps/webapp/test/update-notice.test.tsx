@@ -14,11 +14,11 @@ import {
   resetUpdateStoreForTests,
   sendWaits,
   setSendWaits,
-} from "../app/shell/app-update";
+} from "@ohmail/app-logic/doors/app-update";
 import de from "../messages/de.json";
 import { noticeServerAnswered, noticeUpdateAnswer, hearUpdateAnswer } from "../app/shell/update-answer";
-import type { SendLineItem, SendPhase } from "../app/shell/mail-send";
-import { SendWaitsRelay, sendWaitsOf, UpdateDot, UpdateLine } from "../app/shell/UpdateLine";
+import type { SendLineItem, SendPhase } from "@ohmail/app-logic/writing/mail-send";
+import { SendWaitsRelay, sendWaitsOf, UpdateLine } from "../app/shell/UpdateLine";
 
 /**
  * ═══ THE LINE THAT SAYS A NEWER OHMAIL EXISTS ═══════════════════════════════════════════════
@@ -339,19 +339,6 @@ describe("a server's own answer on the update line", () => {
     await act(async () => announceUpdate({ kind: "ready", version: "2.0.0", act: () => {}, key: "ready:2.0.0" }));
     await act(async () => noticeUpdateAnswer("tooOld", remedy));
     expect(currentUpdateOffer()?.kind, "an update that is ready was replaced by the sentence about needing one").toBe("ready");
-  });
-});
-
-describe("the ≡ while the drawer is closed", () => {
-  it("carries a dot while there is something to press, and none while it downloads or rests", async () => {
-    const el = await mount(h(UpdateDot));
-    expect(el.querySelector(".upd-dot")).toBeNull();
-    await act(async () => announceUpdate({ kind: "downloading", version: "0.30.6" }));
-    expect(el.querySelector(".upd-dot")).toBeNull();
-    await act(async () => announceUpdate({ kind: "ready", version: "0.30.6", act: () => {} }));
-    expect(el.querySelector(".upd-dot")?.getAttribute("aria-hidden")).toBe("true");
-    await act(async () => announceUpdate(null));
-    expect(el.querySelector(".upd-dot")).toBeNull();
   });
 });
 

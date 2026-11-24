@@ -1,3 +1,4 @@
+import type { SyncResponse } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -6,7 +7,7 @@ import {
   mailboxes, messages, folderState, messageStates, changeLog, accountSyncState, threads,
   recordChange, type EntityType,
 } from "@trafficflow/db";
-import { SyncService, type ServiceContext, type SyncResponse } from "../src/index.js";
+import { SyncService, dbFor, type CalendarFeedPort, type ServiceContext } from "../src/index.js";
 import { ServiceError } from "../src/index.js";
 import { ClientMirror, flatten } from "./_apply-harness.js";
 
@@ -19,7 +20,7 @@ async function setup() {
   const accountId = randomUUID();
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "a@x.example" }).returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-07-27T00:00:00.000Z"), requestId: "r",
   };
   return { db, accountId, mailboxId: mb.id, ctx };
@@ -34,7 +35,7 @@ async function addMessage(
     subject: opts.subject ?? "s", fromAddress: opts.from ?? "f@x.example",
   }).returning();
   await db.insert(folderState).values({
-    messageId: m.id, desiredFolder: opts.folder ?? "INBOX", observedFolder: opts.folder ?? "INBOX", lastSetBy: "us",
+    messageId: m.id, accountId: m.accountId, desiredFolder: opts.folder ?? "INBOX", observedFolder: opts.folder ?? "INBOX", lastSetBy: "us",
   });
   return m.id;
 }
@@ -313,7 +314,7 @@ describe("SyncService.getChanges — cursor above the log's max → 410", () => 
     const id = await addMessage(db, quiet.accountId, quiet.mailboxId);
     await rec(db, quiet.accountId, "message", id, "create");
 
-    const neighbour: ServiceContext = { ...quiet.ctx, accountId: busyAccountId };
+    const neighbour: ServiceContext = { ...quiet.ctx, accountId: busyAccountId, db: dbFor(db, busyAccountId) };
     expect(flatten(await svc.getChanges(neighbour, { since: svc.encodeCursor(3n) }))).toHaveLength(2);
     await expect(svc.getChanges(quiet.ctx, { since: svc.encodeCursor(3n) })).rejects.toMatchObject({
       httpStatus: 410,
@@ -434,7 +435,7 @@ describe("sync — a page costs a constant number of queries", () => {
       }));
     }
     const counted = counting(db);
-    const res = await svc.getChanges({ ...ctx, db: counted.db }, { since: "0", limit: 500 });
+    const res = await svc.getChanges({ ...ctx, db: dbFor(counted.db, accountId) }, { since: "0", limit: 500 });
     // The page must actually contain the messages — a query-count assertion over an empty
     // result would pass for the very outage it exists to prevent.
     expect(res.changes.creates).toHaveLength(messageCount);
@@ -491,7 +492,7 @@ describe("sync — a page costs a constant number of queries", () => {
       }));
     }
     const counted = counting(db);
-    const res = await svc.getChanges({ ...ctx, db: counted.db }, { since: "0", limit: 500 });
+    const res = await svc.getChanges({ ...ctx, db: dbFor(counted.db, accountId) }, { since: "0", limit: 500 });
     // Same trap as above: the count only means something over a page that holds the threads.
     expect(res.changes.creates.filter((c) => c.type === "thread")).toHaveLength(threadCount);
     return counted.selects();
@@ -526,7 +527,7 @@ describe("sync — a page costs a constant number of queries", () => {
       }));
     }
     const counted = counting(db);
-    const res = await svc.getChanges({ ...ctx, db: counted.db }, { since: "0", limit: 500 });
+    const res = await svc.getChanges({ ...ctx, db: dbFor(counted.db, accountId) }, { since: "0", limit: 500 });
     // The count only means something over a page that holds the states.
     expect(res.changes.creates.filter((c) => c.type === "message_state")).toHaveLength(stateCount);
     return counted.selects();
@@ -539,4 +540,95 @@ describe("sync — a page costs a constant number of queries", () => {
     // The change_log page, the (empty) message/thread prefetches, and ONE batched state read.
     expect(one).toBeLessThanOrEqual(7);
   }, 60_000);
+});
+
+/**
+ * THE CALENDAR'S GATE. A calendar change reaches a request only when the server keeps a calendar
+ * (the port is handed in), the request names one of its kinds and the settings record that carries
+ * the switch, and the account switched it on. Every other cell sends no change of a calendar kind
+ * at all, never a deletion, asks no builder, and still carries the mail beside it; the cursor
+ * moves past the calendar's rows either way. `deaf` is a device that names the calendar's kinds
+ * and not the settings record: it would never hear the switch go off.
+ */
+describe("the calendar's gate in the change feed", () => {
+  const CAL_TYPES: EntityType[] = ["calendar_connection", "calendar", "calendar_event", "calendar_suggestion"];
+  const NAMED: Record<"none" | "mail" | "deaf" | "calendar", EntityType[] | undefined> = {
+    none: undefined, mail: ["message"], deaf: ["message", ...CAL_TYPES], calendar: ["message", "settings", ...CAL_TYPES],
+  };
+
+  function fakePort(on: boolean) {
+    const calls = { enabledAt: 0, build: 0 };
+    const port: CalendarFeedPort = {
+      enabledAt: async () => { calls.enabledAt += 1; return on ? new Date("2026-07-01T00:00:00.000Z") : null; },
+      build: async (_db, _accountId, kind, ids) => {
+        calls.build += 1;
+        return new Map(ids.map((id) => [id, { id, kind, updatedAt: "2026-07-26T00:00:00.000Z" }])) as never;
+      },
+      window: { daysBack: 366, daysAhead: 731, maxRows: 10_000 },
+      snapshotPage: async () => { throw new Error("the change feed reads no first load"); },
+    };
+    return { port, calls };
+  }
+
+  async function pageWithCalendarRows() {
+    const s = await setup();
+    const mid = await addMessage(s.db, s.accountId, s.mailboxId);
+    await rec(s.db, s.accountId, "message", mid, "create");
+    const ev = randomUUID();
+    const cc = randomUUID();
+    await rec(s.db, s.accountId, "calendar_event", ev, "create");
+    await rec(s.db, s.accountId, "calendar_connection", cc, "delete");
+    return { ...s, mid, ev, cc };
+  }
+
+  const calendarChanges = (res: SyncResponse) => flatten(res).filter((c) => CAL_TYPES.includes(c.type as EntityType));
+
+  for (const port of ["absent", "present"] as const) {
+    for (const on of [false, true]) {
+      for (const named of ["none", "mail", "deaf", "calendar"] as const) {
+        const sends = port === "present" && on && named === "calendar";
+        it(`port ${port}, switch ${on ? "on" : "off"}, ${named} named: ${sends ? "sends" : "sends nothing of the calendar"}`, async () => {
+          const { ctx, mid, ev, cc } = await pageWithCalendarRows();
+          const fake = fakePort(on);
+          const res = await svc.getChanges(ctx, {
+            since: "0",
+            ...(NAMED[named] ? { types: NAMED[named] } : {}),
+            ...(port === "present" ? { calendar: fake.port } : {}),
+          });
+          expect(flatten(res).filter((c) => c.type === "message").map((c) => c.id)).toEqual([mid]);
+          if (sends) {
+            expect(res.changes.creates.filter((c) => c.type === "calendar_event").map((c) => c.id)).toEqual([ev]);
+            expect(res.changes.deletes.filter((c) => c.type === "calendar_connection").map((c) => c.id)).toEqual([cc]);
+            expect(fake.calls.build).toBe(1);
+          } else {
+            expect(calendarChanges(res)).toEqual([]);
+            expect(fake.calls.build).toBe(0);
+          }
+          // Past every row the request reads, the calendar's included: a client that may not read
+          // them never will. A list of mail kinds alone reads no calendar row in the first place.
+          expect(svc.decodeCursor(res.cursor).seq).toBe(named === "mail" ? 1n : 3n);
+          expect(res.hasMore).toBe(false);
+        });
+      }
+    }
+  }
+
+  it("a page with no calendar change does not ask the account's switch", async () => {
+    const { db, accountId, mailboxId, ctx } = await setup();
+    const mid = await addMessage(db, accountId, mailboxId);
+    await rec(db, accountId, "message", mid, "create");
+    const fake = fakePort(true);
+    const res = await svc.getChanges(ctx, { since: "0", types: NAMED.calendar, calendar: fake.port });
+    expect(flatten(res).map((c) => c.id)).toEqual([mid]);
+    expect(fake.calls).toEqual({ enabledAt: 0, build: 0 });
+  });
+
+  it("a calendar record the builder no longer has is sent as its deletion, never dropped", async () => {
+    const { ctx, ev, cc } = await pageWithCalendarRows();
+    const fake = fakePort(true);
+    fake.port.build = async () => new Map() as never;
+    const res = await svc.getChanges(ctx, { since: "0", types: NAMED.calendar, calendar: fake.port });
+    expect(res.changes.deletes.map((c) => `${c.type}:${c.id}`).sort())
+      .toEqual([`calendar_connection:${cc}`, `calendar_event:${ev}`].sort());
+  });
 });

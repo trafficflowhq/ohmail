@@ -36,8 +36,9 @@ const CACHE_PURGE_VALUE = "cache";
 /**
  * THE CACHE CLEAR, ASKED FOR ON ITS OWN, carried by `POST /auth/refresh` ahead of everything that
  * reads the jar. On a cookie surface a request naming it is answered 202 with `Clear-Site-Data`
- * and nothing else: no cookie, session or database is read, nothing is rotated or ended, and no
- * `Set-Cookie` goes out, so a late answer can never clear a newer session. A bearer-only host has
+ * and a matching acknowledgement for browsers that hide that directive from JavaScript.
+ * No cookie, session or database is read, nothing is rotated or ended, and no `Set-Cookie`
+ * goes out, so a late answer can never clear a newer session. A bearer-only host has
  * no browser cache to clear and hands the request on unchanged.
  */
 export const withCachePurge: Middleware = (next) => async (req, deps, params) => {
@@ -46,6 +47,10 @@ export const withCachePurge: Middleware = (next) => async (req, deps, params) =>
   }
   return new Response(null, {
     status: 202,
-    headers: { "Clear-Site-Data": SESSION_END_CLEARS, "Cache-Control": "no-store" },
+    headers: {
+      "Clear-Site-Data": SESSION_END_CLEARS,
+      [CACHE_PURGE_HEADER]: CACHE_PURGE_VALUE,
+      "Cache-Control": "no-store",
+    },
   });
 };

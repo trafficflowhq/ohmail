@@ -1,0 +1,367 @@
+{
+  "component": "Palette",
+  "state": "typed",
+  "look": "ohmarchy-light-desktop",
+  "place": "window",
+  "target": [420, 64, 600, 320],
+  "clip": [420, 64, 600, 320],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "12px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(95, 94, 90)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "12px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "-0.16px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "15.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(95, 94, 90)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "15.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(95, 94, 90)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "12px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(32, 94, 166) 0px 0px 0px 2px" },
+    { "boxShadow": "rgb(195, 193, 184) 0px 0px 0px 1px inset" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 3 2fe5e7620c87" },
+    { "ink": "stroke rgb(95, 94, 90) 1.6px square miter 4; shapes 2 1d9ee29ca690" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 2 1d9ee29ca690" }
+  ],
+  "nodes": [
+    {
+      "role": "dialog",
+      "name": "Command palette",
+      "box": [420, 64, 600, 320],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "8px",
+        "paddingRight": "8px",
+        "paddingBottom": "8px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Ctrl K", "type": 0 },
+        { "said": "↑ ↓", "type": 1 },
+        { "said": "navigate", "type": 2 },
+        { "said": "↵", "type": 1 },
+        { "said": "run", "type": 2 },
+        { "said": "esc", "type": 1 },
+        { "said": "close", "type": 2 }
+      ],
+      "surfaces": [
+        { "box": [420, 64, 600, 320], "paint": 0 },
+        { "box": [948.8, 86, 51.2, 18], "paint": 1 },
+        { "box": [440, 354, 18, 18], "paint": 1 },
+        { "box": [462, 354, 18, 18], "paint": 1 },
+        { "box": [557.6, 354, 18, 18], "paint": 1 },
+        { "box": [617.2, 354, 29.6, 18], "paint": 1 }
+      ]
+    },
+    {
+      "role": "textbox",
+      "name": "Command",
+      "box": [428, 72, 508.8, 46],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "22.4px",
+        "letterSpacing": "-0.16px",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "tag", "type": 3, "shown": true }]
+    },
+    {
+      "role": "listbox",
+      "name": "",
+      "box": [428, 118, 584, 224],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      }
+    },
+    {
+      "role": "option",
+      "name": "Settings: Tags",
+      "box": [428, 118, 584, 32],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgb(246, 243, 231)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "15.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "state": ["selected"],
+      "text": [{ "said": "Settings: Tags", "type": 4 }],
+      "surfaces": [{ "box": [440, 126, 16, 16], "paint": 2 }]
+    },
+    {
+      "role": "option",
+      "name": "Tag: Pottery Project… t",
+      "box": [428, 150, 584, 32],
+      "drawn": {
+        "color": "rgb(95, 94, 90)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "15.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(95, 94, 90)"
+      },
+      "state": ["disabled"],
+      "text": [
+        { "said": "Tag: Pottery Project…", "type": 5 },
+        { "said": "t", "type": 6 }
+      ],
+      "surfaces": [
+        { "box": [440, 158, 16, 16], "paint": 3 },
+        { "box": [982, 157, 18, 18], "paint": 1 }
+      ]
+    },
+    {
+      "role": "option",
+      "name": "Tag: Paperwork…",
+      "box": [428, 182, 584, 32],
+      "drawn": {
+        "color": "rgb(95, 94, 90)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "15.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(95, 94, 90)"
+      },
+      "state": ["disabled"],
+      "text": [{ "said": "Tag: Paperwork…", "type": 5 }],
+      "surfaces": [{ "box": [440, 190, 16, 16], "paint": 3 }]
+    },
+    {
+      "role": "option",
+      "name": "Tag: Adventures…",
+      "box": [428, 214, 584, 32],
+      "drawn": {
+        "color": "rgb(95, 94, 90)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "15.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(95, 94, 90)"
+      },
+      "state": ["disabled"],
+      "text": [{ "said": "Tag: Adventures…", "type": 5 }],
+      "surfaces": [{ "box": [440, 222, 16, 16], "paint": 3 }]
+    },
+    {
+      "role": "option",
+      "name": "Go to tag: Pottery Project",
+      "box": [428, 246, 584, 32],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "15.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Go to tag: Pottery Project", "type": 4 }],
+      "surfaces": [{ "box": [440, 254, 16, 16], "paint": 4 }]
+    },
+    {
+      "role": "option",
+      "name": "Go to tag: Paperwork",
+      "box": [428, 278, 584, 32],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "15.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Go to tag: Paperwork", "type": 4 }],
+      "surfaces": [{ "box": [440, 286, 16, 16], "paint": 4 }]
+    },
+    {
+      "role": "option",
+      "name": "Go to tag: Adventures",
+      "box": [428, 310, 584, 32],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "15.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Go to tag: Adventures", "type": 4 }],
+      "surfaces": [{ "box": [440, 318, 16, 16], "paint": 4 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

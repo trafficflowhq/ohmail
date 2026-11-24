@@ -1,52 +1,23 @@
 import {
   ServiceError, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds, readForwardParts,
   requireUuid, parseReaderLocale, parseReaderZone,
-  type CreateDraftBody, type PatchDraftBody, type SendResolution,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer, answerBuilt } from "../responses.js";
 import { makeSendAdapter } from "../send-adapter.js";
-import { makeOpenAdapter } from "../attachments-adapter.js";
+import { SEND_KEY_MAX, sendDepsOf, sendKeyOf } from "../send-deps.js";
 import type { Route } from "../router.js";
 import { drafts, schedules, sends, readBody } from "./shared.js";
+import type {
+  CreateDraftBody,
+  PatchDraftBody,
+  RequestOf,
+  SendAttachmentWire,
+  SendResolution,
+  UntrustedBody,
+} from "@ohmail/wire";
 
-/**
- * The send request's body — everything the delivery needs beyond the stored draft, nothing kept.
- * Two attachment shapes, both live: `attachments` carries bytes as base64 — the browser stages
- * only above the inline ceiling and the desktop app never stages, so nearly every send is this
- * shape; removing it would first require both clients to stage unconditionally.
- * `stagedAttachmentIds` names upload tickets already in object storage — the transport that lifts
- * the serverless body limit. Either or both; the service concatenates (inline first) and applies
- * one cap whose surface term depends on the shapes present (`sendSurfaceFor`). Neither is
- * persisted — `ifContentRevision`, the draft version this press saw, included.
- */
-export interface SendAttachmentWire { filename?: string; contentType?: string; contentBase64?: string }
-interface SendRequestBody {
-  attachments?: SendAttachmentWire[];
-  /** Upload-ticket ids. Account-scoped in the service; a foreign id is a 404. */
-  stagedAttachmentIds?: unknown;
-  /** Forward this original — the server reads it, refuses an unconfirmed no_forward one, and quotes it. */
-  forwardOf?: string;
-  /** Which of the original's parts go (attachment ids), only beside `forwardOf`; absent: all of them. */
-  forwardParts?: unknown;
-  /** The person confirmed forwarding a no_forward original after the ask. Only `true` counts. */
-  forwardConfirmed?: unknown;
-  /** The sender's IANA zone and language tag, for the date the quoted header gives the original. */
-  forwardZone?: unknown;
-  forwardLocale?: unknown;
-  /**
-   * WHICH VERSION OF THE DRAFT THIS PRESS WAS COMPOSED AGAINST — the `DraftDTO.contentRevision`
-   * the client last saw. The send refuses a row that has moved off it (`draft_changed`, 409) and
-   * delivers nothing. Absent is UNSTATED, which a client predating the field is: it sends as it
-   * always did.
-   */
-  ifContentRevision?: unknown;
-  /**
-   * SEND THE HELD MESSAGE AGAIN under its own Message-ID, Sent checked first. Only `true` counts;
-   * with staged files or a forward field it is refused, since the held row names its own original.
-   */
-  again?: unknown;
-}
+/** One file of a send as the request carries it, declared with the wire's vocabulary beside the send's body. */
 
 /** A parsed value, or `undefined` where the parser refused it. */
 function unlessMalformed<T>(parse: () => T | undefined): T | undefined {
@@ -163,20 +134,8 @@ export function decodeSendAttachments(
   }));
 }
 
-/**
- * A SEND'S KEY, AS THE CLIENTS MINT IT: a UUID, or a short tag in front of one. Required, and refused
- * past {@link SEND_KEY_MAX} characters: the reservation and a Cancel's tombstone keep it in a row
- * that is never pruned, so an unbounded header would be storage any session could grow.
- */
-export const SEND_KEY_MAX = 64;
-function sendKeyOf(req: Request): string {
-  const key = req.headers.get("idempotency-key");
-  if (!key) throw new ServiceError("validation_failed", 400, "Idempotency-Key header is required");
-  if (key.length > SEND_KEY_MAX) {
-    throw new ServiceError("validation_failed", 400, `Idempotency-Key is longer than ${SEND_KEY_MAX} characters`);
-  }
-  return key;
-}
+/** The send's key and its bound, read where every route that sends reads them (`send-deps.ts`). */
+export { SEND_KEY_MAX };
 
 /**
  * §5 /drafts — manual compose drafts. create/update/delete emit a
@@ -197,11 +156,12 @@ export const draftsRoutes: Route[] = [
     // sets the same values twice and a DELETE of the deleted answers 404, both convergent.
     method: "POST",
     pattern: "/drafts",
+    wire: true,
     relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps) => {
-      const body = await readBody<CreateDraftBody>(req);
+      const body = await readBody<RequestOf<"POST /drafts">>(req);
       const { draft, seq } = await drafts(deps).create(serviceContext(deps, req), body, {
         idempotency: deps.idempotency
           ? {
@@ -214,44 +174,76 @@ export const draftsRoutes: Route[] = [
             }
           : undefined,
       });
-      return jsonResponse(draft, { status: 201, seq });
+      return answer<"POST /drafts">()(draft, { status: 201, seq });
     },
   },
   {
     method: "GET",
     pattern: "/drafts/:id",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await drafts(deps).get(serviceContext(deps, req), params.id!);
-      return jsonResponse(dto);
+      return answer<"GET /drafts/:id">()(dto);
     },
   },
   {
     method: "PUT",
     pattern: "/drafts/:id",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
-      const { ifContentRevision: stated, ...patch } = await readBody<PatchDraftBody & { ifContentRevision?: unknown }>(req);
+      const { ifContentRevision: stated, ...patch } = await readBody<RequestOf<"PUT /drafts/:id">>(req);
       // The version the edit was made on: a draft moved off it refuses the edit (409 draft_changed).
       const ifContentRevision = readContentRevision(stated);
       const { draft, seq } = await drafts(deps).update(
         serviceContext(deps, req), params.id!, patch, ifContentRevision ? { ifContentRevision } : {},
       );
-      return jsonResponse(draft, { status: 200, seq });
+      return answer<"PUT /drafts/:id">()(draft, { status: 200, seq });
     },
   },
   {
     method: "DELETE",
     pattern: "/drafts/:id",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
       const { seq } = await drafts(deps).remove(serviceContext(deps, req), params.id!);
-      return new Response(null, { status: 204, headers: { "X-Sync-Seq": String(seq) } });
+      return answerBuilt<"DELETE /drafts/:id">(new Response(null, { status: 204, headers: { "X-Sync-Seq": String(seq) } }));
+    },
+  },
+  {
+    method: "DELETE",
+    pattern: "/drafts/:id/conditional",
+    wire: true,
+    relay: true,
+    cost: "work",
+    replay: "state",
+    handler: async (req, deps, params) => {
+      const url = new URL(req.url);
+      const ifContentRevision = readContentRevision(url.searchParams.get("ifContentRevision"));
+      const stamp = url.searchParams.get("ifUpdatedAt");
+      const ifUpdatedAt = stamp === null ? undefined : Date.parse(stamp);
+      if (stamp !== null && (stamp.length > 40 || !Number.isFinite(ifUpdatedAt))) {
+        throw new ServiceError("validation_failed", 400, "ifUpdatedAt must be a draft timestamp");
+      }
+      if (ifContentRevision === undefined && ifUpdatedAt === undefined) {
+        throw new ServiceError("validation_failed", 400, "conditional discard requires a draft revision or timestamp");
+      }
+      const headers = new Headers();
+      try {
+        const { seq } = await drafts(deps).remove(serviceContext(deps, req), params.id!, { ifContentRevision, ifUpdatedAt });
+        headers.set("X-Sync-Seq", String(seq));
+      } catch (err) {
+        // Already gone is a successful retry. A 404 on this path means the route is unsupported.
+        if (!(err instanceof ServiceError) || err.code !== "not_found") throw err;
+      }
+      return answerBuilt<"DELETE /drafts/:id/conditional">(new Response(null, { status: 204, headers }));
     },
   },
   {
@@ -267,15 +259,20 @@ export const draftsRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/drafts/:id/resolve",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "guarded",
     handler: async (req, deps, params) => {
-      const body = await readBody<{ outcome?: unknown }>(req);
+      const body = await readBody<UntrustedBody<RequestOf<"POST /drafts/:id/resolve">>>(req);
+      const { ifUpdatedAt } = body;
+      if (ifUpdatedAt !== undefined && (typeof ifUpdatedAt !== "string" || !Number.isFinite(Date.parse(ifUpdatedAt)))) {
+        throw new ServiceError("validation_failed", 400, "ifUpdatedAt must be a draft timestamp");
+      }
       const { draft, seq } = await drafts(deps).resolve(
-        serviceContext(deps, req), params.id!, body.outcome as SendResolution,
+        serviceContext(deps, req), params.id!, body.outcome as SendResolution, ifUpdatedAt,
       );
-      return jsonResponse(draft, { status: 200, seq });
+      return answer<"POST /drafts/:id/resolve">()(draft, { status: 200, seq });
     },
   },
   {
@@ -287,15 +284,16 @@ export const draftsRoutes: Route[] = [
     // like the other draft mutations, because that is what it is.
     method: "POST",
     pattern: "/drafts/:id/schedule",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
-      const body = await readBody<{ sendAt?: unknown }>(req);
+      const body = await readBody<UntrustedBody<RequestOf<"POST /drafts/:id/schedule">>>(req);
       const { draft, seq } = await schedules(deps).schedule(
         serviceContext(deps, req), params.id!, body.sendAt,
       );
-      return jsonResponse(draft, { status: 200, seq });
+      return answer<"POST /drafts/:id/schedule">()(draft, { status: 200, seq });
     },
   },
   {
@@ -304,12 +302,13 @@ export const draftsRoutes: Route[] = [
     // cancel of an already-plain draft is idempotent success (the asked-for state).
     method: "DELETE",
     pattern: "/drafts/:id/schedule",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
       const { draft, seq } = await schedules(deps).cancel(serviceContext(deps, req), params.id!);
-      return jsonResponse(draft, { status: 200, seq });
+      return answer<"DELETE /drafts/:id/schedule">()(draft, { status: 200, seq });
     },
   },
   {
@@ -322,6 +321,7 @@ export const draftsRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/drafts/:id/send-attempt",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
@@ -329,7 +329,7 @@ export const draftsRoutes: Route[] = [
       const firstSend = await sends(deps).attemptUnderKey(serviceContext(deps, req), params.id!, key);
       /* `found` is the answer and `firstSend` rides only with it: absent means "nothing has been
          sent under this key", which is the one reading that licenses staging and sending. */
-      return jsonResponse(firstSend ? { found: true, firstSend } : { found: false });
+      return answer<"GET /drafts/:id/send-attempt">()(firstSend ? { found: true, firstSend } : { found: false });
     },
   },
   {
@@ -342,16 +342,17 @@ export const draftsRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/sends/withdraw",
+    wire: true,
     relay: true,
     cost: "connection",
     replay: "state",
     handler: async (req, deps) => {
       const key = sendKeyOf(req);
-      const body = (await readBody<{ draftId?: unknown } | null>(req)) ?? {};
+      const body = (await readBody<UntrustedBody<RequestOf<"POST /sends/withdraw">> | null>(req)) ?? {};
       const draftId = body.draftId === undefined || body.draftId === null ? null : requireUuid(body.draftId, "draftId");
       const openSendAdapter = deps.services?.sendAdapter ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId));
-      const answer = await sends(deps).withdraw(serviceContext(deps, req), key, draftId, { openSendAdapter });
-      return jsonResponse(answer.firstSend ? { outcome: answer.outcome, firstSend: answer.firstSend } : { outcome: answer.outcome });
+      const withdrawn = await sends(deps).withdraw(serviceContext(deps, req), key, draftId, { openSendAdapter });
+      return answer<"POST /sends/withdraw">()(withdrawn.firstSend ? { outcome: withdrawn.outcome, firstSend: withdrawn.firstSend } : { outcome: withdrawn.outcome });
     },
   },
   {
@@ -364,6 +365,7 @@ export const draftsRoutes: Route[] = [
     // double-send. `makeSendAdapter` reads BOTH imap+smtp creds.
     method: "POST",
     pattern: "/drafts/:id/send",
+    wire: true,
     relay: true,
     // `connection` rather than `paid`: it opens SMTP (and IMAP, to verify by Sent) on the
     // user's own server and debits nothing metered. Sending mail from an address nobody has
@@ -376,7 +378,7 @@ export const draftsRoutes: Route[] = [
       const key = sendKeyOf(req);
       // Attachment bytes ride here — decoded to raw and handed to the service, never persisted. An
       // ordinary send carries no body, so `readBody` answers `{}` and this is `undefined`.
-      const body = await readBody<SendRequestBody>(req);
+      const body = await readBody<RequestOf<"POST /drafts/:id/send">>(req);
       const attachments = decodeSendAttachments(body.attachments);
       const stagedAttachmentIds = readStagedIds(body.stagedAttachmentIds);
       const forwardOf = typeof body.forwardOf === "string" && body.forwardOf.length > 0 ? body.forwardOf : undefined;
@@ -395,49 +397,8 @@ export const draftsRoutes: Route[] = [
       // THE ROW THIS PRESS SAW. Threaded to `SendService.reserve`, which compares it against the
       // row it locks — see `SendInput.ifContentRevision`.
       const ifContentRevision = readContentRevision(body.ifContentRevision);
-      // Prod: decrypt both imap+smtp creds → connected ImapAdapter. Tests
-      // may inject a fake/GreenMail send spy via `deps.services.sendAdapter`.
-      const openSendAdapter = deps.services?.sendAdapter ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId));
-      // Only ever OPENED on a forward (SendService calls it lazily), so a normal send builds this
-      // factory and never dials. Streams the forwarded original's attachments from the user's own
-      // IMAP, straight onto the outgoing message, never persisted.
-      const openFetchAdapter = makeOpenAdapter(deps);
       const result = await sends(deps).send(
-        serviceContext(deps, req), params.id!, key,
-        {
-          openSendAdapter, openFetchAdapter,
-          // Its clients replay a retryable answer under the same key.
-          rearmTransient: true,
-          // THE STORAGE CAP for the sent-copy projection. Every live host declares one
-          // (`ApiDeps.storageCapOf` — the hosted deployment's subscription read, the local
-          // hosts' typed UNMETERED). Passed through as-is: ABSENT means the service REFUSES
-          // the projection (never unmetered) — `SendDeps.resolveStorageCap` carries the rule.
-          ...(deps.services?.storageCapOf ? { resolveStorageCap: deps.services.storageCapOf } : {}),
-          // WHICH HOST IS CARRYING THESE BYTES. Absent on the hosted API, which resolves to the
-          // serverless body limit; `null` from the local engine, which has no request pipeline
-          // between this handler and SMTP. `SendService` takes the SMALLER of this and the
-          // mailbox's own announced `SIZE`, so neither host can send past what the user's mail
-          // server said it will accept.
-          //
-          // For a send whose bytes are STAGED the service resolves this to `null` itself — those
-          // bytes did not ride this host's request body, so a declaration about that body says
-          // nothing about them. `sendSurfaceFor` holds that rule; this stays the host's honest
-          // statement about its own pipeline.
-          surfaceMaxTotalBytes: deps.services?.sendSurfaceMaxTotalBytes,
-          // WHERE THE SENT COPY IS WAITED FOR: inside the request on Cloud, in memory where the host outlives it.
-          ...(deps.services?.sendCopyOutlivesAnswer === true ? { copyOutlivesAnswer: true } : {}),
-          ...(deps.services?.sendKeepOwedCopy !== undefined && deps.services.sendKeepOwedCopy !== false
-            ? { keepOwedCopy: deps.services.sendKeepOwedCopy } : {}),
-          ...(deps.services?.sendSubmissionCeilingMs !== undefined
-            ? { submissionCeilingMs: deps.services.sendSubmissionCeilingMs } : {}),
-          ...(deps.services?.sendHoldOffer ? { holdOffer: deps.services.sendHoldOffer } : {}),
-          // WHERE STAGED BYTES COME FROM. Absent on a host with no object storage — a local
-          // install — and then a request naming staged references is REFUSED rather than sent
-          // without its files.
-          ...(deps.services?.attachmentStaging
-            ? { stagedAttachments: deps.services.attachmentStaging(deps.db).source }
-            : {}),
-        },
+        serviceContext(deps, req), params.id!, key, sendDepsOf(deps),
         { attachments, stagedAttachmentIds, forwardOf,
           ...(forwardConfirmed ? { forwardConfirmed } : {}),
           ...(forwardParts ? { forwardParts } : {}),
@@ -449,11 +410,12 @@ export const draftsRoutes: Route[] = [
       switch (result.status) {
         case "sent":
           // `firstSend` RIDES WHEN THE SERVICE STATES IT, and only then: it means this key was
-          // already settled and this request delivered nothing. Absent on an ordinary send, so
-          // the shape every installed client parses today is byte-identical to what it was.
-          return jsonResponse(
+          // already settled and this request delivered nothing. The reservation names the draft
+          // that went, even when the request named a different one.
+          return answer<"POST /drafts/:id/send">()(
             {
-              status: "sent", providerMessageId: result.providerMessageId,
+              status: "sent", providerMessageId: result.providerMessageId, sentDraftId: result.draftId,
+              ...(result.sentDraftThrough === undefined ? {} : { sentDraftThrough: result.sentDraftThrough }),
               ...(result.firstSend ? { firstSend: result.firstSend } : {}),
               ...(result.sentCopy ? { sentCopy: result.sentCopy } : {}),
               ...(result.sentCopyReason ? { sentCopyReason: result.sentCopyReason } : {}),
@@ -462,7 +424,7 @@ export const draftsRoutes: Route[] = [
             { status: 200, seq: result.seq ?? undefined },
           );
         case "unverified":
-          return jsonResponse(
+          return answer<"POST /drafts/:id/send">()(
             {
               status: "unverified",
               message: "We couldn't confirm this send. Check your Sent folder before retrying.",
@@ -470,7 +432,7 @@ export const draftsRoutes: Route[] = [
             { status: 200, seq: result.seq ?? undefined },
           );
         case "failed":
-          return jsonResponse(
+          return answer<"POST /drafts/:id/send">()(
             { status: "failed", message: "A prior send under this key failed and was not delivered." },
             { status: 409 },
           );
@@ -484,7 +446,7 @@ export const draftsRoutes: Route[] = [
           //
           // `X-Sync-Seq` rides it: the reservation's own draft change (`sending`) is a committed
           // row the client must drain past, and it exists whether or not the submission lands.
-          return jsonResponse(
+          return answer<"POST /drafts/:id/send">()(
             {
               status: "queued",
               message: "This send was accepted and is still being handed to your mail server.",
@@ -492,7 +454,7 @@ export const draftsRoutes: Route[] = [
             { status: 202, seq: result.seq ?? undefined },
           );
         default:
-          return jsonResponse(
+          return answer<"POST /drafts/:id/send">()(
             { status: "in_flight", message: "A send for this draft is already in progress." },
             { status: 409 },
           );

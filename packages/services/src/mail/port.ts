@@ -107,7 +107,7 @@ export function underTestRunner(): boolean {
 export function normalizeRecipient(raw: string): string | null {
   const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
   if (value.length === 0 || value.length > 254) return null;
-  if (/[\s<>,;"\\]/.test(value)) return null;
+  if (/[\s<>,;"\\\u0000-\u001f\u007f\p{Cs}]/u.test(value)) return null;
   const at = value.lastIndexOf("@");
   if (at <= 0 || at === value.length - 1) return null;
   // Exactly one `@`. `lastIndexOf` alone accepts `two@@example.com` by reading the local part

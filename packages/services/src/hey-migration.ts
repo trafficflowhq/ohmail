@@ -306,7 +306,7 @@ export class HeyMigrationService {
       // declined row is never counted or dialled. Not inside a transaction — the guard is a
       // single statement.
       const [claimed] = await asTx(ctx).insert(folderState).values({
-        messageId: r.messageId, desiredFolder: dest, observedFolder: r.observedFolder,
+        messageId: r.messageId, accountId: ctx.accountId, desiredFolder: dest, observedFolder: r.observedFolder,
         lastSetBy: "us", reconcileStatus: "pending", conflict: false,
       }).onConflictDoUpdate({
         target: folderState.messageId,

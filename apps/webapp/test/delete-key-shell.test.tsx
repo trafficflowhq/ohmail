@@ -1,22 +1,21 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
-import { UNDO_MS } from "../app/shell/delete-undo";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { UNDO_MS } from "@ohmail/app-logic/press/delete-undo";
+import { cursorRow, openLetter, reportPress, reportSays } from "./ohbox/_finders.js";
 
 /**
  * BACKSPACE AND DELETE, ON THE SHIPPED SHELL, THROUGH BOTH DOORS.
@@ -104,6 +103,8 @@ beforeEach(() => {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  /* The frame's report animates its way out (the kit's motion): jsdom has no Web Animations. */
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}
@@ -117,6 +118,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
   document.body.innerHTML = "";
@@ -133,7 +135,7 @@ const address = (id: string): string => `p${id}@example.invalid`;
 const msg = (id: string): EngineMessage => ({
   id, accountId: "a1", mailboxId: "mb1", threadId: `t-${id}`, folder: "INBOX",
   subject: `Subject ${id}`, from: { address: address(id), name: `Person ${id}` },
-  to: [], date: "2026-09-03T09:00:00.000Z", unread: false,
+  to: [], cc: [], labels: [], date: "2026-09-03T09:00:00.000Z", unread: false,
   updatedAt: "2026-09-03T09:00:00.000Z",
 } as unknown as EngineMessage);
 
@@ -301,7 +303,7 @@ async function shell(
   history: string[] = [],
   consent: ConsentDouble = consentTransport,
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(["m1", "m2", "m3"], history));
   const container = document.createElement("div");
@@ -357,8 +359,10 @@ const settle = async (): Promise<void> => {
 };
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll(".row[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
-const toastText = (): string => document.querySelector(".toast")?.textContent ?? "";
+  [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
+/** What the press answered: the frame's report at a seated place (today's shell said it in its toast). */
+const toastText = (): string => reportSays();
+const endWords = (line: string): string => line.replace(/\.$/u, "");
 const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_delete");
 
 describe("an install that organizes the mailbox", () => {
@@ -370,7 +374,7 @@ describe("an install that organizes the mailbox", () => {
     await key("Backspace");
 
     await waitFor(() => !rowIds(container).includes(id), "the row to leave the list");
-    expect(toastText()).toContain(messages.ohbox.toastDeleted);
+    expect(toastText()).toContain(endWords(messages.ohbox.toastDeleted));
     expect(toastText()).toContain(messages.screener.toastUndo);
     /* THE WHOLE POINT OF THE WINDOW. The press is reversible because nothing has been sent —
        `message_delete` has no inverse, so an Undo over a request already gone would be a button
@@ -385,12 +389,12 @@ describe("an install that organizes the mailbox", () => {
     await key("Backspace");
     await waitFor(() => !rowIds(container).includes(id), "the row to leave the list");
 
-    const undo = document.querySelector<HTMLButtonElement>(".toast-act");
+    const undo = reportPress();
     expect(undo, "the toast carried no Undo").not.toBeNull();
     await act(async () => { undo!.click(); });
 
     await waitFor(() => rowIds(container).includes(id), "the row to come back");
-    expect(toastText()).toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(endWords(messages.ohbox.deleteUndone));
     expect(deletes()).toEqual([]);
   });
 
@@ -429,25 +433,34 @@ describe("an install that organizes the mailbox", () => {
     const before = rowIds(container);
     await key("j");
     await key("?");
-    await waitFor(() => document.querySelector(".ks") != null, "the shortcut sheet");
+    await screen.findByRole("dialog", { name: messages.shortcuts.title });
     /* The sheet dismisses on ANY key, so this press both closes it and — with the gate missing —
        would delete underneath it. That is the sequence worth guarding: the gate is read at the
        moment of the press, not after the sheet has gone. */
     await key("Backspace");
     await settle();
     expect(rowIds(container)).toEqual(before);
-    expect(toastText()).not.toContain(messages.ohbox.toastDeleted);
+    expect(toastText()).not.toContain(endWords(messages.ohbox.toastDeleted));
     expect(deletes()).toEqual([]);
   });
 
   it("the `?` sheet documents it as ONE row with both keycaps", async () => {
     await shell(ORGANIZER_ROSTER);
     await key("?");
-    await waitFor(() => document.querySelector(".ks") != null, "the shortcut sheet");
-    const rows = [...document.querySelectorAll<HTMLElement>(".ks li")]
-      .filter((li) => (li.querySelector(".ks-lab")?.textContent ?? "").trim() === messages.shortcuts.deleteKey);
-    expect(rows, "the sheet does not document the delete key").toHaveLength(1);
-    expect([...rows[0]!.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["⌫", "⌦"]);
+    const resting = await screen.findByRole("dialog", { name: messages.shortcuts.title });
+    const unavailable = within(resting).getByText(messages.reader.key.deleteKey, { exact: true }).closest("p");
+    expect(unavailable?.getAttribute("aria-disabled")).toBe("true");
+    expect(unavailable?.getAttribute("title")).toBe(messages.shortcuts.needsCursor);
+    expect([...unavailable!.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["d", "⌫", "⌦"]);
+    await key("Escape");
+    await key("j");
+    await key("?");
+    const help = await screen.findByRole("dialog", { name: messages.shortcuts.title });
+    const rows = within(help).getAllByText(messages.reader.key.deleteKey, { exact: true });
+    expect(rows, "the sheet documents one delete row").toHaveLength(1);
+    const row = rows[0]!.closest("p");
+    expect(row).toBeTruthy();
+    expect([...row!.querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["d", "⌫", "⌦"]);
   });
 });
 
@@ -480,7 +493,7 @@ describe("\"USE FOLDERS\" IS NOT A TERM — the same press, on a folders-off acc
     await key("Backspace");
 
     await waitFor(() => !rowIds(container).includes(id), "the row to leave the list");
-    expect(toastText()).toContain(messages.ohbox.toastDeleted);
+    expect(toastText()).toContain(endWords(messages.ohbox.toastDeleted));
     expect(toastText()).toContain(messages.screener.toastUndo);
     expect(deletes()).toEqual([]);
   });
@@ -508,32 +521,28 @@ describe("\"USE FOLDERS\" IS NOT A TERM — the same press, on a folders-off acc
   }, UNDO_MS + 20000);
 
   it("`d` OPENS THE ASK with the switch off — and the sheet draws neither row greyed", async () => {
-    /* The `?` sheet's `off` class is computed from each binding's `disabled`, so this case is
-       what a person actually sees: before the fix both the `d` row and the `⌫·⌦` row were drawn
-       greyed on a folders-off account, which is how a live check found the defect. */
+    /* With folders off both Delete bindings are still available for an organized mailbox. */
     const container = await shell(ORGANIZER_ROSTER, [], foldersOffConsentTransport);
     await key("j");
 
     await key("?");
-    await waitFor(() => document.querySelector(".ks") != null, "the shortcut sheet");
-    const rowFor = (label: string): HTMLElement => {
-      const li = [...document.querySelectorAll<HTMLElement>(".ks li")]
-        .find((el) => (el.querySelector(".ks-lab")?.textContent ?? "").trim() === label);
-      expect(li, `the sheet does not document ${JSON.stringify(label)}`).not.toBeUndefined();
-      return li!;
-    };
-    expect(rowFor(messages.shortcuts.deleteKey).className, "⌫·⌦ drawn greyed with folders off")
-      .not.toContain("off");
-    expect(rowFor(messages.shortcuts.deleteAsk).className, "`d` drawn greyed with folders off")
-      .not.toContain("off");
+    const help = await screen.findByRole("dialog", { name: messages.shortcuts.title });
+    // The registered sheet lists a shortcut only while its action is available.
+    expect(within(help).getByText(messages.reader.key.deleteKey, { exact: true })).toBeTruthy();
+    expect(within(help).getByText(messages.reader.key.deleteAsk, { exact: true })).toBeTruthy();
     await key("Escape");
 
+    const kept = rowIds(container);
     await key("d");
-    await waitFor(() => container.querySelector(".abar-delete") != null,
-      "the delete confirm strip");
-    const strip = container.querySelector<HTMLElement>(".abar-delete")!;
-    expect(strip.getAttribute("role")).toBe("alertdialog");
-    // The ask ALONE dispatches nothing — the ceremony is unchanged, only its admission moved.
+    // The cursor opened this letter beside the list. Its first Delete press offers the
+    // decision in More. On the compact closed list the cursor asks in its own dialog.
+    const more = await screen.findByRole("menu", { name: messages.reader.verb.more });
+    expect(within(more).getByRole("menuitem", { name: messages.reader.verb.delete })).toBeTruthy();
+    expect(deletes()).toEqual([]);
+    expect(rowIds(container)).toEqual(kept);
+    await key("Escape");
+    expect(screen.queryByRole("menu", { name: messages.reader.verb.more })).toBeNull();
+    expect(rowIds(container)).toEqual(kept);
     expect(deletes()).toEqual([]);
   });
 
@@ -547,9 +556,9 @@ describe("\"USE FOLDERS\" IS NOT A TERM — the same press, on a folders-off acc
     // The catalogue's sentence, chosen by the shipped derivation from the roster — the same
     // assertion the folders-ON reader case makes, so the two differ in the flag and nothing else.
     expect(toastText()).toContain(
-      messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud"),
+      endWords(messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud")),
     );
-    expect(toastText()).not.toContain(messages.ohbox.toastDeleted);
+    expect(toastText()).not.toContain(endWords(messages.ohbox.toastDeleted));
     expect(deletes()).toEqual([]);
   });
 });
@@ -564,13 +573,13 @@ describe("an install that only READS the mailbox", () => {
 
     // The sentence is the catalogue's, chosen by the shipped derivation from the roster above.
     expect(toastText()).toContain(
-      messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud"),
+      endWords(messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud")),
     );
     // Nothing moved, nothing was hidden, and nothing reached the wire — the three halves that
     // came apart in the released Screener, where a press said "filed" over an untouched server.
     expect(rowIds(container)).toEqual(before);
     expect(deletes()).toEqual([]);
-    expect(toastText()).not.toContain(messages.ohbox.toastDeleted);
+    expect(toastText()).not.toContain(endWords(messages.ohbox.toastDeleted));
   });
 
   it("…and no window opens behind the refusal — the delete never arrives late", async () => {
@@ -599,7 +608,7 @@ describe("the roster decides, one mailbox at a time", () => {
     await key("Backspace");
     await settle();
     expect(toastText()).toContain(
-      messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud"),
+      endWords(messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud")),
     );
     expect(rowIds(container)).toEqual(before);
     expect(deletes()).toEqual([]);
@@ -615,8 +624,8 @@ describe("the roster decides, one mailbox at a time", () => {
     await key("j");
     await key("Backspace");
     await waitFor(() => rowIds(container).length < before.length, "the row to leave the list");
-    expect(toastText()).toContain(messages.ohbox.toastDeleted);
-    expect(toastText()).not.toContain(messages.screener.readerMoveRefusedUnknown);
+    expect(toastText()).toContain(endWords(messages.ohbox.toastDeleted));
+    expect(toastText()).not.toContain(endWords(messages.screener.readerMoveRefusedUnknown));
     await waitFor(() => deletes().length > 0, "the delete to reach the wire", UNDO_MS + 8000);
     expect(deletes()).toHaveLength(1);
   }, UNDO_MS + 20000);
@@ -627,7 +636,7 @@ describe("the roster decides, one mailbox at a time", () => {
     await key("j");
     await key("Backspace");
     await settle();
-    expect(toastText()).toContain(messages.screener.readerMoveRefusedUnknown);
+    expect(toastText()).toContain(endWords(messages.screener.readerMoveRefusedUnknown));
     expect(rowIds(container)).toEqual(before);
     expect(deletes()).toEqual([]);
   });
@@ -694,12 +703,12 @@ describe("HISTORY is filtered like every other view", () => {
 
     await key("j");
     // j walks History now: the row under the cursor is the one the delete takes.
-    const cursor = container.querySelector<HTMLElement>(".view .row.sel")!.dataset.id!;
+    const cursor = cursorRow(container)!.dataset.id!;
     await key("Backspace");
     await waitFor(() => !rowIds(container).includes(cursor), "the row to leave History");
     expect(deletes(), "and still nothing on the wire").toEqual([]);
 
-    const undo = document.querySelector<HTMLButtonElement>(".toast-act");
+    const undo = reportPress();
     expect(undo, "the toast carried no Undo").not.toBeNull();
     await act(async () => { undo!.click(); });
     await waitFor(() => rowIds(container).includes(cursor), "the row to come back to History");
@@ -715,17 +724,21 @@ describe("a refused press changes nothing on screen", () => {
        screen (review finding). `remove` answers whether it acted so the caller can order this. */
     /* NARROW, because the sheet is what a narrow layout raises: at a standing reading column
        there is no `readerFor` to close and the ordering under test is not reachable. */
-    narrow = true;
-    const container = await shell(READER_ROSTER);
-    await waitFor(() => rowIds(container).length > 0, "rows");
+    await shell(READER_ROSTER);
     await key("j");
     await key("Enter");
-    await waitFor(() => document.querySelector(".reader") != null, "the reading sheet to open");
+    await act(() => {
+      narrow = true;
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
+      window.dispatchEvent(new Event("resize"));
+    });
+    await waitFor(() => document.querySelector(".fr-reading[data-over]") !== null && openLetter(document) !== null,
+      "the letter standing inside the narrow reading sheet");
     await key("Backspace");
     await settle();
-    expect(document.querySelector(".reader"), "the sheet must still be there").not.toBeNull();
+    expect(openLetter(document), "the sheet must still be there").not.toBeNull();
     expect(toastText()).toContain(
-      messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud"),
+      endWords(messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud")),
     );
     expect(deletes()).toEqual([]);
   });

@@ -7,8 +7,9 @@
  * The controls: a retryable refusal names nothing (it stays queued under its key), and the
  * `unverified` naming is untouched (send-ambiguity.test.ts owns it).
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { HttpAdapter, MutationRejectedError, type EngineMutation } from "@ohmail/client-engine";
+import { HttpAdapter, MutationRejectedError } from "@ohmail/client-engine";
 
 const SEND = {
   kind: "mail_send", inReplyTo: null, mailboxId: "mbx-1", subject: "offline", body: "one letter",

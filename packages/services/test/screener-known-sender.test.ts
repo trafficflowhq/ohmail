@@ -96,9 +96,9 @@ async function seed(): Promise<World> {
       subject: `Note ${i}`, snippet: "", fromAddress: from, date: RECENT, unread: true,
       createdAt: RECENT, nativeLocator: { folder, ref: `1:${i}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
       lastSetBy, reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -191,7 +191,7 @@ describe("the Screener queue never calls a sender this account already knows fir
       createdAt: RECENT, nativeLocator: { folder: GATE, ref: "1:99" },
     }).returning();
     await w.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     expect(await listed(w)).toEqual(["stranger@x.test"]);

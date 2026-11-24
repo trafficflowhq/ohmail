@@ -4,17 +4,23 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import type { OhmailEngine } from "@ohmail/client-engine";
+import type { FeatureEntry, HostContract } from "@ohmail/app/host";
 
 import messages from "../../webapp/messages/en.json";
-import { COMPOSE_DRAFT_PREFIX } from "../../webapp/app/shell/compose";
-import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { COMPOSE_DRAFT_PREFIX } from "@ohmail/app-logic/writing/compose";
+import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY } from "../../paired-page/src/bearer.js";
+import { HostGate, PAIRED_PANE_PARTS } from "../../paired-page/src/HostGate.js";
 
 /**
  * WHAT THE PAIRED PAGE KEEPS GOES WITH THE PAIRING, AND A BROWSER THAT KEEPS NOTHING SAYS SO.
  * The gate is rendered with the shell captured: its engine is driven, the discard it asks for is
  * recorded, and the strip it hands the shell is rendered. What a discard and the store do to a
- * real IndexedDB is measured with `fake-indexeddb`, beside the engine's own tests.
+ * real IndexedDB is measured with `fake-indexeddb`, beside the engine's own tests. The shell is the mail frame now
+ * (`MailFrame` of the web's `browser-mail`, which every browser host mounts): the host the gate hands it is captured,
+ * and what the old shell's props carried is read off it (its engine, the notice of the account's strip). The way out
+ * is the Account section's door the gate hands Settings (`PAIRED_PANE_PARTS.account.useDoor`). The question before
+ * sign-out is the section's own case (`packages/app/test/mail/settings.test.tsx`, "on a browser signed in to
+ * somebody's computer it is the sign-out alone, which asks first").
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,29 +35,42 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
     dispatchEvent() { return false; },
   })) as never;
 
-let shellProps: Record<string, unknown> | null = null;
+/** A notice the frame says, as a feature hands it. */
+type FrameNotice = ReturnType<NonNullable<FeatureEntry["notice"]>>[number];
+let host: HostContract | null = null;
+/** What the old shell was handed, read off the host the frame is handed. */
+const shellProps = {
+  get engine(): OhmailEngine { return host!.engine as unknown as OhmailEngine; },
+  get accountNotice(): (() => readonly FrameNotice[]) | undefined { return (host!.features.accountStrip as FeatureEntry).notice; },
+};
 let pairProps: ({ onPaired: () => void } & Record<string, unknown>) | null = null;
 /** Every discard the gate asked for, in order: `undefined` is every pairing's. */
 let discards: Array<{ except?: string | null } | undefined> = [];
 
-vi.mock("../../webapp/app/shell/AppShell", async () => {
-  const real = await vi.importActual<typeof import("../../webapp/app/shell/AppShell")>(
-    "../../webapp/app/shell/AppShell",
-  );
-  return { ...real, AppShell: (props: Record<string, unknown>) => { shellProps = props; return null; } };
+/** A part a case stands where the frame stands, under what the gate stands around it; none by default. */
+let probe: (() => null) | null = null;
+
+vi.mock("../../webapp/app/shell/browser-mail", async () => ({
+  ...await vi.importActual<object>("../../webapp/app/shell/browser-mail"),
+  MailFrame: (props: { host: HostContract }) => { host = props.host; return probe === null ? null : h(probe); },
+}));
+/* As the old shell's stand-in did: nothing below the gate drives the engine; the cases drive it themselves. */
+vi.mock("../../webapp/app/shell/engine", async () => {
+  const real = await vi.importActual<typeof import("../../webapp/app/shell/engine")>("../../webapp/app/shell/engine");
+  return { ...real, EngineProvider: ({ children }: { children: React.ReactNode }) => children };
 });
-vi.mock("../src/host-client/PairScreen.js", async () => {
-  const real = await vi.importActual<typeof import("../src/host-client/PairScreen.js")>(
-    "../src/host-client/PairScreen.js",
+vi.mock("../../paired-page/src/PairScreen.js", async () => {
+  const real = await vi.importActual<typeof import("../../paired-page/src/PairScreen.js")>(
+    "../../paired-page/src/PairScreen.js",
   );
   return {
     ...real,
     PairScreen: (props: { onPaired: () => void } & Record<string, unknown>) => { pairProps = props; return null; },
   };
 });
-vi.mock("../src/host-client/outbox-store.js", async () => {
-  const real = await vi.importActual<typeof import("../src/host-client/outbox-store.js")>(
-    "../src/host-client/outbox-store.js",
+vi.mock("../../paired-page/src/outbox-store.js", async () => {
+  const real = await vi.importActual<typeof import("../../paired-page/src/outbox-store.js")>(
+    "../../paired-page/src/outbox-store.js",
   );
   return {
     ...real,
@@ -138,6 +157,12 @@ async function mount(bearer: BearerManager): Promise<void> {
   await ticks(2);
 }
 
+/** A notice the frame would say: its title and its answers, as the slot draws them. */
+function Said({ notice }: { notice: () => readonly FrameNotice[] }) {
+  const said = notice();
+  return h("div", null, ...said.map((n, i) => h("p", { key: i }, n.title, ...(n.acts ?? []).map((a) => h("button", { key: a.label, type: "button", onClick: a.onPress }, a.label)))));
+}
+
 /** Render a node the gate handed the shell, and read what a person would see. */
 async function textOf(node: unknown): Promise<string> {
   const el = document.createElement("div");
@@ -153,7 +178,7 @@ async function textOf(node: unknown): Promise<string> {
 beforeEach(() => {
   mode = "away";
   reached = [];
-  shellProps = null;
+  host = null;
   pairProps = null;
   discards = [];
   window.localStorage.clear();
@@ -225,14 +250,14 @@ describe("a browser that will not keep them says so, once", () => {
     await ticks(2);
     const notice = shellProps!.accountNotice;
     expect(notice).toBeDefined();
-    expect(await textOf(notice)).toContain(messages.pairLanding.outboxNotKept);
+    expect(await textOf(h(Said, { notice: notice! }))).toContain(messages.pairLanding.outboxNotKept);
 
     // Dismissed, it stays away for this pairing.
     const el = document.createElement("div");
     document.body.append(el);
     const r = createRoot(el);
     await act(async () => {
-      r.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: notice as React.ReactNode }));
+      r.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(Said, { notice: notice! }) }));
     });
     await act(async () => { el.querySelector("button")!.click(); });
     await act(async () => r.unmount());
@@ -260,41 +285,32 @@ describe("a browser that will not keep them says so, once", () => {
  * gone with it, and the landing saying what happened at the computer rather than "the pairing ended".
  */
 describe("Sign out on the paired browser", () => {
-  let paneRoot: Root | null = null;
-  let paneEl: HTMLDivElement | null = null;
-  afterEach(async () => {
-    if (paneRoot) await act(async () => paneRoot!.unmount());
-    paneEl?.remove();
-    paneRoot = null;
-    paneEl = null;
-  });
-
-  /** Render the pane the gate hands the shell, press Sign out, then confirm. */
+  /** The Account section's door the gate hands Settings, read where the frame stands: armed before the mount. */
+  let door: ReturnType<typeof PAIRED_PANE_PARTS.account.useDoor> | null = null;
+  function armDoor(): void {
+    door = null;
+    probe = () => { door = PAIRED_PANE_PARTS.account.useDoor(); return null; };
+  }
+  afterEach(() => { probe = null; door = null; });
+  /**
+   * Sign out as the Account section does once its question is answered: through the gate's door. (The question
+   * first is the section's: `settings.test.tsx`, "… it is the sign-out alone, which asks first".)
+   */
   async function pressSignOut(): Promise<void> {
-    const pane = shellProps!.accountSection;
-    expect(pane, "the paired browser has no Sign out").toBeDefined();
-    paneEl = document.createElement("div");
-    document.body.append(paneEl);
-    paneRoot = createRoot(paneEl);
-    await act(async () => {
-      paneRoot!.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: pane as React.ReactNode }));
-    });
-    const press = (): HTMLButtonElement | undefined =>
-      [...paneEl!.querySelectorAll("button")].find((b) => b.textContent?.includes(messages.pairLanding.signOut));
-    await act(async () => { press()!.click(); });
-    expect(paneEl.textContent, "no confirm step").toContain(messages.pairLanding.signOutConfirm);
-    await act(async () => { press()!.click(); });
+    expect(door, "the paired browser has no Sign out").not.toBeNull();
+    await act(async () => { await door!.signOut(); });
     await ticks();
   }
 
   async function landing(): Promise<string> {
-    const real = await vi.importActual<typeof import("../src/host-client/PairScreen.js")>("../src/host-client/PairScreen.js");
+    const real = await vi.importActual<typeof import("../../paired-page/src/PairScreen.js")>("../../paired-page/src/PairScreen.js");
     return textOf(h(real.PairScreen, pairProps as unknown as Parameters<typeof real.PairScreen>[0]));
   }
 
   it("tells the computer with this browser's bearer, and what it kept goes with the pairing", async () => {
     mode = "home";
     const bearer = pairedBearer();
+    armDoor();
     await mount(bearer);
     const draft = `${COMPOSE_DRAFT_PREFIX}${bearer.pairScope()}.c1`;
     window.localStorage.setItem(draft, "half a letter");
@@ -309,8 +325,32 @@ describe("Sign out on the paired browser", () => {
     expect(said).not.toContain(messages.pairLanding.revokedBody);
   });
 
+  /* The new shell's Account section (the sign-out alone) signs out through this door; its question first, its Cancel
+     and its Confirm are the section's own (`packages/app/test/mail/settings.test.tsx`). */
+  it("the Account section's door is the pairing's own sign-out: it ends the pairing as this page's Sign out does, and asks nobody who is signed in", async () => {
+    mode = "home";
+    const bearer = pairedBearer();
+    let door: ReturnType<typeof PAIRED_PANE_PARTS.account.useDoor> | null = null;
+    probe = () => { door = PAIRED_PANE_PARTS.account.useDoor(); return null; };
+    try {
+      await mount(bearer);
+      expect(await door!.who()).toEqual({ ok: false, word: "signed_out" });
+      expect(reached, "who is signed in was asked of the computer").toEqual([]);
+      let answered: string | null = null;
+      await act(async () => { answered = await door!.signOut(); });
+      await ticks();
+      expect(answered, "the page's landing is the answer: the door says the browser left").toBe("left");
+      expect(reached).toEqual([["/auth/logout", "Bearer a1"]]);
+      expect(bearer.paired()).toBe(false);
+      expect(pairProps).toMatchObject({ ended: "signed-out", signedOut: "told" });
+    } finally {
+      probe = null;
+    }
+  });
+
   it("with the computer out of reach the sign-out is owed, and the landing says it will be told", async () => {
     const bearer = pairedBearer();
+    armDoor();
     await mount(bearer);
     await pressSignOut();
     expect(bearer.paired()).toBe(false);

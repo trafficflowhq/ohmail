@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Medium, Today: 4 x 2 cells, drawn by CalendarWidgets.kt from the signed-in pairing's record alone. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+  android:initialLayout="@layout/ohcal_widget_today"
+  android:minWidth="250dp"
+  android:minHeight="110dp"
+  android:targetCellWidth="4"
+  android:targetCellHeight="2"
+  android:resizeMode="none"
+  android:updatePeriodMillis="1800000"
+  android:widgetCategory="home_screen|not_keyguard" />

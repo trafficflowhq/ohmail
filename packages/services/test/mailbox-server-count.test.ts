@@ -1,8 +1,9 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes, mailboxFolders } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * HOW MUCH MAIL THE SERVER SAYS IS IN A MAILBOX — `MailboxDTO.serverMessageCount`, the first
@@ -40,7 +41,7 @@ const svc = makeMailboxService({ keyProvider: KP });
 
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 async function seed(db: Db): Promise<{ accountId: string; mailboxId: string }> {
   const [a] = await db.insert(accounts).values({ name: "server-count" }).returning();
@@ -52,7 +53,10 @@ async function seed(db: Db): Promise<{ accountId: string; mailboxId: string }> {
 
 const folder = (
   ids: { mailboxId: string }, name: string, serverExists: number | null,
-) => ({ mailboxId: ids.mailboxId, folder: name, ...(serverExists === null ? {} : { serverExists }) });
+) => ({
+  mailboxId: ids.mailboxId, accountId: accountOfMailbox(ids.mailboxId), folder: name,
+  ...(serverExists === null ? {} : { serverExists }),
+});
 
 describe("the first pull's denominator reaches the DTO", () => {
   it("is ABSENT when no folder has been counted — never zero", async () => {
@@ -107,7 +111,7 @@ describe("the first pull's denominator reaches the DTO", () => {
     }).returning();
     await db.insert(mailboxFolders).values([
       folder(ids, "INBOX", 100),
-      { mailboxId: other!.id, folder: "INBOX", serverExists: 9_999 },
+      { mailboxId: other!.id, accountId: accountOfMailbox(other!.id), folder: "INBOX", serverExists: 9_999 },
     ]);
     const dto = await svc.get(ctxFor(db, ids.accountId), ids.mailboxId);
     expect(dto.serverMessageCount).toBe(100);

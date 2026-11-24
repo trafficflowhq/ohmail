@@ -1,7 +1,7 @@
+import type { Cursor } from "@ohmail/wire";
 import type { MirrorRecord } from "./apply.js";
 import { mirrorDbName } from "./idb.js";
 import { BaseMirrorStore, keyMayCarry, wipeKeepUnion } from "./store.js";
-import type { Cursor } from "./types.js";
 
 /**
  * The SQL-backed mirror — the React Native arm of {@link BaseMirrorStore},

@@ -1,8 +1,9 @@
+import { dbFor } from "@trafficflow/services";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { asc, eq } from "drizzle-orm";
 import {
-  accounts, auditLog, changeLog, contacts, folderState, mailboxes, messageBodies, messages, rules, threads,
+  accounts, accountSettings, auditLog, changeLog, contacts, folderState, mailboxes, messageBodies, messages, rules, threads,
 } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { commitChange, planChange, UNMETERED_STORAGE_CAP, type Change } from "@trafficflow/core";
@@ -60,10 +61,10 @@ async function seed(
     } : {}),
   }).returning();
   await w.db.insert(messageBodies).values({
-    messageId: m!.id, text: body, html: null, headers: thread?.headers ?? {},
+    messageId: m!.id, accountId: m!.accountId, text: body, html: null, headers: thread?.headers ?? {},
   });
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX,
     lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
@@ -76,7 +77,7 @@ async function threadOf(w: Awaited<ReturnType<typeof world>>): Promise<string> {
 }
 
 const ctxOf = (w: Awaited<ReturnType<typeof world>>): ServiceContext => ({
-  db: w.db as unknown as ServiceContext["db"], accountId: w.accountId, userId: null,
+  db: dbFor(w.db, w.accountId), accountId: w.accountId, userId: null,
   now: () => NOW, requestId: `oud-${randomUUID().slice(0, 8)}`,
 });
 
@@ -117,9 +118,9 @@ describe("the undecided-sender walk speaks both dialects", () => {
       unread: false, nativeLocator: { folder: OHBOX, ref: `9:${i}` },
     }));
     const ids = (await w.db.insert(messages).values(rows).returning({ id: messages.id })).map((r) => r.id);
-    await w.db.insert(messageBodies).values(ids.map((messageId) => ({ messageId, text: "", html: null, headers: {} })));
+    await w.db.insert(messageBodies).values(ids.map((messageId) => ({ messageId, accountId: w.accountId, text: "", html: null, headers: {} })));
     await w.db.insert(folderState).values(ids.map((messageId) => ({
-      messageId, desiredFolder: OHBOX, observedFolder: OHBOX, lastSetBy: "external" as const,
+      messageId, accountId: w.accountId, desiredFolder: OHBOX, observedFolder: OHBOX, lastSetBy: "external" as const,
       reconcileStatus: "reconciled" as const, conflict: false,
     })));
   }
@@ -263,30 +264,29 @@ describe("the undecided-sender walk speaks both dialects", () => {
 
 /* ── THE NOTE ON NEWS AND RECEIPTS ───────────────────────────────────────────────────────────────
  * Owner report 2026-11-02: letters in News from senders the person never chose. The same gate,
- * asked of a pile with no window: a letter there from a sender with no contact and no rule is
- * offered at any age, and the press holds the sender at the gate. Nothing moves without it. */
+ * asked of a pile inside the account’s window. The press holds the sender at the gate. */
 const NEWS = "ohmail/News";
 const LEGACY_NEWS = "ohmail/Reads";
 const RECEIPTS = "ohmail/Receipts";
 /** The headers a mailing service writes, cold outreach's too. */
 const BULK = { "list-unsubscribe": ["<https://x.test/u>"], "list-unsubscribe-post": ["List-Unsubscribe=One-Click"] };
 
-/** A letter a pass, an old release or the person placed in `folder`; years old unless stated. */
+/** A letter a pass, an old release or the person placed in `folder`; recent unless stated. */
 async function seedIn(
   w: Awaited<ReturnType<typeof world>>, from: string, folder: string,
   o: { arrivedAt?: Date | null; decidedAt?: Date } = {},
 ): Promise<string> {
   const i = n++;
-  const arrivedAt = o.arrivedAt === undefined ? OLD : o.arrivedAt;
+  const arrivedAt = o.arrivedAt === undefined ? ARRIVED : o.arrivedAt;
   const [m] = await w.db.insert(messages).values({
     accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `p${i}`,
     dedupKey: `oud:${randomUUID()}`, subject: `Letter ${i}`, fromAddress: from,
     date: arrivedAt ?? OLD, createdAt: arrivedAt ?? OLD, arrivedAt, unread: true,
     nativeLocator: { folder, ref: `2:${i}` },
   }).returning();
-  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: BULK });
+  await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: BULK });
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     ...(o.decidedAt ? { decidedAt: o.decidedAt } : {}),
   });
@@ -297,20 +297,36 @@ const offered = async (w: Awaited<ReturnType<typeof world>>, pile?: "news" | "re
   (await unscreenedSummary(w.db as never, w.accountId, NOW, pile)).groups.map((g) => g.address);
 
 describe("the note on News and Receipts asks who nobody let in, on both stores", () => {
-  it("offers a pile's letters from senders nobody let in at any age, News in both spellings", async () => {
+  it("leaves old News in place and offers new letters inside the screening window", async () => {
     const w = await world();
-    await seedIn(w, "bulk@x.test", NEWS);
+    await w.db.insert(accountSettings).values({
+      accountId: w.accountId, screeningBaselineAt: new Date("2026-09-16T09:00:00.000Z"),
+      screeningScope: "window", dormancyDays: 1,
+    });
+    const old = await seedIn(w, "older@x.test", NEWS, { arrivedAt: OLD });
+    expect((await unscreenedSummary(w.db as never, w.accountId, NOW, "news")).total).toBe(0);
+
+    const recent = await seedIn(w, "recent@x.test", NEWS, { arrivedAt: ARRIVED });
+    expect(await offered(w, "news")).toEqual(["recent@x.test"]);
+    expect(await screenUnscreened(ctxOf(w), { pile: "news" })).toMatchObject({ total: 1 });
+    expect([await desiredOf(w, old), await desiredOf(w, recent)]).toEqual([NEWS, GATE]);
+  });
+
+  it("honors all-time screening for dated mail, including both News folder names", async () => {
+    const w = await world();
+    await w.db.insert(accountSettings).values({ accountId: w.accountId, screeningScope: "all_time" });
+    await seedIn(w, "bulk@x.test", NEWS, { arrivedAt: OLD });
     await seedIn(w, "bulk@x.test", NEWS, { arrivedAt: null });
-    await seedIn(w, "legacy@x.test", LEGACY_NEWS);
+    await seedIn(w, "legacy@x.test", LEGACY_NEWS, { arrivedAt: OLD });
     await seedIn(w, "shop@x.test", RECEIPTS, { arrivedAt: ARRIVED });
     await seed(w, "door@x.test");
 
     expect(await unscreenedSummary(w.db as never, w.accountId, NOW, "news")).toEqual({
       groups: [
-        { address: "bulk@x.test", count: 2, newestAt: OLD.toISOString() },
+        { address: "bulk@x.test", count: 1, newestAt: OLD.toISOString() },
         { address: "legacy@x.test", count: 1, newestAt: OLD.toISOString() },
       ],
-      total: 3, complete: true,
+      total: 2, complete: true,
     });
     expect(await offered(w, "receipts")).toEqual(["shop@x.test"]);
     expect(await offered(w), "the Ohbox's offer took a pile's letters").toEqual(["door@x.test"]);
@@ -342,7 +358,7 @@ describe("the note on News and Receipts asks who nobody let in, on both stores",
     const door = await seed(w, "door@x.test");
 
     expect(await screenUnscreened(ctxOf(w), { pile: "news" })).toEqual({
-      screened: [{ address: "bulk@x.test", count: 2, newestAt: OLD.toISOString() }], total: 2,
+      screened: [{ address: "bulk@x.test", count: 2, newestAt: ARRIVED.toISOString() }], total: 2,
     });
     expect([await desiredOf(w, a), await desiredOf(w, b)]).toEqual([GATE, GATE]);
     expect(await desiredOf(w, receipt), "a News press moved a receipt").toBe(RECEIPTS);

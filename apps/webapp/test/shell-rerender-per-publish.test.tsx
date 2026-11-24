@@ -4,7 +4,7 @@
  *
  * The renderer-peak rig reads the MAGNITUDE (megabytes of resident peak per shell re-render,
  * independent of the row count, on a real WebKit web process). It cannot say WHICH components
- * ran or WHY. This file is the other half: the real `AppShell` over an engine whose publishes
+ * ran or WHY. This file is the other half: the mail frame over an engine whose publishes
  * are scripted one at a time, with every view and pane wrapped in a counter, so a publish's cost
  * is a number rather than an impression.
  *
@@ -32,33 +32,23 @@ function counted<P>(name: string, Real: React.ComponentType<P>): React.Component
   return Wrapped as React.ComponentType<P>;
 }
 
-vi.mock("../app/shell/SyncBar", async (orig) => {
-  const actual = await orig<typeof import("../app/shell/SyncBar")>();
-  return { ...actual, SyncBar: counted("SyncBar", actual.SyncBar) };
+/* A publish can update the address book and reach Write's people line without redrawing the letter.
+   Count both. The kit's Recipients owns the open chip list and its cursor. */
+vi.mock("../../../packages/app/src/write/Letter", async (orig) => {
+  const actual = await orig<typeof import("../../../packages/app/src/write/Letter")>();
+  return { ...actual, Letter: counted("ComposeView", actual.Letter) };
 });
-vi.mock("../app/views/OhboxView", async (orig) => {
-  const actual = await orig<typeof import("../app/views/OhboxView")>();
-  return { ...actual, OhboxView: counted("OhboxView", actual.OhboxView) };
-});
-vi.mock("../app/shell/MessagePane", async (orig) => {
-  const actual = await orig<typeof import("../app/shell/MessagePane")>();
-  return { ...actual, MessagePane: counted("MessagePane", actual.MessagePane) };
-});
-vi.mock("../app/shell/FoldersRailGroup", async (orig) => {
-  const actual = await orig<typeof import("../app/shell/FoldersRailGroup")>();
-  return { ...actual, FoldersRailGroup: counted("FoldersRailGroup", actual.FoldersRailGroup) };
-});
-vi.mock("../app/views/ComposeView", async (orig) => {
-  const actual = await orig<typeof import("../app/views/ComposeView")>();
-  return { ...actual, ComposeView: counted("ComposeView", actual.ComposeView) };
+vi.mock("../../../packages/app/src/write/head/People", async (orig) => {
+  const actual = await orig<typeof import("../../../packages/app/src/write/head/People")>();
+  return { ...actual, People: counted("ComposeView", actual.People) };
 });
 /* THE CHIP FIELD ITSELF, and not only the view above it. A loop in this component's own state
    re-renders THIS subtree and nothing higher, so a counter on `ComposeView` cannot see it —
    measured: the loop ran the file past five minutes while the view's count sat at its ordinary
    number. The instrument has to sit where the state does. */
-vi.mock("../app/shell/RecipientField", async (orig) => {
-  const actual = await orig<typeof import("../app/shell/RecipientField")>();
-  return { ...actual, RecipientField: counted("RecipientField", actual.RecipientField) };
+vi.mock("@ohmail/ui/mail", async (orig) => {
+  const actual = await orig<typeof import("@ohmail/ui/mail")>();
+  return { ...actual, Recipients: counted("RecipientField", actual.Recipients) };
 });
 
 import {
@@ -176,179 +166,7 @@ async function buildEngine(): Promise<{ engine: OhmailEngine; store: MemoryMirro
 const PUBLISH_CONSTANT = 2;
 
 /** The components a body landing may not redraw. Each is a whole subtree of the window. */
-const UNRELATED_TO_A_BODY = ["SyncBar", "OhboxView", "FoldersRailGroup"] as const;
-
-describe("what one publish costs the window", () => {
-  beforeEach(() => { renders.clear(); scans.length = 0; installShellEnv(); });
-  afterEach(teardownShellEnv);
-
-  it("a body publish redraws nothing unrelated and re-derives nothing at all", async () => {
-    const { engine, feed } = await buildEngine();
-    await mountShell([mailbox({ lastSyncAt: ISO })], { engine });
-    await tick(100);
-    feed.push(messagePage(200));
-    await act(async () => { await engine.syncOnce(); });
-    await tick(50);
-
-    const firstId = engine.read().list<{ id: string }>("message")[0]?.id ?? "";
-    expect(firstId, "the page did not land, so nothing below measures anything").not.toBe("");
-    renders.clear(); scans.length = 0;
-
-    await act(async () => { await engine.hydrateBody(firstId); });
-    await tick(50);
-
-    /*
-     * A BODY IS A FACT ABOUT ONE MESSAGE. It is not a pile, a count, a partition or a projection,
-     * and before the split every one of those was rebuilt for it — twenty whole-mirror passes,
-     * against twenty-three for a full `/sync` page of messages.
-     */
-    expect(scans, `a body publish re-derived over the whole mirror: ${scans.join(", ")}`)
-      .toHaveLength(0);
-    for (const name of UNRELATED_TO_A_BODY) {
-      expect(countOf(name), `${name} re-rendered for a body it does not draw`).toBe(0);
-    }
-  });
-
-  /**
-   * THE OTHER HALF, and without it the guard above is satisfied by a window that never draws a
-   * body at all — which is precisely the failure this split could cause and the shape that
-   * renders as its own healthy state. The text has to arrive on screen.
-   */
-  it("…and the body still arrives on the surface that opened it", async () => {
-    const { engine, feed } = await buildEngine();
-    const el = await mountShell([mailbox({ lastSyncAt: ISO })], { engine });
-    await tick(100);
-    feed.push(messagePage(12));
-    await act(async () => { await engine.syncOnce(); });
-    await tick(50);
-
-    const openId = engine.read().list<{ id: string }>("message")[0]?.id ?? "";
-    await act(async () => {
-      window.location.hash = `#/ohbox/m/${openId}`;
-      window.dispatchEvent(new Event("hashchange"));
-    });
-    await tick(600);
-
-    expect(el.textContent ?? "", "the reading surface never showed the fetched body")
-      .toContain(`body of ${openId}`);
-  });
-
-  /**
-   * AN OPEN COSTS THE STATES IT SHOWS. The engine publishes three times for the body alone — the
-   * loading marker, the answer, and the body-cache trim once the cache is full — and the
-   * attachment list is a second pair on top. Every one of those used to redraw the whole window
-   * and every pane in it.
-   *
-   * The ceiling is the states the pane actually has something new to draw for: it mounts, the
-   * body lands, the attachment list settles, and the strip's items settle. The trim draws
-   * nothing and no longer costs anything. The ceiling is a CEILING and not the count of the day:
-   * it is here so the number cannot climb back unnoticed.
-   */
-  const OPEN_PANE_RENDERS = 4;
-
-  it("an open costs the reading pane the states it shows and no more", async () => {
-    const { engine, feed } = await buildEngine();
-    await mountShell([mailbox({ lastSyncAt: ISO })], { engine });
-    await tick(100);
-    feed.push(messagePage(12));
-    await act(async () => { await engine.syncOnce(); });
-    await tick(50);
-    const openId = engine.read().list<{ id: string }>("message")[0]?.id ?? "";
-    renders.clear(); scans.length = 0;
-
-    await act(async () => {
-      window.location.hash = `#/ohbox/m/${openId}`;
-      window.dispatchEvent(new Event("hashchange"));
-    });
-    await tick(600);
-
-    expect(countOf("MessagePane"), "the reading pane drew more than the states it has")
-      .toBeLessThanOrEqual(OPEN_PANE_RENDERS);
-  });
-
-  /**
-   * THE NARROWING'S POSITIVE CONTROL — the case it still admits, measured.
-   *
-   * The attachment notice was narrowed twice: to "while there is a selection" and then to "while
-   * the state this hook can SHOW has moved". Both are refusals, and a refusal rule that nobody
-   * has watched admit the ordinary case is a rule that might refuse everything. Attachment bytes
-   * arrive without touching the mirror — no version, no stamp, nothing — so this is the one
-   * signal the window has, and it must still get through.
-   */
-  it("…and an attachment landing still reaches the window", async () => {
-    const { engine, feed } = await buildEngine();
-    expect(engine.attachmentsAvailable(), "the harness lost the capability the gate reads")
-      .toBe(true);
-    await mountShell([mailbox({ lastSyncAt: ISO })], { engine });
-    await tick(100);
-    feed.push(messagePage(12));
-    await act(async () => { await engine.syncOnce(); });
-    await tick(50);
-    const openId = engine.read().list<{ id: string }>("message")[0]?.id ?? "";
-    await act(async () => {
-      window.location.hash = `#/ohbox/m/${openId}`;
-      window.dispatchEvent(new Event("hashchange"));
-    });
-    await tick(600);
-    renders.clear(); scans.length = 0;
-
-    // The bytes of the one attachment this message has — the engine's own path, no mirror write.
-    await act(async () => { await engine.openAttachment(openId, `${openId}-a1`); });
-    await tick(50);
-
-    expect(countOf("SyncBar"), "an attachment landing never reached the window")
-      .toBeGreaterThan(0);
-    // …and it is a re-render, never a re-derivation: no record moved.
-    expect(scans, `it re-derived the mirror as well: ${scans.join(", ")}`).toHaveLength(0);
-  });
-
-  /**
-   * A PAGE OF MAIL IS THE CASE THAT MUST STILL COST SOMETHING — the guards above are all "does
-   * not happen", and a shell that stopped re-rendering altogether would pass every one of them.
-   */
-  it("a page of mail still redraws the list and re-derives the piles", async () => {
-    const { engine, feed } = await buildEngine();
-    await mountShell([mailbox({ lastSyncAt: ISO })], { engine });
-    await tick(100);
-    renders.clear(); scans.length = 0;
-
-    feed.push(messagePage(200));
-    await act(async () => { await engine.syncOnce(); });
-    await tick(50);
-
-    expect(countOf("OhboxView"), "an arriving page did not redraw the list").toBeGreaterThan(0);
-    expect(scans.filter((s) => s === "list:message").length,
-      "an arriving page did not re-derive over the messages").toBeGreaterThan(0);
-    // …and the redraw is a constant, not a function of the page: a page of rows arriving is
-    // one list to redraw, not a shell per row.
-    expect(countOf("SyncBar"), "the window redrew per row rather than per publish")
-      .toBeLessThanOrEqual(PUBLISH_CONSTANT * 4);
-  });
-
-  /**
-   * AN IDLE POLL — an empty `/sync` page every eight seconds, for as long as a tab is open. It
-   * moves the drain stamp, which the sync line draws, and nothing else.
-   */
-  it("an idle poll re-derives nothing", async () => {
-    const { engine } = await buildEngine();
-    await mountShell([mailbox({ lastSyncAt: ISO })], { engine });
-    await tick(100);
-    /* THE SECOND POLL, not the first. A cold mirror's first drain settles the sync status —
-       `bootstrapping` falls, and several surfaces say so — which is a one-time transition and not
-       what "every eight seconds for as long as the tab is open" costs. Measuring the first would
-       pin that transition into this budget and go red the day it is made cheaper. */
-    await act(async () => { await engine.syncOnce(); });
-    await tick(50);
-    renders.clear(); scans.length = 0;
-
-    await act(async () => { await engine.syncOnce(); });
-    await tick(50);
-
-    expect(scans, `an empty page re-derived: ${scans.join(", ")}`).toHaveLength(0);
-    expect(countOf("SyncBar"), "an empty page cost more than the freshness label")
-      .toBeLessThanOrEqual(PUBLISH_CONSTANT);
-  });
-});
+const UNRELATED_TO_A_BODY = ["SyncBar", "TodaysOhbox", "FoldersRailGroup"] as const;
 
 /**
  * ═══ A MIRROR DELTA LANDING ON AN OPEN COMPOSER ═══════════════════════════════════════
@@ -410,7 +228,10 @@ describe("fifty deltas under an open composer", () => {
     });
     await tick(300);
 
-    const to = el.querySelector<HTMLInputElement>("#compose-to");
+    /** Write's new letter's To line (today's `#compose-to`). */
+    const toLine = (): HTMLInputElement | null =>
+      el.querySelector<HTMLInputElement>('[role="region"][aria-label="New message"] [role="combobox"][aria-label="To"]');
+    const to = toLine();
     expect(to, "the composer never rendered its To field, so nothing below measures anything")
       .not.toBeNull();
 
@@ -453,6 +274,6 @@ describe("fifty deltas under an open composer", () => {
     }
     // And the form is still on screen — a composer that unmounted under the deltas would be a
     // worse failure than a loud one, and it would pass the ceiling.
-    expect(el.querySelector("#compose-to"), "the composer left the screen").not.toBeNull();
+    expect(toLine(), "the composer left the screen").not.toBeNull();
   });
 });

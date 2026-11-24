@@ -1,11 +1,25 @@
+import type { AuthVerdict, EmailAddress } from "@ohmail/wire";
 import type { MailboxMustBeLive, SearchSource, SpendOutcome, SpendPort } from "@trafficflow/db";
-import type { NormalizedMessage, Destination, AttachmentMeta, EmailAddress, MimeStructure } from "./types.js";
-import type { AuthVerdict, KnownSenders, Rule } from "./rules.js";
+import type { NormalizedMessage, Destination, AttachmentMeta, MimeStructure } from "./types.js";
+import type { KnownSenders, Rule } from "./rules.js";
 import type { IdentityFact } from "./sender-check.js";
 import type { ClassifierPort } from "./classifier-port.js";
 import type { CorrespondentEvidence } from "./correspondent.js";
 import type { MessageSearchInput } from "./message-search.js";
 import type { WriteDoor } from "./adapters/imap-types.js";
+import type { PlannedInvitation } from "./invitation-mail.js";
+import type { MessageFailureCode } from "./statement-fault.js";
+
+/** What a letter's invitation write came to, inside the letter's transaction. */
+export interface InvitationWritten {
+  /** The OTHER letters whose row the write changed, each owed a message change. */
+  touched: string[];
+  /**
+   * Set when the store refused the row for the value it carried (the closed word): the letter is
+   * kept without the row, and the caller says so. Any other fault is thrown, never set here.
+   */
+  refused?: MessageFailureCode;
+}
 
 /** `contacts.source`: who made the row. NULL (a row older than the column) reads as `person`. */
 export type ContactSource = "person" | "inferred";
@@ -425,6 +439,16 @@ export interface RepoPort {
    * attachment without its message). No-op when `rows` is empty.
    */
   insertAttachments(messageId: string, accountId: string, rows: AttachmentMeta[]): Promise<void>;
+  /**
+   * THE INVITATION A NEW LETTER CARRIES (mail 0204), written in the letter's transaction by the
+   * winner of its insert, through the table's one door. Names the OTHER letters whose row the
+   * write changed (the person's own reply records its answer on the invitation it answers), each
+   * owed a message change in the same transaction, and the word when the store refused the row
+   * for its value. Any other fault of the store is THROWN, so the letter's transaction fails and
+   * the next cycle reads the letter again. REQUIRED, and called without `?.`: a repo without it
+   * would store the letter and drop its card's identity without a word.
+   */
+  writeInvitation(messageId: string, accountId: string, mailboxId: string, planned: PlannedInvitation): Promise<InvitationWritten>;
   getFolderState(messageId: string): Promise<FolderStateRow | null>;
   upsertFolderState(messageId: string, s: FolderStateRow): Promise<void>;
   /**
@@ -729,7 +753,7 @@ export interface ExternalOverrideOutcome {
  * over for nothing. `SpendPort` and not a boolean: six verdicts, read once and exhaustively in
  * {@link aiSpendPermitted}, so a new verdict is a compile error rather than a silent `false`.
  */
-export type CreditGate = Pick<SpendPort, "spend">;
+export type CreditGate = Pick<SpendPort, "spend"> & Partial<Pick<SpendPort, "release">>;
 
 /**
  * May the AI branch run — the INGEST path's reading of a spend verdict, and only its. The other

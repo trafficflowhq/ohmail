@@ -1,6 +1,6 @@
 import { serviceContext } from "../context.js";
 import { unsubscribeLinkRefusal } from "../probe-host-refusal.js";
-import { jsonResponse } from "../responses.js";
+import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 import { unsubscribes } from "./shared.js";
 
@@ -18,12 +18,13 @@ export const unsubscribeRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/messages/:id/unsubscribe",
+    wire: true,
     relay: true,
     cost: "connection",
     handler: async (req, deps, params) => {
       try {
         const result = await unsubscribes(deps).unsubscribe(serviceContext(deps, req), params.id!);
-        return jsonResponse(result);
+        return answer<"POST /messages/:id/unsubscribe">()(result);
       } catch (err) {
         // The SSRF gate's own refusal names `u` — a parameter this route does not have; the URL
         // came out of the sender's stored headers. Re-said at the seam that answers a person,

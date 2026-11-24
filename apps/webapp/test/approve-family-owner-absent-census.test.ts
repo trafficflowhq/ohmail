@@ -2,11 +2,12 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import * as scan from "../../../scripts/lib/source-scan.mjs";
-/* @reads: apps/webapp/app/(product)/approve/ApproveScreen.tsx
+/* @reads: apps/webapp/app/(product)/approve/ApproveRoute.tsx
    apps/webapp/app/(product)/approve/settle-owner.ts
-   apps/webapp/app/(product)/link-desktop/LinkDesktopScreen.tsx
-   apps/webapp/app/(product)/authorize-desktop/AuthorizeDesktopScreen.tsx
+   apps/webapp/app/(product)/link-desktop/LinkDesktopRoute.tsx
+   apps/webapp/app/(product)/authorize-desktop/AuthorizeDesktopRoute.tsx
    apps/webapp/app/(product)/mailbox/StepUpPrompt.tsx
+   apps/webapp/app/(product)/mailbox/web-step-up.ts
    apps/webapp/app/api-client.ts
    Read by a built path, so no landing pass would select this file when they move. */
 
@@ -23,6 +24,8 @@ import * as scan from "../../../scripts/lib/source-scan.mjs";
 const PRODUCT = join(__dirname, "../app/(product)");
 const API_CLIENT = join(__dirname, "../app/api-client.ts");
 const PROMPT = join(PRODUCT, "mailbox/StepUpPrompt.tsx");
+/** The step-up's door: the prompt's requests and their catches moved here. */
+const STEP_UP_DOOR = join(PRODUCT, "mailbox/web-step-up.ts");
 const SETTLE = join(PRODUCT, "approve/settle-owner.ts");
 const read = (f: string): string => readFileSync(f, "utf8");
 const name = (f: string): string => relative(PRODUCT, f);
@@ -34,10 +37,17 @@ function walk(dir: string): string[] {
   });
 }
 
-/** The pages that settle whose browser this is, read from the tree rather than listed. */
+/**
+ * The pages that settle whose browser this is, read from the tree rather than listed: every caller of the settle
+ * step, and every caller of a page's own ceremony hook that does (`approve/use-approve-door.ts` and its kin).
+ */
 function familyPages(): string[] {
-  return walk(PRODUCT).filter((f) => f !== SETTLE
-    && /\buseSettledOwner\s*\(/.test(scan.withoutCommentsAndLiterals(read(f))));
+  const code = (f: string): string => scan.withoutCommentsAndLiterals(read(f));
+  const settling = walk(PRODUCT).filter((f) => f !== SETTLE && /\buseSettledOwner\s*\(/.test(code(f)));
+  const hooks = settling.flatMap((f) => [...code(f).matchAll(/\bexport\s+function\s+(use\w+Door)\s*\(/g)].map((m) => m[1]!));
+  const hosting = walk(PRODUCT).filter((f) => !settling.includes(f)
+    && hooks.some((hook) => new RegExp(`\\b${hook}\\s*\\(`).test(code(f))));
+  return [...settling, ...hosting];
 }
 
 /** The `auth` methods that pass `ceremony: true` themselves: owner-free at the gate's first line. */
@@ -73,7 +83,10 @@ function messageOfUses(src: string): number[] {
   return [...new Set(lines)].sort((a, b) => a - b);
 }
 
-/** Arm 2: each `StepUpPrompt` a page renders, by line, with whether it is given the settle step. */
+/**
+ * Arm 2: each `StepUpPrompt` a page renders, and each set of the one step-up dialog's answers a page hands its door's
+ * page (`factor: { … }`), by line, with whether it is given the settle step (`onOwnerAbsent`).
+ */
 function hostedPrompts(src: string): Array<{ line: number; settles: boolean }> {
   const lit = scan.withoutCommentsAndLiterals(src);
   const found: Array<{ line: number; settles: boolean }> = [];
@@ -90,7 +103,12 @@ function hostedPrompts(src: string): Array<{ line: number; settles: boolean }> {
     }
     found.push({ line: scan.lineOf(lit, at), settles: attrs.includes("onOwnerAbsent") });
   }
-  return found;
+  for (const m of lit.matchAll(/\bfactor\s*:\s*\{/g)) {
+    const open = m.index! + m[0].length - 1;
+    const keys = topLevelArgs(lit.slice(open + 1, scan.bracketSpan(lit, open, "{", "}").end)).map((a) => /^\w+/.exec(a)?.[0]);
+    found.push({ line: scan.lineOf(lit, m.index!), settles: keys.includes("onOwnerAbsent") });
+  }
+  return found.sort((a, b) => a.line - b.line);
 }
 
 const CLASSIFIERS = new Set(["isOwnerAbsent", "isBusy", "gatedRefusal"]);
@@ -208,11 +226,12 @@ function unsettledRefusals(src: string, ceremony: Set<string>): { inspected: num
 describe("the approve family hands owner_absent to its settle step", () => {
   const ceremony = ceremonyMethods(read(API_CLIENT));
   const pages = familyPages();
-  const family = [...pages, SETTLE, PROMPT];
+  const family = [...pages, SETTLE, PROMPT, STEP_UP_DOOR];
 
   it("reads the family from the tree, and the gate's ceremony list from the client", () => {
     expect(pages.map(name).sort()).toEqual(expect.arrayContaining([
-      "approve/ApproveScreen.tsx", "link-desktop/LinkDesktopScreen.tsx", "authorize-desktop/AuthorizeDesktopScreen.tsx",
+      "approve/use-approve-door.ts", "link-desktop/use-link-desktop-door.ts", "authorize-desktop/use-authorize-desktop-door.ts",
+      "approve/ApproveRoute.tsx", "link-desktop/LinkDesktopRoute.tsx", "authorize-desktop/AuthorizeDesktopRoute.tsx",
     ]));
     expect(ceremony.has("authorizeRequest"), "the reader found no ceremony method").toBe(true);
     expect(ceremony.has("desktopApproval") || ceremony.has("session") || ceremony.has("stepUpTotp")).toBe(false);
@@ -223,19 +242,19 @@ describe("the approve family hands owner_absent to its settle step", () => {
     expect(found).toEqual([]);
   });
 
-  it("arm 2: every step-up prompt a family page renders is given the page's settle step", () => {
+  it("arm 2: every step-up a family page hosts is given the page's settle step", () => {
     const prompts = pages.flatMap((f) => hostedPrompts(read(f)).map((p) => ({ ...p, file: name(f), at: `${name(f)}:${p.line}` })));
-    expect(prompts.map((p) => p.file), "the census read no hosted prompt")
-      .toEqual(expect.arrayContaining(["approve/ApproveScreen.tsx", "link-desktop/LinkDesktopScreen.tsx"]));
+    expect(prompts.map((p) => p.file), "the census read no hosted step-up")
+      .toEqual(expect.arrayContaining(["approve/ApproveRoute.tsx", "link-desktop/LinkDesktopRoute.tsx", "authorize-desktop/AuthorizeDesktopRoute.tsx"]));
     expect(prompts.filter((p) => !p.settles).map((p) => p.at)).toEqual([]);
   });
 
   it("arm 3: every catch and rejection handler that says a gated request's refusal asks isOwnerAbsent first", () => {
-    expect(unsettledHandlers(read(join(PRODUCT, "approve/ApproveScreen.tsx")), ceremony).inspected,
+    expect(unsettledHandlers(read(join(PRODUCT, "approve/use-approve-door.ts")), ceremony).inspected,
       "the census read no promise handler").toBeGreaterThan(0);
     const read3 = family.map((f) => ({ f, ...unsettledRefusals(read(f), ceremony) }));
     expect(read3.filter((r) => r.inspected > 0).map((r) => name(r.f)), "the census read no gated catch")
-      .toEqual(expect.arrayContaining(["approve/ApproveScreen.tsx", "link-desktop/LinkDesktopScreen.tsx", "mailbox/StepUpPrompt.tsx"]));
+      .toEqual(expect.arrayContaining(["approve/use-approve-door.ts", "link-desktop/use-link-desktop-door.ts", "mailbox/web-step-up.ts"]));
     expect(read3.flatMap((r) => r.unsettled.map((l) => `${name(r.f)}:${l}`))).toEqual([]);
   });
 });
@@ -261,6 +280,13 @@ describe("the census refuses what it exists to refuse (planted sources)", () => 
       .toEqual([{ line: 2, settles: false }]);
     expect(hostedPrompts(`${head}const a = createElement(StepUpPrompt, p);`)).toEqual([{ line: 2, settles: false }]);
     expect(hostedPrompts(`${head}const a = <StepUpPrompt onVerified={() => go()} onOwnerAbsent={settle} />;`))
+      .toEqual([{ line: 2, settles: true }]);
+  });
+
+  it("arm 2 refuses the dialog's answers with no settle step, and admits them given it", () => {
+    expect(hostedPrompts("const door = {\n  factor: { onVerified: go, onCancel: () => set(1), onDiscarded: x },\n};"))
+      .toEqual([{ line: 2, settles: false }]);
+    expect(hostedPrompts("const door = {\n  factor: {\n    onVerified: () => go({ a: 1 }),\n    onOwnerAbsent: c.settleAgain,\n  },\n};"))
       .toEqual([{ line: 2, settles: true }]);
   });
 

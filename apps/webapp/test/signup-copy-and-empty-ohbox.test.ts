@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import messages from "../messages/en.json";
+import german from "../messages/de.json";
 import {
   ISO,
   answerSyncWith,
@@ -12,127 +13,55 @@ import {
   textOf,
   tick,
 } from "./fixtures/live-walk-shell";
+import { readingColumn, seatedList } from "./ohbox/_finders";
 
 /**
- * (the code half) — TWO SMALL THINGS THE WALK FOUND, WHICH ARE THE SAME THING TWICE.
- *
- * ── 1. THE SIGNUP ACCOUNT STEP SAID ONE SENTENCE TWICE, FOUR LINES APART ────────────────
- *
- * `JoinScreen`'s account step renders `step_account_lead`, then a label, then an input, then
- * `emailHintOpen`. On the open path those were:
- *
- *     This is your ohmail sign-in. It is not a new email address — your mail stays where it is.
- *     …
- *     Where we will reach you about your account. It is not a new email address.
- *
- * Saying it twice in the same eyeful does not reassure; it makes the reader wonder which one
- * they misread. The lead keeps it, because the lead is where the misconception lives and it is
- * the version that also says what DOES happen to their mail.
- *
- * ── 2. AN EMPTY OHBOX WAS TWO HEADINGS AND NOTHING ELSE ─────────────────────────────────
- *
- * The pane rendered "New" and "Earlier" unconditionally, and its empty-state component
- * (`SyncState`) returned `null` unless `screenerCandidate` — which requires mail to have landed
- * and the mirror to have settled, and is therefore FALSE for the whole of a first sync. On a
- * live account that is a first sync's many minutes, and what was on screen for it was the two words
- * "New" and "Earlier" over a blank column. A heading asserts that a section follows; two
- * headings over nothing read as a screen that failed to load.
- *
- * ── WHY THE TWO ARE IN ONE FILE ─────────────────────────────────────────────────────────
- *
- * They are one finding in the audit and one defect in kind: the product stating something that
- * is not so — once by repetition, once by a label with nothing under it. The guards are
- * separate and fail independently.
- *
- * ── WHAT IS DELIBERATELY NOT HERE ───────────────────────────────────────────────────────
- *
- * the other two items are owner decisions, not code: the Stripe checkout's public business
- * name, and whether the beta is invite-only (login says it is; `/join` accepted a signup with
- * no code). **Nothing in this file asserts either way about invite-only**, because writing a
- * test for it would be picking a side nobody has picked yet, and the copy would then have
- * a guard holding it in place.
+ * The signup account step uses the studio's sentence and field label in both languages.
+ * An empty Ohbox says that it is empty and draws group headings only once there is mail.
  */
 
-const JOIN = messages.join as unknown as Record<string, string>;
-
-/**
- * The strings the account step actually renders, in order — `JoinScreen.tsx:526-545`. Both
- * branches, because `emailHint` / `emailHintOpen` is a `needsInvite` ternary and a duplicate
- * on either path is the same defect.
- */
-const ACCOUNT_STEP = (invite: boolean): string[] => [
-  JOIN.step_account_title!,
-  JOIN.step_account_lead!,
-  JOIN.emailLabel!,
-  invite ? JOIN.emailHint! : JOIN.emailHintOpen!,
-  JOIN.nameLabel!,
-  JOIN.passwordLabel!,
-  JOIN.passwordHint!,
-];
-
-describe("the signup account step says it once", () => {
-  it("'not a new email address' appears exactly once on the step, on either path", () => {
-    /**
-     * Mutation: restore ". It is not a new email address" to `join.emailHintOpen`. The open
-     * branch then counts 2 and fails.
-     *
-     * Counted over the SENTENCE rather than the key, so moving the duplicate to a different
-     * string on the same step does not slip through, and so a rewording of the lead that keeps
-     * the phrase is still allowed exactly one home.
-     */
-    for (const invite of [true, false]) {
-      const hits = ACCOUNT_STEP(invite).filter((s) => /not a new email address/i.test(s));
-      expect(hits, `${invite ? "invite" : "open"} path repeats the sentence`).toHaveLength(1);
-    }
-    // And it is the LEAD that keeps it — the version that also says what happens to their mail.
-    expect(JOIN.step_account_lead).toMatch(/not a new email address/i);
-    expect(JOIN.emailHintOpen).not.toMatch(/not a new email address/i);
-    // The hint still has to say something true about the field it sits under.
-    expect(JOIN.emailHintOpen).toMatch(/account/i);
+describe("the signup account step", () => {
+  it("uses the account sentence and Email label in English and German", () => {
+    expect(messages.join.account).toBe("I’m <name>,</name> at <email>,</email> with a password of <password></password>.");
+    expect(german.join.account).toBe(
+      "Ich bin <name>,</name> meine Adresse ist <email>,</email> und mein Passwort ist <password></password>.",
+    );
+    expect(messages.join.emailLabel).toBe("Email");
+    expect(german.join.emailLabel).toBe("E-Mail");
   });
 });
 
 describe("an empty Ohbox says it is empty", () => {
   beforeEach(installShellEnv);
   afterEach(teardownShellEnv);
+  /* The list's group headings by their names (the kit's heading draws its count beside the name), its rows as options,
+     its groups as listboxes, and its empty sentence as the kit's Empty says it, the closing dot drawn by the kit.
+     The Ohbox list and reading column are separate frame sections. The level-2 group's name comes first. */
+  const list = (c: HTMLElement): HTMLElement => {
+    const at = seatedList(c);
+    expect(at, "the Ohbox's list is not drawn").not.toBeNull();
+    return at!;
+  };
+  const headings = (c: HTMLElement): Array<string | null> =>
+    [...list(c).querySelectorAll("h2")].map((n) => n.querySelector("span")?.textContent ?? n.textContent);
+  const NOTHING = messages.ohbox.empty.nothing;
 
   it("no rows means no group headings, and one line saying so", async () => {
-    /**
-     * Mounted through the real `AppShell` on a mailbox that has never completed a cycle — the
-     * exact state the walk was in, and the one where `screenerCandidate` is false and
-     * `SyncState` used to render nothing at all.
-     *
-     * Mutations, either of which restores what was walked:
-     *   · make the two `ListGroupLabel`s unconditional again in `OhboxView` → "New"/"Earlier"
-     *     come back over an empty column and the first two assertions fail;
-     *   · restore `if (!state.screenerCandidate) return null;` in `SyncState` → the pane has
-     *     nothing in it and the third fails.
-     */
+    // Mounted through the real shell on a mailbox that has never completed a cycle: no "New"/"Earlier" over an empty
+    // column, no empty listbox to land in, and the pane's own one line.
     const c = await mountShell([mailbox({ lastSyncAt: null, createdAt: ISO })]);
     await tick(0);
 
-    expect(c.querySelectorAll(".row[data-id]").length, "the premise: no mail").toBe(0);
-    // Asserted on the ELEMENTS rather than on the words: "New" and "Earlier" are short enough
-    // to appear in unrelated chrome, and a text search would then pass or fail for the wrong
-    // reason. `ListGroupLabel` renders `.grouplabel` and nothing else does.
-    expect([...c.querySelectorAll(".grouplabel")].map((n) => n.textContent)).toEqual([]);
-    expect(c.querySelectorAll(".rows[role=listbox]").length, "an empty listbox to land in").toBe(0);
-    expect(textOf(c)).toContain("Nothing in your Ohbox.");
+    expect(c.querySelectorAll("[role=option][data-id]").length, "the premise: no mail").toBe(0);
+    expect(headings(c)).toEqual([]);
+    expect(list(c).querySelectorAll("[role=listbox]").length, "an empty listbox to land in").toBe(0);
+    expect(textOf(c)).toContain(NOTHING);
 
-    // The pane says what it owns and no more. WHY the list is empty belongs to the strip above
-    // it — the only surface that derived it — and it is already saying so.
-    expect(textOf(c)).toContain("The first sync has not finished yet");
+    // The pane says what it owns and no more: WHY the list is empty is the frame's notice, which says the first sync.
+    expect(textOf(c)).toContain(messages.frame.connection.firstSync.title);
 
-    /* ONE EMPTY STATE, NOT TWO — the Screener's show-once rule, and the reason the Ohbox's
-       resting reading column is gated on the list having rows at all. With nothing in the list
-       the column beside it has nothing to rest FROM, and "Nothing open." printed next to
-       "Nothing in your Ohbox." is the same absence stated twice in two different voices. Drop
-       the `all.length > 0` gate in `OhboxView`'s `ReadColumn` and this goes red.
-
-       This test owns the claim because it is the only place an EMPTY Ohbox is mounted through
-       the real shell — `ohbox-read-state.test.ts`'s harnesses run without a `MailStateProvider`
-       and cannot render the empty pane at all. */
-    expect(c.querySelector(".read-col")?.textContent ?? "", "a second empty state").toBe("");
+    // One empty state, not two: no "Nothing open." beside "Nothing in your Ohbox.".
+    expect(readingColumn(c)?.textContent ?? "", "a second empty state").toBe("");
   });
 
   it("and a heading comes back the moment there is something under it", async () => {
@@ -145,8 +74,8 @@ describe("an empty Ohbox says it is empty", () => {
     const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
     await tick(0);
 
-    expect(c.querySelectorAll(".row[data-id]").length, "the premise: mail arrived").toBe(2);
-    expect([...c.querySelectorAll(".grouplabel")].map((n) => n.textContent)).toEqual(["New"]);
-    expect(textOf(c)).not.toContain("Nothing in your Ohbox.");
+    expect(c.querySelectorAll("[role=option][data-id]").length, "the premise: mail arrived").toBe(2);
+    expect(headings(c)).toEqual(["New"]);
+    expect(textOf(c)).not.toContain(NOTHING);
   });
 });

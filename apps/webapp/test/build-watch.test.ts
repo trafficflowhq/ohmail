@@ -8,14 +8,14 @@ import {
   readAskMemory,
   resetUpdateStoreForTests,
   UPDATE_PERIOD_MS,
-} from "../app/shell/app-update";
+} from "@ohmail/app-logic/doors/app-update";
 import {
   BUILD_MIN_GAP_MS,
   BUILD_PATH,
   BUILD_POLL_MS,
   servedTokenOf,
   startBuildWatch,
-} from "../app/shell/build-watch";
+} from "@ohmail/app-logic/doors/build-watch";
 
 /**
  * ═══ A TAB THAT IS NO LONGER THE APP THIS ORIGIN SERVES ══════════════════════════════════════

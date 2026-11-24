@@ -28,9 +28,22 @@ export interface DraftContext {
   threadMessages: Array<{ from: string; snippet: string }>;
 }
 
+/**
+ * THE PERSON'S OWN WORDS, when the letter is written from them rather than as a reply: `text` says
+ * what the letter should say, `replying` whether {@link DraftInput.incoming} is a real letter being
+ * answered (otherwise it is `NO_LETTER` and travels to no model), `subject` the person's own.
+ */
+export interface DraftOwnWords {
+  text: string;
+  replying: boolean;
+  subject?: string;
+}
+
 export interface DraftInput {
   incoming: DraftIncoming;
   context: DraftContext;
+  /** Absent for a reply drafted from the letter alone; its request is then what it always was. */
+  own?: DraftOwnWords;
 }
 
 export interface DraftResult {
@@ -46,6 +59,8 @@ export interface DraftResult {
  */
 export interface DraftCallOptions extends AiCallOptions {
   signal?: AbortSignal;
+  /** The body written so far, before the final structured response is validated. */
+  onPreview?: (body: string) => void;
 }
 
 /** Injected into the drafting dependencies; absent on a deployment that offers no drafts. */

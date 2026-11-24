@@ -1,7 +1,7 @@
+import type { SyncChange } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { mailboxes, messages, threads } from "@trafficflow/db";
-import type { SyncChange } from "../src/index.js";
 import { DraftsService, MessageService, SyncService, TagsService, ThreadService } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 

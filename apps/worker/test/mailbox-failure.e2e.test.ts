@@ -8,7 +8,7 @@ import { StaticKeyProvider } from "@trafficflow/core";
 import { startWorker, type RunningWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * WHAT A FAILED MAILBOX RECORDS, AND WHAT A BUSY ONE LOOKS LIKE FROM OUTSIDE.
@@ -43,7 +43,7 @@ async function seedMailbox(
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };
@@ -416,7 +416,9 @@ describe("a mailbox mid-first-sync is visible, not invisible", () => {
     // ── THE ASSERTION THE OLD VERSION OF THIS TEST DID NOT HAVE ────────────────────────────
     //
     // Attempts grow ⇒ 300, 600, 1200 … A reset gives 300, 300, 300 — same `retryCount`, same
-    // status, same code. This is the only line that tells them apart.
+    // status, same code. This is the only line that tells them apart. Written once the row's write
+    // returns, so it is waited for as the row was.
+    await waitFor(() => backoffs.length >= 3, 15000, "three quarantines logged");
     expect(backoffs.length, "at least three quarantines were logged").toBeGreaterThanOrEqual(3);
     expect(backoffs, `the backoff did not grow: ${backoffs.join(", ")}`)
       .toEqual([...backoffs].sort((a, b) => a - b));

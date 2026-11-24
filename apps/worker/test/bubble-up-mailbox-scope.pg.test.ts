@@ -8,7 +8,7 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, changeLog, mailboxes, messages, messageStates, type Tx } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
-import { bubbleUpPass } from "../src/bubble-up-pass.js";
+import { bubbleUpPass } from "@ohmail/organizer/bubble-up";
 import { loadEnabledMailboxes, organizedMailboxIdsOf } from "../src/mailboxes.js";
 
 /**

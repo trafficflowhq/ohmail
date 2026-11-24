@@ -24,6 +24,7 @@ const SCANNED_ROOTS = [
   "packages/api/src",
   "packages/client-engine/src",
   "apps/worker/src",
+  "packages/organizer/src",
   "apps/sidecar/src",
 ];
 
@@ -59,6 +60,10 @@ const CLASSIFIED: Record<string, Row> = {
     class: "door",
     why: "the user-pressed route; a refusal here is the 422 the person reads, and no draft",
   },
+  "packages/services/src/drafting-service.ts::DraftingService.draftFromText": {
+    class: "door",
+    why: "the person's own words beside a letter, its thread and the knowledge base; the words are screened as their own document",
+  },
   "packages/core/src/draft-prompt.ts::draftUserPayload": {
     class: "serializer",
     why: "builds the request the doors already screened; its own fence is the redaction allow-list",
@@ -70,7 +75,7 @@ const CLASSIFIED: Record<string, Row> = {
 };
 
 /** How many sites must screen. Pinned so a new door is a deliberate edit here, not a silent one. */
-const DOOR_COUNT = 3;
+const DOOR_COUNT = 4;
 
 /* ── the extractor ──────────────────────────────────────────────────────────────────────── */
 

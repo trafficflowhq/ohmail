@@ -5,11 +5,14 @@
  * the key's one sentence. `absorb` read anything it did not know as `failed`, so a flush carrying
  * that answer would have said "not sent" and released the lane over a reply that is still going.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage } from "@ohmail/client-engine";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
+import { scheduleLabel } from "@ohmail/app-logic/text/format";
+import type { Translator } from "@ohmail/app-logic/text/translator";
+import { useSendText } from "@ohmail/app-logic/writing/mail-send-text";
 import messages from "../messages/en.json";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
@@ -48,7 +51,7 @@ const drain = async (): Promise<void> => {
 
 describe("a superseded answer on the web", () => {
   it("leaves a queued lane queued: no failure, no settlement, no sentence", async () => {
-    const { useMailSend } = await import("../app/shell/mail-send.js");
+    const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
     const settled: string[] = [];
     const toasts: string[] = [];
     const flushes: string[] = [];
@@ -64,8 +67,9 @@ describe("a superseded answer on the web", () => {
     const Probe = (): null => {
       api = useMailSend(
         engine as never,
+        null,
         ((m: string) => { toasts.push(m); }) as never,
-        ((key: string) => { settled.push(key); }) as never,
+        useSendText(useTranslations() as unknown as Translator, scheduleLabel), ((key: string) => { settled.push(key); }) as never,
       ) as never;
       return null;
     };
@@ -87,10 +91,10 @@ describe("a superseded answer on the web", () => {
   });
 
   it("from the restore collector: the lane's durable lock is kept and nothing is said", async () => {
-    const { useMailSend } = await import("../app/shell/mail-send.js");
-    const { claimSendLock, recordForSendKey, SEND_LOCK_FORMAT } = await import("../app/shell/send-lock.js");
-    claimSendLock({ v: SEND_LOCK_FORMAT, lane: "m1", key: "k9", at: Date.now(), draftId: null, fp: "fp-1", subject: "Re: Werkstatt-Besuch?" } as never, NONE_OWED);
-    expect(recordForSendKey("k9", Date.now()), "no record, so the collector would skip it and this measures nothing").not.toBeNull();
+    const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { claimSendLock, recordForSendKey, SEND_LOCK_FORMAT } = await import("@ohmail/app-logic/writing/send-lock");
+    claimSendLock({ v: SEND_LOCK_FORMAT, lane: "m1", key: "k9", at: Date.now(), draftId: null, fp: "fp-1", subject: "Re: Werkstatt-Besuch?" } as never, NONE_OWED, null);
+    expect(recordForSendKey("k9", Date.now(), null), "no record, so the collector would skip it and this measures nothing").not.toBeNull();
     const toasts: string[] = [];
     const listeners: Array<() => void> = [];
     let late = true;
@@ -109,7 +113,7 @@ describe("a superseded answer on the web", () => {
       hasLateResults: () => late,
     };
     const Probe = (): null => {
-      useMailSend(engine as never, ((m: string) => { toasts.push(m); }) as never, (() => {}) as never);
+      useMailSend(engine as never, null, ((m: string) => { toasts.push(m); }) as never, useSendText(useTranslations() as unknown as Translator, scheduleLabel), (() => {}) as never);
       return null;
     };
     host = document.createElement("div");
@@ -121,7 +125,7 @@ describe("a superseded answer on the web", () => {
     await act(async () => { for (const l of listeners) l(); });
     await drain();
     expect(pulls.length, "the collector never pulled, so this measures nothing").toBeGreaterThan(0);
-    expect(recordForSendKey("k9", Date.now()), "a superseded answer released the lane's lock").not.toBeNull();
+    expect(recordForSendKey("k9", Date.now(), null), "a superseded answer released the lane's lock").not.toBeNull();
     expect(toasts).toEqual([]);
   });
 });

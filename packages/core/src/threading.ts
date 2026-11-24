@@ -1,8 +1,8 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { isStorableMessageId, MAX_MESSAGE_ID_BYTES, normalizeMessageId } from "./identity.js";
 import { baseSubject, SUBJECT_PREFIX_PATTERN } from "./reply-subject.js";
 import { isCorroboratedCounterparty, type CounterpartyEvidence } from "./sender-headers.js";
 import type { RepoPort } from "./ports.js";
-import type { EmailAddress } from "./types.js";
 
 /**
  * Threading: at ingest, thread identity is the header chain and ONLY the header chain —

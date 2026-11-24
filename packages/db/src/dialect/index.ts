@@ -38,15 +38,48 @@ export const IN_TRANSACTION_BRAND: unique symbol = Symbol.for("ohmail.db.inTrans
  */
 export const ERASURE_FENCE_BRAND: unique symbol = Symbol.for("ohmail.db.erasureFence") as never;
 
+/**
+ * The account a handle is bound to (`bound.ts` mints and reads it). A transaction inherits it from
+ * the handle it was opened on, and a savepoint from its transaction, as the fence's mark travels.
+ */
+export const BINDING_BRAND: unique symbol = Symbol.for("ohmail.db.binding") as never;
+
+/**
+ * Set on a server pool's handle where its factory registers its door (`bound.ts`), read through
+ * every view of it, and carried to every transaction opened on either: a role and its policies
+ * stand behind the statements of such a handle. A device's store never carries it.
+ */
+export const SERVER_POOL_BRAND: unique symbol = Symbol.for("ohmail.db.serverPool") as never;
+
+/** Set on a transaction opened inside another one: a savepoint, never the outermost handle. */
+export const SAVEPOINT_BRAND: unique symbol = Symbol.for("ohmail.db.savepoint") as never;
+
 /** What the wrapper below stamps on every handle it hands out, beside the dialect brand. */
 function intoTransaction<T extends object>(tx: T, parent: object): T {
+  const from = parent as Record<symbol, unknown>;
+  if (from[IN_TRANSACTION_BRAND] === true) {
+    Object.defineProperty(tx, SAVEPOINT_BRAND, {
+      value: true, enumerable: false, configurable: true, writable: false,
+    });
+  }
   Object.defineProperty(tx, IN_TRANSACTION_BRAND, {
     value: true, enumerable: false, configurable: true, writable: false,
   });
-  const fence = (parent as Record<symbol, unknown>)[ERASURE_FENCE_BRAND];
+  const fence = from[ERASURE_FENCE_BRAND];
   if (typeof fence === "string") {
     Object.defineProperty(tx, ERASURE_FENCE_BRAND, {
       value: fence, enumerable: false, configurable: true, writable: false,
+    });
+  }
+  const binding = from[BINDING_BRAND];
+  if (binding !== undefined) {
+    Object.defineProperty(tx, BINDING_BRAND, {
+      value: binding, enumerable: false, configurable: true, writable: false,
+    });
+  }
+  if (from[SERVER_POOL_BRAND] === true) {
+    Object.defineProperty(tx, SERVER_POOL_BRAND, {
+      value: true, enumerable: false, configurable: true, writable: false,
     });
   }
   return tx;
@@ -73,8 +106,11 @@ export function brandDialect<T extends object>(db: T, name: DialectName): T {
   if (typeof original === "function"
     && (original as unknown as Record<symbol, unknown>)[TRANSACTION_WRAPPED] !== true) {
     const wrapped = function (this: unknown, fn: (tx: object, ...i: unknown[]) => unknown, ...rest: unknown[]) {
+      // The parent is the handle the call was made on: a bound view inherits this method from
+      // its pool handle, and its transaction must carry the view's binding, not the pool's none.
+      const parent = typeof this === "object" && this !== null ? this : db;
       return original.call(this, (tx: object, ...inner: unknown[]) =>
-        fn(intoTransaction(brandDialect(tx, name), db), ...inner), ...rest);
+        fn(intoTransaction(brandDialect(tx, name), parent), ...inner), ...rest);
     } as TxFn;
     Object.defineProperty(wrapped, TRANSACTION_WRAPPED, { value: true, enumerable: false });
     Object.defineProperty(db, "transaction", {
@@ -793,6 +829,10 @@ export interface Dialect {
    */
   exec(db: unknown, statement: SQL): Promise<unknown[][]>;
 
+  /** Read candidate sender keys on the Screener page's transaction and return them as a SQL set.
+   * Null when this store reads the candidates as part of the page statement. */
+  screenerActivityCandidates(tx: unknown, query: SQL): Promise<SQL | null>;
+
   /**
    * FOLD THE WRITE-AHEAD LOG IN once it has grown past `foldBytes`, and say what that did.
    *
@@ -808,6 +848,13 @@ export interface Dialect {
    * equality is promised; the caller names the month from the bucket's own instants.
    */
   monthBucket(instant: SQL): SQL;
+
+  /**
+   * Count and choose the newest message in each reader-local month under the account policy.
+   * The caller supplies the dated key and account filter for the messages alias `m`.
+   * Returns count, instant, id and month, or null when the policy is inactive.
+   */
+  lockedMonths(db: unknown, instant: SQL, where: SQL, zone: string): Promise<unknown[][] | null>;
 
   /**
    * THE ARRIVAL KEY — the one order every store read of messages takes, and `sortAtOf(date,
@@ -885,8 +932,9 @@ export interface Dialect {
     letterTerms(q: string): SQL[] | null;
     /**
      * `address` among message `m`'s To or Cc, an EQUALITY folded by `lower()` in SQL, within
-     * `accountId` (mail 0154). The server's is the expression index's own call over `m` with the
-     * account in the key; the device's reads its trigger-kept side table. Never a substring.
+     * `accountId` (mail 0154). The server's reads the stored key with the account in it (mail 0208,
+     * `messages.recipient_keys`, by its GIN); the device's reads its trigger-kept side table. Never a
+     * substring.
      */
     recipient(args: { accountId: string; address: string }): SQL;
     /**

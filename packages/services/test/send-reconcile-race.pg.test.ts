@@ -1,16 +1,13 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, lt, lte } from "drizzle-orm";
-import { drafts, mailboxes, outboundSends, outboundSentCopies } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { drafts, mailboxes, outboundSends, outboundSentCopies, bindDb } from "@trafficflow/db";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core";
-import { SendService, runSendReconcilePass, runOwedSentCopyPass, SEND_STALE_AFTER_MS } from "../src/index.js";
+import { SendService, dbFor, runSendReconcilePass, runOwedSentCopyPass, SEND_STALE_AFTER_MS } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -27,7 +24,7 @@ import type { ServiceContext } from "../src/index.js";
  * sent, recorded as one we could not confirm, with the reader told to go and look for it in a
  * folder it is already in.
  *
- * ## Why REAL Postgres, and not PGlite (CLAUDE.md)
+ * ## Why REAL Postgres, and not PGlite (AGENTS.md)
  *
  * PGlite is ONE connection. The interleaving under test — a probe in flight on connection A
  * while connection B commits a terminal state — cannot occur there at all, so a green run would
@@ -42,10 +39,12 @@ import type { ServiceContext } from "../src/index.js";
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+// Two of the factory's pools, two sessions: the passes bind each send's account, and the binder
+// takes a server handle only from the factory that registered its door.
+const ownedA = makeOwnedDb(PG_TEST_URL);
+const ownedB = makeOwnedDb(PG_TEST_URL);
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-09-02T12:00:00.000Z");
 const MIN = 60_000;
@@ -77,7 +76,7 @@ async function stranded(): Promise<{
     status: "pending", createdAt: at,
   }).returning();
   // The RETRY arrives on its own connection, the way a second HTTP request does.
-  const ctxB: ServiceContext = { db: dbB, accountId, userId: null, now: () => NOW, requestId: "b" };
+  const ctxB: ServiceContext = { db: dbFor(dbB, accountId), accountId, userId: null, now: () => NOW, requestId: "b" };
   return { accountId, draftId: d!.id, sendId: s!.id, minted, mailboxId: mb!.id, key, ctxB };
 }
 
@@ -99,7 +98,7 @@ const rowOf = async (sendId: string) =>
   (await dbA.select().from(outboundSends).where(eq(outboundSends.id, sendId)))[0]!;
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await ownedA.close(); await ownedB.close(); });
 
 /**
  * EMPTY THE PASS'S CANDIDATE WINDOW BEFORE EACH TEST.
@@ -135,7 +134,7 @@ describe.skipIf(!PG_UP)("the reconciling pass racing the client's own retry", ()
     const delivered: OutboundMessage[] = [];
 
     // The pass's probe is SLOW and answers "not in Sent".
-    const passRun = runSendReconcilePass(dbA, {
+    const passRun = runSendReconcilePass(bindDb(dbA, { account: null }), {
       openSendAdapter: probeAfter(false, 300, delivered),
       now: () => NOW,
     });
@@ -174,7 +173,7 @@ describe.skipIf(!PG_UP)("the reconciling pass racing the client's own retry", ()
     const w = await stranded();
     const delivered: OutboundMessage[] = [];
 
-    const passResult = await runSendReconcilePass(dbA, {
+    const passResult = await runSendReconcilePass(bindDb(dbA, { account: null }), {
       openSendAdapter: probeAfter(true, 0, delivered),
       now: () => NOW,
     });
@@ -207,8 +206,8 @@ describe.skipIf(!PG_UP)("the reconciling pass racing the client's own retry", ()
     });
 
     const [a, b] = await Promise.all([
-      runSendReconcilePass(dbA, { openSendAdapter: counting, now: () => NOW }),
-      runSendReconcilePass(dbB, { openSendAdapter: counting, now: () => NOW }),
+      runSendReconcilePass(bindDb(dbA, { account: null }), { openSendAdapter: counting, now: () => NOW }),
+      runSendReconcilePass(bindDb(dbB, { account: null }), { openSendAdapter: counting, now: () => NOW }),
     ]);
 
     expect(delivered, "no envelope, on either poke").toEqual([]);
@@ -253,7 +252,7 @@ describe.skipIf(!PG_UP)("the reconciling pass racing the client's own retry", ()
     await sleep(80); // let the lock be taken before the pass looks
 
     try {
-      const r = await runSendReconcilePass(dbA, {
+      const r = await runSendReconcilePass(bindDb(dbA, { account: null }), {
         openSendAdapter: probeAfter(true, 0, delivered),
         now: () => NOW,
       });
@@ -278,7 +277,7 @@ describe.skipIf(!PG_UP)("the reconciling pass racing the client's own retry", ()
     // Somebody (or something) put the draft back to `draft` while the reservation stood.
     await dbB.update(drafts).set({ status: "draft" }).where(eq(drafts.id, w.draftId));
 
-    const r = await runSendReconcilePass(dbA, {
+    const r = await runSendReconcilePass(bindDb(dbA, { account: null }), {
       openSendAdapter: probeAfter(true, 0, delivered),
       now: () => NOW,
     });
@@ -327,7 +326,7 @@ describe.skipIf(!PG_UP)("two late Sent-copy passes over one owed copy", () => {
         async close() { /* nothing held */ },
       };
     };
-    const pass = (db: typeof dbA) => runOwedSentCopyPass(db, {
+    const pass = (db: typeof dbA) => runOwedSentCopyPass(bindDb(db, { account: null }), {
       openSendAdapter: open, resolveStorageCap: async () => UNMETERED_STORAGE_CAP, sends: new SendService(), now: () => NOW,
     });
     const [a, b] = await Promise.all([pass(dbA), pass(dbB)]);

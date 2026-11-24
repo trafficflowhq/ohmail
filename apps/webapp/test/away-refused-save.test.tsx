@@ -1,12 +1,14 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { fireEvent, getByRole, getByText, within } from "@testing-library/react";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
+import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
+import {
+  act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
+  sessionFull, teardownConfirmEnv, tick,
+} from "./fixtures/cloud-confirm-shell";
+import { bindApiOwner, type AwayResponderSaveWire, type AwayResponderWire } from "../app/api-client";
 import messages from "../messages/en.json";
-import { AwayResponderRow, type AwayTransport } from "../app/shell/AwayResponderRow";
-import type { AwayResponderSaveWire, AwayResponderWire } from "../app/api-client";
 
 /**
  * ═══ A REFUSED SAVE LEAVES THE SWITCH SHOWING WHAT IS STORED ════════════════════════════════
@@ -36,12 +38,8 @@ import type { AwayResponderSaveWire, AwayResponderWire } from "../app/api-client
  * red on it; swap `failedWire` back to `failed` and they go red on the sentence too.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const h = React.createElement;
-
-let host: HTMLDivElement;
-let root: Root;
+let host: HTMLElement;
+let writes: number;
 
 async function mountRow(
   save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderSaveWire>,
@@ -52,47 +50,58 @@ async function mountRow(
     audience: "screened_in", throttle: "per_day", piles: ["INBOX"], updatedAt: null,
     ...row,
   };
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC",
-        children: h(ThemeProvider, null, h(ToastHost, null, h(
-          AwayResponderRow as React.FunctionComponent<{ transport: AwayTransport }>,
-          { transport: { state: async () => stored, save } },
-        ))),
-      }),
-    );
-  });
-  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    if (new URL(String(input), window.location.origin).pathname !== "/api/away-responder") {
+      return fetch(input, init);
+    }
+    if (init?.method === "PUT") {
+      writes++;
+      return Response.json(await save(JSON.parse(String(init.body))));
+    }
+    return Response.json(stored);
+  };
+  history.replaceState(null, "", "#/settings/away");
+  host = await mountCloudShell();
+  await tick(2500);
 }
 
-/** The responder's OWN switch, by its accessible name — the pane also draws a box per pile. */
-const flipSwitch = async (): Promise<void> => {
-  const name = messages.away.title;
-  const found = [...host.querySelectorAll('[role=switch], input[type=checkbox]')]
-    .filter((el) => el.getAttribute("aria-label") === name
-      || el.getAttribute("name") === name
-      || (el.id !== "" && host.querySelector(`label[for="${el.id}"]`)?.textContent?.trim() === name));
-  if (found.length !== 1) throw new Error(`away switch: expected 1 control named ${name}, found ${found.length}`);
-  await act(async () => { found[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+const A = messages.away;
+const pane = () => getByRole(host, "region", { name: A.title });
+const bodyField = () => getByRole<HTMLTextAreaElement>(pane(), "textbox", { name: A.bodyLabel });
+
+async function click(control: HTMLElement): Promise<void> {
+  await act(() => { fireEvent.click(control); });
+  await tick(100);
+}
+
+const flipSwitch = () => click(getByRole(pane(), "switch", { name: A.title }));
+const pressSave = () => {
+  const unsaved = getByText(pane(), (text) => text === A.unsavedStillOff || text === A.unsavedStillOn);
+  const announcement = unsaved.closest<HTMLElement>("[aria-live]");
+  if (!announcement) throw new Error("the unsaved announcement is missing");
+  return click(within(announcement).getByRole("button", { name: A.save }));
 };
 
-const press = async (label: string): Promise<void> => {
-  const button = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === label);
-  if (!button) throw new Error(`no button labelled ${label}`);
-  await act(async () => { button.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-};
+const text = (): string => pane().textContent ?? "";
 
-const text = (): string => host.textContent ?? "";
+beforeEach(() => {
+  writes = 0;
+  resetSessionTruthForTests();
+  resetStorageOwnerForTest();
+  localStorage.clear();
+  installConfirmEnv();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  rememberOwner();
+});
 
 afterEach(async () => {
-  await act(() => root.unmount());
-  host.remove();
+  await teardownConfirmEnv();
+  bindApiOwner(null);
+  resetSessionTruthForTests();
+  resetStorageOwnerForTest();
+  history.replaceState(null, "", "/");
 });
 
 const refuse = async (): Promise<never> => { throw new Error("the save was refused"); };
@@ -106,7 +115,7 @@ describe("a refused save is reported from the answer", () => {
     /* The edit is named as unsaved; the line keeps stating the stored responder. */
     expect(text(), "the switch did not take the edit").toContain(messages.away.unsavedStillOn);
 
-    await press(messages.away.save);
+    await pressSave();
     // THE ROW IS WHAT IS STORED, and the responder is still sending.
     expect(text(), "the row kept the edit over a responder that is still on")
       .toContain(messages.away.on);
@@ -120,7 +129,7 @@ describe("a refused save is reported from the answer", () => {
     await flipSwitch();
     expect(text(), "the switch did not take the edit").toContain(messages.away.unsavedStillOff);
 
-    await press(messages.away.save);
+    await pressSave();
     expect(text(), "the row kept the edit over a responder that is still off")
       .toContain(messages.away.off);
     expect(text()).toContain(messages.away.failedStillOff);
@@ -129,7 +138,7 @@ describe("a refused save is reported from the answer", () => {
   it("a save that lands still applies the edit and still says Saved. (the positive control)", async () => {
     await mountRow(async (next) => ({ ...next, updatedAt: null }), { enabled: true });
     await flipSwitch();
-    await press(messages.away.save);
+    await pressSave();
     expect(text(), "a landed save did not apply").toContain(messages.away.off);
     expect(text()).toContain(messages.away.saved);
     expect(text()).not.toContain(messages.away.failedStillOn);
@@ -137,14 +146,10 @@ describe("a refused save is reported from the answer", () => {
   });
 
   it("a message typed before the outage stays in the field, and the sentence says it failed", async () => {
-    /* AWAY-OUTAGE-ON-SAVE-DROPS-THE-TYPED-MESSAGE: the catch put the stored row back, so the words
-       were gone. The phone keeps them; so does this row now, still stating the stored responder. */
     await mountRow(refuse, { enabled: true });
-    const field = host.querySelector("#away-body") as HTMLTextAreaElement;
-    const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-    await act(async () => { set.call(field, "Away until the 20th, Anna covers"); field.dispatchEvent(new Event("input", { bubbles: true })); });
-    await press(messages.away.save);
-    expect((host.querySelector("#away-body") as HTMLTextAreaElement).value, "the typed message was dropped")
+    await act(() => { fireEvent.change(bodyField(), { target: { value: "Away until the 20th, Anna covers" } }); });
+    await pressSave();
+    expect(bodyField().value, "the typed message was dropped")
       .toBe("Away until the 20th, Anna covers");
     expect(text()).toContain(messages.away.failedStillOn);
     expect(text(), "the kept edit is not named as unsaved").toContain(messages.away.unsavedStillOn);
@@ -155,7 +160,8 @@ describe("a refused save is reported from the answer", () => {
     // and the new sentence must not swallow that one.
     await mountRow(refuse, { enabled: false, body: "" });
     await flipSwitch();
-    await press(messages.away.save);
+    await pressSave();
+    expect(writes).toBe(0);
     expect(text()).toContain(messages.away.incomplete);
     expect(text()).not.toContain(messages.away.failedStillOff);
   });

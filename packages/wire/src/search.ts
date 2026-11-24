@@ -1,0 +1,92 @@
+/**
+ * Search answers: text results, results for one address, or the folder inventory with counts.
+ */
+import type { MessageDTO } from "./mail.js";
+
+/** The two tiers an answer can be: literal matches, or typo guesses. An answer is one or the other, never a mixture. */
+export type SearchTier = "exact" | "similar";
+
+/** Which side of a letter an address search looks at. */
+export type AddressSearchDirection = "any" | "from" | "to";
+
+/**
+ * THE FILTERS A TEXT SEARCH TAKES, by their query parameter. `sender` is an exact From address,
+ * `to` an exact To or Cc address, `party` an exact address on either side (From, To or Cc); each
+ * compared without case, never a substring. With no words (`q` blank) and at least one filter, the
+ * answer is every letter the filters keep, newest first.
+ */
+export type SearchFilterParam =
+  "folder" | "sender" | "to" | "party" | "unread" | "hasAttachments" | "dateFrom" | "dateTo";
+
+export interface SearchPlaceCount {
+  /** The full path passed back to the folder filter. */
+  folder: string;
+  count: number;
+}
+
+export interface SearchPlacesResult {
+  places: SearchPlaceCount[];
+}
+
+export interface SearchResult {
+  items: MessageDTO[];
+  /**
+   * `null` when only the page was asked for (`parts: "page"`), and on a summary past its cap: the
+   * estimate's, over the page's candidates, stand. Over the candidates for `estimate`.
+   */
+  facets: Facets | null;
+  /** How many messages match, over the tier being returned — never over both tiers. */
+  total: number;
+  /** WHICH TIER THIS ANSWER IS: `exact` literal matches, or `similar` typo guesses. Never mixed. */
+  tier: SearchTier;
+  /**
+   * `false` when `total` is a lower bound: an arm was cut, or the summary passed its cap. Then the
+   * facets, when present, count only the page's candidates. No count is ever read from planner
+   * statistics: they cover every account's mail.
+   */
+  totalExact: boolean;
+  /** This answer's server time in milliseconds. */
+  ms: number;
+  /**
+   * The next page's cursor, or `null` on the last page (always `null` for `summary`). For a search
+   * with no words a page may hold fewer rows than asked and still carry a cursor: the read is
+   * bounded, and the letters past its bound are read by the next page.
+   */
+  nextCursor: string | null;
+  /**
+   * On the last RELEVANCE page: an arm was cut at its top-K, so matches exist past the fused set
+   * and the date orders walk them all.
+   */
+  bounded: boolean;
+  /** Present on a summary while this account's search documents are still being built. */
+  indexed?: { done: number; total: number };
+  /** Present on every part while the store has not taken in the whole mailbox ({@link importOpen}). */
+  importing?: true;
+}
+
+export interface Facets {
+  /** desiredFolder (else native locator, else INBOX) → count. */
+  folder: Record<string, number>;
+  /** top-N senders by count within the match set. */
+  sender: Array<{ address: string; count: number }>;
+  unread: { true: number; false: number };
+  hasAttachments: { true: number; false: number };
+  /** coarse recency buckets. */
+  date: { today: number; last7: number; last30: number; older: number };
+}
+
+export interface AddressSearchResult {
+  /** Newest first — `SQL_RANK_ORDER`'s key sequence with the relevance term removed. */
+  items: MessageDTO[];
+  /** How many messages match, over the whole archive rather than over this page. */
+  total: number;
+  /** `false` past {@link ADDRESS_EXACT_CAP}: `total` is then a lower bound. Absent: exact. */
+  totalExact?: false;
+  /**
+   * WHICH DIRECTION THIS ANSWER IS ABOUT — on the wire rather than inferred: a client that fell
+   * back to `from` against an older server labels its rows by this field, not by what it asked.
+   */
+  direction: AddressSearchDirection;
+  /** Present while the store has not taken in the whole mailbox ({@link importOpen}): `total` is of the mail synced so far. */
+  importing?: true;
+}

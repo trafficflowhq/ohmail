@@ -1,0 +1,84 @@
+{
+  "component": "Sentence",
+  "state": "blank",
+  "look": "ohmarchy-dark-desktop",
+  "place": "cell",
+  "target": [24, 48, 164.9844, 27],
+  "clip": [24, 48, 165, 27],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "20px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "normal",
+      "letterSpacing": "-0.2px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "20px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "-0.2px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "borderBottom": "1px dotted rgb(169, 177, 214)", "placeholder": "rgb(141, 150, 188)" },
+    { "backgroundColor": "rgb(169, 177, 214)" }
+  ],
+  "nodes": [
+    {
+      "role": "textbox",
+      "name": "your name",
+      "box": [47.2, 0, 107.8, 27],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "20px",
+        "fontWeight": "700",
+        "lineHeight": "22px",
+        "letterSpacing": "-0.2px",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0.8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0.8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "state": ["shows its hint"],
+      "text": [{ "said": "your name", "type": 0, "shown": true }],
+      "surfaces": [{ "box": [47.2, 0, 107.8, 27], "paint": 0 }]
+    }
+  ],
+  "loose": {
+    "text": [{ "said": "I'm", "type": 1 }],
+    "surfaces": [{ "box": [156.6, 11.6, 8.4, 8.4], "paint": 1 }]
+  }
+}

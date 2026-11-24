@@ -1403,14 +1403,18 @@ describe("the three doors — the claims, held to the code", () => {
   const welcome = read("../app/welcome.tsx");
   const servers = read("../app/servers.tsx");
 
-  it("first run asks the chooser's question and offers all three doors", () => {
-    expect(Copy.welcomeTitle).toBe("Which mailbox is this?");
+  it("first run introduces the app and keeps every connection route in reach", () => {
+    expect(Copy.welcomeTitle).toBe("Mail from people you said yes to.");
+    expect(Copy.welcomeScan).toBe("Scan a code");
+    expect(Copy.welcomeConnect).toBe("Connect a mailbox");
     // No door is filed under "other": the deck no longer has a key for it.
     expect(Object.keys(Copy)).not.toContain("welcomeOther");
     for (const name of [Copy.doorCloud, Copy.doorOwnServer, Copy.doorDesktop]) {
       expect(name.length).toBeGreaterThan(0);
     }
-    expect(welcome).toContain("<Doors");
+    expect(welcome).toContain('router.push("/servers")');
+    expect(welcome).toContain('router.push("/scan")');
+    expect(welcome).toContain('router.push("/standalone")');
     expect(servers).toContain("<Doors");
   });
 
@@ -1683,7 +1687,7 @@ describe("the three doors — the claims, held to the code", () => {
     // The address step's own probe (`probeUnder("self", …)`), so another door's late check cannot lock it.
     expect(doors).toContain('locked={selfProbe.k === "asking" || selfProbe.k === "probed"}');
     expect(doors).toContain('const selfProbe = probeUnder("self", open, probe);');
-    expect(doors).toContain("editable={!locked}");
+    expect(read("../src/ui/Field.tsx")).toContain("editable={locked ? false : undefined}");
   });
 
   /**
@@ -1695,8 +1699,12 @@ describe("the three doors — the claims, held to the code", () => {
    * after the camera. The tile stays unconditional; one line renders only where the condition holds.
    */
   it("where this build cannot pin, the desktop door says so before the scan", () => {
-    expect(doors).toContain("canPin() ? null : (");
-    expect(doors).toContain("Copy.doorDesktopNoPin");
+    expect(doors).toContain("const supported = canPin()");
+    expect(doors).toContain("supported ? null :");
+    expect(doors).toContain("supported ? Copy.phoneComputerAndroid : Copy.phoneComputerIos");
+    expect(doors).toContain("Copy.phoneComputerNoPin");
+    expect(Copy.phoneComputerIos).toContain("Tailscale");
+    expect(Copy.phoneComputerNoPin).toContain("cannot verify");
     // It names the remedy that works, not the mechanism that does not.
     expect(Copy.doorDesktopNoPin).toContain("Tailscale");
     expect(Copy.doorDesktopNoPin).toContain("cannot yet verify");
@@ -1819,6 +1827,30 @@ describe("the pairing confirmation cannot be routed around", () => {
       .map((f) => f.rel)
       .sort();
     expect(callers).toEqual(["src/net/connection.tsx", "src/net/pairing.ts"]);
+  });
+
+  it("the sibling app's handoff has one spender: the switch's receiving step, with a verifier native made", () => {
+    /* The second way a phone session is born. No person confirms it, because the person pressed the other app and the
+       code is bound to a challenge only this app made: so the one caller is named, and a screen growing a second is red. */
+    const callers = shipped()
+      .filter((f) => /\bpairByHandoff\(/.test(f.src))
+      .map((f) => f.rel)
+      .sort();
+    expect(callers).toEqual(["src/net/pairing.ts", "src/switch/receive.ts"]);
+  });
+
+  it("only native opens a switch link: the app's code names its path only in the grammar, and the switch never reaches Linking", () => {
+    /* The platform's own opener cannot ask for an installed app alone: a switch link opened through it lands in a
+       browser with its fragment, the code in it. So no file but the link's grammar names the path or reads it from
+       the table, and no file of the switch imports the opener; the sibling is opened by the native module alone. */
+    const naming = shipped()
+      .filter((f) => /["'`]\/switch(?:-preview)?["'`#]/.test(f.src) || /\blinks\.path\b/.test(f.src))
+      .map((f) => f.rel)
+      .sort();
+    expect(naming).toEqual(["src/switch/link.ts"]);
+    const switchFiles = shipped().filter((f) => f.rel.startsWith("src/switch/"));
+    expect(switchFiles.length, "the switch's folder moved: this census reads nothing").toBeGreaterThan(5);
+    expect(switchFiles.filter((f) => /\bLinking\b|\bopenURL\b/.test(f.src)).map((f) => f.rel)).toEqual([]);
   });
 
   it("every screen that can spend a code RENDERS the confirmation", () => {

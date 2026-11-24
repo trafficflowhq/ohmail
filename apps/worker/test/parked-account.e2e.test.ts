@@ -7,7 +7,7 @@ import { makeDb, pushSubscriptions } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger, type Logger } from "@trafficflow/core";
 import { META_FOLDER, parseClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { startWorker } from "../src/index.js";
-import { imapCfg, rawClient } from "./_workerenv.js";
+import { imapCfg, rawClient } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 /**
@@ -134,7 +134,7 @@ describe("the park reaches the wire: the claim leaves the real ohmail/_meta", ()
     }).returning();
     const enc = await KP.encrypt(cfg.auth.pass);
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: cfg.host, port: cfg.port, secure: false, user: cfg.auth.user },
     });
     await db.insert(pushSubscriptions).values({

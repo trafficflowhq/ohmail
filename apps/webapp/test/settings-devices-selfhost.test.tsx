@@ -11,6 +11,7 @@
  * `api.ohmail.app` would point a household's phone at the managed service — the wrong server,
  * with somebody else's sign-in — which is the failure this file makes unrepresentable.
  */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -80,7 +81,7 @@ describe("the self-host devices pane mints on the page origin", () => {
       root!.render(
         h(NextIntlClientProvider, {
           locale: "en", messages, timeZone: "UTC",
-          children: h(ThemeProvider, null, h(ToastHost, null, h(DevicesSection))),
+          children: h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DevicesSection }))),
         }),
       );
       await Promise.resolve();
@@ -92,7 +93,7 @@ describe("the self-host devices pane mints on the page origin", () => {
     await click(add!);
 
     const link = `${window.location.origin}/pair#${TOKEN}`;
-    const svg = host.querySelector<SVGSVGElement>(".join-qr svg");
+    const svg = host.querySelector<SVGSVGElement>(".oh-code-tile svg");
     expect(svg, "the QR rendered").toBeTruthy();
     expect(decodeQr(matrixFromSvg(svg!))).toBe(link);
     expect(host.querySelector('[data-testid="pair-link"]')!.textContent).toBe(link);

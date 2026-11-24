@@ -1,13 +1,21 @@
 /** @vitest-environment jsdom */
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import type { RuleDTO, WaitingOnOrganizerView } from "@ohmail/client-engine";
+import type { WaitingOnOrganizerView } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
-import { SettingsView } from "../app/views/SettingsView";
+import { within } from "@testing-library/react";
+import { MailGround, mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { displayRuleMatch } from "@ohmail/app-logic/text/idn";
+import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
+import { fakeAddress } from "../../../packages/app/test/support/fake-window.js";
+import { fakeMail } from "../../../packages/app/test/reader/support/mail.js";
+import { MailFrame } from "../app/shell/browser-mail";
+import { mailbox } from "./fixtures/live-walk-shell";
 
 /**
  * THE RULES PAGE SAYS THE STATE THE ORGANIZER WILL ACT ON, through the real pane: a removal or a
@@ -38,30 +46,57 @@ let host: HTMLDivElement;
 let root: Root | null = null;
 
 let retargets: Array<[string, string, boolean | "walk"]>;
+let shownRules: RuleDTO[];
+let words: typeof messages | typeof de;
+
 async function open(
   rules: RuleDTO[], waiting: WaitingOnOrganizerView[] = [], lang: "en" | "de" = "en",
 ): Promise<void> {
-  const view = h(SettingsView, {
-    notifications: null, tags: [], tagCounts: {},
-    rules: {
-      items: rules, waiting,
-      mailboxLabel: (id: string) => (id === "mb-other" ? "other@shop.test" : null),
-      onRevoke: async () => ({ status: "confirmed" as const }),
-      onRetarget: async (id: string, d: string, r: boolean | "walk") => { retargets.push([id, d, r]); return { status: "confirmed" as const }; },
-      pastMail: () => null,
+  shownRules = rules;
+  words = lang === "de" ? de : messages;
+  const { WebRulesPane } = await import("../app/(product)/mailbox/WebRulesPane");
+  const settings = mailSettings({ ...NO_PANE_PARTS, rules: WebRulesPane });
+  const mail = fakeMail([], [], {}, Object.fromEntries(rules.map((rule) => [`rule:${rule.id}`, rule])));
+  const engine = Object.assign(mail.engine, {
+    waitingOnOrganizer: () => waiting,
+    queuedRuleWrites: () => [],
+    appliedRuleRequests: () => [],
+    unsettledRulePresses: () => [],
+    mutate: async (mutation: Parameters<typeof mail.engine.mutate>[0]) => {
+      if (mutation.kind === "rule_update") {
+        retargets.push([mutation.ruleId, mutation.destination, mutation.applyRetro ? "walk" : mutation.refile === true]);
+      }
+      return { status: "confirmed" as const };
     },
   });
-  const msgs = lang === "de" ? de : messages;
+  const { host: rulesHost } = fakeHost({
+    engine, scope: "rules-test", service: "managed", above: MailGround,
+    address: fakeAddress("#/settings/rules"), places: { settings },
+    mailboxes: async () => [mailbox({ id: "mb-other", address: "other@shop.test", organizerRole: "organizer" })],
+  });
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
-      locale: lang, messages: msgs, timeZone: "UTC", now: new Date("2026-10-02T12:00:00.000Z"),
-      children: h(ThemeProvider, { children: h(ToastHost, { children: view }) }),
+      locale: lang, messages: words, timeZone: "UTC", now: new Date("2026-10-02T12:00:00.000Z"),
+      children: h(ThemeProvider, { children: h(ToastHost, { children: h(MailFrame, { host: rulesHost }) }) }),
     }));
   });
-  const nav = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === (lang === "de" ? de.settings.rules : "Rules"))!;
-  await act(async () => { nav.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+  await within(host).findByRole("list", { name: words.settings.rules }, { timeout: 5000 });
 }
-const rowOf = (id: string) => host.querySelector<HTMLElement>(`[data-rule-id="${id}"]`)!;
+
+const ruleRows = () => within(within(host).getByRole("list", { name: words.settings.rules })).getAllByRole("listitem");
+
+function rowOf(id: string): HTMLElement {
+  const rule = shownRules.find((candidate) => candidate.id === id)!;
+  const name = words.rules.what[rule.kind as "sender" | "domain"].replace("{match}", displayRuleMatch(rule.match));
+  return within(host).getByRole("group", { name: name.replace(/\s+/g, " ").trim() });
+}
+
+const waitingGroup = () => within(host).queryByRole("heading", { name: /^Waiting on / })
+  ?.closest<HTMLElement>(".oh-settingssheet") ?? null;
+
+const rankNote = (row: HTMLElement) => within(row).queryByText((text) =>
+  [words.rules.outranks, words.rules.outranked].some((message) => text.startsWith(message.split("{")[0]!)),
+);
 const press = async (el: Element | undefined) => {
   await act(async () => { el!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 };
@@ -103,10 +138,10 @@ describe("what waits on the organizer is said on the page", () => {
 
   it("a rule removed here and still asked there is listed at the top, naming the mailbox", async () => {
     await open([rule("b", "sender", "bob@shop.example")], [waits({ ruleId: null, target: { rule: KEY("ann@shop.example") } })]);
-    const group = host.querySelector<HTMLElement>(".rules-waiting")!;
+    const group = waitingGroup()!;
     expect(group, "no waiting group").toBeTruthy();
-    expect(group.textContent).toContain("Mail from ann@shop.example");
-    expect(group.textContent).toContain("Removed here; waits on Laptop for other@shop.test");
+    expect(group.textContent).toContain("ann@shop.example");
+    expect(group.textContent).toContain("Removed here, and waits on Laptop for other@shop.test");
     // Outside the window's index space: at phone width the page is the window's scroller, and a
     // slot claimed here was measured as a row and re-measured for ever (measured on the rig).
     expect(group.querySelectorAll("[data-index]")).toHaveLength(0);
@@ -115,12 +150,12 @@ describe("what waits on the organizer is said on the page", () => {
   it("a request names its rule by key: a padded spelling, read before the mirror held the row, reaches it", async () => {
     await open([rule("a", "sender", "ann@shop.example")], [waits({ ruleId: null, target: { rule: KEY("  Ann@Shop.example") } })]);
     expect(rowOf("a").textContent).toContain("Removal waits on Laptop");
-    expect(host.querySelector(".rules-waiting")).toBeNull();
+    expect(waitingGroup()).toBeNull();
   });
 
   it("CONTROL: with nothing waiting no row says so and there is no group", async () => {
     await open([rule("a", "sender", "ann@shop.example")], []);
-    expect(host.querySelector(".rules-waiting")).toBeNull();
+    expect(waitingGroup()).toBeNull();
     expect(rowOf("a").textContent).not.toContain("waits on");
   });
 
@@ -145,7 +180,7 @@ describe("an address rule against its domain's", () => {
       rule("a", "sender", "ann@shop.example", { priority: 4, destination: "INBOX" }),
     ]);
     expect(rowOf("a").textContent).toContain("The rule for anyone at shop.example (Receipts) decides this sender now");
-    await press([...rowOf("a").querySelectorAll("button")].find((b) => b.textContent?.trim() === R.liftAction));
+    await press(within(rowOf("a")).getByRole("button", { name: R.liftAction }));
     expect(retargets).toEqual([["a", "INBOX", false]]);
   });
 
@@ -155,15 +190,15 @@ describe("an address rule against its domain's", () => {
       rule("a", "sender", "ann@shop.example", { destination: "INBOX" }),
       rule("c", "sender", "cat@else.example", { priority: 3 }),
     ]);
-    expect(rowOf("a").querySelector(".rules-rank")).toBeNull();
-    expect(rowOf("c").querySelector(".rules-rank")).toBeNull();
+    expect(rankNote(rowOf("a"))).toBeNull();
+    expect(rankNote(rowOf("c"))).toBeNull();
   });
 });
 
 describe("twins and the settings bound", () => {
   it("two rows under one key are one row, the one the router runs, with the copy counted", async () => {
     await open([rule("p", "sender", "ann@shop.example"), rule("q", "sender", "  Ann@Shop.example ", { priority: 2 })]);
-    expect(host.querySelectorAll("[data-rule-id]")).toHaveLength(1);
+    expect(ruleRows()).toHaveLength(1);
     expect(rowOf("q").textContent).toContain("1 more copy of this rule, removed with it");
   });
 
@@ -173,7 +208,7 @@ describe("twins and the settings bound", () => {
       rule("a1", "sender", "Ann@Shop.example", { destination: "ohmail/Receipts", priority: 5, enabled: false }),
       rule("b2", "sender", "ann@shop.example"),
     ]);
-    expect(host.querySelectorAll("[data-rule-id]")).toHaveLength(1);
+    expect(ruleRows()).toHaveLength(1);
     const row = rowOf("b2").textContent ?? "";
     expect(row).toContain("Also for this sender: files into Receipts, paused. Revoke removes that rule too.");
     expect(row).not.toContain("more copy");
@@ -182,17 +217,17 @@ describe("twins and the settings bound", () => {
   it("twins filing elsewhere are named with their places, in English and in German", async () => {
     const twins = [rule("p", "sender", "ann@shop.example"), rule("q", "sender", "ANN@shop.example", { destination: "ohmail/Receipts" })];
     await open(twins);
-    const en = host.querySelector("[data-rule-id]")!.textContent ?? "";
+    const en = ruleRows()[0]!.textContent ?? "";
     expect(en).toMatch(/Also for this sender: files into (News|Receipts)\. Revoke removes that rule too\./);
     await open(twins, [], "de");
-    const de = host.querySelector("[data-rule-id]")!.textContent ?? "";
+    const de = ruleRows()[0]!.textContent ?? "";
     expect(de).toMatch(/Außerdem für diesen Absender: sortiert in \S+\. Aufheben entfernt diese Regel mit\./);
   });
 
   it("past the bound the page says how many stay on this computer, and not before", async () => {
     const many = Array.from({ length: 5001 }, (_, i) => rule(`r${i}`, "sender", `s${i}@x.example`));
     await open(many);
-    expect(host.textContent).toContain("Your other computers receive your newest 5,000" + " rules; 1 older one stays on this one.");
+    expect(host.textContent).toContain("Your other computers receive your newest 5,000" + " rules, and 1 older one stays on this one.");
     await open(many.slice(0, 5000));
     expect(host.textContent).not.toContain("Your other computers receive");
   });

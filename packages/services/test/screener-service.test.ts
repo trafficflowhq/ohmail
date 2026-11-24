@@ -6,7 +6,7 @@ import { messageBodies } from "@trafficflow/db";
 import {
   ScreenerService, makeUnsubscribeService, UNSUB_SYNC_MAX, type HostResolver,
 } from "../src/index.js";
-import { makeCtx, seedMessage, FakeAdapter, changesFor } from "./helpers.js";
+import { makeCtx, makeSuggestionCtx, seedMessage, FakeAdapter, changesFor } from "./helpers.js";
 
 function classifierReturning(result: ClassifierResult): ClassifierPort {
   return { async classify() { return result; } };
@@ -16,7 +16,7 @@ const NO: ClassifierResult = { destination: "ohmail/Screened", confidence: 0.8, 
 
 describe("ScreenerService — first-contact queue (derived) + decide", () => {
   it("lists one entry per held sender, and buying a suggestion puts it on the row", async () => {
-    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const { db, accountId, mailboxId, ctx } = await makeSuggestionCtx();
     await seedMessage(db, accountId, mailboxId, { from: "alice@ex.example", subject: "hi", date: new Date("2026-07-28T08:00:00Z") });
     await seedMessage(db, accountId, mailboxId, { from: "alice@ex.example", subject: "again", date: new Date("2026-07-28T09:00:00Z") }); // same sender → deduped
     await seedMessage(db, accountId, mailboxId, { from: "bob@ex.example", subject: "yo" });
@@ -170,7 +170,7 @@ describe("ScreenerService — first-contact queue (derived) + decide", () => {
   });
 
   it("decide NO → promoted rule to Screened + re-routes their mail to Screened", async () => {
-    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const { db, accountId, mailboxId, ctx } = await makeSuggestionCtx();
     const m1 = await seedMessage(db, accountId, mailboxId, { from: "spam@ex.example" });
     const adapter = new FakeAdapter();
     const svc = new ScreenerService({ adapter, classifier: classifierReturning(NO) });
@@ -228,7 +228,7 @@ describe("ScreenerService — first-contact queue (derived) + decide", () => {
     const stranger = await seedMessage(db, accountId, mailboxId, { from: "someone@elsewhere.example" });
 
     const svc = new ScreenerService({ adapter: new FakeAdapter(), classifier: classifierReturning(NO) });
-    await svc.decide(ctx, mine, { decision: "no", scope: "domain" });
+    await svc.decide(ctx, mine, { decision: "no", scope: "domain", unsubscribeIds: [mine, sibling] });
 
     const desired = async (id: string) =>
       (await db.select().from(folderState).where(eq(folderState.messageId, id)))[0]!.desiredFolder;
@@ -262,7 +262,7 @@ describe("ScreenerService — first-contact queue (derived) + decide", () => {
   /**
    * ── WHAT A DOMAIN REJECT HANDS TO THE UNSUBSCRIBE TRIGGER ───────────────────
    *
-   * `decide` calls `unsubscribe.onScreenOut(ctx, senderMail)` after the commit on every `no`
+   * `decide` calls `unsubscribe.onScreenOut` after commit for the confirmed IDs it filed
    * (`screener-service.ts`), and production wires that dependency in
    * (`apps/api-vercel/src/deps.ts`). So widening the bag widens the set of strangers this
    * account sends a one-click unsubscribe to — from one address to every sender at the
@@ -287,7 +287,7 @@ describe("ScreenerService — first-contact queue (derived) + decide", () => {
         async onScreenOut(_c, ids) { seen.push([...ids].sort()); return { considered: ids.length }; },
       },
     });
-    await svc.decide(ctx, mine, { decision: "no", scope: "domain" });
+    await svc.decide(ctx, mine, { decision: "no", scope: "domain", unsubscribeIds: [mine, sibling] });
 
     expect(seen).toEqual([[mine, sibling].sort()]);
   });
@@ -310,7 +310,7 @@ describe("ScreenerService — first-contact queue (derived) + decide", () => {
       const id = await seedMessage(db, accountId, mailboxId, { from: `list-${i}@corp.example` });
       held.push(id);
       await db.insert(messageBodies).values({
-        messageId: id, text: "", headers: {
+        messageId: id, accountId, text: "", headers: {
           "list-unsubscribe": [`<https://corp.example/u?t=${i}>`],
           "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
           // The mailbox's provider confirming the sender: the automatic arm's licence to ask.
@@ -331,7 +331,7 @@ describe("ScreenerService — first-contact queue (derived) + decide", () => {
       }),
     });
 
-    const result = await svc.decide(ctx, held[0]!, { decision: "no", scope: "domain" });
+    const result = await svc.decide(ctx, held[0]!, { decision: "no", scope: "domain", unsubscribeIds: held });
 
     // `decide` answers one of two shapes and only the APPLIED one carries a fan-out at all; the
     // route narrows on the same key to choose 200 or 202. Narrowed rather than cast: a queued

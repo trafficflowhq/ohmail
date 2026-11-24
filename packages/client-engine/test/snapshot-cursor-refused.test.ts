@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome, SyncSnapshotPage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   CursorExpiredError,
@@ -9,10 +10,7 @@ import {
   SnapshotCursorRefusedError,
   encodeSeqCursor,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncResponse,
-  type SyncSnapshotPage,
 } from "../src/index.js";
 
 /**

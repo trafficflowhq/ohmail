@@ -15,7 +15,7 @@ import { STAFF_ROLE_LIVE_IN_PRODUCTION } from "../src/staff-grants.js";
  * copy still disclaims it.
  *
  * Nothing in the tree forced the copy edit; it was manual discipline, and "Claims are contracts"
- * (CLAUDE.md) does not run on discipline. This test makes the two move together. The single bit
+ * (AGENTS.md) does not run on discipline. This test makes the two move together. The single bit
  * of shared truth is {@link STAFF_ROLE_LIVE_IN_PRODUCTION} — the provisioning DECLARATION — and
  * the coupling is BIDIRECTIONAL, so neither the flag nor the copy can move without the other:
  *

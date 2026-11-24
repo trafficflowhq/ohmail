@@ -7,8 +7,9 @@
  */
 import { expect, vi } from "vitest";
 import { flushSync } from "react-dom";
-import { ISO, act, answerStoreWith, answerSyncWith, mailbox, mountShell, tick } from "./live-walk-shell.js";
-import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
+import { ISO, act, answerStoreWith, answerSyncWith, liveAccountResponse, mailbox, mountShell, tick } from "./live-walk-shell.js";
+import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
+import { readSlot as seatedReadSlot, reportPress, reportSays } from "../ohbox/_finders.js";
 
 export const ME = "walker@example.invalid";
 export const LENA = { name: "Lena", address: "lena@example.invalid" };
@@ -40,7 +41,7 @@ const thread = (tid: string, ids: string[]) => create("thread", tid, {
   lastMessageAt: ISO, participants: [], updatedAt: ISO,
 });
 const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  liveAccountResponse(Response.json(body, { status }));
 
 export type ReadPatch = { ids: string[]; unread: boolean; via?: string };
 /** Every `PATCH /messages` the engine sent, in order. */
@@ -68,7 +69,7 @@ const takeLater = (): unknown[] => {
  */
 export async function mountThread(
   messages: unknown[],
-  opts: { threadIds?: Record<string, number>; bodies?: Parameters<typeof answerStoreWith>[1] } = {},
+  opts: { threadIds?: Record<string, number>; bodies?: Parameters<typeof answerStoreWith>[1]; webContactScreening?: boolean } = {},
 ): Promise<HTMLElement> {
   resetResumeLaneForTests();
   seq = 0;
@@ -106,7 +107,9 @@ export async function mountThread(
     }
     return base(input as RequestInfo, init);
   }) as unknown as typeof globalThis.fetch;
-  const host = await mountShell([mailbox({ id: "mb_1", address: ME, lastSyncAt: ISO })]);
+  const host = await mountShell([mailbox({ id: "mb_1", address: ME, lastSyncAt: ISO, organizerChecked: opts.webContactScreening })], {
+    webContactScreening: opts.webContactScreening,
+  });
   await settle();
   return host;
 }
@@ -141,12 +144,21 @@ export const keyAsBrowser = async (k: string, init: KeyboardEventInit = {}): Pro
 };
 /** The conversation's one Ohbox row. */
 export const theRow = (host: HTMLElement): HTMLElement | null =>
-  host.querySelector<HTMLElement>('[role="listbox"] .row');
+  host.querySelector<HTMLElement>('[role="listbox"] :is(.row, [role=option])');
 /** A row press, as a person makes it: one click opens the conversation on its newest (a second stays there). */
 export const openTheRow = async (host: HTMLElement): Promise<void> => {
   await click(theRow(host), "the conversation's row");
 };
-/** The read slot of the bar in `scope` (the column or the sheet). */
-export const readSlot = (scope: ParentNode): HTMLElement | null => scope.querySelector<HTMLElement>(".abar .abar-read");
+/**
+ * The read slot in `scope`: at the seated Ohbox the open letter's panel's (`scope` holds the reading column), at a
+ * place of today's the bar's in the column or the sheet.
+ */
+export const readSlot = (scope: ParentNode): HTMLElement | null =>
+  seatedReadSlot(scope) ?? scope.querySelector<HTMLElement>(".abar .abar-read");
+/** What a verb's answer says: at a seated place the frame's report, at a place of today's the capsule. */
 export const toastText = (): string =>
-  [...document.querySelectorAll<HTMLElement>(".toast")].map((t) => t.textContent ?? "").join(" | ");
+  [reportSays(), ...[...document.querySelectorAll<HTMLElement>(".toast")].map((t) => t.textContent ?? "")]
+    .filter((t) => t !== "").join(" | ");
+/** The Undo a verb's answer offers: the frame's report's at a seated place, the capsule's elsewhere. */
+export const undoPress = (): HTMLElement | null =>
+  reportPress() ?? document.querySelector<HTMLElement>(".toast .toast-act");

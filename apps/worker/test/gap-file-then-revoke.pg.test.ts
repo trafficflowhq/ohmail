@@ -1,15 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { and, eq } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, auditLog, folderState, mailboxes, messages, routingDecisions, rules, type Tx } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
-import { ScreenerService, rulesService, type ServiceContext } from "@trafficflow/services";
-import { gapCatchupPass } from "../src/gap-catchup.js";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
+import { ScreenerService, rulesService, type ServiceContext, dbFor } from "@trafficflow/services";
+import { gapCatchupPass } from "@ohmail/organizer/gap-catchup";
 
 /**
  * A SCREENER RULE THAT FILED A GAP BATCH IS REVOKED, on real Postgres: the rule is
@@ -29,21 +26,21 @@ const GAP = new Date("2026-10-03T00:00:00Z");
 const IN_GAP = new Date("2026-10-03T10:00:00Z");
 
 describe.skipIf(!AVAILABLE)("the revoke of a rule that filed a gap batch, on real Postgres", () => {
-  let sql: ReturnType<typeof postgres>;
-  let db: ReturnType<typeof drizzle<typeof schema>>;
+  let sql: OwnedDb;
+  let db: OwnedDb["db"];
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    sql = postgres(PG_TEST_URL, { max: 3, onnotice: () => {} });
-    db = brandDialect(drizzle(sql, { schema }), "pg");
+    sql = makeOwnedDb(PG_TEST_URL);
+    db = sql.db;
   }, 120_000);
 
   afterAll(async () => {
-    await sql?.end({ timeout: 5 });
+    await sql?.close();
   });
 
   const ctxOf = (accountId: string): ServiceContext => ({
-    db: db as unknown as ServiceContext["db"], accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => DECIDED, requestId: randomUUID(),
   });
 
@@ -61,7 +58,7 @@ describe.skipIf(!AVAILABLE)("the revoke of a rule that filed a gap batch, on rea
         subject: `letter ${i}`, fromAddress: from, nativeLocator: { folder, ref: `1:${i + 1}` }, arrivedAt,
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
         lastSetBy, reconcileStatus: "reconciled", conflict: false,
       });
       return m!.id;

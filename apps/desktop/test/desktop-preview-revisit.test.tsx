@@ -7,9 +7,9 @@ import { useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { OhmailEngine, threadOf, type EngineAdapter } from "@ohmail/client-engine";
 import { useMessageAttachments } from "../../webapp/app/shell/attachments.js";
-import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
+import { desktopFileShell, enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
 import { AttachmentPreview } from "../../webapp/app/components/AttachmentPreview.js";
-import { KeymapProvider } from "../../webapp/app/shell/keymap.js";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 /**
  * MORE PICTURES THAN THE SHELL KEEPS, AND BACK TO THE FIRST, AND IT SHOWS. The overlay walks more
@@ -68,7 +68,7 @@ afterEach(async () => {
 });
 
 function Harness({ engine }: { engine: OhmailEngine }) {
-  const chrome = useMessageAttachments(engine, "m1", { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  const chrome = useMessageAttachments(engine, "m1", { shell: desktopFileShell(), conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   const [activeId, setActiveId] = useState("i0");
   const view = chrome?.itemsOf("m1", { includeInlineParts: true });
   const items = view?.state === "ready" ? view.items : [];

@@ -1,3 +1,23 @@
+import type {
+  ApprovalDTO,
+  ChangeOp,
+  DraftDTO,
+  MailboxDTO,
+  MailboxProfileDTO,
+  MessageBodyBatchItem,
+  MessageDTO,
+  MessageStateDTO,
+  Page,
+  RoutingDecisionDTO,
+  RuleDTO,
+  ScreenerSuggestionDTO,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+  TagDTO,
+  ThreadDTO,
+  WithheldMarker,
+} from "@ohmail/wire";
 import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm";
@@ -8,17 +28,21 @@ import { recordChange, recordChanges, recordRuleDelta, accountSettings, CAPABILI
   // MAILBOX owns, and SKIPS rather than throws on either stamp; see the folder arm for why a
   // throw is the wrong verb here.
   readAccountErasedAt, readMailboxErasedAt, fenceErased, AccountErasedError, MailboxErasedError,
+  isCalendarRecordKind,
+  // The one door to `message_invitations` (mail 0204): the copy writes what the record carries.
+  putInvitationCopy,
 } from "@trafficflow/db";
 import {
+  calCalendars, calConnections, calEvents, calSettings, calSuggestions,
   accountSyncState, approvals, attachments, awayReplies, drafts, flagState, folderOps, folderState,
-  listAddresses, mailboxCredentials, mailboxFolders, mailboxProfileMirror,
+  junkRescues, listAddresses, mailboxCredentials, mailboxFolders, mailboxProfileMirror,
   mailboxes, messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messages,
   messageTags,
   organizerRequests, outboundSends, routingDecisions, rules, tags, threadNotes, threads,
   trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
-import { StoreStatementFaultError } from "@trafficflow/core/mail";
+import { StoreStatementFaultError, searchInputsFromStore, upsertMessageSearchRows } from "@trafficflow/core/mail";
 // THE SHARED DRAIN POLICY — the ONE definition of "is this mirror behind", of the three
 // freshness states, and of the dense-page limit, held with `packages/client-engine`
 // (INSTANT-ARCH §6.7, stage 7's first adopted responsibility). Dependency-free core source —
@@ -30,13 +54,12 @@ import {
   drainPageLimit, mirrorFreshness, mirrorStale, STALE_RESUME_MS, type MirrorFreshness,
 } from "@trafficflow/core/drain-policy";
 import type {
-  ApprovalDTO, ChangeOp, DraftDTO, EntityType, MailboxDTO, MessageBodyBatchItem, MessageDTO,
-  MailboxProfileDTO, MessageStateDTO, Page, RoutingDecisionDTO, RuleDTO, ScreenerSuggestionDTO, SnapshotResponse,
-  SyncChange, SyncResponse,
-  TagDTO, ThreadDTO, WithheldMarker,
+  EntityType,
 } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
+import { removeCalendarChange, storeCalendarSwitch, upsertCalendarChange } from "./cloud-mirror-calendar.js";
+import { forgetHostedDevices, keepHostedDevices, keepHostedDevicesAtStart } from "./cloud-mirror-devices.js";
 import { answeredByCloud, retryAfterMs, type CloudAuth } from "./cloud-auth.js";
 import { stampSynced } from "./sync-stamp.js";
 import { createFirstSyncReporter } from "./first-sync.js";
@@ -102,6 +125,11 @@ export const CLOUD_SYNC_TYPES = [
    * local door judges that mailbox by the organizer's rules as the web and the phone do.
    */
   "mailbox_profile",
+  /**
+   * THE CALENDAR'S FOUR KINDS. Named, because the hosted reader serves them only to a request
+   * that names one; stored by `cloud-mirror-calendar.ts` into this store's own `cal_*` tables.
+   */
+  "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
 ] as const satisfies readonly EntityType[];
 
 /**
@@ -131,7 +159,7 @@ void cloudSyncTypesAreComplete;
  * it can be assigned — so within a page ordered by seq the tag's own change is already in hand by
  * the time the message carrying the assignment is applied.
  */
-export const APPLY_ORDER: readonly EntityType[] = [
+export const APPLY_ORDER = [
   /* `mailbox` is FIRST so that in the REVERSED delete pass it is LAST: the mailbox receipt takes
      everything keyed by that mailbox, and running it after the page's own per-row deletes leaves
      them nothing to find rather than the other way round. It never appears as a non-delete — the
@@ -150,7 +178,21 @@ export const APPLY_ORDER: readonly EntityType[] = [
      first-pull wedge (`approvals_routing_decision_id_account_fk`, measured 2026-09-19). In the
      REVERSED delete pass, last means the approval's tombstone clears before its holders'. */
   "approval",
-];
+  /* The calendar's kinds, each after the one it hangs on: in the REVERSED delete pass an event's
+     tombstone clears before its calendar's and a calendar's before its connection's. */
+  "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
+] as const satisfies readonly EntityType[];
+
+/**
+ * AND EVERY KIND THE MIRROR ASKS FOR HAS A PLACE IN THAT ORDER. A kind asked for and missing here
+ * is fetched and then never applied: the page commits its cursor past rows nobody wrote. The same
+ * compile-time proof as the request list's above.
+ */
+type ApplyOrderMissing = Exclude<(typeof CLOUD_SYNC_TYPES)[number], (typeof APPLY_ORDER)[number]>;
+type ApplyOrderIsComplete = [ApplyOrderMissing] extends [never] ? true
+  : { "a kind CLOUD_SYNC_TYPES asks for has no place in APPLY_ORDER": ApplyOrderMissing };
+const applyOrderIsComplete: ApplyOrderIsComplete = true;
+void applyOrderIsComplete;
 
 const DEFAULT_PAGE_LIMIT = 500;
 
@@ -399,6 +441,13 @@ interface CursorState {
    * the steady state and the file then carries no key for it.
    */
   overflow: QuarantineOverflow;
+  /**
+   * The switch's instant this copy last read the hosted calendar whole for, `null` when it holds
+   * none. The feed sends no calendar change while the switch is off, so a copy whose switch went on
+   * again owes a read of the calendar as it stands (`reconcileCalendarCopy`). Absent from older
+   * files, which reads `null`: such a copy reads it once.
+   */
+  calendarLoadedFor: string | null;
 }
 
 /** A hosted mailbox's gap offer: the rules' letters and, from a server that counts them, the strangers'. */
@@ -470,6 +519,17 @@ export interface CloudMirrorConfig {
    * mailbox a launch serves from it (`cloud-engine.ts`). Never throws into the pull.
    */
   onMailboxes?: () => Promise<void>;
+  /**
+   * A page carries the receipt of a mailbox ERASED on the account, and is about to be applied.
+   * The engine removes what else on this computer still holds that mailbox's mail (an earlier
+   * copy of the mirror). A throw leaves the page unapplied, and the pull asks for it again.
+   */
+  onMailboxErased?: () => void;
+  /**
+   * The first fill's opening window has landed and its place is written, or the fill completed on
+   * a server that serves no window. Never throws into the pull.
+   */
+  onFirstWindow?: () => void;
 }
 
 export interface CloudMirror {
@@ -748,6 +808,8 @@ interface CursorFile {
   quarantineOverflow?: unknown;
   /** `"stale"`/`"fresh"` once the overflow reached {@link OVERFLOW_MAX}; absent while exact. */
   quarantineFloor?: unknown;
+  /** The switch's instant the calendar was last read whole for; absent when none was. */
+  calendarLoadedFor?: unknown;
 }
 
 /**
@@ -820,6 +882,7 @@ function readCursor(path: string): CursorState {
       lastDrainAt: typeof j.lastDrainAt === "string" && j.lastDrainAt !== "" ? j.lastDrainAt : null,
       quarantine: readQuarantine(j.quarantine),
       overflow: readOverflow(j.quarantineOverflow, j.quarantineFloor),
+      calendarLoadedFor: typeof j.calendarLoadedFor === "string" && j.calendarLoadedFor !== "" ? j.calendarLoadedFor : null,
     };
   } catch {
     // No file at all is a FRESH install, not an upgraded one: there are no rows to re-key, and the
@@ -843,6 +906,8 @@ function readCursor(path: string): CursorState {
       lastDrainAt: null,
       quarantine: [],
       overflow: { keys: new Map(), floor: null },
+      // A fresh copy holds no calendar; its bootstrap reads the calendar with the rest.
+      calendarLoadedFor: null,
     };
   }
 }
@@ -871,6 +936,8 @@ function writeCursor(path: string, state: CursorState): void {
       ? { quarantineOverflow: [...state.overflow.keys].map(([k, e]) => [k, e.seq, e.fresh ? 1 : 0]) }
       : {}),
     ...(state.overflow.floor !== null ? { quarantineFloor: state.overflow.floor } : {}),
+    // Absent while the copy holds no calendar, so such a file is byte-identical to an older one.
+    ...(state.calendarLoadedFor !== null ? { calendarLoadedFor: state.calendarLoadedFor } : {}),
   };
   writeFileSync(path, JSON.stringify(onDisk));
 }
@@ -918,6 +985,11 @@ interface BootstrapGen {
   routing_decision: MarkSet;
   tag: MarkSet;
   mailbox_profile: MarkSet;
+  /** The calendar's records, swept after the mail by `sweepPhantoms`, children first. */
+  calendar_connection: MarkSet;
+  calendar: MarkSet;
+  calendar_event: MarkSet;
+  calendar_suggestion: MarkSet;
   /**
    * Append every id marked since the last flush to the generation file, fsynced. Called after
    * a page's transaction commits and BEFORE the cursor advances past it — the cursor is the
@@ -956,7 +1028,7 @@ function genPathFor(cursorPath: string): string {
 
 const GEN_TYPES = [
   "folder", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision", "tag",
-  "mailbox_profile",
+  "mailbox_profile", "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
 ] as const;
 type GenType = (typeof GEN_TYPES)[number];
 
@@ -979,6 +1051,8 @@ function genOver(path: string, sets: Record<GenType, Set<string>>, keyingStale =
     rule: mark("rule"), draft: mark("draft"), approval: mark("approval"),
     routing_decision: mark("routing_decision"), tag: mark("tag"),
     mailbox_profile: mark("mailbox_profile"),
+    calendar_connection: mark("calendar_connection"), calendar: mark("calendar"),
+    calendar_event: mark("calendar_event"), calendar_suggestion: mark("calendar_suggestion"),
     flush(): void {
       if (pending.length === 0) return;
       const fd = openSync(path, "a");
@@ -1007,6 +1081,7 @@ const emptyGenSets = (): Record<GenType, Set<string>> => ({
   thread: new Set(), message: new Set(), message_state: new Set(), rule: new Set(),
   draft: new Set(), approval: new Set(), routing_decision: new Set(), tag: new Set(),
   mailbox_profile: new Set(),
+  calendar_connection: new Set(), calendar: new Set(), calendar_event: new Set(), calendar_suggestion: new Set(),
 });
 
 /** A FRESH generation: truncate the file, stamp the keying, start marking from nothing. */
@@ -1276,12 +1351,14 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
  * Every table the MIGRATIONS key to `mailboxes` — the set {@link mailboxReferenced} must probe.
  * Hand-kept lists of foreign keys go stale silently, so `cloud-mirror-mailbox-refs.test.ts`
  * derives the same set from the migration SQL and refuses a difference. It was SEVEN until mail
- * 0118 added four more in SQL the ORM schema does not declare.
+ * 0118 added four more in SQL the ORM schema does not declare. `junk_rescues` has keyed onto the
+ * mailbox since mail 0117, inside its CREATE TABLE where that census did not read; mail 0201 names
+ * the key, and a queued "not junk" holds its mailbox's row like any other reference.
  */
 export const MAILBOX_REFERENCE_TABLES: readonly string[] = [
   "messages", "drafts", "message_instances", "message_failures", "unsubscribe_records",
   "mailbox_folders", "mailbox_credentials", "folder_ops", "away_replies",
-  "mailbox_profile_mirror", "organizer_requests",
+  "mailbox_profile_mirror", "organizer_requests", "junk_rescues",
 ];
 
 /**
@@ -1306,6 +1383,7 @@ async function mailboxReferenced(tx: Tx, id: string): Promise<boolean> {
   if (await hit(tx.select({ x: awayReplies.id }).from(awayReplies).where(eq(awayReplies.mailboxId, id)).limit(1))) return true;
   if (await hit(tx.select({ x: mailboxProfileMirror.mailboxId }).from(mailboxProfileMirror).where(eq(mailboxProfileMirror.mailboxId, id)).limit(1))) return true;
   if (await hit(tx.select({ x: organizerRequests.id }).from(organizerRequests).where(eq(organizerRequests.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: junkRescues.id }).from(junkRescues).where(eq(junkRescues.mailboxId, id)).limit(1))) return true;
   return false;
 }
 
@@ -1532,6 +1610,7 @@ async function applyAccountUpsert(
         dormancyDays?: number | null; autoSuggestAt?: string | null;
         blockRemoteImagesAt?: string | null; loadTrackingPixelsAt?: string | null;
         blockAutoUnsubscribeAt?: string | null; locale?: string | null; updatedAt?: string;
+        calendarEnabledAt?: string | null;
       } | undefined;
       if (!st) return false;
       const stamp = asDate(st.updatedAt) ?? now;
@@ -1547,6 +1626,11 @@ async function applyAccountUpsert(
       await tx.insert(accountSettings)
         .values({ accountId: world.accountId, ...cols })
         .onConflictDoUpdate({ target: accountSettings.accountId, set: cols });
+      // And the calendar's switch, which the local feed's gate reads (`cloud-mirror-calendar.ts`).
+      await storeCalendarSwitch(tx, dia, world.accountId, st.calendarEnabledAt);
+      // And the account's devices, which the window's record answers in place of this copy's own
+      // count (`cloud-mirror-devices.ts`): this copy's device rows are not the hosted account's.
+      keepHostedDevices(world.accountId, ch.entity);
       return true;
     }
     case "thread": {
@@ -1807,7 +1891,7 @@ async function applyUpsert(
          is what the unknown mailbox already gets. */
       if (await readMailboxErasedAt(tx, dia, f.mailboxId) !== null) return false;
       await tx.insert(mailboxFolders).values({
-        id: ch.id, mailboxId: f.mailboxId, folder: f.name, updatedAt: now,
+        id: ch.id, mailboxId: f.mailboxId, accountId: world.accountId, folder: f.name, updatedAt: now,
       }).onConflictDoUpdate({
         target: mailboxFolders.id,
         set: { mailboxId: f.mailboxId, folder: f.name, updatedAt: now },
@@ -1916,6 +2000,7 @@ async function applyUpsert(
       // `folder_state.desired_folder` is what `message-service.ts` projects as the message's folder.
       await tx.insert(folderState).values({
         messageId: m.id,
+        accountId: world.accountId,
         desiredFolder: m.folder,
         observedFolder: m.folder,
         lastSetBy: "external",
@@ -1929,6 +2014,10 @@ async function applyUpsert(
       // how the wire delivers them — see {@link applyLabels}.
       await applyLabels(tx, world, m.id, m.labels);
       await mirrorAutoReply(tx, dia, world, m.mailboxId, m, now);
+      /* THE INVITATION THE LETTER CARRIES (mail 0204) rides the message record, as its tags do:
+         written from the field, and gone when a later record carries none. The local door
+         re-derives the field from this row, so the copy shows what Cloud shows. */
+      await putInvitationCopy(tx as never, { accountId: world.accountId, messageId: m.id, mailboxId: m.mailboxId }, m.invitation ?? null);
       gen?.message.add(m.id);
       // Mark the thread STUB too: a surviving message pins its thread via the FK, so the sweep must
       // not treat that thread as a phantom even when the thread's own change never arrives.
@@ -2111,10 +2200,14 @@ async function applyUpsert(
       gen?.routing_decision.add(s.id);
       return true;
     }
-    default:
-      // Forward-compatible: an unknown type (e.g. "folder", which has no local table) is skipped
-      // exactly as `apply.ts` tolerates an unknown entity rather than wedging the feed.
-      return false;
+    default: {
+      // The calendar's kinds are stored by their own file, and marked for the bootstrap's sweep.
+      // Anything else is forward-compatible: an unknown type is skipped exactly as `apply.ts`
+      // tolerates an unknown entity rather than wedging the feed.
+      const stored = await upsertCalendarChange(tx, dia, world, ch, now);
+      if (stored && isCalendarRecordKind(ch.type)) gen?.[ch.type].add(ch.id);
+      return stored;
+    }
   }
 }
 
@@ -2149,7 +2242,9 @@ async function recordDetached(tx: Tx, world: LocalWorld, detached: readonly Deta
   }
 }
 
-async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]): Promise<boolean> {
+async function applyDelete(
+  tx: Tx, ch: SyncChange, detached: DetachedSurvivor[] | undefined, world: LocalWorld,
+): Promise<boolean> {
   switch (ch.type) {
     case "mailbox": {
       /* THE HOSTED ACCOUNT ERASED A MAILBOX. The same table walk the standalone removal runs, in
@@ -2266,7 +2361,8 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
       await tx.delete(routingDecisions).where(eq(routingDecisions.id, ch.id));
       return true;
     default:
-      return false;
+      // The calendar's kinds, children first; anything else is a kind this copy keeps nothing of.
+      return removeCalendarChange(tx, world, ch);
   }
 }
 
@@ -2275,6 +2371,23 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
  * `gen`, when present, is the bootstrap generation this page belongs to: every upsert marks the row
  * it touched so the trailing sweep can tell survivors from phantoms.
  */
+/**
+ * THE SEARCH DOCUMENTS OF THE LETTERS A PAGE STORED, in the page's own transaction. A Postgres
+ * store finds a letter by its document alone (mail 0200 took the columns that read a letter
+ * without one), and no pass builds documents on a mirror, so the mirror writes each letter's with
+ * the letter and again with its body. The device's own tables cover every row: nothing is written
+ * there. Chunked for the reason the detached batch is.
+ */
+async function writeSearchDocuments(
+  tx: Tx, world: LocalWorld, messageIds: readonly string[], hold: () => Promise<void>,
+): Promise<void> {
+  if (messageIds.length === 0 || dialect(tx).name !== "pg") return;
+  for (let i = 0; i < messageIds.length; i += DETACHED_BATCH_MAX) {
+    await hold();
+    await upsertMessageSearchRows(tx, await searchInputsFromStore(tx, world.accountId, messageIds.slice(i, i + DETACHED_BATCH_MAX)));
+  }
+}
+
 async function applyPage(
   db: LocalDb,
   world: LocalWorld,
@@ -2362,7 +2475,7 @@ async function applyPage(
       /* An erased mailbox's own conversations are announced before the walk takes them — the hosted
          feed tombstones them itself; these are rows it never named (an older erasure, a standalone era). */
       if (ch.type === "mailbox") await announceExclusiveThreads(t, world.accountId, ch.id);
-      if (await applyDelete(t, ch, detached)) {
+      if (await applyDelete(t, ch, detached, world)) {
         await record(t, ch.type, ch.id, "delete");
         appliedKeys?.add(`${ch.type}:${ch.id}`);
         // The survivors the delete DETACHED (a draft losing its reply target, a message losing
@@ -2424,6 +2537,7 @@ async function applyPage(
         inArray(messageBodies.withheldReason, [...REFILLABLE_WITHHELD]),
       ));
     }
+    await writeSearchDocuments(tx, world, touchedMessages, hold);
     // A page that moved the folder inventory also settles the local flag it is read behind —
     // same transaction, so the local /sync can never see rows the flag disowns or vice versa.
     if (changes.some((c) => c.type === "folder")) {
@@ -2454,7 +2568,7 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
       await hold();
       const ch: SyncChange = { type, op: "delete", id, seq: 0, updatedAt: now.toISOString() };
       const detached: DetachedSurvivor[] = [];
-      if (await applyDelete(tx, ch, detached)) {
+      if (await applyDelete(tx, ch, detached, world)) {
         await recordChange(tx, { accountId: world.accountId, entityType: type, entityId: id, op: "delete", meta: null });
         // Survivors the sweep detached are announced exactly as the incremental path announces
         // them — a change the projection never hears about is a row it never redraws. Batched
@@ -2507,6 +2621,16 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
     for (const r of await tx.select({ id: mailboxProfileMirror.mailboxId }).from(mailboxProfileMirror)
       .where(eq(mailboxProfileMirror.accountId, world.accountId)))
       if (!gen.mailbox_profile.has(r.id)) await sweepOne("mailbox_profile", r.id);
+    /* The calendar's records the bootstrap never named: removed upstream while this copy was away,
+       their deletes since compacted. Children first, each its own local deletion. */
+    for (const r of await tx.select({ id: calEvents.id }).from(calEvents).where(eq(calEvents.accountId, world.accountId)))
+      if (!gen.calendar_event.has(r.id)) await sweepOne("calendar_event", r.id);
+    for (const r of await tx.select({ id: calSuggestions.id }).from(calSuggestions).where(eq(calSuggestions.accountId, world.accountId)))
+      if (!gen.calendar_suggestion.has(r.id)) await sweepOne("calendar_suggestion", r.id);
+    for (const r of await tx.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, world.accountId)))
+      if (!gen.calendar.has(r.id)) await sweepOne("calendar", r.id);
+    for (const r of await tx.select({ id: calConnections.id }).from(calConnections).where(eq(calConnections.accountId, world.accountId)))
+      if (!gen.calendar_connection.has(r.id)) await sweepOne("calendar_connection", r.id);
 
     await reconcileLocalFoldersFlag(tx, dialect(db), world, now);
     await loopTurn();
@@ -2604,6 +2728,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const cursor = readCursor(cfg.cursorPath);
   /** The bootstrap generation's on-disk marks, beside the cursor. See {@link BootstrapGen}. */
   const genPath = genPathFor(cfg.cursorPath);
+  // A new mirror has read nothing of the account's devices yet (`cloud-mirror-devices.ts`).
+  forgetHostedDevices(cfg.world.accountId);
   let stopped = false;
   /**
    * The abort every loop in this file checks. Set by `stop()` and never cleared: a mirror that has
@@ -3085,6 +3211,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       sawDeletes = true;
       hostedCounts = new Map();
     }
+    /* A MAILBOX ERASED ON THE ACCOUNT: told before its receipt is applied, and outside the page's
+       transaction. A refusal here is the pull's: the page stays unapplied and is asked for again. */
+    if (body.changes.deletes.some((d) => d.type === "mailbox")) cfg.onMailboxErased?.();
     let applied: number;
     try {
       applied = await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes, appliedKeys);
@@ -3208,6 +3337,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         ? { phase: "paging", next: snap.nextCursor }
         : { phase: "complete" };
       writeCursor(cfg.cursorPath, cursor);
+      if (cursor.window.phase === "complete") {
+        try { cfg.onFirstWindow?.(); } catch { /* the hook is a hint; the pull goes on */ }
+      }
       // A page LANDED, so Cloud demonstrably answers — the replay's own rule, from the first page.
       reachable = true;
     }
@@ -3615,6 +3747,53 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
+   * THE CALENDAR, READ WHOLE WHEN ITS SWITCH WENT ON. The feed sends no calendar change while the
+   * account's switch is off, and a copy whose switch went off let its calendar go
+   * (`storeCalendarSwitch`), so a switch turned on again finds this copy without the events nobody
+   * changed since. Read once per instant the switch went on: the calendar's phase of the hosted
+   * snapshot, applied as a page is, every record re-emitted on the local feed. A bootstrap read the
+   * calendar with the rest and owes nothing. A page that does not answer leaves it owed; a server
+   * that serves no calendar leaves nothing to read.
+   */
+  const reconcileCalendarCopy = async (bootstrapped: boolean): Promise<void> => {
+    const [row] = await cfg.db.select({ at: calSettings.enabledAt }).from(calSettings)
+      .where(eq(calSettings.accountId, cfg.world.accountId)).limit(1);
+    const on = row?.at ? row.at.toISOString() : null;
+    if (on === cursor.calendarLoadedFor) return;
+    const settle = (): void => {
+      cursor.calendarLoadedFor = on;
+      writeCursor(cfg.cursorPath, cursor);
+    };
+    if (on === null || bootstrapped) return settle();
+    // The settings record named too: the hosted reader serves the calendar only to a request that hears its switch.
+    const types = "settings,calendar_connection,calendar,calendar_event,calendar_suggestion";
+    let pageCursor: string | undefined;
+    try {
+      for (;;) {
+        if (aborted) return;
+        const q = new URLSearchParams({ phase: "calendar", types, limit: String(pageLimit) });
+        if (pageCursor) q.set("cursor", pageCursor);
+        const res = await fetchCloud(`/sync/snapshot?${q.toString()}`);
+        // Left owed: the next pull reads it again.
+        if (!res.ok) return;
+        const page = (await res.json()) as SnapshotResponse;
+        // Not the calendar's phase: this account's server serves it no calendar, so there is none to read.
+        if (page.calendarWindow === undefined || !Array.isArray(page.changes)) return settle();
+        await applyPage(cfg.db, cfg.world, {
+          changes: { creates: page.changes, updates: [], moves: [], deletes: [] },
+          cursor: cursor.sync, hasMore: false, serverTime: now().toISOString(),
+        }, now(), null, knownMailboxes);
+        if (!page.nextCursor) break;
+        pageCursor = page.nextCursor;
+      }
+    } catch {
+      // Left owed, and the pull goes on: the mail never waits on the calendar.
+      return;
+    }
+    settle();
+  };
+
+  /**
    * The one-time folder backfill — `repairStaleTags`' shape for its reason, with one gate
    * difference. Between the drain first asking for `folder` entities and the apply loop learning to
    * store them, a mirror could drain folder creates, drop them, and persist a cursor past them — a
@@ -3843,6 +4022,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   /** Upsert one page of bodies. Not a `/sync` entity, so no change-log row. */
   const storeBodies = async (items: readonly MessageBodyBatchItem[]): Promise<number> => {
     let written = 0;
+    const stored: string[] = [];
     await cfg.db.transaction(async (tx) => {
       const hold = loopHold();
       for (const item of items) {
@@ -3863,10 +4043,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           // changes. The mirror's own counter is untouched — this store copies the hosted one.
           withheldReason: mirroredWithheld(item.withheld),
         };
-        await tx.insert(messageBodies).values({ messageId: item.messageId, ...row })
+        await tx.insert(messageBodies).values({ messageId: item.messageId, accountId: cfg.world.accountId, ...row })
           .onConflictDoUpdate({ target: messageBodies.messageId, set: row });
+        stored.push(item.messageId);
         written++;
       }
+      // The body's words join each letter's search document.
+      await writeSearchDocuments(tx as unknown as Tx, cfg.world, stored, hold);
       await loopTurn();
     });
     await loopTurn();
@@ -4219,6 +4402,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         cursor.version = CURSOR_VERSION;
         settleOverflowAfterBootstrap(overflow);
         writeCursor(cfg.cursorPath, cursor);
+        // A fill that never had a window to land (a server without one) is done here.
+        try { cfg.onFirstWindow?.(); } catch { /* the hook is a hint; the pull goes on */ }
         // The generation completed and swept: its marks have no further reader. AFTER the cursor
         // write, so a crash between the two leaves a stale file a fresh generation truncates,
         // never a finished bootstrap the next launch mistakes for an interrupted one.
@@ -4241,6 +4426,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // AFTER the drain, so a bootstrap has already delivered the tags natively and is skipped by
       // the zero-tags gate rather than by a special case for it.
       await repairStaleTags();
+      await reconcileCalendarCopy(sweep !== null && sweep !== undefined);
       await repairStaleFolders(sweep !== null && sweep !== undefined);
       await repairRuleInstants(sweep !== null && sweep !== undefined);
       await repairProfiles();
@@ -4609,6 +4795,18 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       constraint: quarantine.values().next().value?.constraint ?? null,
     }),
     async start() {
+      // THE HOSTED ACCOUNT's DEVICES, read once before the first pull (`cloud-mirror-devices.ts`): a
+      // device paired while this desktop was closed is then told at this start. One page, closed; any
+      // answer that is not one keeps none, and the pull goes on as before.
+      try {
+        const res = await fetchCloud("/sync/snapshot?limit=1");
+        if (res.ok && !stopped) {
+          const page: unknown = await res.json();
+          if (!stopped) keepHostedDevicesAtStart(cfg.world.accountId, page);
+        }
+      } catch {
+        // Keeps none: a refused or unreadable answer is not this read's to report; the pull meets it.
+      }
       // A first pull that fails is a bad network or an expired token, not a launch failure: the
       // mirror serves what it holds and the poll retries (on backoff). Scheduling regardless is what
       // keeps a transient bootstrap failure from stopping the mirror forever.
@@ -4625,6 +4823,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     },
     async stop() {
       stopped = true;
+      forgetHostedDevices(cfg.world.accountId);
       // Set BEFORE the await, or the walk this is waiting on never sees the ask and the wait is
       // the very hang it exists to prevent.
       aborted = true;

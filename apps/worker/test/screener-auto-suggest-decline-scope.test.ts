@@ -6,9 +6,9 @@ import {
   type RefundObligation, type RefundObligationPort, type Tx,
 } from "@trafficflow/db";
 import { makeHaikuClassifier, type AnthropicLike, type ClassifierInput, type ClassifierPort } from "@trafficflow/core";
-import { fakeSpendPort } from "./_spendport.js";
+import { fakeSpendPort } from "../../../packages/organizer/test/_spendport.js";
 import { makeClassifierCircuit } from "../src/ai-circuit.js";
-import { makeDeclineMemory, screenerAutoSuggestPass } from "../src/screener-auto-suggest.js";
+import { makeDeclineMemory, screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 
 /**
  * AN AUTO-SUGGEST DECLINE RETURNS ITS OWN CHARGE AND NOBODY ELSE'S. Composed as the worker composes
@@ -62,7 +62,7 @@ async function heldSender(db: Tx, accountId: string, mailboxId: string, from: st
     date: ARRIVED, createdAt: ARRIVED, nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   // Its copy in the Screener, as the ingest records one.

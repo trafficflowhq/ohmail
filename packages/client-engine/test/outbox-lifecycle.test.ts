@@ -17,13 +17,14 @@
  * invalidation sat below an early return that counts LIVE rows, so a boot with abandoned records
  * and an empty queue showed an empty list for the whole session.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
+import { engineSource } from "./helpers/engine-source.js";
 import { faultyFactory } from "./helpers/faulty-idb.js";
 import { sqlWorld } from "./helpers/node-sql-executor.js";
 import {
   CursorExpiredError,
-  FixturesAdapter,
   IndexedDbMirrorStore,
   MutationRejectedError,
   OhmailEngine,
@@ -34,9 +35,8 @@ import {
   OUTBOX_TYPE,
   SqlMirrorStore,
   targetOf,
-  type EngineMessage,
-  type EngineMutation,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 const VERB: EngineMutation = { kind: "triage_set", messageId: "petra", state: "reply_later" } as EngineMutation;
 const SERVER_500 = () => new MutationRejectedError("internal error", {
@@ -291,7 +291,7 @@ describe("I2 — a retry acts on ONE record and owns its outcome", () => {
     const a = w.engine.abandoned()[0]!;
 
     // Q: seven counted failures, then left INSIDE its (long) backoff.
-    await w.engine.mutate({ kind: "move", messageId: "giulia", to: "INBOX" } as unknown as EngineMutation);
+    await w.engine.mutate({ kind: "move", messageId: "giulia", folder: "ohmail/News" } as EngineMutation);
     for (let i = 0; i < OUTBOX_MAX_SERVER_FAILURES - 2; i++) {
       w.advance(OUTBOX_BACKOFF_CAP_MS + 1);
       await w.engine.syncOnce();
@@ -614,7 +614,7 @@ describe("I3 — supersession is about the TARGET, not the kind", () => {
     return retired;
   }
 
-  const msg = (kind: string, id = "petra") => ({ kind, messageId: id, state: "reply_later", to: "INBOX" } as unknown as EngineMutation);
+  const msg = (kind: string, id = "petra") => ({ kind, messageId: id, state: "reply_later", folder: "ohmail/News" } as unknown as EngineMutation);
 
   it("keys by target across kinds — the rule itself, pinned as a table", () => {
     /**
@@ -747,8 +747,7 @@ describe("I6 — there is no invalidation line left to position wrongly", () => 
      * no longer "the line is above the returns" but "the line does not exist": re-introducing one
      * is re-introducing the whole class, and it fails here with the offending line quoted.
      */
-    const { readFileSync } = await import("node:fs");
-    const src = readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8").split("\n");
+    const src = engineSource().split("\n");
     const manual = src
       .map((text, i) => ({ line: i + 1, text: text.trim() }))
       .filter((x) => /this\.abandonedCache\s*=\s*null/.test(x.text));
@@ -1049,8 +1048,7 @@ describe("the outbox has ONE write path, and the source says so", () => {
      * a lone delete has nothing to be atomic with. That method names its reasoning; this guard
      * pins the count at exactly one so the carve-out cannot quietly become the rule again.
      */
-    const { readFileSync } = await import("node:fs");
-    const src = readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8").split("\n");
+    const src = engineSource().split("\n");
 
     const putLocalWrites = src
       .map((text, i) => ({ line: i + 1, text: text.trim() }))
@@ -1519,8 +1517,7 @@ describe("the outbox has ONE write path, and the source says so", () => {
      * a lone delete has nothing to be atomic with. That method names its reasoning; this guard
      * pins the count at exactly one so the carve-out cannot quietly become the rule again.
      */
-    const { readFileSync } = await import("node:fs");
-    const src = readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8").split("\n");
+    const src = engineSource().split("\n");
 
     const putLocalWrites = src
       .map((text, i) => ({ line: i + 1, text: text.trim() }))
@@ -1973,13 +1970,12 @@ describe("there is ONE dispatch, and the source says so", () => {
      * next month starts the count again. So the rules live in one method and this asserts there
      * is no way to dispatch around it. That is the difference between a fix and an invariant.
      */
-    const { readFileSync } = await import("node:fs");
-    const src = readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8").split("\n");
+    const src = engineSource().split("\n");
 
     const calls = src
       .map((text, i) => ({ line: i + 1, text: text.trim() }))
       .filter((x) => /\.dispatchWithDeadline\(/.test(x.text) || /\bdispatchWithDeadline\(/.test(x.text))
-      .filter((x) => !/private async dispatchWithDeadline\(/.test(x.text))
+      .filter((x) => !/protected async dispatchWithDeadline\(/.test(x.text))
       .filter((x) => !x.text.startsWith("*") && !x.text.startsWith("//"));
 
     expect(
@@ -1998,8 +1994,8 @@ describe("there is ONE dispatch, and the source says so", () => {
      * half a guard.
      */
     const laneBody = src.slice(
-      src.findIndex((l) => /private async dispatchOnLane\(/.test(l)),
-      src.findIndex((l) => /private settleReconcile\(/.test(l)),
+      src.findIndex((l) => /protected async dispatchOnLane\(/.test(l)),
+      src.findIndex((l) => /protected settleReconcile\(/.test(l)),
     ).join("\n");
     expect(
       laneBody,
@@ -2013,8 +2009,8 @@ describe("there is ONE dispatch, and the source says so", () => {
     ).toMatch(/this\.outboxHold/);
 
     // …and it is the one inside `dispatchOnLane`, not merely the only one somewhere.
-    const laneAt = src.findIndex((l) => /private async dispatchOnLane\(/.test(l));
-    const deadlineAt = src.findIndex((l) => /private async dispatchWithDeadline\(/.test(l));
+    const laneAt = src.findIndex((l) => /protected async dispatchOnLane\(/.test(l));
+    const deadlineAt = src.findIndex((l) => /protected async dispatchWithDeadline\(/.test(l));
     expect(laneAt, "`dispatchOnLane` must exist").toBeGreaterThan(-1);
     expect(
       calls[0]!.line,
@@ -2026,8 +2022,7 @@ describe("there is ONE dispatch, and the source says so", () => {
   it("every road reaches the wire through the lane", async () => {
     // The companion to the count: the five roads must actually call it. A census that only
     // forbids the wrong call would stay green if a road stopped dispatching altogether.
-    const { readFileSync } = await import("node:fs");
-    const src = readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8");
+    const src = engineSource();
     const callers = [...src.matchAll(/this\.dispatchOnLane\(/g)];
     expect(
       callers.length,

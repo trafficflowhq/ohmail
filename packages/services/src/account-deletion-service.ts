@@ -1,5 +1,10 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, like, ne, or, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
+// The calendar's tables by name: this sweep is outside the phone's engine, whose schema has none.
+import {
+  calAlarms, calAttendees, calCalendars, calConnections, calCredentials, calEvents, calLinks, calSettings,
+  calSuggestions, calWrites,
+} from "@trafficflow/db/mail";
 import {
   accountSettings,
   accountStorage,
@@ -9,7 +14,6 @@ import {
   attachments,
   auditLog,
   awayReplies,
-  awayResponderSent,
   awayResponders,
   awaySenderState,
   changeLog,
@@ -33,6 +37,7 @@ import {
   messageBodies, messageSearch,
   messageFailures,
   messageInstances,
+  messageInvitations,
   messageStates,
   messages,
   notifyRules,
@@ -41,6 +46,7 @@ import {
   outboundSentCopies,
   outboundSends,
   pairingTokens,
+  passProgress,
   refreshTokens,
   routingDecisions,
   ruleRemovals,
@@ -74,6 +80,7 @@ import {
   connectAttempts,
   creditRefundObligations,
   authThrottle,
+  accountCounters,
   probeRowsOfAccount,
   credentials,
   invites,
@@ -82,6 +89,7 @@ import {
   mailboxOauthDeviceCeremonies,
   oauthAuthCodes,
   pushSubscriptions,
+  calPushChannels,
   recoveryCodes,
   screenerSuggestOwed,
   totpSecrets,
@@ -234,6 +242,9 @@ export async function deleteAccount(
      * forms.
      */
     await drop("account_settings", tx.delete(accountSettings).where(eq(accountSettings.accountId, accountId)));
+    // The calendar's settings beside the account's own, and for the same reason: a switch's write
+    // takes the settings stamp first, so the settings rows go before the counter.
+    await drop("cal_settings", tx.delete(calSettings).where(eq(calSettings.accountId, accountId)));
 
     /**
      * The user- and mailbox-keyed predicates are SUBQUERIES, not materialized id lists. Both
@@ -267,6 +278,14 @@ export async function deleteAccount(
     await tx.select({ id: mailboxes.id }).from(mailboxes)
       .where(eq(mailboxes.accountId, accountId))
       .orderBy(asc(mailboxes.id))
+      .for("update");
+    // THE CALENDAR'S CONNECTIONS, FOR UPDATE, after the mailboxes: a calendar writer's fence
+    // (`@trafficflow/db/calendar` `holdCalendarConnection`) holds the account's row, its mailbox's
+    // and its connection's FOR SHARE in that order, so one in flight commits first and is swept
+    // below, and a later one finds the stamp.
+    await tx.select({ id: calConnections.id }).from(calConnections)
+      .where(eq(calConnections.accountId, accountId))
+      .orderBy(asc(calConnections.id))
       .for("update");
 
     // ── 0. THE THREAD-FIRST FENCE. Every live writer of a thread takes thread rows before
@@ -325,6 +344,9 @@ export async function deleteAccount(
     await drop("attachments", tx.delete(attachments).where(eq(attachments.accountId, accountId)));
     await drop("tracker_events", tx.delete(trackerEvents).where(eq(trackerEvents.accountId, accountId)));
     await drop("message_states", tx.delete(messageStates).where(eq(messageStates.accountId, accountId)));
+    // The invitations' identities (mail 0204). They would go with their letters; named, so the
+    // receipt counts them and the sweep does not rest on a cascade.
+    await drop("message_invitations", tx.delete(messageInvitations).where(eq(messageInvitations.accountId, accountId)));
     // BEFORE `routing_decisions`, since mail 0118 gave `routing_decision_id` a real key.
     await drop("approvals", tx.delete(approvals).where(eq(approvals.accountId, accountId)));
     // `routing_decisions` is also where a BOUGHT SCREENER SUGGESTION lives — same table, told
@@ -365,17 +387,12 @@ export async function deleteAccount(
     // BEFORE `messages`, since mail 0118 — the composite account key on `message_id` is a real
     // reference now, where this table carried a bare id nothing checked. The reasons below are
     // unchanged; only the position is newly load-bearing.
-    // BEFORE the responder itself, and both go. `away_responder_sent.sender` is a correspondent's
-    // email address — somebody else's personal data, held because we sent them mail — so it is not
-    // optional here. The catalog sweep in `account-deletion.test.ts` enumerates every table with an
-    // `account_id` column and fails on any surviving row, which is what makes this a red test rather
-    // than a quiet retention if a future table is added and forgotten.
-    await drop("away_responder_sent", tx.delete(awayResponderSent).where(eq(awayResponderSent.accountId, accountId)));
-    // The 0087 pair, and they are here for `away_responder_sent`'s reason stated one line up
-    // rather than for tidiness: `away_replies.sender` and `away_sender_state.sender` are
-    // CORRESPONDENTS' email addresses — somebody else's personal data, held because we sent them
-    // mail — and `away_replies` additionally records that a named person wrote to this account and
-    // when. That is exactly the class the catalog sweep in `account-deletion.test.ts` enumerates,
+    // BEFORE the responder itself. The 0087 pair is not here for tidiness: `away_replies.sender`
+    // and `away_sender_state.sender` are CORRESPONDENTS' email addresses — somebody else's personal
+    // data, held because we sent them mail — and `away_replies` additionally records that a named
+    // person wrote to this account and when. That is exactly the class the catalog sweep in
+    // `account-deletion.test.ts` enumerates (every table with an `account_id` column, failing on any
+    // surviving row),
     // so both go, and both were red in that sweep until they did.
     await drop("away_replies", tx.delete(awayReplies).where(eq(awayReplies.accountId, accountId)));
     await drop("messages", tx.delete(messages).where(eq(messages.accountId, accountId)));
@@ -425,6 +442,25 @@ export async function deleteAccount(
     // only thing that removes it.
     await drop("mailbox_profile_mirror", tx.delete(mailboxProfileMirror).where(eq(mailboxProfileMirror.accountId, accountId)));
     await drop("mailboxes", tx.delete(mailboxes).where(eq(mailboxes.accountId, accountId)));
+    // Where the account's one-time passes stood (mail 0203): its mailboxes' rows and its own.
+    // AFTER `mailboxes` and `account_settings`, on purpose: the table has no key into either, and
+    // a pass writes its row holding its mailbox's row or the settings row. This transaction has
+    // waited for that write by the time it gets here, and a write that comes later finds no
+    // mailbox and an erased account (`pass-progress.ts`).
+    await drop("pass_progress", tx.delete(passProgress).where(eq(passProgress.accountId, accountId)));
+
+    // ── THE CALENDAR (mail 0205), children before the rows they hang on. Rows first, then the
+    // counter below, as every writer takes them: below the counter this would deadlock with one.
+    await drop("cal_attendees", tx.delete(calAttendees).where(eq(calAttendees.accountId, accountId)));
+    await drop("cal_alarms", tx.delete(calAlarms).where(eq(calAlarms.accountId, accountId)));
+    await drop("cal_writes", tx.delete(calWrites).where(eq(calWrites.accountId, accountId)));
+    await drop("cal_suggestions", tx.delete(calSuggestions).where(eq(calSuggestions.accountId, accountId)));
+    await drop("cal_links", tx.delete(calLinks).where(eq(calLinks.accountId, accountId)));
+    await drop("cal_events", tx.delete(calEvents).where(eq(calEvents.accountId, accountId)));
+    await drop("cal_calendars", tx.delete(calCalendars).where(eq(calCalendars.accountId, accountId)));
+    await drop("cal_push_channels", tx.delete(calPushChannels).where(eq(calPushChannels.accountId, accountId)));
+    await drop("cal_credentials", tx.delete(calCredentials).where(eq(calCredentials.accountId, accountId)));
+    await drop("cal_connections", tx.delete(calConnections).where(eq(calConnections.accountId, accountId)));
 
     // ── 5. Automation, knowledge, preferences ───────────────────────────────────
     await drop("workflow_runs", tx.delete(workflowRuns).where(eq(workflowRuns.accountId, accountId)));
@@ -596,10 +632,13 @@ export async function deleteAccount(
     // Load it now's admission names the account itself, by its keyed hash (`live-body-admit.ts`).
     if (opts.throttleKeys) exact.push(`live-body:${opts.throttleKeys.client(accountId)}`);
     await drop("auth_throttle", tx.delete(authThrottle).where(or(
+      eq(authThrottle.noticeAccountId, accountId),
       ...(exact.length === 0 ? [] : [inArray(authThrottle.key, exact)]),
       ...prefixes.map((pattern) => like(authThrottle.key, pattern)),
       probeRowsOfAccount(accountId),
     )));
+    // The counters that name one of this account's rows carry its id since cloud 0101.
+    await drop("account_counters", tx.delete(accountCounters).where(eq(accountCounters.accountId, accountId)));
     // ── 7b. THE SIGNUP FUNNEL — pseudonymised, not deleted ─────────────────────
     // `invites.email` and `waitlist.email` are the only thing in either row that names a person,
     // and neither table is in the account's foreign-key graph — deliberately, so an erasure never

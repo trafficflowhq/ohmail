@@ -84,7 +84,9 @@ const VALUE_PRESERVING = new Set(["map", "flatMap", "reduce", "reduceRight"]);
  */
 const SQL = new RegExp(
   "\\b(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|DROP TABLE|PRAGMA"
-  + "|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\\b");
+  + "|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE"
+  /* `VACUUM INTO`: the copy the phone takes of its own engine store before the store crosses into 2.0. */
+  + "|VACUUM)\\b");
 
 /* ── the named exceptions ───────────────────────────────────────────────────────────────────── */
 
@@ -134,6 +136,8 @@ const NAMED_LINES: Record<string, Exemption> = {
     { file: "src/theme/index.tsx", why: "the text-size probe's two glyphs, drawn at opacity 0 and hidden from accessibility; the theme reads its height, nobody reads the words" },
   "server_unavailable":
     { file: "src/state/wake.tsx", why: "a `reason` CODE on the wake state; `wakeSentence` compares it and hands it to Copy.wakeOff, which maps it to a German sentence — never printed" },
+  "switched_off":
+    { file: "src/state/wake.tsx", why: "the same shape: a code Copy.wakeOff maps to the sentence for a registration the person's own two switches took down" },
   "row_remains":
     { file: "src/state/wake.tsx", why: "the same shape: a code `wakeSentence` compares to choose Copy.wakeRowRemains" },
   "device kind":

@@ -5,8 +5,9 @@
  * shown. The open now asks over the panel's members; a message the presentation does not hold keeps
  * the raw conversation, the panel's own fallback.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, OhmailEngine, type EngineMessage, type EntityReader, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, type EntityReader, type SyncChange } from "@ohmail/client-engine";
 import { liveActions } from "../src/state/live";
 
 const NOW = new Date("2026-09-11T12:00:00.000Z");

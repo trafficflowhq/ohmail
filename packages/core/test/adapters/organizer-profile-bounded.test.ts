@@ -847,7 +847,7 @@ describe("the profile read is bounded, and reads the newest", () => {
    * meaning anything.
    */
   it("no product code passes its own byte ceiling", () => {
-    const roots = ["packages/core/src", "packages/services/src", "apps/worker/src", "apps/sidecar/src"];
+    const roots = ["packages/core/src", "packages/services/src", "apps/worker/src", "packages/organizer/src", "apps/sidecar/src"];
     const hits: string[] = [];
     let scanned = 0;
     for (const root of roots) {

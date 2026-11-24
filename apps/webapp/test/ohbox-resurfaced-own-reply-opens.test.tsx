@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
+import { blankSays, openLetter, openSubject } from "./ohbox/_finders.js";
 
 /**
  * A RESURFACED CONVERSATION ROW ALWAYS OPENS — the reported shape, through the shipped shell.
@@ -89,22 +90,18 @@ function ownerShapePage(): Response {
   );
 }
 
+/** The rows of the Ohbox's Resurfaced group, by its listbox's name; a row names its letter by the kit's `data-id`
+    and every letter of a folded conversation by its `data-ids` (`Row.tsx`). */
 const resurfacedRows = (host: HTMLElement): HTMLElement[] =>
-  [...host.querySelectorAll<HTMLElement>('[role="listbox"][aria-label="Resurfaced"] .row[data-id]')];
+  [...host.querySelectorAll<HTMLElement>('[role="listbox"][aria-label="Resurfaced"] [role="option"][data-id]')];
 
-/** The reading column — the split layout's right half; `.empty` there is the resting panel. */
-const readColumn = (host: HTMLElement): HTMLElement | null =>
-  host.querySelector<HTMLElement>(".read-col") ?? host.querySelector<HTMLElement>('[data-zone="read"]');
+/** What the resting reading column says, or null while a letter is open (or nothing is said). PARITY L19, DECLARED
+    (RULING-JOIN J-3): the resting column says the list's blank ("All read" here), not today's "Nothing open.":
+    nothing is open and the column says so. */
+const restingSentence = (host: HTMLElement): string | null => blankSays(host);
 
-const restingSentence = (host: HTMLElement): string | null => {
-  const col = readColumn(host) ?? host;
-  const b = col.querySelector<HTMLElement>(".empty b");
-  return b?.textContent ?? null;
-};
-
-const openSubjects = (host: HTMLElement): string[] =>
-  [...(readColumn(host) ?? host).querySelectorAll<HTMLElement>(".msg-subject")]
-    .map((el) => (el.textContent ?? "").trim());
+/** The subject of the conversation the reading column shows (its heading), none while it rests. */
+const openSubjects = (host: HTMLElement): string[] => (openLetter(host) === null ? [] : [openSubject(host)]);
 
 const settle = async (): Promise<void> => {
   for (let i = 0; i < 6; i++) await tick(50);
@@ -149,28 +146,13 @@ describe("a Resurfaced conversation whose newest member is the account's own out
     expect(row.textContent).toContain("Here are the figures");
     expect(row.textContent).not.toContain("out of the office");
 
-    expect(restingSentence(host)).toBe("Nothing open.");
+    expect(restingSentence(host), "the column does not rest").not.toBeNull();
     await click(row);
 
     expect(restingSentence(host), "the click left the reading column resting").toBeNull();
     expect(openSubjects(host).join(" | ")).toContain(ORIGINAL_SUBJECT);
     // The route reflects the message the column shows — the original.
-    expect(window.location.hash).toBe("#/ohbox/m/orig");
-  });
-
-  /**
-   * THE SURFACE IS FOR RESOLVING, NEVER FOR COUNTING. The shell's Ohbox surface unions a
-   * resurfaced conversation's other members in so the column can open them; the rail's tooltip
-   * counts the Ohbox's own unread, and the Sent copy of your own answer is not one of them. It
-   * states no total since 0.25.5: the only one this device had was its window's.
-   */
-  it("the rail's tooltip counts the Ohbox's own unread, not the conversation's Sent member", async () => {
-    const host = await mountShell([mailbox({ address: ME, lastSyncAt: ISO })]);
-    await settle();
-
-    const rail = host.querySelector<HTMLElement>('[data-rail-id="ohbox"]');
-    expect(rail, "the Ohbox rail entry is not rendered").not.toBeNull();
-    expect(rail!.getAttribute("title")).toBe("0 unread");
+    expect(window.location.hash).toBe("#/ohbox/t/orig");
   });
 
   /**
@@ -186,4 +168,9 @@ describe("a Resurfaced conversation whose newest member is the account's own out
     expect(restingSentence(host), "the route arrived on a resting column").toBeNull();
     expect(openSubjects(host).join(" | ")).toContain(ORIGINAL_SUBJECT);
   });
+
+  /* The rail's tooltip ("0 unread") retired with today's rail, which drew it: the new rail draws no tooltip, and the
+     count a person still meets there, the Ohbox's own unread letters, is held by
+     packages/app/test/ohbox/above.test.tsx ("the rail's count is the engine's unread letters, withheld until the
+     Ohbox may state it"). */
 });

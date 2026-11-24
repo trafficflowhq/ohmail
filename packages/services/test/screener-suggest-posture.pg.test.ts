@@ -1,14 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { accounts, mailboxes, messages, folderState, accountSettings } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import type { ClassifierPort } from "@trafficflow/core";
-import { ScreenerService, type ServiceContext } from "@trafficflow/services";
+import { ScreenerService, dbFor, type ServiceContext } from "@trafficflow/services";
 import { pgTestUrl } from "@trafficflow/db/testing";
 
 /**
@@ -31,8 +28,9 @@ import { pgTestUrl } from "@trafficflow/db/testing";
  */
 const URL = pgTestUrl(import.meta.url);
 
-const sql = postgres(URL, { max: 5 });
-const db = brandDialect(drizzle(sql, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(URL);
+const db = owned.db;
 
 const NOW = new Date("2026-07-28T12:00:00Z");
 
@@ -41,7 +39,7 @@ const STRICT_BAR =
   + "sender — I never want bulk mail in my Ohbox.";
 
 function ctxFor(accountId: string): ServiceContext {
-  return { db, accountId, userId: null, now: () => NOW, requestId: randomUUID() };
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: randomUUID() };
 }
 
 /**
@@ -84,23 +82,22 @@ async function seedAccount(
     nativeLocator: { folder: "ohmail/Screener", ref: `1:${Math.floor(Math.random() * 1e6)}` },
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
 
-  if (pref) {
-    await db.insert(accountSettings).values({
-      accountId,
-      ...(pref.bar !== undefined ? { ohboxBar: pref.bar } : {}),
-      ...(pref.policy !== undefined ? { ohboxPolicy: pref.policy } : {}),
-    });
-  }
+  await db.insert(accountSettings).values({
+    accountId,
+    autoSuggestAt: NOW,
+    ...(pref?.bar !== undefined ? { ohboxBar: pref.bar } : {}),
+    ...(pref?.policy !== undefined ? { ohboxPolicy: pref.policy } : {}),
+  });
   return accountId;
 }
 
 describe("SUGGEST-POSTURE — suggest honours the stored Ohbox bar + posture", () => {
   beforeAll(async () => { await runMigrations(URL); });
-  afterAll(async () => { await sql.end({ timeout: 5 }); });
+  afterAll(async () => { await owned.close(); });
 
   it("threads the stored bar into every classify call, and the verdict follows it", async () => {
     // Lenient posture on purpose: this test isolates the BAR. The classifier turns the account's

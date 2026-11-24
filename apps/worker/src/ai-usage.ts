@@ -1,8 +1,8 @@
 import type { ClassifierPort, DraftPort, Logger, WorkflowPort } from "@trafficflow/core";
 import { AI_USAGE_LINES_PER_POST, type AiUsageLine, type UsageReceipt } from "@trafficflow/db";
-import { usageLineOf, type UsageHook } from "./ai-usage-line.js";
+import { usageLineOf, type UsageHook } from "@ohmail/organizer/ai-usage-line";
 
-export { screenerUsageHook, type UsageHook } from "./ai-usage-line.js";
+export { screenerUsageHook, type UsageHook } from "@ohmail/organizer/ai-usage-line";
 
 /** How long lines wait before the timer flushes them. */
 export const AI_USAGE_FLUSH_MS = 30_000;
@@ -120,7 +120,8 @@ export function attributedIngestClassifier(
   port: ClassifierPort, accountId: string, hook: UsageHook, buffer: AiUsageBuffer,
 ): ClassifierPort {
   return {
-    classify: (input) => port.classify(input, {
+    classify: (input, call) => port.classify(input, {
+      ...call,
       onUsage: hook((r) => buffer.push(usageLineOf(r, accountId, "classify_ingest"))),
     }),
   };
@@ -132,7 +133,7 @@ export function attributedWorkflowDrafter(
 ): DraftPort {
   return {
     draft: (input, call) => drafter.draft(input, {
-      ...(call?.signal ? { signal: call.signal } : {}),
+      ...call,
       onUsage: hook((r) => buffer.push(usageLineOf(r, accountId, "workflow"))),
     }),
   };
@@ -146,7 +147,8 @@ export function attributedProposer(
   port: WorkflowPort, accountId: string, hook: UsageHook, take: (line: AiUsageLine) => void,
 ): WorkflowPort {
   return {
-    propose: (patterns) => port.propose(patterns, {
+    propose: (patterns, call) => port.propose(patterns, {
+      ...call,
       onUsage: hook((r) => take(usageLineOf(r, accountId, "propose"))),
     }),
   };

@@ -1,0 +1,36 @@
+@layer oh {
+  .oh-selection-circle {
+    display: grid;
+    place-items: center;
+    width: var(--av);
+    height: var(--av);
+    border-radius: var(--av-r);
+  }
+
+  .oh-selection-circle-mark {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+
+  /* The contact stays visible under the ring, whether the circle wraps it or sits beside the row. */
+  .oh-selection-circle[data-selection-active][aria-pressed="false"]:is(
+      :focus-visible,
+      :root:not([data-touch="1"]) :hover
+    )
+    > .oh-avatar,
+  .oh-row-slot:has(
+      > .oh-selection-circle[data-selection-active][aria-pressed="false"]:is(
+          :focus-visible,
+          :root:not([data-touch="1"]) :hover
+        )
+    )
+    .oh-row-face-art
+    > .oh-avatar:first-child {
+    --oh-avatar-ring: inset 0 0 0 var(--sq-ringw) var(--ink2);
+  }
+}

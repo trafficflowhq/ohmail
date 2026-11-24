@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
  * [data-theme="dark"]`) is a forced island and needs none. String-level: jsdom has no media.
  */
 
-const ROOTS = ["../app", "../../../packages/ui/src", "../../../packages/tokens/src"]
+const ROOTS = ["../app", "../../../packages/app/src", "../../../packages/letter-body/src", "../../../packages/ui/src", "../../../packages/tokens/src"]
   .map((r) => fileURLToPath(new URL(r, import.meta.url)));
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
 const STAMP = '[data-theme="dark"]';

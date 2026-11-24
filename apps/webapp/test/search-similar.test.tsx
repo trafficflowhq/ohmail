@@ -1,20 +1,18 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import { enterSearchRoute, findSearchField, RegisteredSearch, searchField, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
 
 /**
  * THE RENDERED HALF OF THE TIER RULE — "Similar" is a heading, not an adjective on a row.
@@ -35,7 +33,6 @@ import { KeymapProvider } from "../app/shell/keymap";
 // See `sync-liveness-shell.test.ts` for why React is published as a global.
 (globalThis as unknown as { React: unknown }).React = React;
 
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -79,9 +76,11 @@ async function engineWith(rows: EngineMessage[], over: Partial<EngineAdapter> = 
 
 let host: HTMLDivElement;
 let root: Root;
+let leaveSearch: () => void;
 
 beforeEach(() => {
   window.localStorage.clear();
+  leaveSearch = enterSearchRoute();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -90,22 +89,13 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  leaveSearch();
 });
 
 async function render(engine: OhmailEngine, query: string): Promise<void> {
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(KeymapProvider, {
-          children: h(SearchView, {
-            engine, version: 1, now: NOW, query,
-            onQuery: () => {}, onOpen: () => {},
-          }),
-        }),
-      }),
-    );
-  });
+  await act(async () => { root.render(<RegisteredSearch engine={engine} now={NOW} />); });
+  await findSearchField(host);
+  await act(async () => { typeSearch(host, query); });
 }
 
 /** Past the 250 ms archive debounce, plus the microtasks its promise resolves through. */
@@ -115,11 +105,10 @@ async function settleArchive(): Promise<void> {
   });
 }
 
-const subjects = (): string[] => [...host.querySelectorAll(".hit .subj")].map((n) => n.textContent ?? "");
+const subjects = (): string[] => [...host.querySelectorAll('[role="listitem"] .oh-row-subject')].map((n) => n.textContent ?? "");
 const similarSubjects = (): string[] =>
-  [...host.querySelectorAll('[data-similar="hit"] .subj')].map((n) => n.textContent ?? "");
-const heading = (): string | null =>
-  host.querySelector('[data-similar="head"]')?.textContent?.trim() ?? null;
+  [...host.querySelectorAll('[data-similar="hit"] .oh-row-subject')].map((n) => n.textContent ?? "");
+const heading = () => within(host).queryByText(messages.search.similarHead);
 
 const CORPUS = [
   msg("invoice", "Invoice 078 for the workshop", "billing@erdton.example"),
@@ -129,18 +118,19 @@ const CORPUS = [
 /* The device stores (desktop, phone) have no typo arm: a one-letter typo of a word in the mailbox
    finds nothing there, so the box does not promise typos. */
 describe("the search box promises only what every store does", () => {
+  // Keep the older census title for this original copy check. The approved label is shorter.
   it("says Search everything, and no typo tolerance, in en and de", async () => {
     const de = (await import("../messages/de.json")).default as typeof messages;
     await render(await engineWith(CORPUS), "");
-    const box = host.querySelector<HTMLInputElement>("input[aria-label='Search']");
-    expect(box?.placeholder).toBe("Search everything");
-    expect(de.search.placeholder).toBe("Alles durchsuchen");
+    const box = searchField(host) as HTMLInputElement;
+    expect(box?.placeholder).toBe("Search");
+    expect(de.search.placeholder).toBe("Suchen");
   });
 });
 
 describe("the Similar section", () => {
   /* The store answers as a real one does: the rows it matched, in the tier it matched them in —
-     under ARCHIVE-024 its page REPLACES the device's first paint, so an empty fake would be a
+     its page REPLACES the device's first paint, so an empty fake would be a
      store that lost the mail. */
   it("is absent when the query has an exact answer", async () => {
     const engine = await engineWith(CORPUS, {
@@ -162,7 +152,9 @@ describe("the Similar section", () => {
     await settleArchive();
 
     // A part-shaped query: the head also says where a part inside a word is looked for (search-part-reach.test.tsx).
-    expect(heading()).toBe(`Similar Nothing matched exactly, so these are the closest words. ${messages.search.partReach}`);
+    const reach = within(host).getByText(messages.search.saidPart);
+    expect(heading()!.compareDocumentPosition(reach) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(host).queryByText("Nothing matched exactly, so these are the closest words.")).toBeNull();
     expect(similarSubjects()[0]).toContain("Invoice 078");
     // Everything on screen is under the heading — there is no exact row to be above it.
     expect(subjects()).toEqual(similarSubjects());
@@ -195,7 +187,8 @@ describe("the Similar section", () => {
     /* The bare count line yields to the verdict when the verdict carries the count, so the
        count on screen is the verdict's "N with a close word" (near, never matched), and it is the rows on screen. */
     expect(host.querySelector(".results-head.num")).toBeNull();
-    expect(host.textContent).toContain(`— ${similarSubjects().length} with a close word`);
+    expect(within(host).getByRole("heading", { name: `Similar ${similarSubjects().length}` })).toBeTruthy();
+    expect(host.textContent).not.toContain("with a close word");
   });
 
   it("the keyboard cursor walks INTO the Similar rows", async () => {

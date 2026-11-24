@@ -298,6 +298,8 @@ export type StartPhoneEngineFromSealed = (deps: {
   keks?: Record<number, string>;
   onMigrating?: (progress: StoreMigrating) => void;
   buildCommit?: string;
+  /** The copy of the store taken before it crosses into 2.0 (`store-copy.ts`); a throw refuses the open. */
+  beforeMajorUpgrade?: () => Promise<void>;
 } & StartPhoneEngineLogging) => Promise<
   | { kind: "started"; engine: StandaloneEngine } | { kind: "no-credential" }
   /** The store holds more than one mailbox: none was opened, none removed. */
@@ -686,6 +688,11 @@ export interface ReopenDeps {
   onMigrating?: (progress: StoreMigrating) => void;
   /** See {@link StandaloneDeps.buildCommit}: the relaunch hands the same identity. */
   buildCommit?: string;
+  /**
+   * The copy of the store a relaunch takes before the store crosses into 2.0, over the platform's
+   * own store handle. Only a relaunch can owe it: a first open has no store to copy.
+   */
+  beforeMajorUpgrade?: (exec: unknown) => Promise<void>;
 }
 
 /** The relaunch's answer. A refusal is a keyed sentence, never a fall-through to the chooser. */
@@ -715,6 +722,8 @@ export async function reopenStandaloneMailbox(deps: ReopenDeps): Promise<ReopenO
       ...(deps.logSink !== undefined ? { logSink: deps.logSink } : {}),
       ...(deps.onMigrating !== undefined ? { onMigrating: deps.onMigrating } : {}),
       ...(deps.buildCommit !== undefined ? { buildCommit: deps.buildCommit } : {}),
+      ...(deps.beforeMajorUpgrade !== undefined
+        ? { beforeMajorUpgrade: () => deps.beforeMajorUpgrade!(platform.exec) } : {}),
     });
     if (started.kind === "no-credential") {
       return { ok: false, reason: refuse("standaloneNoSealedCredential") };

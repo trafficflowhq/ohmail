@@ -1,4 +1,4 @@
-import type { EmailAddress } from "./types.js";
+import type { EmailAddress } from "@ohmail/wire";
 
 /**
  * THE NAME A CARD OR A NOTIFICATION SHOWS FOR A SENDER, in one place: the display name, else the

@@ -1,0 +1,26 @@
+/* A place with nothing in it: a label in the display face, at most one button, no picture. */
+@layer oh {
+  .oh-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s4);
+    padding: var(--s6);
+    text-align: center;
+  }
+  .oh-empty-label {
+    color: var(--ink2);
+    font-size: var(--t-title);
+    line-height: 1.2;
+  }
+  .oh-empty-line {
+    color: var(--ink2);
+    font-size: var(--t-ui);
+  }
+  .oh-empty-acts {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--s2);
+  }
+}

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -6,7 +7,7 @@ import { REFILE_HOLD_MS } from "@trafficflow/core/mail";
 import { accounts, changeLog, folderState, mailboxes, messages, rules } from "@trafficflow/db";
 import { rulesService } from "../src/rules-service.js";
 import { ruleRowToDTO } from "../src/dto/materialize.js";
-import { ruleRetroPass } from "../../../apps/worker/src/rule-retro.js";
+import { ruleRetroPass } from "../../organizer/src/rule-retro.js";
 import { mutated } from "./helpers.js";
 import type { Db, ServiceContext } from "../src/context.js";
 
@@ -43,7 +44,7 @@ async function world(): Promise<{ db: Db; ctx: ServiceContext }> {
   const db = (await makeTestDb()) as unknown as Db;
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `retro-${accountId.slice(0, 8)}` });
-  const ctx = { db, accountId, now: () => NOW } as unknown as ServiceContext;
+  const ctx = { db: dbFor(db, accountId), accountId, now: () => NOW } as unknown as ServiceContext;
   return { db, ctx };
 }
 
@@ -240,7 +241,7 @@ describe("a Rules-page Change re-files what the rule filed, and only that", () =
         subject, fromAddress: NORA, nativeLocator: { folder, ref: "1:1" },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
         reconcileStatus: "reconciled", conflict: false, decidedAt,
       });
       return m!.id;
@@ -259,7 +260,7 @@ describe("a Rules-page Change re-files what the rule filed, and only that", () =
       accountId, kind: "sender", match: NORA, subjectContains: "weekly", destination: from, provenance: "manual", enabled: true,
     });
     let clock = PRESS;
-    const ctx = { db, accountId, now: () => clock } as unknown as ServiceContext;
+    const ctx = { db: dbFor(db, accountId), accountId, now: () => clock } as unknown as ServiceContext;
     const at = async (id: string) => (await db.select({ d: folderState.desiredFolder }).from(folderState)
       .where(eq(folderState.messageId, id)))[0]!.d;
     return {

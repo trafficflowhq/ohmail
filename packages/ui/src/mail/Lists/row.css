@@ -1,0 +1,1000 @@
+/* A list's row: the circle in the gutter, two lines beside it; three on touch and in ohmarchy. */
+@layer oh {
+  :root {
+    /* An enclosing list can supply a different paper for the row's own button. */
+    --oh-row-own-background: initial;
+    --oh-row-subject-whitespace: initial;
+  }
+
+  .oh-rows {
+    padding: 0 var(--s2) var(--s1);
+  }
+
+  /* The row's measures, and its slot's: a row's verbs stand beside it in the slot, over the room it keeps. */
+  .oh-row,
+  .oh-row-slot {
+    --oh-under: var(--sheet);
+    --oh-row-end: var(--s3);
+    --oh-row-in: 0 var(--oh-row-end) 0 var(--s1);
+    --oh-row-verb-h: 26px;
+    --oh-row-verb-at: 11px;
+    --oh-row-verb-ring: inset 0 0 0 1px var(--btn-ring), var(--lift);
+    --oh-row-reach: -5px -4px;
+    --oh-row-layer: 1;
+    --oh-row-layer-up: 2;
+    --oh-row-between: 2px;
+  }
+
+  .oh-row {
+    --oh-row-second: var(--ink2);
+    --oh-row-under-off: 0.16em;
+    --oh-row-pair-in: 0 3px 3px 0;
+    --oh-row-peek: calc(var(--av) * 20 / 36);
+    --oh-row-peek-at: calc(var(--av) * 21 / 36);
+    --oh-row-peek-in: 0 2px;
+    --oh-row-peek-size: var(--t-meta);
+    --oh-row-peek-track: -0.02em;
+    --oh-row-peek-ring: inset 0 0 0 var(--av-ring) var(--btn-ring), 0 0 0 2px var(--oh-under);
+    --oh-row-cursor: none;
+
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--gutter) minmax(0, 1fr);
+    align-content: center;
+    row-gap: var(--oh-row-between);
+    width: 100%;
+    height: var(--row);
+    padding: var(--oh-row-in);
+    border-radius: var(--r-row);
+    box-shadow: var(--oh-row-cursor);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color var(--d-key-focus) var(--e-std);
+  }
+
+  .oh-row:focus {
+    outline: none;
+  }
+
+  :is(.oh-row, .oh-row-slot)[data-leaving] {
+    overflow: hidden;
+    animation:
+      oh-row-leave var(--d-out) var(--e-gone) both,
+      oh-row-close var(--d-move) var(--e-move) both;
+  }
+
+  :is(.oh-row, .oh-row-slot)[data-leaving="rail"] {
+    --oh-row-leave-transform: var(--x-out);
+  }
+
+  @keyframes oh-row-leave {
+    to {
+      opacity: var(--o-out);
+      transform: var(--oh-row-leave-transform, none);
+    }
+  }
+
+  @keyframes oh-row-close {
+    from {
+      height: var(--row);
+    }
+    to {
+      height: 0;
+    }
+  }
+
+  /* The studio uses the same wash under the pointer and the keyboard cursor. */
+  .oh-row:is(:hover, :where(.oh-row-slot:hover) > *),
+  .oh-row:focus-visible,
+  .oh-row[data-cursor],
+  .oh-row[data-picked] {
+    --oh-under: var(--hover);
+
+    background: var(--hover);
+  }
+
+  .oh-row[data-open] {
+    --oh-under: var(--row-open);
+    --oh-row-second: var(--on-row-open2);
+    --d-key-focus: var(--d-close);
+
+    background: var(--row-open);
+    color: var(--on-row-open);
+  }
+
+  .oh-row:is([data-cursor], :focus-visible):not([data-open]) {
+    --oh-row-cursor: var(--row-focus-ring);
+  }
+
+  /* The gutter: the lead's circle; a second voice, or the count of the others, merged into its lower right. */
+  .oh-row-face {
+    position: relative;
+    grid-row: 1 / span 2;
+    grid-column: 1;
+    align-self: var(--row-face);
+    justify-self: start;
+    display: block;
+    width: var(--av);
+    height: var(--av);
+    margin: var(--row-face-y) 0 0 var(--s2);
+    border-radius: var(--av-r);
+  }
+
+  .oh-row-face-art {
+    display: block;
+  }
+
+  .oh-row-face-art[data-pair] > .oh-avatar:first-child {
+    padding: var(--oh-row-pair-in);
+  }
+
+  .oh-row-face-art[data-pair] > .oh-avatar:nth-child(2),
+  .oh-row-more {
+    position: absolute;
+    top: var(--oh-row-peek-at);
+    left: var(--oh-row-peek-at);
+    z-index: var(--oh-row-layer);
+    width: var(--oh-row-peek);
+    height: var(--oh-row-peek);
+    box-shadow: var(--oh-row-peek-ring);
+    font-size: var(--oh-row-peek-size);
+  }
+
+  .oh-row-more {
+    display: grid;
+    place-items: center;
+    width: auto;
+    min-width: var(--oh-row-peek);
+    padding: var(--oh-row-peek-in);
+    border-radius: var(--av-r);
+    background: var(--off);
+    color: var(--on-off);
+    font-family: var(--f-display);
+    font-weight: var(--w-bold);
+    font-variation-settings: var(--opsz);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--oh-lh-tight);
+    letter-spacing: var(--oh-row-peek-track);
+    user-select: none;
+  }
+
+  /* A row to tick: the tick stands at the row's end, in the room the row keeps for it. */
+  .oh-row[data-tick] {
+    --oh-row-tick: 22px;
+    --oh-row-tick-ring: inset 0 0 0 2px var(--ink2);
+    --oh-row-tick-rise: calc(var(--oh-row-tick) / -2);
+    --oh-row-tick-dot: 10px;
+    --oh-row-in: 0 calc(var(--s4) + var(--oh-row-tick) + var(--s3)) 0 var(--s1);
+  }
+
+  .oh-row-tick {
+    position: absolute;
+    top: 50%;
+    right: var(--s4);
+    display: grid;
+    place-items: center;
+    width: var(--oh-row-tick);
+    height: var(--oh-row-tick);
+    margin-top: var(--oh-row-tick-rise);
+    border-radius: var(--av-r);
+    background: var(--solid);
+    color: var(--on-solid);
+    transition: background-color var(--d-fade) var(--e-std);
+  }
+
+  .oh-row-tick > .oh-dot {
+    --dot-size: var(--oh-row-tick-dot);
+    margin: 0;
+  }
+
+  .oh-row[aria-checked="false"] .oh-row-tick {
+    background: transparent;
+    box-shadow: var(--oh-row-tick-ring);
+  }
+
+  .oh-row[aria-checked="false"] .oh-row-tick > .oh-icon {
+    visibility: hidden;
+  }
+
+  .oh-row[data-tick][aria-checked="false"] .oh-row-who {
+    color: var(--ink2);
+  }
+
+  /* The ticks taken: the row takes no press, and its tick is the dot of a person let in, or nothing. */
+  .oh-row[data-tick][aria-disabled="true"] {
+    cursor: default;
+  }
+
+  .oh-row[data-tick][aria-disabled="true"]:hover {
+    background: transparent;
+  }
+
+  .oh-row[aria-disabled="true"] .oh-row-tick {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  /* Under a finger a person's address is set at the size an address has beside a name and may take a second line. */
+  :root[data-touch="1"] .oh-row[data-tick] .oh-row-preview {
+    --oh-row-tick-lh: 1.3;
+    font-size: var(--t-meta);
+    line-height: var(--oh-row-tick-lh);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  /* Line one: who, the address, then at the right the squares, a tag, the paper-clip, the time. */
+  .oh-row-first,
+  .oh-row-second {
+    grid-column: 2;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .oh-row-first {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-height: var(--row-l1);
+  }
+
+  .oh-row-who {
+    flex: 0 1 auto;
+    overflow: hidden;
+    min-width: 3em;
+    font-weight: var(--w-text);
+    text-overflow: ellipsis;
+  }
+
+  .oh-row-first:has(> .oh-row-address) > .oh-row-who {
+    flex: 0 0 auto;
+    max-width: 64%;
+  }
+
+  .oh-row-address {
+    flex: 0 1000 auto;
+    overflow: hidden;
+    min-width: 0;
+    color: var(--oh-row-second);
+    font-size: var(--t-meta);
+    text-overflow: ellipsis;
+  }
+
+  .oh-row-address[aria-haspopup="dialog"] {
+    white-space: nowrap;
+  }
+
+  .oh-row-contact-name {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    white-space: inherit;
+  }
+
+  .oh-row-contact {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .oh-row-contact.oh-row-address {
+    color: var(--oh-row-second);
+  }
+
+  :root[data-touch="0"] :is(.oh-row-address[data-press], .oh-row-contact-name):hover {
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: var(--oh-row-under-off);
+  }
+
+  :root[data-touch="0"] .oh-row[data-open] :is(.oh-row-address[data-press], .oh-row-contact-name):hover {
+    color: var(--on-row-open);
+  }
+
+  .oh-row-room {
+    flex: 1;
+  }
+
+  .oh-row-file {
+    --oh-row-file-pull: -2px;
+
+    flex: none;
+    display: inline-flex;
+    margin-right: var(--oh-row-file-pull);
+    color: var(--ink2);
+  }
+
+  .oh-row[data-open] .oh-row-file {
+    color: var(--on-row-open2);
+  }
+
+  .oh-row-when,
+  .oh-row-amount {
+    flex: none;
+    color: var(--oh-row-second);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+  }
+
+  :root[data-touch="1"] [data-keep-row-date] .oh-row-first:has(> .oh-row-when) > .oh-row-who {
+    min-width: 0;
+  }
+
+  :root[data-touch="1"] [data-keep-row-date] .oh-row-when {
+    min-inline-size: max-content;
+    white-space: nowrap;
+  }
+
+  /* A time that turns every time of the list to its other form: pressed as the address is. */
+  :root[data-touch="0"] .oh-row-when[data-press] {
+    cursor: pointer;
+  }
+
+  :root[data-touch="0"] .oh-row-when[data-press]:hover {
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: var(--oh-row-under-off);
+  }
+
+  :root[data-touch="0"] .oh-row[data-open] .oh-row-when[data-press]:hover {
+    color: var(--on-row-open);
+  }
+
+  /* The row you were taken to: a wash that settles once. Without motion it stays washed while it is the one. */
+  .oh-row[data-located] {
+    animation: oh-row-located var(--d-tint) var(--e-std) both;
+  }
+
+  @keyframes oh-row-located {
+    from {
+      background: var(--wash);
+    }
+  }
+
+  :root[data-rm="1"] .oh-row[data-located] {
+    animation: none;
+    background: var(--wash);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .oh-row[data-located] {
+      animation: none;
+      background: var(--wash);
+    }
+  }
+
+  .oh-row .oh-where {
+    color: var(--oh-row-second);
+  }
+
+  /* A place's word gives way before the name is cut, and the time after it never leaves the row. The address
+     gives way a million times sooner than the word: the word is not cut while the address has anything to give. */
+  .oh-row-first:has(> .oh-where) > .oh-row-address {
+    --oh-row-address-yield: 1000000000;
+
+    flex-shrink: var(--oh-row-address-yield);
+  }
+
+  .oh-row-first > .oh-where {
+    flex: 0 1000 auto;
+    overflow: clip;
+    min-width: 0;
+    text-overflow: ellipsis;
+  }
+
+  /* A tag is whole or not there: it gives way before the name does. */
+  .oh-row-first > .oh-tag {
+    --oh-row-tag-lh: 22px;
+
+    flex: 0 60 auto;
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+  }
+
+  .oh-row-first > .oh-tag:not([data-own]) {
+    display: block;
+    line-height: var(--oh-row-tag-lh);
+  }
+
+  .oh-row-first[data-fold-address] > .oh-row-address,
+  .oh-row-first[data-fold-tag] > .oh-tag[data-own] {
+    display: none;
+  }
+
+  .oh-row[data-open] .oh-readsquares,
+  .oh-row[data-open] .oh-tag {
+    background: var(--sheet);
+    color: var(--ink2);
+  }
+
+  /* Labels before the time: each is whole or not there. One that does not fit beside the name wraps out of the
+     line and is not seen, the last first. The address gives way before a label does, and a label before the
+     name: each gives way a million times sooner than the next, so none is cut while the one before it has room. */
+  .oh-row-labels {
+    --oh-row-labels-h: 22px;
+    --oh-row-labels-yield: 1000000;
+
+    display: flex;
+    flex: 0 var(--oh-row-labels-yield) auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0 var(--s2);
+    overflow: hidden;
+    min-width: 0;
+    height: var(--oh-row-labels-h);
+  }
+
+  /* Nothing, first in the line and as high as it: so the first label too can leave the line whole when it no
+     longer fits, and what has left stands under the line's foot, unseen. */
+  .oh-row-labels::before {
+    --oh-row-labels-first: calc(var(--s2) * -1);
+
+    content: "";
+    flex: none;
+    width: 0;
+    height: var(--oh-row-labels-h);
+    margin-left: var(--oh-row-labels-first);
+  }
+
+  .oh-row-first:has(> .oh-row-labels) > .oh-row-address {
+    --oh-row-address-yield: 1000000000000;
+
+    flex-shrink: var(--oh-row-address-yield);
+  }
+
+  /* Beside labels the address too is whole or not there: it leaves the line before a label does, never as a stub. */
+  .oh-row-address[data-whole] {
+    display: flex;
+    flex-wrap: wrap;
+    height: 1lh;
+    text-overflow: clip;
+  }
+
+  .oh-row-address[data-whole]::before {
+    content: "";
+    flex: none;
+    width: 0;
+    height: 1lh;
+  }
+
+  /* Under a finger the address gives way beside a label whatever the room: the labels are what the row says first. */
+  :root[data-touch="1"] .oh-row-address[data-whole] {
+    display: none;
+  }
+
+  /* Beside labels the name is cut only once no label is left: it keeps no share of the line back for the address. */
+  .oh-row-first:has(> .oh-row-labels) > .oh-row-who {
+    flex: 0 1 auto;
+    max-width: none;
+  }
+
+  .oh-row-first:has(> .oh-row-address[data-domain]) > .oh-row-who {
+    flex: 0 1000 auto;
+    min-width: 0;
+  }
+
+  .oh-row-first > .oh-row-address[data-domain] {
+    flex-shrink: 1;
+  }
+
+  .oh-row-first > .oh-row-who[data-domain] {
+    min-width: 0;
+  }
+
+  /* A sender that is not who the name says: the sign and its word stand where the address would, whole. */
+  .oh-row-flag {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s1);
+  }
+
+  .oh-row-flag-sign {
+    display: inline-flex;
+    flex: none;
+  }
+
+  /* A sender taken for junk recedes; the row that is open never does. */
+  .oh-row[data-receded]:not([data-open]) .oh-row-who,
+  .oh-row[data-receded]:not([data-open]) .oh-row-subject {
+    color: var(--ink2);
+  }
+
+  /* Line two: the subject, then the first words. */
+  .oh-row-second {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .oh-row-subject {
+    font-weight: var(--w-text);
+    white-space: var(--oh-row-subject-whitespace, inherit);
+  }
+
+  :root[data-touch="0"] .oh-row-subject {
+    display: inline-block;
+    overflow: hidden;
+    max-width: 100%;
+    text-overflow: ellipsis;
+    vertical-align: top;
+  }
+
+  .oh-row-preview {
+    color: var(--oh-row-second);
+  }
+
+  .oh-row-thread-preview {
+    display: flex;
+    flex-flow: row-reverse wrap;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    max-block-size: var(--oh-readsquares-h);
+    overflow: hidden;
+  }
+
+  .oh-row-thread-preview > .oh-row-preview {
+    flex: 1 1 12ch;
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Read from unread by weight first; the dot on the circle confirms it. */
+  .oh-row[data-unread] .oh-row-who,
+  .oh-row[data-unread] .oh-row-subject {
+    font-weight: var(--w-bold);
+  }
+
+  .oh-row:not([data-unread], [data-open]) .oh-row-who,
+  .oh-row:not([data-unread], [data-open]) .oh-row-subject {
+    color: var(--ink-read);
+    transition: color var(--d-mark) var(--e-std);
+  }
+
+  .oh-row:not([data-unread], [data-open]) .oh-row-preview {
+    color: var(--ink3);
+  }
+
+  /* An entry is a section of Settings, not a letter: its name is a label in the ink whether or not it wants the
+     person; the one that does is bold, and its sign carries the dot as an unread letter's circle does. */
+  .oh-row[data-entry]:not([data-unread]) .oh-row-who {
+    font-weight: var(--w-mid);
+  }
+
+  .oh-row[data-entry]:not([data-unread], [data-open]) .oh-row-who,
+  .oh-row[data-entry]:not([data-unread], [data-open]) .oh-row-subject {
+    color: var(--ink);
+  }
+
+  .oh-row[data-entry]:not([data-unread], [data-open]) .oh-row-preview {
+    color: var(--ink2);
+  }
+
+  .oh-row[data-entry][data-unread] .oh-avatar[data-sign] {
+    --oh-avatar-fg: var(--ink);
+  }
+
+  /* The value and the detail stand apart by a dot; on touch and in ohmarchy they stand on two lines and need none. */
+  .oh-row[data-entry] .oh-row-sep {
+    font-style: normal;
+  }
+
+  :root[data-touch="1"] .oh-row[data-entry] .oh-row-sep,
+  :root[data-face="ohmarchy"] .oh-row[data-entry] .oh-row-sep {
+    display: none;
+  }
+
+  /* The verb under the pointer or the keys: it stands at the end of the last line, over a fade of what it covers. */
+  .oh-row-quick {
+    position: absolute;
+    right: 0;
+    bottom: var(--oh-row-verb-at);
+    z-index: var(--oh-row-layer);
+    display: flex;
+    padding: 0 var(--s3) 0 var(--s6);
+    background: linear-gradient(to right, transparent, var(--oh-under) var(--s5));
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--d-fade) var(--e-std);
+  }
+
+  :root[data-touch="1"] .oh-row-quick {
+    display: none;
+  }
+
+  .oh-row-slot:hover > .oh-row-quick,
+  .oh-row[data-cursor] ~ .oh-row-quick,
+  .oh-row:focus-visible ~ .oh-row-quick,
+  .oh-row-quick:focus-within {
+    opacity: 1;
+  }
+
+  /* The fade lies over the row beside it and stays the row's to press: only the verb itself takes the pointer. */
+  .oh-row-slot:hover > .oh-row-quick > .oh-row-verb,
+  .oh-row[data-cursor] ~ .oh-row-quick > .oh-row-verb,
+  .oh-row:focus-visible ~ .oh-row-quick > .oh-row-verb,
+  .oh-row-quick:focus-within > .oh-row-verb {
+    pointer-events: auto;
+  }
+
+  /* The ground the verbs fade over beside the row: the row's own, in each of its states. */
+  .oh-row-slot:hover,
+  .oh-row-slot:has(> .oh-row[data-cursor], > .oh-row[data-picked]) {
+    --oh-under: var(--hover);
+  }
+
+  .oh-row-slot:has(> .oh-row[data-open]) {
+    --oh-under: var(--row-open);
+
+    color: var(--on-row-open);
+  }
+
+  .oh-row-verb {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s1);
+    height: var(--oh-row-verb-h);
+    padding: 0 var(--s3) 0 var(--s2);
+    border-radius: var(--r-pill);
+    background: var(--sheet);
+    box-shadow: var(--oh-row-verb-ring);
+    color: var(--ink);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    line-height: var(--oh-lh-tight);
+    white-space: nowrap;
+    transition:
+      transform var(--d-press) var(--e-press),
+      background-color var(--d-fade) var(--e-std);
+  }
+
+  .oh-row-verb:focus-visible {
+    border-radius: var(--r-pill);
+  }
+
+  .oh-row-verb:active {
+    transform: var(--x-press);
+  }
+
+  .oh-row-verb::after {
+    content: "";
+    position: absolute;
+    inset: var(--oh-row-reach);
+  }
+
+  .oh-row-quick > .oh-row-verb:hover {
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+
+  /* A button of its own: a column of its own, centred; with a pointer the preview makes room for it. */
+  .oh-row[data-own] {
+    grid-template-columns: var(--gutter) minmax(0, 1fr) auto;
+    column-gap: 0;
+  }
+
+  .oh-row-verb[data-own] {
+    --oh-row-own-ring: inset 0 0 0 1px var(--btn-ring);
+
+    grid-row: 1 / span 2;
+    grid-column: 3;
+    align-self: center;
+    height: var(--h-s);
+    margin-left: var(--s5);
+    background: var(--oh-row-own-background, var(--soft));
+    box-shadow: var(--oh-row-own-ring);
+    font-size: var(--t-ui);
+  }
+
+  /* A word alone keeps the same room at both its sides; a sign stands a step closer to its edge. */
+  .oh-row-verb[data-own]:not(:has(> .oh-icon)) {
+    padding-inline: var(--s3);
+  }
+
+  /* The room is the button's box, kept in the row's third column; the button stands over it, beside the row. */
+  .oh-row-verb[data-room] {
+    visibility: hidden;
+  }
+
+  .oh-row-verb[data-room] > [data-label]::before {
+    content: attr(data-label);
+  }
+
+  /* Size a standing action after the name and labels. A long action keeps its whole word on each line. */
+  :root[data-touch="0"]
+    .oh-row[data-own]
+    .oh-row-first:has(> .oh-row-labels):not([data-fold-verb])
+    > :is(.oh-row-who, .oh-row-labels) {
+    flex-shrink: 0;
+  }
+  :root[data-touch="0"] .oh-row-slot:has(.oh-row-first[data-fold-verb]) .oh-row-verb[data-own] {
+    width: min-content;
+    height: fit-content;
+    min-height: var(--h-s);
+    margin-left: var(--s2);
+    padding-block: var(--s1);
+    white-space: normal;
+  }
+
+  .oh-row-slot > .oh-row-verb[data-own] {
+    position: absolute;
+    top: 0;
+    right: var(--oh-row-end);
+    bottom: 0;
+    margin-block: auto;
+  }
+
+  .oh-row[data-swiping] ~ .oh-row-verb[data-own] {
+    z-index: var(--oh-row-layer-up);
+  }
+
+  :root[data-touch="0"] .oh-row[data-own] .oh-row-preview {
+    display: none;
+  }
+
+  :root[data-touch="0"] .oh-row-slot:hover > .oh-row:not([data-open]) ~ .oh-row-verb[data-own],
+  :root[data-touch="0"] .oh-row[data-cursor] ~ .oh-row-verb[data-own] {
+    background: var(--sheet);
+    box-shadow: var(--oh-row-verb-ring);
+  }
+
+  .oh-row[data-open] ~ .oh-row-verb[data-own] {
+    background: var(--sheet);
+    color: var(--ink);
+  }
+
+  /* Touch: three lines, who and when, the subject, the preview. */
+  :root[data-touch="1"] .oh-rows {
+    position: relative;
+  }
+
+  :root[data-device="phone"] .oh-rows {
+    padding: 0 var(--s1) var(--s1);
+  }
+
+  :root:is([data-device="phone"], [data-device="fold"]) .oh-row-first > .oh-tag[data-own] {
+    display: none;
+  }
+
+  :root[data-touch="1"] .oh-row {
+    touch-action: pan-y;
+  }
+
+  :root[data-touch="1"] .oh-row-second {
+    display: grid;
+    gap: var(--oh-row-between);
+  }
+
+  :root[data-touch="1"] .oh-row-subject,
+  :root[data-touch="1"] .oh-row-preview {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  :root[data-touch="1"] .oh-row[data-own] {
+    grid-template-columns: var(--gutter) minmax(0, 1fr);
+  }
+
+  :root[data-touch="1"] .oh-row-verb[data-own] {
+    --oh-row-reach: -8px -4px;
+
+    position: absolute;
+    top: auto;
+    right: var(--s3);
+    bottom: 6px;
+    grid-area: auto;
+    height: 26px;
+    margin: 0;
+    font-size: var(--t-meta);
+  }
+
+  :root[data-touch="1"] .oh-row[data-own] .oh-row-preview {
+    --oh-row-own-room: 104px;
+
+    padding-right: var(--oh-row-own-room);
+  }
+
+  /* Under a finger the row travels, and the verb it lands on stands on the ground behind it. */
+  .oh-row-slot {
+    position: relative;
+  }
+
+  /* Keep the separately positioned circle below surfaces that float over the list. */
+  .oh-row-slot:has(> .oh-selection-circle) {
+    isolation: isolate;
+  }
+
+  /* The circle's button is a sibling of the option. Its hit area covers the avatar gutter. */
+  .oh-row-slot > .oh-selection-circle {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: 0;
+    z-index: var(--oh-row-layer-up);
+    width: calc(var(--gutter) + var(--s1));
+    height: var(--row);
+    border-radius: var(--r-row);
+  }
+
+  :root[data-touch="1"]:not([data-rm="1"]) .oh-row {
+    transition:
+      background-color var(--d-key-focus) var(--e-std),
+      transform var(--d-move) var(--e-out);
+  }
+
+  .oh-row[data-swiping] {
+    z-index: var(--oh-row-layer-up);
+    background: var(--sheet);
+    box-shadow: var(--lift);
+  }
+
+  .oh-row-back {
+    --oh-row-back-lh: 1.15;
+    --oh-row-back-gap: 3px;
+
+    position: absolute;
+    inset: 0;
+    z-index: var(--oh-row-layer);
+    display: grid;
+    grid-template-columns: 72px;
+    align-content: center;
+    justify-content: start;
+    justify-items: center;
+    row-gap: var(--oh-row-back-gap);
+    padding: 0 var(--s1);
+    border-radius: var(--r-row);
+    background: var(--ground);
+    color: var(--ink);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    line-height: var(--oh-row-back-lh);
+    text-align: center;
+    transition:
+      background-color var(--d-fade) var(--e-std),
+      color var(--d-fade) var(--e-std);
+  }
+
+  .oh-row-back[data-side="left"] {
+    justify-content: end;
+  }
+
+  .oh-row-back[data-armed] {
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+
+  .oh-row-back-word {
+    max-width: 60px;
+  }
+
+  :root[data-device="fold"] .oh-row-back {
+    --oh-row-back-out: calc(var(--s1) - var(--s2));
+
+    inset: 0 var(--oh-row-back-out);
+  }
+
+  /* Ohmarchy: three lines everywhere, quieter second voices, the keys' ring on the row. */
+  :root[data-face="ohmarchy"] :is(.oh-row, .oh-row-slot) {
+    --oh-row-verb-h: 22px;
+    --oh-row-verb-at: 9px;
+  }
+
+  :root[data-face="ohmarchy"] .oh-row {
+    --oh-row-second: var(--ink3);
+    --oh-row-peek: 18px;
+    --oh-row-peek-at: 18px;
+    --oh-row-peek-in: 0 1px;
+    --oh-row-peek-size: 11px;
+    --oh-row-peek-track: -0.04em;
+    --oh-row-subject-size: 13.5px;
+  }
+
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-rows {
+    --oh-rows-in: 0 10px var(--s1);
+
+    padding: var(--oh-rows-in);
+  }
+
+  :root[data-face="ohmarchy"][data-device="desktop"] :is(.oh-row, .oh-row-slot) {
+    --oh-row-end: 14px;
+    --oh-row-in: 0 var(--oh-row-end) 0 var(--s2);
+  }
+
+  :root[data-face="ohmarchy"] .oh-row:is(:hover, :where(.oh-row-slot:hover) > *),
+  :root[data-face="ohmarchy"] .oh-row[data-cursor] {
+    --oh-row-second: var(--ink2);
+  }
+
+  :root[data-face="ohmarchy"] .oh-row[data-open] {
+    --oh-row-second: var(--on-row-open2);
+    --oh-row-cursor: inset 0 0 0 1px var(--row-ring);
+  }
+
+  :root[data-face="ohmarchy"] .oh-row-second {
+    display: grid;
+    gap: var(--oh-row-between);
+  }
+
+  :root[data-face="ohmarchy"] .oh-row-subject,
+  :root[data-face="ohmarchy"] .oh-row-preview {
+    display: block;
+    overflow: hidden;
+    max-width: none;
+    text-overflow: ellipsis;
+  }
+
+  :root[data-face="ohmarchy"] .oh-row-preview {
+    font-size: var(--t-meta);
+  }
+
+  :root[data-face="ohmarchy"][data-touch="0"] .oh-row-subject {
+    font-size: var(--oh-row-subject-size);
+  }
+
+  :root[data-face="ohmarchy"] .oh-row[data-open] .oh-readsquares,
+  :root[data-face="ohmarchy"] .oh-row[data-open] .oh-tag:not([data-own]) {
+    --oh-row-on-open: inset 0 0 0 1px var(--line);
+
+    background: var(--sheet);
+    box-shadow: var(--oh-row-on-open);
+    color: var(--ink2);
+  }
+
+  :root[data-face="ohmarchy"][data-touch="1"] .oh-row-verb[data-own] {
+    bottom: 10px;
+    height: 22px;
+  }
+
+  /* The open row in oh: its circles stand on the sheet's white, the dot in the row's own tone. */
+  :root[data-face="paper"] .oh-row[data-open] .oh-row-face-art > .oh-avatar:not([data-sign]) {
+    --oh-avatar-bg: var(--av-open-bg);
+    --oh-avatar-fg: var(--av-open-fg);
+  }
+
+  :root[data-face="paper"] .oh-row[data-open] .oh-row-more {
+    background: var(--av-open-bg);
+    color: var(--av-open-fg);
+  }
+
+  .oh-row[data-open] .oh-row-face-art > .oh-avatar[data-sign] {
+    --oh-avatar-bg: var(--sheet);
+    --oh-avatar-fg: var(--ink);
+  }
+
+  .oh-row[data-open] .oh-row-face-art > .oh-avatar > .oh-dot {
+    background: var(--row-open-dot);
+  }
+}
+
+/* The resting list uses the kit's row, with room for a name and an address. */
+[data-address-rows] .oh-row {
+  height: calc(var(--h-xl) + var(--s1));
+}
+
+[data-address-rows] .oh-row-face {
+  align-self: center;
+  margin-top: 0;
+}
+
+[data-address-rows] .oh-row-first {
+  min-height: 0;
+}
+
+[data-address-rows] .oh-row:not([data-unread], [data-open]) .oh-row-who {
+  color: var(--ink);
+  font-weight: var(--w-mid);
+}
+
+[data-address-rows] .oh-row-second {
+  display: block;
+  font-size: var(--t-meta);
+}
+
+[data-address-rows] .oh-row:not([data-unread], [data-open]) .oh-row-preview {
+  color: var(--ink2);
+}

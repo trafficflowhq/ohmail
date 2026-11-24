@@ -1,11 +1,13 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { within } from "@testing-library/react";
 import {
   MemoryMirrorStore, OhmailEngine,
-  type EngineMessage, type Folder, type RuleDTO, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import {
-  ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, textOf, tick,
+  ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 
 /**
@@ -137,7 +139,7 @@ async function localEngine(): Promise<OhmailEngine> {
 }
 
 const rowIds = (c: HTMLElement): string[] =>
-  [...c.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
+  within(c).queryAllByRole("option").map((n) => n.getAttribute("data-id") ?? "");
 
 describe("a standalone install partitions its own mirror", () => {
   beforeEach(() => {
@@ -232,6 +234,6 @@ describe("a standalone install partitions its own mirror", () => {
     // loud@, fresh@, stranger@ and ruled@ (a rule that has not moved the mail). dorm@ (History)
     // and friend@ (consented AND retired) are excluded, and five messages sit in the Screener
     // FOLDER — the number a person is shown must be the one they can act on.
-    expect(textOf(c)).toContain("4 first-time senders waiting");
+    expect(within(c).getByRole("button", { name: "Waiting 4" })).toBeTruthy();
   });
 });

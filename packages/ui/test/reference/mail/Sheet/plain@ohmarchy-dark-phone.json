@@ -1,0 +1,28 @@
+{
+  "component": "Sheet",
+  "state": "plain",
+  "look": "ohmarchy-dark-phone",
+  "place": "cell",
+  "target": [24, 24, 200, 96],
+  "clip": [24, 24, 200, 96],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [{ "backgroundColor": "rgb(26, 27, 38)", "boxShadow": "rgb(66, 66, 69) 0px 0px 0px 2px" }],
+  "nodes": [],
+  "loose": { "text": [], "surfaces": [{ "box": [0, 0, 200, 96], "paint": 0 }] }
+}

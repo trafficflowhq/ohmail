@@ -1,15 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { mailboxes, drafts, outboundSends } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SendService, ServiceError } from "../src/index.js";
+import { SendService, ServiceError, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -29,7 +27,7 @@ import type { ServiceContext } from "../src/index.js";
  * for the organizer lease, and a plain `PATCH {status:'disabled'}`) leave the credentials in
  * place, so there was no accident at all: the mail was genuinely sent.
  *
- * ## Why REAL Postgres and not PGlite (CLAUDE.md)
+ * ## Why REAL Postgres and not PGlite (AGENTS.md)
  *
  * The property is not "reserve returns an error" — it is that the reservation's INSERT is
  * **rolled back**. The check sits with the other new-reservation preconditions, i.e. AFTER the
@@ -42,9 +40,9 @@ import type { ServiceContext } from "../src/index.js";
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
+const ownedA = makeOwnedDb(PG_TEST_URL);
 const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
+const dbA = ownedA.db;
 
 const NOW = new Date("2026-08-04T12:00:00.000Z");
 const svc = new SendService();
@@ -77,7 +75,7 @@ const credentiallessAdapter: OpenSendAdapter = async () => {
 };
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await ownedA.close(); await sqlB.end({ timeout: 5 }); });
 
 describe.skipIf(!PG_UP)("a disabled mailbox refuses inside the reserve transaction", () => {
   async function seeded(status = "connected", syncBlockedReason: string | null = null) {
@@ -91,7 +89,7 @@ describe.skipIf(!PG_UP)("a disabled mailbox refuses inside the reserve transacti
       to: [{ name: null, address: "you@example.com" }], status: "draft",
     }).returning();
     const ctx: ServiceContext = {
-      db: dbA as unknown as ServiceContext["db"],
+      db: dbFor(dbA, accountId),
       accountId, userId: null, now: () => NOW, requestId: "r",
     };
     return { accountId, mailboxId: mb!.id, draftId: d!.id, ctx };

@@ -21,6 +21,12 @@ export const CAPABILITY_MOVES = "moves";
 export const CAPABILITY_RULES = "rules";
 /** Editing the per-mailbox configuration — `profile.update`. */
 export const CAPABILITY_PROFILE = "profile";
+/**
+ * Moving one message into one of the person's own folders — `message.file`, a kind of its own
+ * rather than a second shape of `message.move`, so the word a door asks for still follows from the
+ * kind alone, and an organizer without this word leaves the record standing instead of reading it.
+ */
+export const CAPABILITY_FOLDER_MOVES = "folder_moves";
 
 /**
  * The organizing role, and the one refusal every write door shares. Exactly one active organizer

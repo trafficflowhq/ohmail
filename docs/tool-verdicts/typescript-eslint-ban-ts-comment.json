@@ -1,0 +1,20 @@
+{
+  "id": "@typescript-eslint/ban-ts-comment",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a switched-off type check",
+      "file": "packages/app/src/planted/ts-comment.ts",
+      "line": 1,
+      "refused": "Use \"@ts-expect-error\" instead of \"@ts-ignore\", as \"@ts-ignore\" will do nothing if the following line is error-free."
+    }
+  ],
+  "green": [
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    }
+  ]
+}

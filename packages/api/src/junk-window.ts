@@ -1,9 +1,10 @@
+import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  assertOrganizerRole, fenceErased,
-  contacts, folderState, junkRescues, junkSweepCandidateWhere, mailboxes, messages,
-  lockAccountRuleKeys, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl, mailboxRowsInIdOrder,
+  assertOrganizerRole, clearLegacyJunkSweepNotice, fenceErased, retireLegacyJunkSweep,
+  contacts, folderState, junkRescues, junkSweepCandidateWhere, mailboxes, messages, passMark, queueJunkSweep,
+  lockAccountRuleKeys, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl,
   writeRuleUnderKey, type LedgerTx, type RuleRowWrite, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import {
@@ -30,7 +31,7 @@ import type { ApiDeps } from "./deps.js";
  * Junk never enters `messages` or any client mirror. LIST and BODY are the two READS that dial:
  * they open a short-lived connection through `withinDoorBudget`, serve only `connected` mailboxes,
  * store no bytes, and answer 410 on an epoch mismatch. NOTHING HERE APPLIES ORGANIZATION. The
- * rescue and the sweep are COMMANDS — a `junk_rescues` row and a stamp — recorded with the
+ * rescue and the sweep are COMMANDS — a `junk_rescues` row and a pass request — recorded with the
  * doorbell and executed by the organizer under its lease, which is what this server promises of
  * every move it makes. The second verb's allow rides the rescue's own transaction.
  */
@@ -574,7 +575,7 @@ export async function rescueJunk(
     return allowed !== undefined
       ? { status: "queued" as const, rescueId: row!.id, allowed }
       : { status: "queued" as const, rescueId: row!.id };
-  }, { db: deps.db });
+  });
 }
 
 /**
@@ -600,7 +601,7 @@ export async function dismissJunkRescue(
       .returning({ id: junkRescues.id });
     if (gone.length === 0) throw new ServiceError("conflict", 409, "that move is still being made on your mail server");
     return { dismissed: true as const };
-  }, { db: deps.db, mailboxId: row.mailboxId });
+  }, { mailboxId: row.mailboxId });
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -635,6 +636,10 @@ export interface JunkSweepPreview {
   movable: number;
   /** Any mailbox has a press outstanding. */
   pending: boolean;
+  /** A sweep queued by an older version needs confirmation of a fresh preview. */
+  confirmationRequired: boolean;
+  /** Account-bound fingerprint of the exact movable IDs and their destination mailboxes. */
+  confirmation: string;
   /** Every mailbox not stood down, opted-out and Junk-less ones included, newest first. */
   held: JunkHeld;
 }
@@ -672,73 +677,103 @@ async function heldInQuarantine(deps: ApiDeps, accountId: string): Promise<JunkH
  */
 export async function junkSweepPreview(deps: ApiDeps, accountId: string): Promise<JunkSweepPreview> {
   await requireFolders(deps, accountId);
-  const boxes = await deps.db
+  const { mailboxes, movable, pending, confirmationRequired, confirmation } = await readSweepCandidates(deps.db as unknown as Tx, accountId);
+  return { mailboxes, movable, pending, confirmationRequired, confirmation, held: await heldInQuarantine(deps, accountId) };
+}
+
+const SWEEP_CONFIRMATION_VERSION = 2;
+
+const sweepMailboxes = (accountId: string) =>
+  and(eq(mailboxes.accountId, accountId), isNull(mailboxes.erasedAt));
+
+async function readSweepCandidates(db: Tx, accountId: string) {
+  const boxes = await db
     .select({
       id: mailboxes.id, address: mailboxes.address, junkFolder: mailboxes.junkFolder,
-      requestedAt: mailboxes.junkSweepRequestedAt,
+      requestedAt: passMark("junk_sweep", "requestedAt", accountId, mailboxes.id),
+      noticedAt: passMark("junk_sweep", "doneAt", accountId, mailboxes.id),
+      legacy: mailboxes.junkSweepRequestedAt,
+      status: mailboxes.status, foldersDisabledAt: mailboxes.foldersDisabledAt,
     })
     .from(mailboxes)
-    .where(and(
-      eq(mailboxes.accountId, accountId),
-      ne(mailboxes.status, "disabled"),
-      isNull(mailboxes.foldersDisabledAt),
-    ));
-  // Before the early return: a mailbox opted out of folders still holds its letters.
-  const held = await heldInQuarantine(deps, accountId);
-  if (boxes.length === 0) return { mailboxes: [], movable: 0, pending: false, held };
-  const countOf = new Map<string, number>();
-  for (const b of boxes) {
-    const [row] = await deps.db
-      .select({ n: dialect(deps.db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number> })
+    .where(sweepMailboxes(accountId))
+    .orderBy(mailboxes.id);
+
+  const targets: Array<{ mailboxId: string; folder: string; ids: string[] }> = [];
+  const out: JunkSweepMailbox[] = [];
+  const notices: Array<{ mailboxId: string; legacy: Date | null; noticedAt: Date | null }> = [];
+  for (const box of boxes) {
+    if (box.legacy !== null || box.noticedAt !== null) {
+      notices.push({ mailboxId: box.id, legacy: box.legacy, noticedAt: box.noticedAt });
+    }
+    if (box.status === "disabled" || box.foldersDisabledAt !== null) continue;
+    const from = db.select({ id: messages.id })
       .from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
-      .where(junkSweepCandidateWhere(accountId, b.id));
-    countOf.set(b.id, Number(row?.n ?? 0));
+      .where(junkSweepCandidateWhere(accountId, box.id));
+    const candidates = await from.orderBy(messages.id);
+    if (box.junkFolder !== null && candidates.length > 0) {
+      targets.push({ mailboxId: box.id, folder: box.junkFolder, ids: candidates.map(({ id }) => id) });
+    }
+    out.push({
+      id: box.id, address: box.address, candidates: candidates.length,
+      hasJunkFolder: box.junkFolder !== null, pending: box.requestedAt !== null,
+    });
   }
-  const out: JunkSweepMailbox[] = boxes.map((b) => ({
-    id: b.id, address: b.address,
-    candidates: countOf.get(b.id) ?? 0,
-    hasJunkFolder: b.junkFolder !== null,
-    pending: b.requestedAt !== null,
-  }));
+  // Retirement copies the stamp into doneAt. A preview naming that revision stays valid
+  // through the worker's move between the two fields.
+  const revisions = notices.map(({ mailboxId, legacy, noticedAt }) => [mailboxId, (legacy ?? noticedAt)?.toISOString()]);
   return {
     mailboxes: out,
-    movable: out.filter((m) => m.hasJunkFolder).reduce((n, m) => n + m.candidates, 0),
-    pending: out.some((m) => m.pending),
-    held,
+    movable: targets.reduce((n, target) => n + target.ids.length, 0),
+    pending: out.some((box) => box.pending),
+    confirmationRequired: notices.length > 0,
+    notices,
+    confirmation: createHash("sha256")
+      .update(JSON.stringify([SWEEP_CONFIRMATION_VERSION, accountId, targets, revisions])).digest("base64url"),
+    targets,
   };
 }
 
-/**
- * THE PRESS: record the command on every mailbox that has both something to move and somewhere
- * to move it. Idempotent in effect — a second press re-stamps, and the worker's clear-what-it-
- * observed discipline means the later stamp is served by a later cycle, never lost and never a
- * second sweep of an already-empty pile (a sweep of zero candidates is a no-op by construction).
- * Answers the preview it leaves behind, so the client renders "queued" from the same shape.
- */
-export async function requestJunkSweep(deps: ApiDeps, ctx: ServiceContext): Promise<JunkSweepPreview> {
-  const accountId = ctx.accountId;
-  const preview = await junkSweepPreview(deps, accountId);
-  const targets = preview.mailboxes.filter((m) => m.hasJunkFolder && m.candidates > 0).map((m) => m.id);
-  if (targets.length === 0) {
-    throw new ServiceError("nothing_to_sweep", 409, "there is nothing left in ohmail/Quarantine to move");
-  }
-  /**
-   * A reader presses no sweep (mail 0083). The sweep is a bulk move — the whole
-   * `ohmail/Quarantine` pile into the provider's native Junk — executed by the organizer inside
-   * its serial cycle. Stamping the command on a mailbox this install does not organize would
-   * either do nothing or be picked up after a later promotion and move a pile somebody has since
-   * rearranged. Per mailbox, and every target, because the press covers a set: an account with
-   * one organized and one read mailbox may sweep the first, and the refusal must name the second
-   * rather than refusing the whole press — filtering silently would be a button that reports
-   * success for mailboxes it skipped.
-   */
-  for (const id of targets) {
-    await assertOrganizerRole(deps.db as unknown as Tx, dialect(deps.db), accountId, id);
-  }
-  // In id order, as a Screener press takes the account's rows: in its scan's order this met one crosswise.
-  await deps.db.update(mailboxes)
-    .set({ junkSweepRequestedAt: ctx.now(), syncRequestedAt: ctx.now() })
-    .where(mailboxRowsInIdOrder(dialect(deps.db), and(eq(mailboxes.accountId, accountId), inArray(mailboxes.id, targets))!));
+/** Record the exact, still-current preview under the organizer's mailbox lock. */
+export async function requestJunkSweep(deps: ApiDeps, ctx: ServiceContext, confirmation: string): Promise<JunkSweepPreview> {
+  const { accountId } = ctx;
+  await requireFolders(deps, accountId);
+  await withAccountTx(ctx, async (tx) => {
+    // The legacy writer and retirement both update the mailbox. Read the notice in a
+    // separate statement after taking those locks, so a wait sees the committed revision.
+    await dialect(tx).forUpdate(tx.select({ id: mailboxes.id }).from(mailboxes)
+      .where(sweepMailboxes(accountId)).orderBy(mailboxes.id));
+    const preview = await readSweepCandidates(tx, accountId);
+    if (preview.pending || confirmation !== preview.confirmation) {
+      throw new ServiceError("stale_junk_sweep", 409, "read a fresh Quarantine preview before confirming");
+    }
+    if (preview.targets.length === 0) {
+      throw new ServiceError("nothing_to_sweep", 409, "there is nothing left in ohmail/Quarantine to move");
+    }
+    const at = ctx.now();
+    const targets = new Map(preview.targets.map((target) => [target.mailboxId, target]));
+    const notices = new Map(preview.notices.map((notice) => [notice.mailboxId, notice]));
+    // Both the transition and a fresh confirmation take each mailbox before its pass row.
+    for (const mailboxId of [...new Set([...targets.keys(), ...notices.keys()])].sort()) {
+      const target = targets.get(mailboxId);
+      const notice = notices.get(mailboxId);
+      if (target) await assertOrganizerRole(tx, dialect(tx), accountId, mailboxId);
+      if (notice?.legacy != null) await retireLegacyJunkSweep(tx, accountId, mailboxId, notice.legacy);
+      if (target) {
+        const { folder, ids } = target;
+        const rows = await tx.update(mailboxes).set({ syncRequestedAt: at })
+          .where(and(eq(mailboxes.accountId, accountId), eq(mailboxes.id, mailboxId),
+            eq(mailboxes.junkFolder, folder), isNull(mailboxes.foldersDisabledAt), ne(mailboxes.status, "disabled"),
+          )).returning({ id: mailboxes.id });
+        if (rows.length === 0 || !await queueJunkSweep(tx, accountId, mailboxId, { id: randomUUID(), ids, folder }, at)) {
+          throw new ServiceError("stale_junk_sweep", 409, "read a fresh Quarantine preview before confirming");
+        }
+      } else {
+        const noticedAt = notice?.legacy ?? notice?.noticedAt;
+        if (noticedAt != null) await clearLegacyJunkSweepNotice(tx, accountId, mailboxId, noticedAt);
+      }
+    }
+  }, { lock: "update" });
   return junkSweepPreview(deps, accountId);
 }

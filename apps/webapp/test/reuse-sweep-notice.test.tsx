@@ -4,6 +4,9 @@
  * `reuseSweeps` reach the account strip through the per-owner feed; Details opens the list and the
  * advice; OK sends one acknowledgement and the strip goes at once, a re-read while that is out does
  * not bring it back, and a refused one does. Another account's jar shows nothing of this one's feed.
+ *
+ * The frame draws the web account's notices. The window measurements below exercise the standalone
+ * notice separately.
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -12,7 +15,12 @@ import { resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { createTranslator, NextIntlClientProvider } from "next-intl";
+import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
+import { Frame } from "../../../packages/app/src/frame/Frame.js";
+import { TextProvider } from "../../../packages/app/src/text/index.js";
+import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-host.js";
+import { FRAME_WORDS } from "../../../packages/app/test/support/frame-words.js";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 
@@ -23,6 +31,8 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 const S = en.settings;
+const settings = createTranslator({ locale: "en", messages: en, namespace: "settings" });
+const sweepTitle = (count: number): string => settings("reuseSweepsTitle", { count });
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -74,16 +84,46 @@ async function read(): Promise<void> {
   await act(async () => { await auth.session(); });
 }
 
-async function mount(locale: "en" | "de" = "en"): Promise<void> {
-  const { ReuseSweepStrip } = await import("../app/(product)/mailbox/ReuseSweepStrip");
+/** Today's notice over the feed, as today's strip drew it (the strip leaves; the notice is drawn by no host). */
+async function mountTodays(locale: "en" | "de" = "en"): Promise<void> {
+  const { useReuseSweepFeed } = await import("../app/(product)/mailbox/reuse-sweep-feed");
+  const { ReuseSweepNotice } = await import("../app/shell/ReuseSweepNotice");
+  function Strip() {
+    const { sweeps, acknowledge, recheck } = useReuseSweepFeed();
+    return sweeps === null ? null : h(ReuseSweepNotice, { sweeps, onAcknowledge: acknowledge, onRecheck: recheck });
+  }
   await act(async () => {
-    root.render(h(NextIntlClientProvider, { locale, messages: locale === "en" ? en : de, timeZone: "UTC", children: h(ReuseSweepStrip) }));
+    root.render(h(NextIntlClientProvider, { locale, messages: locale === "en" ? en : de, timeZone: "UTC", children: h(Strip) }));
+  });
+}
+/** The web's account strip inside the frame that owns its notice. */
+async function mount(): Promise<void> {
+  const { useAccountNotices } = await import("../app/(product)/mailbox/web-supplies");
+  const { host } = fakeHost({
+    engine: NO_ENGINE,
+    service: "self",
+    scope: "acct_A",
+    above: function AccountConsent({ children }) {
+      const consent = useConsentState(false, "acct_A", "none");
+      return h(ConsentContext.Provider, { value: consent }, children);
+    },
+    features: { accountStrip: { name: "accountStrip", render: () => null, notice: useAccountNotices } },
+  });
+  await act(async () => {
+    root.render(h(NextIntlClientProvider, { locale: "en", messages: en, timeZone: "UTC",
+      children: h(TextProvider, {
+        locale: "en", messages: FRAME_WORDS.en, timeZone: "UTC", children: h(Frame, { host }),
+      }),
+    }));
   });
 }
 
 const settle = (): Promise<void> => act(async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve(); });
-/** How many times the strip names the swept browser: once is shown once. */
-const told = (): number => (host.textContent ?? "").split(S.reuseClientWeb).length - 1;
+/** How many times the strip names the swept browser: once is shown once. (Today's notice: its list under Details.) */
+const namedInList = (): number =>
+  (document.querySelector('[role="dialog"]')?.textContent ?? "").split(S.reuseClientWeb).length - 1;
+/** How many times the frame says the sweeps (its notice's sentence): once is shown once. */
+const told = (): number => [...host.querySelectorAll('[role="status"] p')].filter((p) => (p.textContent ?? "").startsWith(sweepTitle(1))).length;
 const pressOk = async (): Promise<void> => {
   const ok = [...host.querySelectorAll("button")].find((b) => b.textContent === S.reuseSweepsOk);
   expect(ok, "no OK on the strip").toBeDefined();
@@ -92,6 +132,9 @@ const pressOk = async (): Promise<void> => {
 };
 const details = (): HTMLButtonElement | undefined =>
   [...host.querySelectorAll("button")].find((b) => b.textContent === S.reuseSweepsDetails);
+/** The notice's answer: what is left to press while it stands. */
+const ok = (): HTMLButtonElement | undefined =>
+  [...host.querySelectorAll("button")].find((b) => b.textContent === S.reuseSweepsOk);
 const pressDetails = async (): Promise<void> => {
   expect(details(), "no Details on the strip").toBeDefined();
   await act(async () => { details()!.click(); });
@@ -103,9 +146,7 @@ describe("the reuse sweeps a new sign-in is told of", () => {
   it("are shown once; OK sends one acknowledgement with the ids, and the strip goes", async () => {
     await read();
     await mount();
-    expect(host.textContent).toContain("ohmail signed out an older copy of your sign-in.");
-    expect(told(), "the list stands before Details").toBe(0);
-    await pressDetails();
+    expect(host.textContent).toContain(sweepTitle(1));
     expect(told()).toBe(1);
     await pressOk();
     expect(acks).toEqual([{ ids: [sweep.id] }]);
@@ -119,14 +160,13 @@ describe("the reuse sweeps a new sign-in is told of", () => {
     ackAnswer = () => new Promise<Response>((resolve) => { answer = resolve; });
     await read();
     await mount();
-    await pressDetails();
     await pressOk();
     expect(told(), "OK did not take the strip away at once").toBe(0);
     await read();
     expect(told(), "a read while the press was out brought it back").toBe(0);
     await act(async () => { answer(json({ error: { code: "db_busy", message: "busy" } }, 503)); });
     await settle();
-    expect(details(), "a refused acknowledgement left nothing to press").toBeDefined();
+    expect(ok(), "a refused acknowledgement left nothing to press").toBeDefined();
     expect(acks).toHaveLength(1);
   });
 
@@ -139,7 +179,7 @@ describe("the reuse sweeps a new sign-in is told of", () => {
     listed = undefined;
     await read();
     expect(told()).toBe(0);
-    expect(host.querySelector("button")).toBeNull();
+    expect(host.querySelector('[role="status"] button')).toBeNull();
   });
 
   it("OK in another window takes it away here at the next session read: a return to the window, or the clock", async () => {
@@ -147,46 +187,84 @@ describe("the reuse sweeps a new sign-in is told of", () => {
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     await read();
     await mount();
-    await pressDetails();
     expect(told()).toBe(1);
     // The other window's OK: the server lists the sweep no more. This one has heard nothing yet.
     listed = undefined;
     vi.advanceTimersByTime(60_000);
     await act(async () => { window.dispatchEvent(new Event("focus")); });
     await settle();
-    expect(details(), "a return to the window kept a notice the server no longer lists").toBeUndefined();
+    expect(ok(), "a return to the window kept a notice the server no longer lists").toBeUndefined();
     expect(acks, "this window acknowledged nothing").toEqual([]);
 
     // A window left in front: the clock asks.
     sweep = { ...sweep, id: randomUUID() };
     listed = [sweep];
     await read();
-    expect(details()).toBeDefined();
+    expect(ok()).toBeDefined();
     listed = undefined;
     await act(async () => { vi.advanceTimersByTime(REUSE_RECHECK_MS); });
     await settle();
-    expect(details(), "the notice outlived the clock's read").toBeUndefined();
+    expect(ok(), "the notice outlived the clock's read").toBeUndefined();
   });
 
-  it("four say one line; Details shows each with its date and the advice, and OK acknowledges all four", async () => {
+  it("four say one line, and OK acknowledges all four", async () => {
     const all = four();
     listed = all;
     await read();
     await mount();
-    expect(host.textContent).toContain("ohmail signed out 4 older copies of your sign-in.");
-    expect(host.textContent, "the advice stands before Details").not.toContain(S.reuseSweepsBody);
-    expect(details()!.getAttribute("aria-expanded")).toBe("false");
-    await pressDetails();
-    expect(details()!.getAttribute("aria-expanded")).toBe("true");
-    const items = [...host.querySelectorAll("li")].map((li) => li.textContent);
-    expect(items).toHaveLength(4);
-    expect(items[1]).toMatch(new RegExp(`^${S.reuseClientLinux}, .*2026`));
-    expect(host.textContent).toContain(S.reuseSweepsBody);
-    await pressDetails();
-    expect(host.querySelectorAll("li"), "Details closes again").toHaveLength(0);
+    expect(host.textContent).toContain(sweepTitle(4));
     await pressOk();
     expect(acks).toEqual([{ ids: all.map((s) => s.id) }]);
-    expect(host.querySelector("button")).toBeNull();
+    expect(host.querySelector('[role="status"] button')).toBeNull();
+  });
+
+  it("Details names the swept browser once, and the list stands only behind it", async () => {
+    await read();
+    await mount();
+    expect(namedInList(), "the list stands before Details").toBe(0);
+    await pressDetails();
+    expect(namedInList()).toBe(1);
+  });
+
+  it("four: Details shows each with its date and the advice, and closes again", async () => {
+    listed = four();
+    await read();
+    await mount();
+    expect(host.textContent, "the advice stands behind Details").not.toContain(S.reuseSweepsBody);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await pressDetails();
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog).not.toBeNull();
+    const items = [...dialog.querySelectorAll('[role="listitem"]')].map((item) => item.textContent);
+    expect(items).toHaveLength(4);
+    expect(items[1]).toMatch(new RegExp(`^${S.reuseClientLinux}, .*2026`));
+    expect(dialog.textContent).toContain(S.reuseSweepsBody);
+    const close = [...dialog.querySelectorAll("button")].find((button) => button.textContent === "Close")!;
+    expect(close).toBeDefined();
+    await act(async () => { close.click(); });
+    expect(document.querySelector('[role="dialog"]'), "Details closes again").toBeNull();
+  });
+});
+
+/**
+ * THE WEB'S NOTICE IN THE FRAME (`useAccountNotices`, the account slot's feed): the same sweeps, the same OK. Drawn
+ * in the notice slot with its title and available actions.
+ */
+describe("the reuse sweeps as the web's notice in the frame", () => {
+  const said = sweepTitle(1);
+  it("OK takes it away at once, sends one acknowledgement with the ids, and a refusal puts it back", async () => {
+    let answer!: (r: Response) => void;
+    ackAnswer = () => new Promise<Response>((resolve) => { answer = resolve; });
+    await read();
+    await mount();
+    expect(host.textContent).toContain(said);
+    await pressOk();
+    expect(host.textContent, "OK did not take the notice away at once").not.toContain(said);
+    expect(acks).toEqual([{ ids: [sweep.id] }]);
+    await act(async () => { answer(json({ error: { code: "db_busy", message: "busy" } }, 503)); });
+    await settle();
+    expect(host.textContent, "a refused acknowledgement left nothing to press").toContain(said);
+    expect(acks).toHaveLength(1);
   });
 });
 
@@ -232,7 +310,7 @@ describe("the reuse notice in the window", () => {
     it(`is one row, one line high, from 390 to 1440 px (${locale})`, { timeout: 90_000 }, async () => {
       listed = four();
       await read();
-      await mount(locale);
+      await mountTodays(locale);
       const html = host.innerHTML;
       expect(html).toContain("acct-note");
       await pressDetails();

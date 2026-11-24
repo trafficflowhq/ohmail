@@ -1,27 +1,15 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import type { EngineDraft } from "@ohmail/client-engine";
-import messages from "../messages/en.json";
-import { DraftsView } from "../app/views/DraftsView";
-
-/**
- * A HELD ROW SAYS WHAT IS KNOWN AND OFFERS THE TWO ACTS; A REFUSED DISCARD SAYS WHY, IN ITS ROW.
- *
- * The question "Did this message arrive?" is gone: the engine looks in the Sent folder itself
- * (`HELD_SEND_RECHECK_MS`), and the row says so while it does and says the message is not there
- * once it has stopped. What is left for a person is "Send again" and "It was sent — dismiss". A
- * Discard the shell refuses renders its sentence IN THAT ROW and focuses it — never a toast alone
- * pointing at a list of identical pairs (measured on the rig, 2026-09-16). A row held only by a
- * durable RECORD (mirror status still a plain draft) carries the same two acts.
- */
-
-(globalThis as unknown as { React: unknown }).React = React;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
+import { afterEach, describe, expect, it } from "vitest";
+import type { EngineDraft } from "@ohmail/wire";
+import { useDraftsList, type DraftsDoor } from "@ohmail/app-logic/drafts";
+import { DraftsAbove } from "../../../packages/app/src/drafts/DraftsAbove.js";
+import { DraftsList } from "../../../packages/app/src/drafts/DraftsList.js";
+import { DraftsReading } from "../../../packages/app/src/drafts/DraftsReading.js";
+import { useDiscardWords } from "../../../packages/app/src/drafts/words.js";
+import { inWords, pane, stamp } from "../../../packages/app/test/places/lists-world.js";
+import messages from "../../../packages/app/messages/drafts.en.json";
 
 const NOW = new Date("2026-09-16T09:00:00.000Z");
 
@@ -42,191 +30,136 @@ const draft = (over: Partial<EngineDraft> = {}): EngineDraft => ({
   ...over,
 });
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
 
-const q = <T extends Element>(sel: string): T | null => host!.querySelector<T>(sel);
-const qa = (sel: string): Element[] => Array.from(host!.querySelectorAll(sel));
-const press = async (el: HTMLElement): Promise<void> => { await act(async () => { el.click(); }); };
-
-async function unmount(): Promise<void> {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
+function Drafts({ drafts, overrides }: { drafts: EngineDraft[]; overrides: Partial<DraftsDoor> }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const model = useDraftsList({
+    drafts, scheduled: [], settled: true, owed: false, now: NOW, stamp, appointment: stamp,
+    words: useDiscardWords(),
+    report: () => {},
+    door: {
+      open: (draft) => setOpen(draft.id),
+      decide: () => ({ kind: "go" }),
+      withdrawWaiting: async () => "none",
+      discard: async () => ({ kind: "applied" }),
+      cancelSchedule: () => {},
+      editScheduled: () => {},
+      resolve: () => {},
+      sendAgain: () => {},
+      repliesHere: () => false,
+      heldHere: new Set(),
+      waiting: new Set(),
+      notSent: new Map(),
+      ...overrides,
+    },
+  });
+  const props = pane("drafts", { open });
+  return (
+    <DraftsAbove model={model}>
+      <DraftsList {...props} />
+      <DraftsReading {...props} />
+    </DraftsAbove>
+  );
 }
 
-/** The view on its own, with the shell's two answers passed as props. */
-async function mountDrafts(
-  drafts: EngineDraft[],
-  over: {
-    refusal?: { draftId: string; why: "still-sending" | "unknown-jar"; at: number } | null;
-    heldHere?: ReadonlySet<string>;
-    onSendAgain?: (d: EngineDraft) => void;
-  } = {},
-): Promise<void> {
-  await unmount();
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(DraftsView, {
-          settled: true,
-          owed: false,
-          drafts, scheduled: [], now: NOW,
-          onOpen: () => {}, onDiscard: () => {}, onResolve: () => {}, onSendAgain: () => {},
-          onCancelSchedule: () => {}, onEditScheduled: () => {}, repliesHere: () => false,
-          ...over,
-        }),
-      }),
-    );
-  });
+function mountDrafts(drafts: EngineDraft[], overrides: Partial<DraftsDoor> = {}) {
+  render(inWords(<Drafts drafts={drafts} overrides={overrides} />));
 }
 
-beforeEach(() => {
-  window.location.hash = "";
-  try { window.localStorage.clear(); } catch { /* blocked storage; the in-memory half still runs */ }
-  Object.defineProperty(window, "matchMedia", {
-    configurable: true, writable: true,
-    value: (query: string) => ({
-      matches: false, media: query, onchange: null,
-      addEventListener: () => {}, removeEventListener: () => {},
-      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
-    }),
-  });
-  (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
-  const el = Element.prototype as unknown as Record<string, () => void>;
-  el.scrollIntoView = () => {};
-  el.scrollTo = () => {};
-  (globalThis as Record<string, unknown>).IntersectionObserver = class {
-    observe(): void {} unobserve(): void {} disconnect(): void {}
-    takeRecords(): [] { return []; }
-  };
-  vi.spyOn(console, "error").mockImplementation(() => {});
-});
+const words = messages.drafts;
+const list = () => within(screen.getByRole("listbox", { name: words.title }));
+const row = (name = /Invoice for the paper order/) => list().getByRole("option", { name });
+const heldActions = () => screen.getByRole("toolbar", { name: words.heldActs });
+const answerNames = () => within(heldActions()).getAllByRole("button").slice(0, 2).map((b) => b.textContent);
+const answers = [words.sendAgain, words.heldItWasSent];
+const stateOf = (item = row()) => item.getAttribute("aria-description");
 
-afterEach(async () => {
-  await unmount();
-  document.body.innerHTML = "";
-  delete (globalThis as Record<string, unknown>).IntersectionObserver;
-  delete (globalThis as Record<string, unknown>).CSS;
-  vi.restoreAllMocks();
-});
+afterEach(cleanup);
 
 describe("a refused discard says why, in its own row", () => {
-  /**
-   * THE ADDRESS, not the instruction. Two held rows, so a guard that renders "the refusal" rather
-   * than THIS row's cannot pass: the fixture has the property under test.
-   *
-   * Mutation: drop the `refusedAt`/`refusedFor` effect from `DraftsView`. Real failure text:
-   *   AssertionError: the refused press left focus where it was …: expected null to be …
-   */
   it("renders the sentence in the refused row and focuses it, not the other held one", async () => {
-    await mountDrafts(
+    mountDrafts(
       [draft({ id: "u1", status: "unverified" }), draft({ id: "u2", status: "unverified", subject: "Other" })],
-      { refusal: { draftId: "u2", why: "still-sending", at: 1 } },
+      { decide: (id) => id === "u2" ? { kind: "refuse", why: "still-sending" } : { kind: "go" } },
     );
-    const line = q<HTMLElement>('.draft-row[data-id="u2"] .draft-refusal');
-    expect(line, "the refused row carries no sentence").not.toBeNull();
-    expect(line!.getAttribute("role")).toBe("alert");
-    expect(line!.textContent).toBe(messages.drafts.discardStillSending);
-    expect(q('.draft-row[data-id="u1"] .draft-refusal'), "the OTHER held row says it was refused").toBeNull();
-    expect(
-      document.activeElement,
-      "the refused press left focus where it was — a sentence nobody is told about is a silent refusal",
-    ).toBe(line);
+    const refusedRow = row(/Other/);
+    const firstRow = row();
+    const discard = within(refusedRow.parentElement!).getByRole("button", { name: words.discard });
+    discard.focus();
+    await act(async () => { fireEvent.click(discard); });
+    const line = list().getByRole("alert");
+    expect(line.textContent).toBe(words.discardStillSending);
+    expect(line.parentElement?.contains(refusedRow)).toBe(true);
+    expect(line.parentElement?.contains(firstRow)).toBe(false);
+    expect(document.activeElement).toBe(line);
   });
 
   it("names the other refusal too — a jar this browser cannot read", async () => {
-    await mountDrafts([draft({ id: "d1" })], { refusal: { draftId: "d1", why: "unknown-jar", at: 1 } });
-    expect(q('.draft-row[data-id="d1"] .draft-refusal')!.textContent).toBe(messages.drafts.discardUnknownJar);
+    mountDrafts([draft()], { decide: () => ({ kind: "refuse", why: "unknown-jar" }) });
+    await act(async () => { fireEvent.click(list().getByRole("button", { name: words.discard })); });
+    expect(list().getByRole("alert").textContent).toBe(words.discardUnknownJar);
   });
 });
 
 describe("what a held row says, and the two acts it offers", () => {
-  const acts = (id: string): string[] =>
-    qa(`.draft-row[data-id="${id}"] .draft-resolve button`).map((b) => (b.textContent ?? "").trim());
-
-  it("offers the two acts for a row held by a durable RECORD, whatever the mirror says", async () => {
-    const held = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString();
-    await mountDrafts([draft({ id: "d1", updatedAt: held }), draft({ id: "d2", subject: "Other" })], { heldHere: new Set(["d1"]) });
-    expect(acts("d1")).toEqual([messages.drafts.sendAgain, messages.drafts.itWasSent]);
-    expect(acts("d2"), "an ordinary row offers the held row's acts").toEqual([]);
-    const group = q<HTMLElement>('.draft-row[data-id="d1"] .draft-resolve')!;
-    expect(group.getAttribute("role")).toBe("group");
-    expect(group.getAttribute("aria-label")).toBe(messages.drafts.heldChecking);
+  it("offers the two acts for a row held by a durable RECORD, whatever the mirror says", () => {
+    const recent = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString();
+    mountDrafts([draft({ updatedAt: recent }), draft({ id: "d2", subject: "Other" })], { heldHere: new Set(["d1"]) });
+    fireEvent.click(row(/Other/));
+    expect(screen.queryByRole("toolbar", { name: words.heldActs })).toBeNull();
+    fireEvent.click(row());
+    expect(answerNames()).toEqual(answers);
+    expect(within(heldActions()).getByText(words.heldChecking)).toBeTruthy();
   });
 
-  /**
-   * INSIDE THE WINDOW the engine is still looking; PAST IT the message is not in Sent. The two
-   * acts do not change. Mutation: invert `heldStillChecking` → both sentences swap.
-   */
-  it("says the Sent folder is being checked while the engine still looks, and that the message is not there once it has stopped", async () => {
-    // The engine looks for twenty minutes after the hold.
+  it("says the Sent folder is being checked while the engine still looks, and that the message is not there once it has stopped", () => {
     const recent = new Date(NOW.getTime() - 19 * 60 * 1000).toISOString();
     const old = new Date(NOW.getTime() - 21 * 60 * 1000).toISOString();
-    await mountDrafts([
+    mountDrafts([
       draft({ id: "u1", status: "unverified", updatedAt: recent }),
       draft({ id: "u2", status: "unverified", updatedAt: old, subject: "Old" }),
     ]);
-    expect(q('.draft-row[data-id="u1"] .draft-state')!.textContent).toBe(messages.drafts.heldChecking);
-    expect(q('.draft-row[data-id="u2"] .draft-state')!.textContent).toBe(messages.drafts.heldNotInSent);
-    expect(acts("u1")).toEqual([messages.drafts.sendAgain, messages.drafts.itWasSent]);
-    expect(acts("u2")).toEqual([messages.drafts.sendAgain, messages.drafts.itWasSent]);
-    expect(host!.textContent, "the retired question is still on screen").not.toContain("Did this message arrive");
-    expect(host!.textContent).not.toContain("over a week");
+    expect(stateOf()).toBe(`${words.heldLabel}, ${words.heldChecking}`);
+    expect(stateOf(row(/Old/))).toBe(`${words.heldLabel}, ${words.heldNotInSent}`);
+    fireEvent.click(row());
+    expect(answerNames()).toEqual(answers);
+    fireEvent.click(row(/Old/));
+    expect(answerNames()).toEqual(answers);
+    expect(document.body.textContent).not.toContain("Did this message arrive");
+    expect(document.body.textContent).not.toContain("over a week");
   });
 
-  it("reads an unparseable stamp as past the window — the sentence that claims less", async () => {
-    await mountDrafts([draft({ id: "u1", status: "unverified", updatedAt: "not a date" })]);
-    expect(q('.draft-row[data-id="u1"] .draft-state')!.textContent).toBe(messages.drafts.heldNotInSent);
+  it("reads an unparseable stamp as past the window — the sentence that claims less", () => {
+    mountDrafts([draft({ status: "unverified", updatedAt: "not a date" })]);
+    expect(stateOf()).toBe(`${words.heldLabel}, ${words.heldNotInSent}`);
   });
 
-  it("a stranded `sending` row says the send was interrupted", async () => {
-    await mountDrafts([draft({ id: "s1", status: "sending" })]);
-    expect(q('.draft-row[data-id="s1"] .draft-state')!.textContent).toBe(messages.drafts.heldInterrupted);
-    expect(acts("s1")).toEqual([messages.drafts.sendAgain, messages.drafts.itWasSent]);
+  it("a stranded `sending` row says the send was interrupted", () => {
+    mountDrafts([draft({ status: "sending" })]);
+    expect(stateOf()).toBe(`${words.heldLabel}, ${words.heldInterrupted}`);
+    fireEvent.click(row());
+    expect(answerNames()).toEqual(answers);
   });
 
-  /**
-   * "Send again" hands the ROW to the shell — which answers `not_arrived`, releases the record and
-   * opens the message with Send live. The view dispatches nothing itself.
-   * Mutation: wire `onSendAgain` to `onResolve(id, "not_arrived")` in the view → `again` stays [].
-   */
-  it("`Send again` hands the draft to the shell; `It was sent — dismiss` answers `arrived`", async () => {
+  it("`Send again` hands the draft to the shell; `It was sent — dismiss` answers `arrived`", () => {
     const again: string[] = [];
     const resolved: Array<[string, string]> = [];
-    await mountDrafts([draft({ id: "u1", status: "unverified" })], { onSendAgain: (d) => { again.push(d.id); } });
-    // `onResolve` is a mount default; re-mount with a recording one for the second act.
-    await press(q<HTMLButtonElement>('.draft-row[data-id="u1"] .draft-send-again')!);
-    expect(again).toEqual(["u1"]);
-    await unmount();
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(DraftsView, {
-          settled: true,
-          owed: false,
-          drafts: [draft({ id: "u1", status: "unverified" })], scheduled: [], now: NOW,
-          onOpen: () => {}, onDiscard: () => {}, onSendAgain: () => {},
-          onResolve: (id: string, outcome: string) => { resolved.push([id, outcome]); },
-          onCancelSchedule: () => {}, onEditScheduled: () => {}, repliesHere: () => false,
-        }),
-      }));
+    mountDrafts([draft({ id: "u1", status: "unverified" })], {
+      sendAgain: (draft) => again.push(draft.id),
+      resolve: (id, outcome) => resolved.push([id, outcome]),
     });
-    await press(q<HTMLButtonElement>('.draft-row[data-id="u1"] .draft-it-was-sent')!);
+    fireEvent.click(row());
+    fireEvent.click(within(heldActions()).getByRole("button", { name: words.sendAgain }));
+    expect(again).toEqual(["u1"]);
+    expect(resolved).toEqual([]);
+    fireEvent.click(within(heldActions()).getByRole("button", { name: words.heldItWasSent }));
     expect(resolved).toEqual([["u1", "arrived"]]);
   });
 
-  it("a held row still has Discard, beside the two acts", async () => {
-    await mountDrafts([draft({ id: "u1", status: "unverified" })]);
-    const buttons = qa('.draft-row[data-id="u1"] .draft-actions button').map((b) => (b.textContent ?? "").trim());
-    expect(buttons).toEqual([messages.drafts.sendAgain, messages.drafts.itWasSent, messages.drafts.discard]);
+  it("a held row still has Discard, beside the two acts", () => {
+    mountDrafts([draft({ status: "unverified" })]);
+    fireEvent.click(row());
+    const buttons = within(heldActions()).getAllByRole("button").map((b) => b.textContent);
+    expect(buttons).toEqual([...answers, words.discard]);
   });
 });

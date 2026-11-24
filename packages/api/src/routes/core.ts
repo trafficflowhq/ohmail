@@ -3,7 +3,7 @@ import { serviceContext } from "../context.js";
 import { presentedResumeMarker } from "../cookies.js";
 import { withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
-import { json, noContent, readBody } from "./shared.js";
+import { cookieSurface, json, noContent, readBody } from "./shared.js";
 import { auth, enrollmentSession } from "./shared-cloud.js";
 // The carved lifecycle pair — `/auth/logout` + `/auth/refresh` — spread back in below at their
 // old positions, as the same objects. See `session-lifecycle.ts` for the carve.
@@ -25,7 +25,7 @@ export const coreRoutes: Route[] = [
     pattern: "/auth/register",
     relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
-    options: { public: true, credentialSubject: true },
+    options: { public: true, credentialSubject: true, credentialLookup: true },
     handler: async (req, deps) => {
       // `locale` is the signup screen's language: it picks the mail's language and nothing else
       // (the service reads it from a closed set, English otherwise).
@@ -63,11 +63,12 @@ export const coreRoutes: Route[] = [
     // because the decision is the same one: `enrollment` (and the session cookies) for a user
     // with zero enrolled factors, a bare `{status:"verified"}` for one who already has a factor —
     // a mailed link plus a password must not skip a second factor somebody deliberately added.
+    // Acknowledging an earlier confirmation also returns a status without session cookies.
     method: "POST",
     pattern: "/auth/verify-email",
     relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
-    options: { public: true, credentialSubject: true },
+    options: { public: true, credentialSubject: true, credentialLookup: true },
     handler: async (req, deps) => {
       const body = await readBody<{ token?: unknown; password?: unknown }>(req);
       const result = await auth(deps).verifyEmail(serviceContext(deps, req), body);
@@ -109,7 +110,7 @@ export const coreRoutes: Route[] = [
     pattern: "/auth/login",
     relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
-    options: { public: true, credentialSubject: true },
+    options: { public: true, credentialSubject: true, credentialLookup: true },
     handler: async (req, deps) => {
       const body = await readBody<{ email: string; password: string }>(req);
       const result = await auth(deps).login(serviceContext(deps, req), body);
@@ -128,7 +129,9 @@ export const coreRoutes: Route[] = [
     handler: async (req, deps) => {
       // No `tf_owner`: an answer that crossed a Sign out press would name the account over it. The
       // web client puts a lost marker back from this body, where its jar says nothing.
-      return json(await auth(deps).getSession(serviceContext(deps, req)), 200);
+      const session = await auth(deps).getSession(serviceContext(deps, req));
+      return json({ ...session, ...(cookieSurface(deps) && deps.session?.via === "cookie"
+        ? { familyId: deps.session.familyId } : {}) }, 200);
     },
   },
   {

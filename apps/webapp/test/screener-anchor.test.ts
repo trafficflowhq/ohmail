@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { HELD_ANCHOR_PAD_PX, heldAnchorTop } from "../app/views/ScreenerView";
+import { HELD_ANCHOR_PAD_PX, heldAnchorTop } from "@ohmail/app-logic/lists/held-window";
 
 /**
  * THE SCREENER'S READ COLUMN OPENS ON THE LATEST HELD MESSAGE — the arithmetic, guarded.

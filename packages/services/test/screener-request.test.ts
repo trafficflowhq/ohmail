@@ -1,8 +1,9 @@
+import type { ScreenRequestResult } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { mailboxes, organizerRequests } from "@trafficflow/db";
-import { ScreenerService, type ScreenRequestResult } from "../src/index.js";
+import { ScreenerService } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 
 /**
@@ -456,6 +457,8 @@ describe("ScreenerService.suggest — gated on whether a decision could ever be 
   it("a CAPABLE holder lets the purchase through", async () => {
     const { db, accountId, mailboxId, ctx } = await makeReaderCtx();
     await seedMessage(db, accountId, mailboxId, { from: "person@example.com" });
+    const { accountSettings } = await import("@trafficflow/db");
+    await db.insert(accountSettings).values({ accountId, autoSuggestAt: ctx.now() });
     const classifier = countingClassifier();
 
     const out = await new ScreenerService({ classifier: classifier as never })

@@ -16,8 +16,8 @@ import { OWNER_BILLING_HTML, OWNER_BILLING_TEXT } from "./fixtures/owner-billing
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../../../packages/letter-body/src/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../../../packages/letter-body/src/MessageBody.js");
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -33,7 +33,7 @@ async function render(text: string, html: string): Promise<HTMLDivElement> {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, { messageId: "m1", text, html })); });
+  await act(async () => { root!.render(h(MessageBody, { owner: null, messageId: "m1", text, html })); });
   return host;
 }
 
@@ -194,7 +194,7 @@ describe("a page of the text part ends at BODY_PAGE_LINES lines too", () => {
     const prose = Array.from({ length: 3_000 }, (_, n) => words(n, 10)).join("\n");
     expect(pageEnd(prose, 0)).toBeGreaterThan(BODY_PAGE_CHARS * 0.8);
 
-    const { BodyText } = await import("../app/shell/BodyText.js");
+    const { BodyText } = await import("../../../packages/letter-body/src/BodyText.js");
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);

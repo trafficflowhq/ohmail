@@ -1,10 +1,8 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { attachmentBudgetFor, effectiveAttachmentCap, SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_UNMEASURED_MESSAGE_BYTES } from "@trafficflow/services";
 import { HOST_SEND_MAX_TOTAL_BYTES } from "../src/host-listener.js";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * THIS INSTALL DECLARES THAT IT HAS NO PLATFORM CEILING ON ATTACHMENT BYTES.
@@ -34,15 +32,13 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * as no limit costs the user a message they composed and waited for.
  */
 
-const HERE = fileURLToPath(new URL(".", import.meta.url));
-const ENGINE = join(HERE, "..", "src", "engine.ts");
 
 describe("the local engine declares no platform ceiling on a send", () => {
   /* The repo's one scanner, not a pair of regexes. The pair this replaced took the first `//` on
      any line — inside a URL string too — and read a block-comment opener quoted in a line comment
      as real, which deletes every line to the next terminator. Either way the negative below is
      asked about an extract that is no longer there, and a negative over nothing passes. */
-  const src = withoutComments(readFileSync(ENGINE, "utf8"));
+  const src = withoutComments(readEngineAsOneText());
 
   it("resolved a real file", () => {
     expect(src).toContain("function localServices(");
@@ -69,7 +65,7 @@ describe("…and the HOST DOOR declares the ceiling its transport actually has",
    * arithmetic in `host-listener.e2e.test.ts`; here the census pins WHERE each declaration
    * lives.
    */
-  const src = withoutComments(readFileSync(ENGINE, "utf8"));
+  const src = withoutComments(readEngineAsOneText());
 
   it("depsForHost overrides the bag with HOST_SEND_MAX_TOTAL_BYTES — by name, never a loose digit", () => {
     expect(src).toMatch(/sendSurfaceMaxTotalBytes:\s*HOST_SEND_MAX_TOTAL_BYTES/);

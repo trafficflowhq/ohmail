@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { makeScreenerService } from "@trafficflow/services";
-import { rules, folderState, idempotencyKeys, mailboxes, messages, organizerRequests } from "@trafficflow/db";
+import { accountSettings, rules, folderState, idempotencyKeys, mailboxes, messages, organizerRequests } from "@trafficflow/db";
 import { and, eq } from "drizzle-orm";
 import { makeDeps, seedSession, seedScreenerHeld, seedMailbox, seedMessage, req, FIXED_NOW } from "./helpers.js";
 
@@ -111,10 +111,28 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
     return { db, deps: { ...deps, services: { ...deps.services!, screener } } };
   }
 
+  it("drops an automatic HTTP suggestion when the account has stored Off", async () => {
+    const calls = { n: 0 };
+    const { db, deps } = await withClassifier(calls);
+    const session = await seedSession(db, { now: FIXED_NOW });
+    const sender = "held@example.invalid";
+    await db.insert(accountSettings).values({ accountId: session.accountId, autoSuggestAt: null });
+    await seedScreenerHeld(db, { accountId: session.accountId, fromAddress: sender });
+
+    const response = await H(req("POST", "/screener/suggest", {
+      bearer: session.token, body: JSON.stringify({ senders: [sender], automatic: true }),
+    }), deps);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ charged: 0, suggestions: [] });
+    expect(calls.n).toBe(0);
+  });
+
   it("buys for the named senders, and the NEXT GET serves the stored answer without a model call", async () => {
     const calls = { n: 0 };
     const { db, deps } = await withClassifier(calls);
     const s = await seedSession(db, { now: FIXED_NOW });
+    await db.insert(accountSettings).values({ accountId: s.accountId, autoSuggestAt: FIXED_NOW });
     await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "alice@ex.example" });
     await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "bob@ex.example" });
 
@@ -153,8 +171,22 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
       bearer: s.token, body: JSON.stringify({ senders: ["alice@ex.example"], dryRun: true }),
     }), deps);
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ dryRun: true, quoted: 1, charged: 0, suggestions: [] });
+    const quote = await res.json();
+    expect(quote).toMatchObject({ dryRun: true, quoted: 1, charged: 0, suggestions: [] });
     expect(calls.n).toBe(0);
+    const confirm = { senders: ["alice@ex.example"], maxCredits: quote.quotedCredits };
+    const missing = await H(req("POST", "/screener/suggest", {
+      bearer: s.token, body: JSON.stringify(confirm),
+    }), deps);
+    expect(missing.status).toBe(409);
+    expect((await missing.json()).error.code).toBe("suggest_quote_changed");
+    expect(calls.n).toBe(0);
+
+    const bought = await H(req("POST", "/screener/suggest", {
+      bearer: s.token, body: JSON.stringify({ ...confirm, quoteGrant: quote.quoteGrant.proof }),
+    }), deps);
+    expect(bought.status).toBe(200);
+    expect(calls.n).toBe(1);
   });
 
   it("`automatic` over HTTP reaches the rule: a `no_ai` sender is skipped unasked; a bad flag is a 400", async () => {
@@ -162,6 +194,7 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
     const calls = { n: 0 };
     const { db, deps } = await withClassifier(calls);
     const s = await seedSession(db, { now: FIXED_NOW });
+    await db.insert(accountSettings).values({ accountId: s.accountId, autoSuggestAt: FIXED_NOW });
     await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "alice@ex.example" });
     const flagged = await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "bank@ex.example" });
     await db.update(messages).set({ noAi: true }).where(eq(messages.id, flagged.id));
@@ -181,6 +214,7 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
     const calls = { n: 0 };
     const { db, deps } = await withClassifier(calls);
     const s = await seedSession(db, { now: FIXED_NOW });
+    await db.insert(accountSettings).values({ accountId: s.accountId, autoSuggestAt: FIXED_NOW });
     await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "alice@ex.example" });
     const body = JSON.stringify({ senders: ["alice@ex.example"] });
 
@@ -226,6 +260,7 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
     });
     const deps = { ...base, services: { ...base.services!, screener } };
     const s = await seedSession(db, { now: FIXED_NOW });
+    await db.insert(accountSettings).values({ accountId: s.accountId, autoSuggestAt: FIXED_NOW });
     await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "alice@ex.example" });
     const body = JSON.stringify({ senders: ["alice@ex.example"] });
     const send = (b: string) => H(req("POST", "/screener/suggest", {
@@ -319,6 +354,30 @@ describe("POST /screener/:id — decide (defer + idempotency)", () => {
     expect(conflict.status).toBe(409);
   });
 
+  it("replays the filing when a retry drops its live unsubscribe grant", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const held = await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "sender" + "@" + "example.invalid" });
+    const onScreenOut = vi.fn(async () => ({ considered: 1 }));
+    const screener = makeScreenerService({ unsubscribe: { onScreenOut } });
+    const send = (body: object) => H(req("POST", `/screener/${held.id}`, {
+      bearer: s.token, headers: { "idempotency-key": "filing-with-grant" }, body: JSON.stringify(body),
+    }), { ...deps, services: { ...deps.services!, screener } });
+    const filing = { decision: "no", scope: "confirmed_sender", confirmedIds: [held.id], applyRetro: false };
+
+    const first = await send({ ...filing, unsubscribeIds: [held.id] });
+    expect(first.status).toBe(200);
+    expect(onScreenOut).toHaveBeenCalledTimes(1);
+    const { unsubscribed, ...receipt } = await first.json();
+    expect(unsubscribed).toEqual({ done: 1, of: 1 });
+    const replay = await send(filing);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(receipt);
+    expect(onScreenOut).toHaveBeenCalledTimes(1);
+    const conflict = await send({ ...filing, applyRetro: true });
+    expect(conflict.status).toBe(409);
+  });
+
   it("unknown screener id → 404", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
@@ -342,7 +401,7 @@ describe("POST /screener/:id — decide (defer + idempotency)", () => {
  *
  * `organized_by_capabilities = 'requests'` is written here directly because NO BUILD WRITES IT
  * TODAY: ruling §(i) containment empties `ORGANIZER_CAPABILITIES`
- * (`apps/worker/src/lease.ts`), so every organizer this tree ships advertises nothing and every
+ * (`packages/organizer/src/lease.ts`), so every organizer this tree ships advertises nothing and every
  * reader is refused — which is exactly what
  * an end-to-end worker case proved when it was written, and what production
  * does. These two tests pin the WIRE CONTRACT the channel will answer on when the signature work
@@ -441,8 +500,19 @@ describe("GET/POST /screener/unscreened — a pile's note", () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
     const mailboxId = await seedMailbox(db, { accountId: s.accountId });
-    const cold = await seedMessage(db, { accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example", date: new Date("2024-03-01T08:00:00Z") });
-    await seedMessage(db, { accountId: s.accountId, mailboxId, folder: "ohmail/Receipts", fromAddress: "shop@cold.example", date: new Date("2024-03-01T08:00:00Z") });
+    const cold = await seedMessage(db, {
+      accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example",
+      date: FIXED_NOW, arrivedAt: FIXED_NOW,
+    });
+    // Importing older mail from the same sender does not bring it inside the screening window.
+    const older = await seedMessage(db, {
+      accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example",
+      date: new Date("2024-03-01T08:00:00Z"), arrivedAt: FIXED_NOW,
+    });
+    await seedMessage(db, {
+      accountId: s.accountId, mailboxId, folder: "ohmail/Receipts", fromAddress: "shop@cold.example",
+      date: FIXED_NOW, arrivedAt: FIXED_NOW,
+    });
 
     const news = await H(req("GET", "/screener/unscreened?pile=news", { bearer: s.token }), deps);
     expect(news.status).toBe(200);
@@ -460,13 +530,18 @@ describe("GET/POST /screener/unscreened — a pile's note", () => {
     expect(await pressed.json()).toMatchObject({ screened: [{ address: "deals@cold.example", count: 1 }], total: 1 });
     const [fs] = await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, cold.id));
     expect(fs!.d).toBe("ohmail/Screener");
+    const [olderFs] = await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, older.id));
+    expect(olderFs!.d).toBe("ohmail/News");
   });
 
   it("says `next` only for a read that has more to go on to, and refuses an `after` that is not one", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
     const mailboxId = await seedMailbox(db, { accountId: s.accountId });
-    await seedMessage(db, { accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example", date: new Date("2024-03-01T08:00:00Z") });
+    await seedMessage(db, {
+      accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example",
+      date: FIXED_NOW, arrivedAt: FIXED_NOW,
+    });
 
     // A read that reached the end carries no `next`: nothing to go on to.
     const whole = await (await H(req("GET", "/screener/unscreened?pile=news", { bearer: s.token }), deps)).json();

@@ -12,12 +12,14 @@ import type { LeaseIo, LeasePeekIo, RawClaimMessage } from "@trafficflow/core/ad
 import { formatClaim, isMalformed, parseClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { ProfileUnavailableError } from "@trafficflow/core/adapters/organizer-profile";
 import {
-  accountSettings, approvals, attachments, auditLog, awayReplies, awayResponderSent, changeLog, drafts, flagState, folderOps, folderState,
+  accountSettings, approvals, attachments, auditLog, awayReplies, changeLog, drafts, flagState, folderOps, folderState,
   junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, mailboxes, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, organizerRequests,
   outboundSendFingerprints, outboundSentCopies, outboundSends, REMOVED_MAILBOX_SEND_SENTENCE, routingDecisions,
   scheduledSendFiles, sessions, tags,
   threadNotes, threads, trackerEvents, unsubscribeExamined, unsubscribeRecords,
+  messageInvitations, mailboxPass, writePassProgress,
+  passProgress,
 } from "@trafficflow/db";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { createSidecar, type Sidecar, type SidecarConfig } from "../src/engine.js";
@@ -309,7 +311,7 @@ function recordingMailbox(
    * THE PROFILE STEP FAILS THE WAY IT FAILS ON A REAL PROVIDER — present and refusing.
    *
    * `onOrganize` returns immediately unless the adapter has a `profileIo` (`hasProfileIo`,
-   * `apps/worker/src/profile.ts:86-88`), so a fake without one skips the profile step altogether
+   * `packages/organizer/src/profile.ts:86-88`), so a fake without one skips the profile step altogether
    * and cannot say anything about a pass whose profile step fails. With one, the read throws the
    * shape production throws: `readOrganizerProfile` wraps whatever the server did in
    * `ProfileUnavailableError` with `op: "list_profiles"` and the original as `cause`
@@ -1142,7 +1144,7 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
      * `drainPass` (`engine.ts:4582`) calls `mayOrganize()` (`:4634`), whose release arm runs first
      * of all; the profile write is downstream at `:4856` (`profileSync.onOrganize`) and again in
      * `drain` at `:4329` (`armHoldFromFolder`), and both of that class's call sites catch and log
-     * rather than throw (`apps/worker/src/profile.ts:540-546` and `:949-959`). So a profile step
+     * rather than throw (`packages/organizer/src/profile.ts:540-546` and `:949-959`). So a profile step
      * that fails cannot starve the release — and this is the guard that keeps it that way, because
      * the ordering is invisible at either site and one `await` moved would reverse it.
      */
@@ -1159,7 +1161,7 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
     ).toContain("organizer_profile_write_failed");
     /* ── AND THE FAILURE LINE CARRIES THE ERROR, NOT ITS MESSAGE STRING (0.14.1) ────────────
      *
-     * `apps/worker/src/profile.ts` handed the logger `err instanceof Error ? err.message :
+     * `packages/organizer/src/profile.ts` handed the logger `err instanceof Error ? err.message :
      * String(err)` — a STRING in the `err` slot, under a comment claiming "`err` reduces to
      * class + code in `log.ts`". The logger reduces the THROWN VALUE to class + code; handed a
      * string it reports `errorClass:"String" errorCode:null` and, by design, no message — so a
@@ -1742,10 +1744,14 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
     await forget(sidecar);
 
     const after = await countsOf(sidecar, owed);
+    // `pass_progress` holds the ACCOUNT's own passes beside each mailbox's, and those stay: of that
+    // table the removal owes the rows whose subject is this mailbox, read by themselves below.
     expect(
-      Object.fromEntries(owed.filter((t) => after[t] !== 0).map((t) => [t, after[t]])),
+      Object.fromEntries(owed.filter((t) => after[t] !== 0 && t !== "pass_progress").map((t) => [t, after[t]])),
       "the removal left more than the unsent draft and its send, or took them",
     ).toEqual({ drafts: 1, outbound_sends: 1, outbound_send_fingerprints: 1 });
+    const passes = await sidecar.db.select({ subjectId: passProgress.subjectId }).from(passProgress);
+    expect(passes.filter((r) => r.subjectId !== accountId), "a pass over the removed mailbox still has its marks").toEqual([]);
     expect((await sidecar.db.select().from(drafts).where(eq(drafts.id, sentDraft!.id))).length,
       "a sent draft stayed; its words are in the server's Sent folder").toBe(0);
   });
@@ -1910,18 +1916,18 @@ async function seedEveryOwedTable(s: Sidecar): Promise<void> {
   const db = s.db;
   const [thread] = await db.insert(threads).values({ accountId }).returning();
   const messageId = await plantMessage(s, mailboxId, thread!.id);
-  const [folder] = await db.insert(mailboxFolders).values({ mailboxId, folder: "ohmail/Fixture" }).returning();
-  await db.insert(messageBodies).values({ messageId, text: "the whole letter" }).onConflictDoNothing();
+  const [folder] = await db.insert(mailboxFolders).values({ mailboxId, accountId, folder: "ohmail/Fixture" }).returning();
+  await db.insert(messageBodies).values({ messageId, accountId, text: "the whole letter" }).onConflictDoNothing();
   await upsertMessageSearch(db as never, messageId, {
     accountId, subject: "ciao", from: null, to: [], cc: [], attachmentNames: [],
     bodyText: "the whole letter", source: "text",
   });
   await db.insert(folderState).values({
-    messageId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId, accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     reconcileStatus: "reconciled", conflict: false,
   }).onConflictDoNothing();
   await db.insert(flagState).values({
-    messageId, desiredSeen: true, observedSeen: false, lastSetBy: "us", reconcileStatus: "pending",
+    messageId, accountId, desiredSeen: true, observedSeen: false, lastSetBy: "us", reconcileStatus: "pending",
   }).onConflictDoNothing();
   await db.insert(messageInstances).values({
     accountId, mailboxId, messageId, folder: "Archive", uidvalidity: 1n, uid: 90_001, isPrimary: false,
@@ -1969,11 +1975,13 @@ async function seedEveryOwedTable(s: Sidecar): Promise<void> {
   await db.insert(awayReplies).values({
     accountId, mailboxId, messageId, sender: "giulia@example.test", outcome: "sent", sentAt: new Date(),
   });
-  await db.insert(awayResponderSent).values({
-    accountId, messageId, sender: "giulia@example.test", responderUpdatedAt: new Date(),
-  });
   await db.insert(folderOps).values({ accountId, mailboxId, folderId: folder!.id, op: "create" });
   await db.insert(junkRescues).values({ accountId, mailboxId, folder: "Junk", uidvalidity: 7n, uid: 11 });
+  await db.insert(messageInvitations).values({
+    accountId, messageId, mailboxId, uid: "fixture-event@calendar.example", method: "REQUEST", organizer: "organizer@example.test",
+  });
+  // The marks of a pass over this mailbox: the engine's own sync may or may not have written one.
+  await writePassProgress(db, mailboxPass("sensitive_rescreen", accountId, mailboxId), { cursor: messageId, startedAt: new Date() });
   await db.insert(organizerRequests).values({
     accountId, mailboxId, kind: "screener.decide",
     payload: { sender: "giulia@example.test", verdict: "screened_in" }, decidedAt: new Date(), state: "pending",
@@ -1986,7 +1994,7 @@ async function seedEveryOwedTable(s: Sidecar): Promise<void> {
     .where(eq(mailboxCredentials.mailboxId, mailboxId));
   if (!cred) {
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: "enc:xxxx", keyVersion: 1,
+      mailboxId, accountId, transport: "imap", secretEnc: "enc:xxxx", keyVersion: 1,
     });
   }
 }

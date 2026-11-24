@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import type { PGlite } from "@electric-sql/pglite";
 import {
   INGEST_LOG_FLUSH_MS, StoreClientSplitError, StoreIntervalError, assertOneStoreClient,
   openLocalDb, type OpenLocalDb,
@@ -12,6 +11,8 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { inStoreLane } from "../src/store-lanes.js";
 import { startEngineVitals } from "../src/vitals.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * ═══ THE INGEST'S TRANSACTION DOES NOT WAIT FOR THE FLUSH, AND NOTHING ELSE INHERITS THAT ══════
@@ -282,7 +283,7 @@ describe("the local store's durability", () => {
     dirs.push(dir);
     const h = await openLocalDb(dir, { ingestFoldWalBytes: 1 });
     open.push(h);
-    const client = (h.db as unknown as { $client: PGlite }).$client as unknown as Record<string, unknown>;
+    const client = pgliteOf(h.db) as unknown as Record<string, unknown>;
     let inFlight = 0;
     let most = 0;
     let seen = 0;
@@ -468,8 +469,9 @@ describe("nothing but the local store loosens its durability", () => {
     let walked = 0;
     for (const r of ROOTS) {
       for (const f of sourceFiles(join(ROOT, r))) {
+        if (isEnginePart(f)) continue;
         walked += 1;
-        const src = withoutComments(readFileSync(f, "utf8"));
+        const src = withoutComments(readAsUnit(f));
         for (const _call of src.matchAll(/\binStoreLane\s*\(\s*["']ingest["']/g)) {
           sites.push(f.slice(ROOT.length).replace(/\\/g, "/"));
         }

@@ -6,6 +6,7 @@ import { createSidecarLog } from "../src/log.js";
 /* THE MASKER MOVED to `_mask.ts` so a SECOND census could reuse it without importing this file —
    importing a test module runs its suites, and one shared helper is the point of having one. */
 import { maskSource } from "./_mask.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * THE CENSUS GUARD — every field name this package hands a logger is on `ALLOWED_FIELDS`.
@@ -672,6 +673,19 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // `kind` says which evidence decided (unfinished / holds-nothing); no path. `info`: the store
   // held nothing, and making it again is the recovery, not a failure.
   store_set_aside: "info",
+  // store-copies.ts — the copies a store's update keeps beside it left: by their mark, or because
+  // somebody asked (`kind` says which, a closed set). A count and bytes; no path, no name.
+  store_copies_removed: "info",
+  // store-copies.ts — one could not be removed. `count` is how many are left; the removal stays
+  // owed and the next start tries again. `error`: a copy somebody asked gone is still there.
+  store_copies_removal_failed: "error",
+  // db.ts — the copy a desktop takes of its store before 2.0 moves it. Bytes, a file count and a
+  // duration; no path. `info`: the ordinary first start of 2.0 over a 1.0 store.
+  store_copied: "info",
+  // db.ts — that copy could not be taken, so the store was not updated and is as it was. `kind`
+  // says which: `no_room` carries what the update needs (`bytes`) and what the disk has free
+  // (`remaining`); `copy` carries the fault's class. `error`: the start is refused.
+  store_copy_failed: "error",
   // db.ts — a new store could not be made in memory (`fresh-store.ts`), so it was made on disk as
   // before. `err` and a reason, no path. `error`: the start still serves, seconds slower.
   fresh_store_copy_failed: "error",
@@ -1790,7 +1804,7 @@ describe("apps/sidecar — the census", () => {
     expect(main).toMatch(/\bcreateSidecarLog\s*\(/);
     // ── AND THE HALF THAT LIMIT NAMED, FOR THE ONE CONSUMER WHERE IT WENT WRONG ────────────
     //
-    // The local engine composes `@trafficflow/worker/sync`, which speaks `Logger` rather than
+    // The local engine composes `@ohmail/organizer/sync`, which speaks `Logger` rather than
     // this package's two-argument seam, and `engine.ts` built its `syncDeps` with no `log` at
     // all — so every diagnostic the reconcile passes emit went nowhere on the standalone door.
     // Nothing could see it: the sink was correct, the census was green, and the lines simply had
@@ -1881,7 +1895,7 @@ describe("apps/sidecar — the census", () => {
  * correction watchable rather than a sentence somebody can undo without anything going red.
  */
 describe("the roster line does not claim an organizer claim", () => {
-  const engine = readFileSync(join(SRC, "engine.ts"), "utf8");
+  const engine = readEngineAsOneText();
 
   it("finds the call at all — the anti-vacuity case", () => {
     // A guard that cannot locate its subject passes for the wrong reason for ever.

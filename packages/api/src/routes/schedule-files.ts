@@ -1,9 +1,10 @@
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer } from "../responses.js";
 import type { Route } from "../router.js";
-import { decodeSendAttachments, readStagedIds, type SendAttachmentWire } from "./drafts.js";
+import { decodeSendAttachments, readStagedIds } from "./drafts.js";
 import { readBody, schedules } from "./shared.js";
+import type { RequestOf } from "@ohmail/wire";
 
 /**
  * SEND LATER WITH FILES (mail 0179, 0180) — `POST /drafts/:id/schedule-with-files`, `{ sendAt,
@@ -19,13 +20,14 @@ export const scheduleFilesRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/drafts/:id/schedule-with-files",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
       const keeping = deps.services?.scheduledFiles;
       if (!keeping) throw new ServiceError("not_found", 404, "this server keeps no files for a later send");
-      const body = await readBody<{ sendAt?: unknown; attachments?: SendAttachmentWire[]; stagedAttachmentIds?: unknown }>(req);
+      const body = await readBody<RequestOf<"POST /drafts/:id/schedule-with-files">>(req);
       const files = decodeSendAttachments(body.attachments);
       const stagedIds = readStagedIds(body.stagedAttachmentIds);
       if (!files && !stagedIds) {
@@ -45,7 +47,7 @@ export const scheduleFilesRoutes: Route[] = [
           keeping,
         },
       );
-      return jsonResponse(draft, { status: 200, seq });
+      return answer<"POST /drafts/:id/schedule-with-files">()(draft, { status: 200, seq });
     },
   },
 ];

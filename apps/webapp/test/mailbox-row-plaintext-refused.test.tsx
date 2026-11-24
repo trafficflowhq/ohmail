@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A MAILBOX CONNECTED WITHOUT TLS WHOSE SERVER LEFT THE PERSON'S NETWORK IS SAID AS THAT. The dial
@@ -41,7 +41,7 @@ vi.mock("../app/api-client", async () => {
     mailboxes: { list: async () => ({ items: mockListed }), resync: async () => undefined },
   };
 });
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
 
 const dto = (over: Partial<MailboxDTO>): MailboxDTO => ({
   id: "mb1", provider: "imap", address: "person@home.example", displayName: null, status: "error",
@@ -94,7 +94,7 @@ describe("a mailbox whose saved password this computer cannot use", () => {
   });
 
   it("CONTROL: a detail the reader does not know leaves the code's own key", async () => {
-    const { mailboxErrorKey } = await import("../app/shell/mailbox-error-key.js");
+    const { mailboxErrorKey } = await import("@ohmail/app-logic/mail-state/mailbox-error-key");
     expect(mailboxErrorKey("connect", "constructor").key).toBe("err_connect");
     expect(mailboxErrorKey("connect", null).key).toBe("err_connect");
     expect(mailboxErrorKey(null, "MAILBOX_CREDENTIAL_UNREADABLE").key).toBe("err_credential_unreadable");

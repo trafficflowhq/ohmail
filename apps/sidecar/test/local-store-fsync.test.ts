@@ -3,7 +3,7 @@ import { PGlite as PGliteClass } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
-import { MAIL_JOURNAL, readJournalOf } from "@trafficflow/db/journal";
+import { MAIL_JOURNAL, OLD_HEADS, readJournalOf } from "@trafficflow/db/journal";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -14,6 +14,7 @@ import { LocalStoreOpenError, PGDATA_SUBDIR, openLocalDb, type OpenLocalDb } fro
 import * as store from "../src/db.js";
 import * as transport from "../src/pglite-transport.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 /**
  * ═══ THE LOCAL STORE SYNCS THROUGH AN FSYNC OF ITS OWN ═══════════════════════════════════════
@@ -41,7 +42,7 @@ function nodefsOf(client: PGlite): NodeFsOps {
   return mod.FS.filesystems.NODEFS;
 }
 
-const clientOf = (h: OpenLocalDb): PGlite => (h.db as unknown as { $client: PGlite }).$client;
+const clientOf = (h: OpenLocalDb): PGlite => pgliteOf(h.db);
 
 /** Every host fsync made while `work` runs, by what it synced. The original call runs first. */
 async function hostSyncs<T>(work: () => Promise<T>): Promise<{ files: number; directories: number; result: T }> {
@@ -452,7 +453,9 @@ describe("a store an earlier start made", () => {
   it("syncs every migration its upgrade commits — the hold is a new store's alone", async () => {
     const dir = mkdtempSync(join(realpathSync(tmpdir()), "ohmail-fsync-upgrade-"));
     dirs.push(dir);
-    await oldInstall(dir, 6);
+    // A store at 1.0.11's head: it owes the six of the 2.0 window and every entry after it.
+    const owed = readJournalOf(MAIL_JOURNAL).filter((e) => e.when > OLD_HEADS.mail.when).length;
+    await oldInstall(dir, owed);
     const f = fs as unknown as Record<string, (...a: unknown[]) => unknown>;
     const fsync = f.fsyncSync!;
     let inPass = false;
@@ -463,9 +466,13 @@ describe("a store an earlier start made", () => {
       return out;
     };
     try {
-      const h = await openLocalDb(dir, { onPhase: (p, at) => { if (p === "migrating") inPass = at === undefined || at.applied < at.pending; } });
+      const h = await openLocalDb(dir, {
+        onPhase: (p, at) => { if (p === "migrating") inPass = at === undefined || at.applied < at.pending; },
+        // The way is named, as the desktop's own engine names it: a store 1.0 made is refused without one.
+        transition: { way: "copy" },
+      });
       open.push(h);
-      expect(h.migrations?.applied, "the fixture owed nothing, so this is no upgrade").toBe(6);
+      expect(h.migrations?.applied, "the fixture owed nothing, so this is no upgrade").toBe(owed);
       expect(pass, "an upgrade of a store that may hold mail committed its migrations unsynced").toBeGreaterThan(0);
     } finally {
       f.fsyncSync = fsync;

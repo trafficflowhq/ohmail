@@ -11,8 +11,8 @@ import { DrizzleRepo } from "../src/adapters/drizzle-repo.js";
  * of it are dialect-sensitive: the booleans are spelled as literals because the device driver takes
  * no JavaScript boolean, and the verdict comes back as TEXT because the two stores answer a boolean
  * column differently. The sidecar composes the worker's own cycle over the device store
- * (`@trafficflow/worker/sync`), so a server-only spelling here is a phone that cannot settle a read
- * mark at all. Registered in `vitest.sqlite.config.ts`; without that line the device arm is code
+ * (`@ohmail/organizer/sync`), so a server-only spelling here is a phone that cannot settle a read
+ * mark at all. Registered in `test/vitest.sqlite.config.ts`; without that line the device arm is code
  * nothing runs.
  */
 const ACCOUNT = "00000000-0000-4000-8000-0000000000fa";
@@ -32,7 +32,7 @@ async function seeded(desiredSeen: boolean, observedSeen: boolean) {
     nativeLocator: { folder: "INBOX", ref: "1:10" }, unread: !desiredSeen,
   });
   await db.insert(flagState).values({
-    messageId: MESSAGE, desiredSeen, observedSeen,
+    messageId: MESSAGE, accountId: ACCOUNT, desiredSeen, observedSeen,
     lastSetBy: "us", reconcileStatus: "pending", conflict: false,
   });
   const row = async () => (await db.select().from(flagState).where(eq(flagState.messageId, MESSAGE)))[0]!;

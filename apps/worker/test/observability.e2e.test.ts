@@ -6,7 +6,7 @@ import { makeDb } from "@trafficflow/db/cloud";
 import { workerHeartbeats, alertState, platformSignals, SYNC_LAG_PAGE_ACCOUNTS } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger, type Logger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
-import { imapCfg } from "./_workerenv.js";
+import { imapCfg } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 /**
@@ -53,7 +53,7 @@ async function seedUnreachableMailbox(db: Db): Promise<{ accountId: string; mail
     .returning();
   const enc = await KP.encrypt("nope");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     // Nothing listens on 127.0.0.1:1 — connect fails fast.
     meta: { host: "127.0.0.1", port: 1, secure: false, user: cfg.auth.user },
   });
@@ -157,7 +157,12 @@ describe("worker observability wiring", () => {
     expect(body.source).toBe("worker");
     expect(body.alerts.map((a) => a.kind)).toContain("sync_lag");
 
-    // The state row exists, so the next pass will NOT page again inside the repeat window.
+    // The state row exists, so the next pass will NOT page again inside the repeat window. Its
+    // confirm is written after the delivery returns, so it is waited for as the post was.
+    await waitFor(async () => {
+      const [row] = await db.select().from(alertState).where(eq(alertState.alertKey, "sync_lag"));
+      return row?.notifiedAt ? row : null;
+    }, 8000);
     const [state] = await db.select().from(alertState).where(eq(alertState.alertKey, "sync_lag"));
     expect(state).toBeDefined();
     expect(state!.notifiedAt).not.toBeNull();
@@ -265,6 +270,7 @@ describe("worker observability wiring", () => {
     closers.push(() => worker.stop());
     const dead = await waitFor(async () => (worker.stats().pager === "dead" ? true : null), 10_000);
     expect(dead, "three refused passes and the pager reports itself dead").toBe(true);
+    await waitFor(async () => (events().includes("alerts_undeliverable") ? true : null), 10_000);
     expect(events()).toContain("alerts_undeliverable");
   }, 30_000);
 

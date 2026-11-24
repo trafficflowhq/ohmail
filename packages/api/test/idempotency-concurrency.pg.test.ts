@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -44,7 +45,7 @@ const FIXED_NOW = new Date("2026-07-28T12:00:00.000Z");
 /** A real-Postgres `ApiDeps` on its OWN connection — two of these is what makes the race real. */
 function depsOn(db: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
+  return perRequest({
     db,
     now: () => FIXED_NOW,
     requestId: `pg-${randomUUID()}`,
@@ -81,7 +82,7 @@ function depsOn(db: Db): ApiDeps {
       workflows: workflowsService,
       proposals: proposalsService,
     },
-  };
+  });
 }
 
 const app = createApp(apiRoutes);
@@ -238,7 +239,7 @@ describe.skipIf(!PG_UP)("concurrent Idempotency-Key against real Postgres", () =
       nativeLocator: { folder: "INBOX", ref: "1:1" },
     }).returning();
     await dbA.insert(folderState).values({
-      messageId: msg!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+      messageId: msg!.id, accountId: msg!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "reconciled",
     });
 

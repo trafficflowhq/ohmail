@@ -1,4 +1,4 @@
-import { VerifyEmailScreen } from "./VerifyEmailScreen";
+import { VerifyRoute } from "./VerifyRoute";
 import type { SearchParamsLike } from "../../demo-mode";
 
 /**
@@ -18,7 +18,7 @@ export default async function VerifyEmailPage(props: { searchParams?: Promise<Se
   const raw = searchParams?.token;
   const first = Array.isArray(raw) ? raw[0] : raw;
   return (
-    <VerifyEmailScreen
+    <VerifyRoute
       initialToken={typeof first === "string" ? first.trim().slice(0, 512) : ""}
     />
   );

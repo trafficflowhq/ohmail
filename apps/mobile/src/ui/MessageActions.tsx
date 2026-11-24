@@ -6,13 +6,14 @@
  * arranged for a thumb: the bar pins to the bottom; everything else stands in the More sheet.
  * The webapp's absence rules hold: Reply all only where `replyAllRecipients` admitted an
  * envelope, Forward always (a `no_forward` message asks once), the read slot holds one of its
- * three faces. The AI drafter is not here — no engine verb, so an absent control, never a dead one.
+ * three faces. The composer offers drafting through its paired server when the account allows it.
  */
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import type { StayedWhy, RuleEntity as WorldRule } from "@ohmail/wire";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ThreadRead } from "./reader-seen";
 import {
   AppState, Image, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, useWindowDimensions, View,
-  type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent,
+  type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type ViewStyle,
 } from "react-native";
 import { FadeOut } from "./FadeOut";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -60,7 +61,6 @@ import {
   folderName,
   type ConflictGroup,
   type PressForecast,
-  type WorldRule,
   connectionSaid,
   type FailedSendCopy,
   ruleMatchKey,
@@ -70,6 +70,7 @@ import { useWorld, useWorldToast } from "../state/world";
 import { BAR, PILL, compactFit } from "./action-bar-layout";
 import { Button, Rule, Tap, Txt } from "./base";
 import { GlassActionBar, GlassPill, nextRoom, type BarVerbSpec } from "./glass";
+import { mailSize } from "../theme/mail";
 import type { RailAction } from "./glass/GlassRail";
 import { useAppWindow, usePosture } from "./posture";
 import { readerBarClearance, scaffoldPlan } from "./scaffold/plan";
@@ -101,6 +102,10 @@ import {
   type PhoneComposeAttachment,
 } from "../compose/attach";
 /* The expo pickers — a `*-native.ts` twin the suite never imports; every rule is in attach.ts. */
+import { PhoneDrafter } from "./PhoneDrafter";
+import { wordsOf } from "../compose/letter-store";
+import { editRuns, markupOf, runsOf, toggleMark, type Mark, type Run } from "../compose/formatting";
+import { COMPOSE_EMOJI } from "../compose/emoji";
 import { nativeAttachPicker, nativeImageShrink } from "../compose/attach-native";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
 import { AttachmentPreview, type PreviewFile } from "./AttachmentPreview";
@@ -109,6 +114,7 @@ import { KEPT_FILES_MAX_BYTES } from "../compose/letter-store";
 import { forwardFilesPlan } from "../compose/forward-files";
 import { sayRefusal, type Refusal } from "../refusal";
 import { usePrefs } from "../state/store";
+import { refusalSentence, type DraftDiscardRefusal } from "./draft-card";
 import { cancelAct, cancelSendOffered, cancelSendPress, keptSay, waitingRowOf } from "./send-cancel";
 import { autosaveKeep, baseAfter, baseFor, keepAct, unmountKeep, waitedFor, worthKeeping, type DraftBase } from "./compose-keep";
 import { composeFromOf } from "./compose-sender";
@@ -129,7 +135,6 @@ import { sendAgainSentence, type DraftSendAgainRefusal } from "./draft-card";
 import { holdReader, holdWhileOpen } from "./reader-held";
 import { ATTACH_ROW_GAP, attachHintFits, attachHintStyle } from "./attach-hint";
 import { changedElsewhere, failedSendLine } from "./send-failed";
-import type { StayedWhy } from "../state/sender-stayed";
 import { stayedRows } from "./sender-stayed-lines";
 import { useKeyboardLift } from "./keyboard-lift";
 import { conversationUnreadIds } from "./read-slot";
@@ -184,12 +189,16 @@ export function useReaderVerbMode(inPane: boolean): ReaderVerbMode {
 
 export function MessageActions({
   m,
+  replyTo = m,
   onDeleted,
   onBack,
   inPane = false,
   record,
+  onInlineReply,
 }: {
   m: WorldMail;
+  replyTo?: WorldMail;
+  onInlineReply?: (message: WorldMail, reply: ReplyOpen) => void;
   /** The reader's visit: a Mark unread here keeps the message unread for it, a Mark read lets go. */
   record?: ThreadRead;
   /** Drawn in the list-detail pair's reading pane, which already starts past the rail. */
@@ -235,7 +244,20 @@ export function MessageActions({
   shownId.current = m.id;
 
   /** Every Reply and Reply all press: a kept reply is resumed, or said to be in Drafts (`replyOpen`). */
-  const openReply = (all: boolean) => setOpen(replyOpen(a.keptReply(m.id), all ? "replyAll" : "reply"));
+  const availableReply = useRef(replyTo);
+  availableReply.current = replyTo;
+  const replyTarget = useRef(replyTo);
+  const openReply = (all: boolean) => {
+    const replyTo = availableReply.current;
+    replyTarget.current = replyTo;
+    const next = replyOpen(a.keptReply(replyTo.id), all ? "replyAll" : "reply");
+    if (onInlineReply) {
+      close();
+      onInlineReply(replyTo, next);
+    } else {
+      setOpen(next);
+    }
+  };
 
   /**
    * Forward is always offered (`forwardOffered`). A row the mirror does not hold has its body read
@@ -269,7 +291,7 @@ export function MessageActions({
     if (mode === "rail") standing(null);
   }, [mode, standing]);
   const facts: ReaderVerbFacts = {
-    canReplyAll: m.canReplyAll === true,
+    canReplyAll: replyTo.canReplyAll === true,
     forwardOffered: forwardOffered(m),
     junkOffered: moveTargetsFor(m).includes("spam"),
     // No Screening press on the account's own mail: it would be a rule about our own address.
@@ -287,7 +309,7 @@ export function MessageActions({
   const [compactWidths, setCompactWidths] = useState<Record<string, number> | null>(null);
   const measuredWidths = useRef<Record<string, number>>({});
   const compactRow = mode !== "compact" ? [] : ([
-    { id: "later" as const, label: Copy.actionLater, icon: "clock" as IconName,
+    { id: "later" as const, label: Copy.actionLater, icon: (t.mail ? "hourglass" : "clock") as IconName,
       on: m.pile === "reply_later", onPress: () => a.pileToggle(m.id, "replyLater") },
     { id: "aside" as const, label: Copy.actionSetAside, icon: "pause" as IconName,
       on: m.pile === "set_aside", onPress: () => a.pileToggle(m.id, "setAside") },
@@ -429,7 +451,7 @@ export function MessageActions({
     switch (id) {
       case "replyAll": return { id, label: Copy.actionReplyAll, onPress: () => openReply(true) };
       case "forward": return { id, label: Copy.actionForward, iconFace: "fwd", onPress: openForward };
-      case "later": return { id, icon: "clock", label: Copy.actionLater, seg: "defer", onPress: () => a.pileToggle(m.id, "replyLater") };
+      case "later": return { id, icon: t.mail ? "hourglass" : "clock", label: Copy.actionLater, seg: "defer", onPress: () => a.pileToggle(m.id, "replyLater") };
       case "aside": return { id, icon: "pause", label: Copy.actionSetAside, seg: "defer", onPress: () => a.pileToggle(m.id, "setAside") };
       case "resurface": return { id, icon: "up", label: Copy.actionResurface, seg: "defer", onPress: () => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface")) };
       case "tag": return { id, icon: "tag", label: Copy.actionTag, onPress: () => setOpen("tag") };
@@ -488,7 +510,12 @@ export function MessageActions({
           standing(height);
           setCompactRoom((r) => nextRoom(r, width));
         }}
-        style={{ paddingHorizontal: BAR.outerPadH, paddingBottom: Math.max(insets.bottom, 8) }}
+        style={{
+          paddingHorizontal: BAR.outerPadH,
+          paddingBottom: Math.max(insets.bottom, t.mail ? 16 : 8),
+          alignSelf: t.mail ? "flex-start" : "stretch",
+          width: t.mail ? "100%" : undefined,
+        }}
       >
       {/* The hidden copy every width is read from — the same capsules, absolute and invisible,
           out of the touch path and out of the accessibility tree. */}
@@ -499,12 +526,12 @@ export function MessageActions({
         style={{ position: "absolute", opacity: 0, flexDirection: "row", left: 0, top: 0 }}
       >
         <View onLayout={recordWidth("__reply")}>
-          <Button label={Copy.actionReply} icon="pen" variant="solid" onPress={() => undefined} />
+          <Button label={Copy.actionReply} icon="reply" variant="solid" onPress={() => undefined} />
         </View>
         {forwardStands ? (
           <>
             <View onLayout={recordWidth("forward")}>
-              <Button label={Copy.actionForward} icon="fwd" variant="plain" onPress={() => undefined} />
+              <Button label={Copy.actionForward} icon="fwd" variant={t.mail ? "quiet" : "plain"} onPress={() => undefined} />
             </View>
             <View onLayout={recordWidth("forward.icon")}>
               <ForwardIcon onPress={() => undefined} />
@@ -520,7 +547,7 @@ export function MessageActions({
       <GlassPill
         horizontal
         level="l3"
-        radius={t.radius.panel}
+        radius={t.mail ? t.radius.pill : t.radius.panel}
         contentStyle={{
           alignSelf: "stretch",
           alignItems: "center",
@@ -549,7 +576,7 @@ export function MessageActions({
         >
           <Button
             label={Copy.actionReply}
-            icon="pen"
+            icon="reply"
             variant="solid"
             style={{ maxWidth: "100%" }}
             onPress={() => openReply(false)}
@@ -559,7 +586,7 @@ export function MessageActions({
           {forwardStands && barFit.standing.includes("forward") ? (
             barFit.leadIcon
               ? <ForwardIcon onPress={openForward} />
-              : <Button label={Copy.actionForward} icon="fwd" variant="plain" onPress={openForward} />
+              : <Button label={Copy.actionForward} icon="fwd" variant={t.mail ? "quiet" : "plain"} onPress={openForward} />
           ) : null}
           {compactRow
             .filter((v) => barFit.standing.includes(v.id))
@@ -573,7 +600,7 @@ export function MessageActions({
           accessibilityLabel={Copy.actionMore}
           style={{ padding: (BAR.moreBox - 16) / 2 }}
         >
-          <Icon name="more" size={16} color={t.c.ink2} />
+          {t.mail ? <Txt variant="button">⋯</Txt> : <Icon name="more" size={16} color={t.c.ink2} />}
         </Tap>
       </GlassPill>
       </View>
@@ -793,7 +820,7 @@ export function MessageActions({
       {open !== null && typeof open === "object" ? (
         <SurfaceBoundary surface="composer" frame="sheet" onClose={close}>
           <ComposeSheet
-            m={m} mode={open.compose} forwardConfirmed={"confirmed" in open && open.confirmed === true}
+            m={open.compose === "forward" ? m : replyTarget.current} mode={open.compose} forwardConfirmed={"confirmed" in open && open.confirmed === true}
             {...("draft" in open && open.draft ? { draft: open.draft } : {})} replyAside={"aside" in open && open.aside === true}
             onClose={close}
           />
@@ -890,7 +917,13 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
   /* Nothing organizes any mailbox: the note says so rather than what a rule would file. */
   const nobody = w.mailboxes.known && noneOrganizedWhy(w.mailboxes.rows) !== null;
   const inPlay = w.actions.screeningRules(m.id, scope);
-  const unsubClaim = w.actions.screeningUnsubClaim(m.id, scope);
+  const unsubscribeFor = (choice: Scope) => ({
+    claim: w.actions.screeningUnsubClaim(m.id, choice),
+    ids: w.actions.screeningUnsubscribeIds(m.id, choice),
+  });
+  const unsub = unsubscribeFor(scope);
+  const chosenScope = step ? phoneTiles(step.cls, step.forecast)[step.choice]!.scope ?? scope : scope;
+  const chosenUnsub = step?.unsubscribe[chosenScope];
   /* WHY SOME OF THEIR MAIL STAYED once the rule's past-mail pass finished — asked of the server
      once per row set, one line per place and reason, as the web sheet asks it. */
   const ask = w.actions.screeningStayed(m.id, scope);
@@ -906,6 +939,8 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
   const labelOf = (id: string) => w.mailboxes.all.find((r) => r.id === id)?.displayName?.trim() || null;
   const stayed = stayedRows(ask, why && why.key === askKey ? why.map : null, labelOf);
   const press = (dest: Destination) => {
+    const demoting = dest === "screened" || dest === "spam";
+    const ids = demoting && unsub.claim !== "none" ? unsub.ids : undefined;
     const f = w.actions.screeningForecast(m.id, dest, scope, applyRetro);
     const cls = f ? phoneStepClass(f, scope) : null;
     // On a shared provider the domain above the address is answered by the address: no "everyone" tile.
@@ -913,12 +948,18 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
       onClose();
       w.actions.screenSender(m.id, dest, scope, applyRetro, {
         resolution: "keep", shown: f.groups.map((g) => g.rule), forecast: f,
+      }, ids);
+      return;
+    }
+    if (f && cls) {
+      setStep({
+        dest, forecast: f, cls, choice: cls === "domain" && !f.exception ? 1 : 0,
+        unsubscribe: demoting ? { [scope]: unsub, ...(cls === "domain" ? { domain: unsubscribeFor("domain") } : {}) } : {},
       });
       return;
     }
-    if (f && cls) { setStep({ dest, forecast: f, cls, choice: cls === "domain" && !f.exception ? 1 : 0 }); return; }
     onClose();
-    w.actions.screenSender(m.id, dest, scope, applyRetro);
+    w.actions.screenSender(m.id, dest, scope, applyRetro, undefined, ids);
   };
   return (
     /* The system back gesture in the step goes back to the list; on the list it closes the sheet. */
@@ -927,13 +968,16 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
         <PhoneResolveStep
           step={step}
           domain={domain}
+          warning={chosenUnsub && chosenUnsub.claim !== "none" && chosenUnsub.ids.length > 0
+            ? Copy.decideUnsub(chosenUnsub.claim, chosenScope === "domain" ? `@${domain}` : m.from.address, chosenScope === "domain")
+            : undefined}
           onChoice={(choice) => setStep({ ...step, choice })}
           onCommit={() => {
             const tile = phoneTiles(step.cls, step.forecast)[step.choice]!;
             onClose();
             w.actions.screenSender(m.id, step.dest, tile.scope ?? scope, applyRetro, {
               resolution: tile.resolution, shown: step.forecast.groups.map((g) => g.rule), forecast: step.forecast,
-            });
+            }, chosenUnsub?.claim === "none" ? undefined : chosenUnsub?.ids);
           }}
           onCancel={() => setStep(null)}
         />
@@ -1018,9 +1062,9 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
         {nobody ? Copy.screeningNoteNobody : applyRetro ? Copy.screeningNoteRetro(target) : Copy.screeningNote(target)}
       </Txt>
       {/* What Screen out and Spam send for a sender still waiting, before either is pressed. */}
-      {unsubClaim !== "none" ? (
+      {unsub.claim !== "none" && unsub.ids.length ? (
         <Txt variant="caption" tone="ink2" style={{ paddingHorizontal: 14, paddingTop: 6 }} testID="screening-unsub">
-          {Copy.decideUnsub(unsubClaim, target, scope === "domain")}
+          {Copy.decideUnsub(unsub.claim, target, scope === "domain")}
         </Txt>
       ) : null}
         </>
@@ -1035,6 +1079,7 @@ interface PhoneStep {
   forecast: PressForecast;
   cls: "term" | "domain" | "inside";
   choice: 0 | 1;
+  unsubscribe: Partial<Record<Scope, { claim: ReturnType<ReturnType<typeof useWorld>["actions"]["screeningUnsubClaim"]>; ids: readonly string[] }>>;
 }
 
 const isTermGroup = (g: ConflictGroup) => g.cause === "term-subject" || g.cause === "term-body";
@@ -1107,8 +1152,8 @@ function PhoneRuleLine({ rule, count, domain, inside = false }: {
 }
 
 /** THE STEP, in the same sheet: the rules that disagree, two radio rows, the press and Cancel. */
-function PhoneResolveStep({ step, domain, onChoice, onCommit, onCancel }: {
-  step: PhoneStep; domain: string; onChoice: (c: 0 | 1) => void; onCommit: () => void; onCancel: () => void;
+function PhoneResolveStep({ step, domain, warning, onChoice, onCommit, onCancel }: {
+  step: PhoneStep; domain: string; warning?: string; onChoice: (c: 0 | 1) => void; onCommit: () => void; onCancel: () => void;
 }) {
   const t = useTheme();
   const f = step.forecast;
@@ -1150,6 +1195,7 @@ function PhoneResolveStep({ step, domain, onChoice, onCommit, onCancel }: {
           </Tap>
         ))}
       </View>
+      {warning ? <Txt variant="caption" tone="ink2">{warning}</Txt> : null}
       <Button label={Copy.screeningResolveGo(place)} variant="solid" onPress={onCommit} />
       <Button label={Copy.screeningResolveCancel} variant="quiet" onPress={onCancel} />
     </View>
@@ -1172,6 +1218,10 @@ export function ComposeSheet({
   prefill,
   diag,
   replyAside = false,
+  inline = false,
+  inlineHeading,
+  doneOnSend = false,
+  run,
   onClose,
 }: {
   /** The message being answered — `null` for a mail with no parent (the `new` mode). */
@@ -1187,12 +1237,17 @@ export function ComposeSheet({
   diag?: string;
   /** A reply to this message is kept that this sheet cannot resume (`replyOpen`): said in its notes. */
   replyAside?: boolean;
+  /** The same editor and dispatch, laid within the conversation. */
+  inline?: boolean;
+  inlineHeading?: ReactNode;
+  doneOnSend?: boolean;
+  run?: { skip: () => void; exit: () => void };
   onClose: () => void;
 }) {
   const t = useTheme();
   const keyboardLift = useKeyboardLift();
   const insets = useSafeAreaInsets();
-  const heightClass = usePosture().heightClass;
+  const { heightClass, panes } = usePosture();
   const windowHeight = useWindowDimensions().height;
   const modalKey = useModalKey();
   /* The composer stands over the reader: nothing under it is read while it is shown (`reader-cover.ts`). */
@@ -1248,7 +1303,30 @@ export function ComposeSheet({
   const room = useSheetRoom(keyboardLift);
   /** The send-later day rows, named by `Intl` in the app's language. */
   const locale = useLocale();
-  const [body, setBody] = useState(draft?.body ?? prefill?.body ?? "");
+  const [discardAsked, setDiscardAsked] = useState(false);
+  const [discardPending, setDiscardPending] = useState(false);
+  const [discardRefused, setDiscardRefused] = useState<DraftDiscardRefusal | null>(null);
+  const discarding = useRef(false);
+  const [replyMenu, setReplyMenu] = useState(false);
+  const [quoteOpen, setQuoteOpen] = useState(false);
+  const [tools, setTools] = useState<"attachment" | "emoji" | "format" | null>(null);
+  const selection = useRef<{ start: number; end: number } | null>(null);
+  const [{ body, runs }, setWords] = useState<{ body: string; runs: Run[] | null }>(() => {
+    const seed = draft?.body ?? prefill?.body ?? "";
+    return { body: seed, runs: draft?.html ? runsOf(seed, draft.html) : null };
+  });
+  const setBody = (next: string | ((body: string) => string)) => setWords((before) => {
+    const body = typeof next === "string" ? next : next(before.body);
+    return { body, runs: before.runs === null ? null : editRuns(before.runs, body) };
+  });
+  const html = runs === null ? undefined : markupOf(runs) ?? null;
+  const rich = html === undefined ? {} : { html };
+  const formatting = (mark: Mark) => {
+    if (phase !== "idle") return;
+    const range = selection.current;
+    if (range === null || range.start === range.end) return;
+    setWords((before) => ({ ...before, runs: toggleMark(before.runs ?? [{ text: before.body, marks: [] }], range.start, range.end, mark) }));
+  };
   const [to, setTo] = useState(draft?.to ?? prefill?.to ?? "");
   /** A parent-less mail's own subject. Reply and forward derive theirs; this one is typed. */
   const [subject, setSubject] = useState(draft?.subject ?? prefill?.subject ?? "");
@@ -1307,10 +1385,18 @@ export function ComposeSheet({
    * it names the mailbox it leaves from rather than inheriting one.
    */
   const fresh = mode === "new";
+  const phoneLetter = t.mail === true && fresh && panes === 1 && heightClass !== "compact";
+  const paperEditor = phoneLetter || inline;
+  const insertEmoji = (emoji: string) => {
+    if (phase !== "idle") return;
+    const range = selection.current;
+    setBody((text) => range ? text.slice(0, range.start) + emoji + text.slice(range.end) : text + emoji);
+    setTools(null);
+  };
   /* What the writing area asks for — a reply's own words, a forward's optional note, or, with
      no parent to answer, a message of its own. */
   const bodyPlaceholder = fresh
-    ? Copy.composeBodyPlaceholder
+    ? (phoneLetter ? Copy.composePaperPlaceholder : Copy.composeBodyPlaceholder)
     : forward
       ? Copy.forwardNotePlaceholder
       : Copy.replyPlaceholder;
@@ -1356,7 +1442,7 @@ export function ComposeSheet({
   const [forked, setForked] = useState(false);
   const rebase = (r: { draftId: string | null; revision?: string; key?: string | null }): void => { base.current = baseAfter(base.current, r); };
   /** What the bound row last held from this sheet — the seed until the first save. */
-  const saved = useRef<string | null>(draft ? JSON.stringify([draft.to, draft.subject, draft.body, draft.cc, draft.bcc]) : null);
+  const saved = useRef<string | null>(draft ? wordsOf(draft) : null);
   /** The last press was refused, and which sentence it earned — said in the sheet, see `send-failed.ts`. */
   const [failNote, setFailNote] = useState<FailedSendCopy | null>(null);
   /* A NEW MAIL'S FROM: the pick, else the draft's own, else the oldest connected mailbox; a draft
@@ -1387,13 +1473,13 @@ export function ComposeSheet({
     return openLetterKeeper({
       door: letters.door, id: held?.id ?? letters.uuid(), newFileId: letters.uuid,
       words: {
-        mode, messageId: m?.id ?? null, mailboxId, to, cc: copies.cc, bcc: copies.bcc, subject, body,
+        mode, messageId: m?.id ?? null, mailboxId, to, cc: copies.cc, bcc: copies.bcc, subject, body, ...rich,
         envelope: w.actions.keepEnvelope(mode, m?.id ?? null),
       },
       draftId: draft?.id ?? null, savedAs: saved.current, revision: draft?.revision ?? null,
     });
   });
-  const letterWords = { mode, messageId: m?.id ?? null, mailboxId, to, cc: copies.cc, bcc: copies.bcc, subject, body };
+  const letterWords = { mode, messageId: m?.id ?? null, mailboxId, to, cc: copies.cc, bcc: copies.bcc, subject, body, ...rich };
   /* THE ORIGINAL'S FILES, LISTED (`compose/forward-files.ts`): held while the sheet stands, removable
      where the server sends only the parts the forward names, and weighed apart from the phone's own. */
   /* The ids kept once one was removed (`Letter.forwardKept`), so a reopened or restored forward keeps its choice;
@@ -1426,7 +1512,7 @@ export function ComposeSheet({
     keeper?.edit({ ...letterWords, envelope: keeper.current().envelope });
     // The words are the change; the keeper reads the rest.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [to, subject, body, copies.cc, copies.bcc, mailboxId]);
+  }, [to, subject, body, copies.cc, copies.bcc, mailboxId, html]);
   const { pictureQuality } = usePrefs();
   /* AN ATTACHED FILE OPENS from its bytes in hand: a picture or a PDF in the reader's own preview, over
      this sheet; anything else in another app, as the reader's tiles do. */
@@ -1507,35 +1593,40 @@ export function ComposeSheet({
   /* A DRAFT OPENED HERE IS WRITTEN AS IT IS EDITED: two seconds after the last keystroke its row
      holds what is on screen, quietly, so leaving the app mid-sentence loses nothing. Only a bound
      sheet saves this way; a fresh one keeps on close. */
-  const onScreen = JSON.stringify([to, subject, body, copies.cc, copies.bcc]);
+  const onScreen = wordsOf(letterWords);
   /* PAST THE DRAFT LIMIT no save can land (the server's 413): said while typing, never autosaved. */
-  const tooLong = draftOverCeiling(body);
+  const tooLong = draftOverCeiling(body, html);
   /* By presence, not identity: the route builds the seed per render, and a new object must not reset the timer. */
   const bound = draft !== undefined;
   /** The snapshot a quiet save is carrying — one in flight per snapshot. */
   const savingFor = useRef<string | null>(null);
+  const savesOutstanding = useRef(new Set<Promise<void>>());
+  const latestDraft = useRef(draftId);
+  latestDraft.current = draftId;
   /** The quiet save of a draft opened here, when one is owed; also run as the app leaves the foreground. */
   const quietSave = useRef<() => void>(() => undefined);
   quietSave.current = () => {
-    if (!bound || draftId === null || phase !== "idle" || saved.current === onScreen || tooLong) return;
+    if (discarding.current || !bound || draftId === null || phase !== "idle" || saved.current === onScreen || tooLong) return;
     if (savingFor.current === onScreen) return;
     const snapshot = onScreen;
     savingFor.current = snapshot;
     let row = draftId;
     /* Saved only once kept: a refused keep is the close's to keep again and to say (`autosaveKeep`).
        A forward draft is saved as a forward of its original, never as a new mail. */
-    void autosaveKeep(saved, onScreen, () => w.actions.draftKeep({
+    const saving = autosaveKeep(saved, onScreen, () => w.actions.draftKeep({
       mode: m !== null ? mode : "new", messageId: m?.id ?? null,
       mailboxId, to: m === null || addressed ? keptRecipients(to) : [], ...(m === null || fresh ? copiesToKeep(copies) : {}),
-      subject, body, files: 0, draftId, quiet: true, ...keptOnRow,
+      subject, body, ...rich, files: 0, draftId, quiet: true, ...keptOnRow,
       revision: baseFor(base.current, draftId), waited: waitedFor(base.current, draftId), forked: () => setForked(true),
-      rebind: setDraftId, row: (r) => { if (r.draftId !== null) row = r.draftId; rebase(r); },
+      rebind: setDraftId, row: (r) => { if (r.draftId !== null) { row = r.draftId; latestDraft.current = row; } rebase(r); },
     })).then(() => { if (saved.current === snapshot) keeper?.saved(row, snapshot, baseFor(base.current, row)); }).catch(() => undefined).finally(() => {
       if (savingFor.current === snapshot) savingFor.current = null;
+      savesOutstanding.current.delete(saving);
     });
+    savesOutstanding.current.add(saving);
   };
   useEffect(() => {
-    if (!bound || draftId === null || phase !== "idle" || saved.current === onScreen || tooLong) return;
+    if (discarding.current || !bound || draftId === null || phase !== "idle" || saved.current === onScreen || tooLong) return;
     const timer = setTimeout(() => {
       quietSave.current();
     }, DRAFT_AUTOSAVE_MS);
@@ -1615,7 +1706,7 @@ export function ComposeSheet({
         setDraftId(null);
         void w.actions.draftKeep({
           mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-          ...(fresh ? copiesToKeep(copies) : {}), subject, body, files: 0, draftId: null, quiet: true, ...keptOnRow,
+          ...(fresh ? copiesToKeep(copies) : {}), subject, body, ...rich, files: 0, draftId: null, quiet: true, ...keptOnRow,
           row: (r) => { if (r.draftId !== null) { setDraftId(r.draftId); rebase(r); } },
         }).then((kept) => { if (kept === "kept") setFailNote("replyChangedElsewhere"); });
       }
@@ -1668,6 +1759,7 @@ export function ComposeSheet({
     setAgainSaid(outcome);
   };
   const press = (act: typeof pressAct, andDone = false) => {
+    if (discarding.current) return;
     /* A FORWARD WHOSE FILES ARE STILL READ, OR TOO LARGE, ANSWERS IN WORDS rather than doing nothing. */
     if (act === "send" && forwardPlan?.refusal) setForwardNote(forwardPlan.refusal);
     else if (act === "send") void send(null, andDone);
@@ -1744,6 +1836,8 @@ export function ComposeSheet({
    * the sheet's caption is said as it goes. Only {@link cancelSend} withdraws.
    */
   const closeComposer = () => {
+    if (discarding.current) return;
+    if (discardAsked) { setDiscardAsked(false); return; }
     // An open suggestion list is the inner state Back steps out of first.
     if (stepBack(suggestionsBack)) return;
     const way = cancelAct({ road: "close", phase, key: queuedKey, alreadySent, cancelOwed: cancelUnreachable });
@@ -1797,7 +1891,7 @@ export function ComposeSheet({
            discard a row that existed before this sheet. */
         const kept = await w.actions.draftKeep({
           mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-          ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, ...(draft !== undefined ? { quiet: true } : {}),
+          ...(fresh ? copiesToKeep(copies) : {}), subject, body, ...rich, files, dropped, draftId, ...(draft !== undefined ? { quiet: true } : {}),
           ...keptOnRow,
           revision: baseFor(base.current, draftId), waited: waitedFor(base.current, draftId),
           rebind: setDraftId, row: (r) => { rebase(r); keeper?.keepAnswered(r); },
@@ -1846,6 +1940,7 @@ export function ComposeSheet({
   };
 
   atUnmount.current = () => {
+    if (discarding.current) return;
     // Nobody is left to ask about files past the phone's limit: the keep goes without them.
     keeper?.dropOverLimit();
     const files = keeper?.current().files.length ?? 0;
@@ -1859,7 +1954,7 @@ export function ComposeSheet({
     /* Answered after the sheet is gone; a keep that never answers is the next launch's to settle. */
     void w.actions.draftKeep({
       mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-      ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, quiet: true, ...keptOnRow,
+      ...(fresh ? copiesToKeep(copies) : {}), subject, body, ...rich, files, dropped, draftId, quiet: true, ...keptOnRow,
       revision: baseFor(base.current, draftId), waited: waitedFor(base.current, draftId),
       rebind: setDraftId, row: (r) => { rebase(r); keeper?.keepAnswered(r); },
     });
@@ -1880,13 +1975,14 @@ export function ComposeSheet({
     const files = toComposeAttachments(attachments);
     const asNew = sendAsNew.current;
     sendAsNew.current = false;
+    const markupArgs: [html?: string | null] = html === undefined ? [] : [html];
     const toRow = async (draftId: string | null) => fresh
-      ? await w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined, baseFor(base.current, draftId), waitedFor(base.current, draftId))
+      ? await w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined, baseFor(base.current, draftId), waitedFor(base.current, draftId), ...markupArgs)
       : forward
         ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId,
-          forwardPlan?.wire !== undefined ? { forwardParts: forwardPlan.wire } : {}, baseFor(base.current, draftId), waitedFor(base.current, draftId))
+          forwardPlan?.wire !== undefined ? { forwardParts: forwardPlan.wire } : {}, baseFor(base.current, draftId), waitedFor(base.current, draftId), ...markupArgs)
         : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,
-          baseFor(base.current, draftId), waitedFor(base.current, draftId));
+          baseFor(base.current, draftId), waitedFor(base.current, draftId), ...markupArgs);
     const press = () => toRow(asNew && draftId !== null && w.actions.draftLeft(draftId) !== null ? null : draftId);
     /* The reader under this sheet shows the sent copy once it is drawn (`sent-reveal.ts`). */
     const answered = !fresh && m ? m.id : null;
@@ -1924,6 +2020,7 @@ export function ComposeSheet({
      toast and the top bar render under this Modal, so a sentence said only there was a press with no
      answer. Pinned up to `pinnedNotesMax`; past it they scroll at the letter's end, scrolled to. */
   const noteItems = [
+    discardRefused ? <Txt key="discard" variant="note" accessibilityRole="alert">{refusalSentence(discardRefused)}</Txt> : null,
     replyAside ? (
       <Txt key="replyAside" variant="caption" tone="ink3">
         {Copy.composeReplyAside}
@@ -2011,6 +2108,15 @@ export function ComposeSheet({
       </Txt>,
     );
   }
+  const mailTool = (label: string, onPress: () => void, icon: IconName) => t.mail ? (
+    <Tap accessibilityRole="button" accessibilityLabel={label} disabled={phase !== "idle"} onPress={onPress}
+      style={{ width: 35, height: 36, alignItems: "center", justifyContent: "center", borderRadius: t.radius.pill,
+        backgroundColor: icon === "clip" ? t.c.tint2 : "transparent" }}>
+      <Icon name={icon} size={16} color={t.c.ink2} />
+    </Tap>
+  ) : (
+    <Button label={label} icon={icon === "clip" ? icon : undefined} variant="quiet" disabled={phase !== "idle"} onPress={onPress} />
+  );
   const notesBlock = noteItems.length === 0 ? null : (
     <View style={{ gap: 10 }} onLayout={(e) => setNotesHeight(Math.round(e.nativeEvent.layout.height))}>
       {noteItems}
@@ -2019,13 +2125,101 @@ export function ComposeSheet({
   /* Every sentence cleared: forget their height, or the next one draws a frame at the letter's end. */
   if (notesMeasured(notesHeight, noteItems.length) !== notesHeight) setNotesHeight(null);
 
+  const discardDraft = async () => {
+    if (phase !== "idle" || discarding.current || keeping.current) return;
+    discarding.current = true;
+    Keyboard.dismiss();
+    setDiscardPending(true);
+    try {
+      await Promise.all(savesOutstanding.current);
+      const id = latestDraft.current;
+      if (id !== null) {
+        const verdict = await w.actions.draftDiscard(id);
+        if (verdict !== "discarded" && verdict !== "queued") {
+          if (verdict === "stillSending" || verdict === "alreadySent" || verdict === "cancelUnknown") setDiscardRefused(verdict);
+          return;
+        }
+      }
+      keeper?.drop();
+      leave();
+    } finally {
+      discarding.current = false;
+      setDiscardPending(false);
+      setDiscardAsked(false);
+    }
+  };
+  const canPickFrom = fresh && fromAddress !== null && (sender?.choices.length ?? 0) > 1;
+  const fromFace = fromAddress === null ? null : canPickFrom ? (
+    <Tap accessibilityRole="button" accessibilityLabel={Copy.composeFromChange(fromAddress)}
+      accessibilityState={{ expanded: fromOpen, disabled: phase !== "idle" }}
+      onPress={() => { if (phase === "idle") setFromOpen(!fromOpen); }}
+      style={{
+        flexDirection: "row", alignItems: "center", alignSelf: "flex-start", maxWidth: "100%", gap: 4,
+        borderRadius: t.radius.pill, paddingVertical: 4,
+        ...(paperEditor ? { backgroundColor: t.c.tint2, paddingHorizontal: 7 } : {}),
+      }}>
+      <Txt variant={paperEditor ? "button" : "caption"} tone={paperEditor ? "ink" : "ink2"} numberOfLines={1}
+        style={{ flexShrink: 1 }}>{paperEditor ? fromAddress : Copy.composeFrom(fromAddress)}</Txt>
+      <View style={{ transform: [{ rotate: fromOpen ? "-90deg" : "90deg" }] }}>
+        <Icon name="chev" size={11} color={t.c.ink3} />
+      </View>
+    </Tap>
+  ) : (
+    <Txt variant={paperEditor ? "button" : "caption"} tone={paperEditor ? "ink" : "ink3"} numberOfLines={1}
+      style={paperEditor ? { alignSelf: "flex-start", backgroundColor: t.c.tint2, borderRadius: t.radius.pill, paddingHorizontal: 7, paddingVertical: 4 } : undefined}>
+      {paperEditor ? fromAddress : Copy.composeFrom(fromAddress)}
+    </Txt>
+  );
+  const closeButton = cancelSendOffered({ phase, key: queuedKey, alreadySent }) ? (
+    <Button label={Copy.cancelSend} variant="quiet" onPress={cancelSend} style={{ marginRight: "auto" }} />
+  ) : held.close === "close" ? (
+    /* Over a held send the close leaves the message in Drafts: Close, not Cancel. */
+    <Button label={Copy.replyUnverifiedClose} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />
+  ) : fresh && paperEditor && phase === "idle" ? (
+    <Button label={Copy.draftsDiscard} icon="trash" variant="quiet" onPress={() => { setDiscardRefused(null); setDiscardAsked(true); }} />
+  ) : (
+    <Button label={Copy.replyCancel} icon={inline ? "x" : undefined} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />
+  );
+  const laterButton = laterOffered ? (
+    <Button
+      label={Copy.sendLater}
+      variant={paperEditor ? "quiet" : "plain"}
+      icon={paperEditor ? "clock" : undefined}
+      disabled={!canSend}
+      onPress={openLater}
+    />
+  ) : null;
+  const doneButton = andDoneOffered && !doneOnSend ? (
+    <Button
+      label={Copy.sendAndDone}
+      icon={paperEditor ? "check" : undefined}
+      variant={paperEditor ? "quiet" : "plain"}
+      disabled={pressAct === "none"}
+      onPress={() => press(pressAct, true)}
+    />
+  ) : null;
+  const sendButton = held.sendAgain !== null ? (
+    <Button
+      label={Copy.draftsSendAgain}
+      variant="solid"
+      disabled={held.sendAgain.locked}
+      onPress={() => { void sendAgain(held.sendAgain!.draftId); }}
+    />
+  ) : (
+    <Button
+      label={phase === "sending" ? Copy.replySending : run ? Copy.replyRunSendNext : doneOnSend ? Copy.sendAndDone : Copy.replySend}
+      accessibilityLabel={run && phase !== "sending" ? Copy.sendAndDone : undefined}
+      icon={paperEditor ? "send" : undefined}
+      variant="solid"
+      disabled={pressAct === "none"}
+      onPress={() => press(pressAct, doneOnSend)}
+    />
+  );
+
   return (
-    <Modal key={modalKey} transparent statusBarTranslucent navigationBarTranslucent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={closeComposer} onShow={focusKeeper.onShow}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={room}
-      >
-        <SheetBackdrop label={Copy.replyCancel} onPress={closeComposer} />
+    <ComposerFrame inline={inline} modalKey={modalKey} room={room} animate={!t.reduceMotion}
+      onRequestClose={closeComposer} onShow={focusKeeper.onShow}>
+        {!phoneLetter && !inline ? <SheetBackdrop label={Copy.replyCancel} onPress={closeComposer} /> : null}
         <View
           style={[
             {
@@ -2038,10 +2232,36 @@ export function ComposeSheet({
               gap: 10,
               flexShrink: 1,
             },
-            panelBounds,
-            t.liftUp("l3"),
+            inline && t.mail ? {
+              backgroundColor: "transparent",
+              paddingHorizontal: 0, paddingTop: 0, paddingBottom: 12,
+              minHeight: Math.max(0, windowHeight - keyboardLift - insets.top - insets.bottom - (run ? 3 : 1) * mailSize.bar - 2 * mailSize.inset),
+            } : inline ? {
+              borderRadius: t.radius.card, borderWidth: 2, borderColor: t.c.ink,
+              paddingHorizontal: 18, paddingBottom: 16,
+            } : panelBounds,
+            phoneLetter ? {
+              flex: 1, backgroundColor: t.c.canvas, borderRadius: 0, paddingHorizontal: mailSize.inset,
+              paddingTop: mailSize.inset, paddingBottom: Math.max(16, insets.bottom),
+            } : inline ? null : t.liftUp("l3"),
           ]}
         >
+          {inline ? inlineHeading : null}
+          {phoneLetter ? (
+            <Tap
+              onPress={closeComposer}
+              accessibilityRole="button"
+              accessibilityLabel={Copy.back}
+              style={{
+                alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 4,
+                minHeight: mailSize.back, paddingHorizontal: 12, backgroundColor: t.c.panel,
+                borderRadius: t.radius.pill, borderWidth: 1, borderColor: t.c.hair,
+              }}
+            >
+              <View style={{ transform: [{ rotate: "180deg" }] }}><Icon name="chev" size={16} color={t.c.ink} /></View>
+              <Txt variant="button">{Copy.back}</Txt>
+            </Tap>
+          ) : null}
           {/* THE LETTER SCROLLS; THE BUTTONS DO NOT. On a cover screen held sideways (403 dp) the
               fields outgrew the window and Send and Cancel stood below it. The sentences answering
               a press stand pinned over the buttons up to a bound and scroll with the letter past it
@@ -2049,7 +2269,10 @@ export function ComposeSheet({
           <ScrollView
             ref={letterScroll}
             style={{ flexGrow: 0, flexShrink: 1 }}
-            contentContainerStyle={{ gap: 10 }}
+            contentContainerStyle={phoneLetter || (inline && t.mail) ? {
+              gap: 12, padding: 18, backgroundColor: t.c.panel,
+              borderRadius: t.radius.card, borderWidth: 2, borderColor: t.c.ink,
+            } : { gap: 10 }}
             bounces={false}
             keyboardShouldPersistTaps="handled"
             nestedScrollEnabled
@@ -2058,9 +2281,12 @@ export function ComposeSheet({
             onScroll={letterMoved}
             scrollEventThrottle={32}
           >
+          <PhoneDrafter body={body} subject={subject} mailboxId={sendFrom} messageId={m?.id ?? null}
+            allowed={paperEditor && !forward && later === null && w.draftReplies} blocked={phase !== "idle" || discardPending} onChange={setBody}>
+            {(draftSwitch, draftTool, draftNotice, draftSelected) => <>
           {/* The head states the audience — the same statement the webapp editor opens with,
               and for reply-all the same envelope the send will carry, every name on it. */}
-          <Txt variant="settingsLabel">
+          {!paperEditor ? <Txt variant="settingsLabel">
             {fresh
               ? Copy.composeNewHead
               : forward
@@ -2068,30 +2294,23 @@ export function ComposeSheet({
                 : mode === "replyAll" && m?.replyAllHead
                   ? Copy.replyToAll(m.replyAllHead.to)
                   : Copy.replyTo(m?.from.name ?? "")}
-          </Txt>
+          </Txt> : null}
           {/* WHICH ADDRESS IT LEAVES FROM — stated only where nothing else says it. A reply
               carries the conversation's own mailbox and the head already names the audience;
               a parent-less mail states its sender rather than letting a person guess. */}
-          {fresh && fromAddress !== null && (sender?.choices.length ?? 0) > 1 ? (
-            /* MORE THAN ONE ADDRESS: the From line opens the list in place, never a Modal over this one. */
-            <Tap
-              accessibilityRole="button"
-              accessibilityState={{ expanded: fromOpen, disabled: phase !== "idle" }}
-              accessibilityLabel={Copy.composeFromChange(fromAddress)}
-              onPress={() => { if (phase === "idle") setFromOpen((o) => !o); }}
-              style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", paddingVertical: 4 }}
-            >
-              <Txt variant="caption" tone="ink2">
-                {Copy.composeFrom(fromAddress)}
-              </Txt>
-              <View style={{ transform: [{ rotate: fromOpen ? "-90deg" : "90deg" }] }}>
-                <Icon name="chev" size={12} color={t.c.ink3} />
-              </View>
-            </Tap>
-          ) : fresh && fromAddress !== null ? (
-            <Txt variant="caption" tone="ink3">
-              {Copy.composeFrom(fromAddress)}
-            </Txt>
+          {paperEditor && (fresh || inline) ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Txt variant="button" tone="ink2" style={{ width: 46 }}>{Copy.composeFromLabel}</Txt>
+              <View style={{ flex: 1, minWidth: 0 }}>{fromFace}</View>
+              <Txt variant="caption" tone="ink3">{draftSelected ? Copy.composeAiDraftLabel : Copy.composeDraftLabel}</Txt>
+            </View>
+          ) : fresh ? fromFace : null}
+          {inline && m ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Txt variant="button" tone="ink2" style={{ width: 46 }}>{Copy.replyRecipientLabel}</Txt>
+              <Txt variant="button" style={{ flex: 1 }}>{mode === "replyAll" && m.replyAllHead ? m.replyAllHead.to : m.from.name}</Txt>
+              <Icon name="person" size={15} color={t.c.ink2} />
+            </View>
           ) : null}
           {fresh && fromOpen && phase === "idle" && sender !== null ? (
             <View accessibilityRole="radiogroup" accessibilityLabel={Copy.composeFromList} style={{ gap: 2 }}>
@@ -2126,20 +2345,25 @@ export function ComposeSheet({
           {addressed ? (
             <RecipientInput
               label={Copy.forwardTo}
+              plain={paperEditor}
+              trailing={paperEditor && copiesOffered({ mode, shown: copiesOn, phase }) ? (
+                <Button label={Copy.composeAddCopies} variant="quiet"
+                  onPress={() => { setCopiesOn(true); setCopiesAsked(true); }} />
+              ) : null}
               ref={toField}
               {...focusKeeper.bind(toField)}
               value={to}
               onChangeText={editWhileIdle(phase, setTo)}
-              editable={phase === "idle"}
+              editable={phase === "idle" && !discardPending}
               book={addressBook}
               back={suggestionsBack}
               /* THE FIELD A NEW MAIL OPENS ON — a composer whose first keystroke lands in
                  the body is a composer that asks for the message before the audience. */
               autoFocus={fresh}
-              placeholder={fresh ? Copy.composeToPlaceholder : Copy.forwardToPlaceholder}
+              placeholder={phoneLetter ? "" : fresh ? Copy.composeToPlaceholder : Copy.forwardToPlaceholder}
             />
           ) : null}
-          {copiesOffered({ mode, shown: copiesOn, phase }) ? (
+          {!paperEditor && copiesOffered({ mode, shown: copiesOn, phase }) ? (
             <Button
               label={Copy.composeAddCopies}
               variant="quiet"
@@ -2147,12 +2371,12 @@ export function ComposeSheet({
               onPress={() => { setCopiesOn(true); setCopiesAsked(true); }}
             />
           ) : null}
-          {copiesOn ? <ComposeCopies value={copies} editable={phase === "idle"} onChange={editWhileIdle(phase, setCopies)} book={addressBook} back={suggestionsBack} ccField={ccField} /> : null}
+          {copiesOn ? <ComposeCopies value={copies} editable={phase === "idle" && !discardPending} onChange={editWhileIdle(phase, setCopies)} book={addressBook} back={suggestionsBack} ccField={ccField} /> : null}
           {fresh ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Txt variant="caption" tone="ink3">
-                {Copy.composeSubject}
-              </Txt>
+              {phoneLetter ? <View style={{ width: 44 }} /> : (
+                <Txt variant="caption" tone="ink3">{Copy.composeSubject}</Txt>
+              )}
               <TextInput
                 ref={subjectField}
                 {...focusKeeper.bind(subjectField)}
@@ -2161,16 +2385,16 @@ export function ComposeSheet({
                 keyboardAppearance={t.scheme}
                 value={subject}
                 onChangeText={editWhileIdle(phase, setSubject)}
-                editable={phase === "idle"}
-                placeholder={Copy.composeSubjectPlaceholder}
+                editable={phase === "idle" && !discardPending}
+                placeholder={phoneLetter ? Copy.composeSubject : Copy.composeSubjectPlaceholder}
                 placeholderTextColor={t.c.ink3}
                 accessibilityLabel={Copy.composeSubject}
                 style={[
-                  t.type.body,
+                  phoneLetter ? t.type.h2 : t.type.body,
                   {
                     flex: 1,
                     color: t.c.ink,
-                    backgroundColor: t.c.tint2,
+                    backgroundColor: phoneLetter ? "transparent" : t.c.tint2,
                     borderRadius: t.radius.pill,
                     paddingHorizontal: 14,
                     paddingVertical: 8,
@@ -2182,6 +2406,8 @@ export function ComposeSheet({
           {/* Frozen the moment Send is pressed: the dispatch captured the fields at the
               press, and an editable field over a sending/queued/unverified state would
               display words the wire will not carry. */}
+          <View style={paperEditor ? { borderWidth: 1, borderColor: t.c.hair, borderRadius: t.radius.row, padding: 5, gap: 4 } : { gap: 10 }}>
+          {inline ? draftSwitch : null}
           <TextInput
             ref={bodyField}
             {...focusKeeper.bind(bodyField)}
@@ -2189,9 +2415,10 @@ export function ComposeSheet({
             disableFullscreenUI
             keyboardAppearance={t.scheme}
             value={body}
+            onSelectionChange={(event) => { selection.current = event.nativeEvent.selection; }}
             onChangeText={editWhileIdle(phase, setBody)}
-            editable={phase === "idle"}
-            placeholder={bodyPlaceholder}
+            editable={phase === "idle" && !discardPending}
+            placeholder={inline && t.mail ? Copy.composeReplyPaperHint : bodyPlaceholder}
             placeholderTextColor={t.c.ink3}
             multiline
             /* THE FIRST KEYSTROKE GOES WHERE THE MESSAGE IS MISSING A FACT. A reply and a
@@ -2204,8 +2431,10 @@ export function ComposeSheet({
               t.type.body,
               {
                 color: t.c.ink,
-                backgroundColor: t.c.tint2,
-                borderRadius: t.radius.card,
+                backgroundColor: t.mail ? t.c.panel : t.c.tint2,
+                borderColor: t.mail ? t.c.hair : undefined,
+                borderWidth: t.mail && !paperEditor ? 1 : undefined,
+                borderRadius: t.mail ? t.radius.row : t.radius.card,
                 paddingHorizontal: 14,
                 paddingVertical: 10,
                 /* THE PANEL MUST NOT GROW PAST THE VIEWPORT AND BURY SEND — the exact defect
@@ -2216,6 +2445,8 @@ export function ComposeSheet({
                 minHeight: composeBodyMin(later !== null, heightClass),
                 textAlignVertical: "top",
               },
+              phoneLetter && later === null ? { minHeight: 116 } : null,
+              paperEditor && Platform.OS === "web" ? ({ outlineStyle: "none" } as object) : null,
             ]}
           />
           {/* A mail to support: what its diagnostics block holds, and Remove / Add back in one press. */}
@@ -2242,6 +2473,16 @@ export function ComposeSheet({
               </View>
             );
           })() : null}
+          {inline && m?.body && !m.protected && later === null ? (
+            <>
+              <Tap accessibilityRole="button" accessibilityLabel={quoteOpen ? Copy.bodyHistoryHide : Copy.bodyHistoryShow}
+                accessibilityState={{ expanded: quoteOpen }} onPress={() => setQuoteOpen(!quoteOpen)}
+                style={{ alignSelf: "flex-start", paddingHorizontal: 10, minHeight: 36, justifyContent: "center" }}>
+                <Txt variant="button" tone="ink2">…</Txt>
+              </Tap>
+              {quoteOpen ? <Txt variant="note" tone="ink2" numberOfLines={6}>{m.body.slice(0, 1200)}</Txt> : null}
+            </>
+          ) : null}
           {/* THE SIGNATURE BLOCK — a DISTINCT, REMOVABLE element below the writing area
               (`SignatureBlock.tsx` is the webapp reference; `signature.ts` owns the model).
               Nothing renders when there is nothing to show — struck, edited to blank, the
@@ -2252,7 +2493,7 @@ export function ComposeSheet({
             <View
               accessibilityLabel={Copy.sigLabel}
               style={{
-                backgroundColor: t.c.tint2,
+                backgroundColor: paperEditor ? t.c.panel : t.c.tint2,
                 borderRadius: t.radius.card,
                 paddingHorizontal: 14,
                 paddingTop: 6,
@@ -2260,9 +2501,7 @@ export function ComposeSheet({
               }}
             >
               <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Txt variant="caption" tone="ink3">
-                  {Copy.sigLabel}
-                </Txt>
+                {paperEditor ? null : <Txt variant="caption" tone="ink3">{Copy.sigLabel}</Txt>}
                 <View style={{ flex: 1 }} />
                 <Tap
                   onPress={phase === "idle" ? () => setSig({ kind: "removed" }) : undefined}
@@ -2283,13 +2522,48 @@ export function ComposeSheet({
                 keyboardAppearance={t.scheme}
                 value={sigText}
                 onChangeText={editWhileIdle(phase, (text: string) => setSig({ kind: "edited", text }))}
-                editable={phase === "idle"}
+                editable={phase === "idle" && !discardPending}
                 multiline
                 accessibilityLabel={Copy.sigAria}
                 style={[t.type.body, { color: t.c.ink2, paddingVertical: 0, maxHeight: 144 }]}
               />
             </View>
           ) : null}
+          {paperEditor && later === null ? (
+            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+              {mailTool(Copy.composeFileTools, () => setTools("attachment"), "clip")}
+              {mailTool(Copy.composeFormat, () => setTools("format"), "format")}
+              {mailTool(Copy.composeEmoji, () => setTools("emoji"), "smile")}
+              {draftTool ? <View style={{ marginLeft: "auto" }}>{draftTool}</View> : null}
+            </View>
+          ) : null}
+          {draftNotice}
+          {!inline ? draftSwitch : null}
+          {tools !== null && phase === "idle" ? (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+              {tools === "attachment" ? <>
+                <Button label={Copy.attachFile} icon="clip" onPress={() => { setTools(null); void pick("files"); }} />
+                <Button label={Copy.attachPhoto} onPress={() => { setTools(null); void pick("photos"); }} />
+              </> : tools === "format" ? <>
+                <Button label={Copy.composeBold} onPress={() => formatting("strong")} />
+                <Button label={Copy.composeItalic} onPress={() => formatting("em")} />
+                <Button label={Copy.composeUnderline} onPress={() => formatting("u")} />
+                <Txt variant="caption" tone="ink2">{Copy.composeFormatSelect}</Txt>
+                {html ? <Txt variant="body" style={{ width: "100%" }}>{runs?.map((run, index) => (
+                  <Txt key={index} variant={run.marks.includes("strong") ? "rowSubject" : "body"} style={{
+                    fontStyle: run.marks.includes("em") ? "italic" : undefined,
+                    textDecorationLine: run.marks.includes("u") ? "underline" : undefined,
+                  }}>{run.text}</Txt>
+                ))}</Txt> : null}
+              </> : COMPOSE_EMOJI.map((emoji) => (
+                <Button key={emoji} label={emoji} onPress={() => insertEmoji(emoji)} />
+              ))}
+              <Button label={Copy.moveCancel} variant="quiet" onPress={() => setTools(null)} />
+            </View>
+          ) : null}
+          </View>
+          </>}
+          </PhoneDrafter>
           {/* ── THE ATTACHMENTS — each row a file with its remove; the two pickers and the cap
               sentence below, stated from the same value the admit rule refuses against. Yields
               to the Send-later picker exactly as the signature block does, and freezes with the
@@ -2388,7 +2662,7 @@ export function ComposeSheet({
                 </Fragment>
               ))}
               {previewed !== null ? <AttachmentPreview file={previewed} onClose={() => setPreviewed(null)} /> : null}
-              <View
+              {!paperEditor ? <View
                 style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: ATTACH_ROW_GAP, rowGap: 4 }}
                 onLayout={(e) => measureAttach("row", e.nativeEvent.layout.width)}
               >
@@ -2429,7 +2703,7 @@ export function ComposeSheet({
                     {sayRefusal(forwardPlan.line)}
                   </Txt>
                 )}
-              </View>
+              </View> : null}
               {attachNotes.map((note) => (
                 <Txt key={note.kind} variant="caption" tone="ink2" accessibilityRole="alert">
                   {note.kind === "overCap"
@@ -2567,7 +2841,7 @@ export function ComposeSheet({
           {pinNotes ? null : notesBlock}
           </ScrollView>
           {/* The scroller's bottom edge, drawn: a cut letter reads as an edge, not a sliced field. */}
-          <View style={{ height: StyleSheet.hairlineWidth * 2, marginTop: -10, backgroundColor: t.c.hairSoft }}>
+          <View style={{ height: StyleSheet.hairlineWidth * 2, marginTop: -10, backgroundColor: t.c.hairSoft, opacity: phoneLetter ? 0 : 1 }}>
             {/* More letter below the edge: the clamp fade over it, so the line under it reads as cut. */}
             {runsOn ? (
               <View pointerEvents="none" style={{ position: "absolute", left: 0, right: 0, bottom: StyleSheet.hairlineWidth * 2, height: 0 }}>
@@ -2578,66 +2852,51 @@ export function ComposeSheet({
           {pinNotes ? notesBlock : null}
           {/* The footer WRAPS on a narrow sheet: Cancel keeps the left edge on its own line and the
               send verbs stay right-aligned under it — nothing starts off-screen (the attach row's grammar). */}
+          <View style={paperEditor ? {
+            alignSelf: "center", marginTop: "auto", borderRadius: t.radius.pill,
+            padding: 6, backgroundColor: t.c.panel, ...t.lift("l2"),
+          } : undefined}>
           <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", columnGap: 8, rowGap: 8 }}>
-            {cancelSendOffered({ phase, key: queuedKey, alreadySent }) ? (
-              <Button label={Copy.cancelSend} variant="quiet" onPress={cancelSend} style={{ marginRight: "auto" }} />
-            ) : held.close === "close" ? (
-              /* Over a held send the close leaves the message in Drafts: Close, not Cancel. */
-              <Button label={Copy.replyUnverifiedClose} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />
-            ) : (
-              <Button label={Copy.replyCancel} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />
-            )}
-            {/* SEND LATER stands beside Send because it is the same act on a different clock,
-                under the SAME lock: a message that may not be sent now may not be scheduled
-                either, and one predicate owns both buttons. A forward is never offered it —
-                a draft row cannot hold the forward reference (§14) — and the sentence saying
-                so is the button's accessibility hint rather than a control that fails after
-                the pick. */}
-            {laterOffered ? (
-              <Button
-                label={Copy.sendLater}
-                variant="plain"
-                disabled={!canSend}
-                onPress={openLater}
-              />
-            ) : null}
-            {/* SEND + DONE — the same send, and the message being answered filed with it. Beside
-                Send under the SAME lock, like Send later: a message that may not be sent may not
-                be sent and filed either, and one predicate owns all three buttons. Offered only
-                where the ENGINE says the second action would finish something
-                (`sendAndDoneOffered`) — the webapp composer reads the same rule, and neither
-                surface judges it for itself. It carries the same disabled/handler pair as Send:
-                an undefined handler takes the button role off the control. */}
-            {andDoneOffered ? (
-              <Button
-                label={Copy.sendAndDone}
-                variant="plain"
-                disabled={pressAct === "none"}
-                onPress={() => press(pressAct, true)}
-              />
-            ) : null}
-            {/* Send keeps its FACE and dims when it cannot be taken — `Button`'s own rule.
-                Swapping the variant made the unavailable state look like a different,
-                perfectly pressable verb, and dropping the handler took the button role off
-                it entirely (measured in the accessibility tree on the Duo). */}
-            {/* Over a held send whose row is known, Send again stands where Send stood. */}
-            {held.sendAgain !== null ? (
-              <Button
-                label={Copy.draftsSendAgain}
-                variant="solid"
-                disabled={held.sendAgain.locked}
-                onPress={() => { void sendAgain(held.sendAgain!.draftId); }}
-              />
-            ) : (
-              <Button
-                label={phase === "sending" ? Copy.replySending : Copy.replySend}
-                variant="solid"
-                disabled={pressAct === "none"}
-                onPress={() => press(pressAct)}
-              />
-            )}
+            {discardAsked ? <>
+              <Txt variant="caption" tone="ink2" style={{ alignSelf: "center" }}>{Copy.draftsDiscardWhat}</Txt>
+              <Button label={Copy.draftsDiscardCancel} variant="quiet" disabled={discardPending} onPress={() => setDiscardAsked(false)} />
+              <Button label={Copy.draftsDiscardConfirm} variant="solid" disabled={discardPending} onPress={() => { void discardDraft(); }} />
+            </> : run ? <>{sendButton}
+              <Button label={Copy.replyRunSkip} icon="chev" variant="quiet" onPress={run.skip} />
+              <Button label={Copy.replyRunExit} icon="x" variant="quiet" onPress={run.exit} />
+            </> : paperEditor ? <>{sendButton}{doneButton}{inline ? null : laterButton}{closeButton}
+              {inline && laterOffered ? (
+                <Tap accessibilityRole="button" accessibilityLabel={Copy.actionMore} onPress={() => setReplyMenu(!replyMenu)}
+                  accessibilityState={{ expanded: replyMenu }} style={{ minWidth: 36, justifyContent: "center", alignItems: "center" }}>
+                  <Txt variant="button">⋯</Txt>
+                </Tap>
+              ) : null}
+            </> : <>{closeButton}{laterButton}{doneButton}{sendButton}</>}
+          </View>
+          {replyMenu && inline && laterOffered ? (
+            <Button label={Copy.sendLater} variant="quiet" disabled={!canSend} onPress={() => { setReplyMenu(false); openLater(); }} />
+          ) : null}
           </View>
         </View>
+    </ComposerFrame>
+  );
+}
+
+function ComposerFrame({ inline, modalKey, room, animate, onRequestClose, onShow, children }: {
+  inline: boolean;
+  modalKey: string;
+  room: ViewStyle;
+  animate: boolean;
+  onRequestClose: () => void;
+  onShow: () => void;
+  children: ReactNode;
+}) {
+  if (inline) return <>{children}</>;
+  return (
+    <Modal key={modalKey} transparent statusBarTranslucent navigationBarTranslucent
+      animationType={animate ? "slide" : "none"} visible onRequestClose={onRequestClose} onShow={onShow}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={room}>
+        {children}
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -2707,10 +2966,10 @@ function BarToggle({
           paddingHorizontal: PILL.padH,
           paddingVertical: 8,
           borderRadius: t.radius.pill,
-          backgroundColor: on ? t.c.accentSoft : t.c.panel,
+          backgroundColor: on ? t.c.accentSoft : t.mail ? (icon === "hourglass" ? t.c.tint2 : "transparent") : t.c.panel,
           opacity: pressed ? 0.86 : 1,
         },
-        t.lift("l0"),
+        t.mail ? null : t.lift("l0"),
       ]}
     >
       <Icon name={icon} size={PILL.icon} color={on ? t.c.accentInk : t.c.ink} />

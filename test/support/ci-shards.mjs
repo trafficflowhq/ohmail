@@ -150,7 +150,7 @@ export function gatedFiles(report, root = ROOT) {
 }
 
 /* ── THE SQLITE RUN'S SHARDS ─────────────────────────────────────────────────────────────────────
- * The second store's run (`vitest.sqlite.config.ts`) is one serial job of its own, and it outgrew its
+ * The second store's run (`test/vitest.sqlite.config.ts`) is one serial job of its own, and it outgrew its
  * 20-minute bound: measured at 2811 s of serial file time over 202 files on the maintainers' runners,
  * 524 s of it one file (apps/sidecar/test/phone-claim-own.imap.test.ts, whose renew windows are real
  * time by design) and 467 s another (phone-gap-after-stop.imap.test.ts). Five shards, packed the way

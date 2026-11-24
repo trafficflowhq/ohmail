@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import net from "node:net";
 import { eq } from "drizzle-orm";
@@ -154,7 +155,7 @@ async function credentials(
   for (const [transport, meta] of rows) {
     const enc = await w.deps.keyProvider.encrypt(`${transport}-pass`);
     await w.db.insert(mailboxCredentials).values({
-      mailboxId: w.mailboxId, transport, secretEnc: enc.ciphertext, keyVersion: enc.keyVersion, meta,
+      mailboxId: w.mailboxId, accountId: accountOfMailbox(w.mailboxId), transport, secretEnc: enc.ciphertext, keyVersion: enc.keyVersion, meta,
     });
   }
 }

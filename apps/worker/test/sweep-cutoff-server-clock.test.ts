@@ -3,7 +3,7 @@ import {
   formatClaim, makeLeaseIo, makeRequestOrganizerIo, META_ENUM_RECORDS_MAX, peekMemo, writeMemo,
 } from "@trafficflow/core/adapters/organizer-lease";
 import { memoryImapServer, type MemoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
-import { shrinkMeta } from "../src/request-drain.js";
+import { shrinkMeta } from "@ohmail/organizer/request-drain";
 
 /**
  * THE SWEEP'S CUTOFF IS THE SERVER'S CLOCK (SWEEP-CUTOFF-READS-THE-HOST-CLOCK): the folder's newest

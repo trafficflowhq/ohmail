@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -32,7 +33,7 @@ async function seed() {
   }).returning();
   let tick = 0;
   const ctx: ServiceContext = {
-    db: db as never, accountId, userId: null, now: () => new Date(T + ++tick), requestId: `cs-${randomUUID().slice(0, 8)}`,
+    db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(T + ++tick), requestId: `cs-${randomUUID().slice(0, 8)}`,
   };
   let n = 0;
   const changed = (entityType: "message" | "rule", entityId: string, op: "create" | "move" | "update") =>
@@ -44,9 +45,9 @@ async function seed() {
       snippet: "", fromAddress: from, date: at(-600), unread: true, createdAt: at(-600),
       nativeLocator: { folder, ref: `1:${i}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
       reconcileStatus: "reconciled", conflict: false, updatedAt: at(-100),
     });
     await changed("message", m!.id, "create");

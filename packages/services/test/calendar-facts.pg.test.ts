@@ -44,7 +44,7 @@ describe.skipIf(!PG_UP)("the calendar facts, on the store production runs", () =
     for (const shape of SHAPES) {
       const id = randomUUID();
       await db.insert(messages).values({ id, accountId, mailboxId, bodyHash: "h", dedupKey: id, subject: "", fromAddress: "me@x.test", date: AT });
-      await db.insert(messageBodies).values({ messageId: id, text: "", headers: shape.headers });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: "", headers: shape.headers });
       for (const contentType of shape.parts) await db.insert(attachments).values({ accountId, messageId: id, contentType, sizeBytes: 1 });
       const d = dialect(db);
       const rows = await d.exec(db, sql`

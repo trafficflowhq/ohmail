@@ -37,7 +37,7 @@ import { readMailboxFactsVia } from "../src/mailbox-facts-wire.js";
 /** Top-level property names of `MailboxFacts`, read from the declaration itself. */
 function mailboxFactsKeys(): string[] {
   const src = readFileSync(
-    new URL("../../webapp/app/shell/mail-state.ts", import.meta.url), "utf8",
+    new URL("../../../packages/app-logic/src/mail-state/mail-state.ts", import.meta.url), "utf8",
   );
   const start = src.indexOf("export interface MailboxFacts {");
   expect(start, "MailboxFacts must still be declared in mail-state.ts").toBeGreaterThan(-1);

@@ -2,13 +2,13 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vite
 import { randomUUID } from "node:crypto";
 import net from "node:net";
 import { eq, sql } from "drizzle-orm";
-import { accountSettings, mailboxes, mailboxCredentials, type Tx } from "@trafficflow/db";
+import { accountSettings, mailboxes, mailboxCredentials, type Tx, accountPass, readPassProgress } from "@trafficflow/db";
 import { makeDb, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, type Logger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * AN OUTAGE MET BY THE LIST-ADDRESS BACKFILL IS THE SHARD'S. Its tail stage swallowed every throw as
@@ -20,8 +20,8 @@ import { FakeAdapterFleet } from "./_fakeadapter.js";
 
 const fault = vi.hoisted(() => ({ db: null as unknown, err: null as unknown, calls: 0 }));
 
-vi.mock("../src/list-address-backfill.js", async (importOriginal) => {
-  const real = await importOriginal<typeof import("../src/list-address-backfill.js")>();
+vi.mock("@ohmail/organizer/list-address-backfill", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@ohmail/organizer/list-address-backfill")>();
   return {
     ...real,
     listAddressBackfillPass: async (db: Tx, deps: Parameters<typeof real.listAddressBackfillPass>[1]) => {
@@ -46,7 +46,7 @@ async function seedMailbox(db: Db): Promise<{ accountId: string; mailboxId: stri
     .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };
@@ -108,9 +108,7 @@ describe("the list-address backfill stage meets a database outage", () => {
   }, ISOLATED_DB_RESET_BUDGET_MS);
 
   async function stamped(db: Db, accountId: string): Promise<boolean> {
-    const [r] = await db.select({ at: accountSettings.listAddressesScannedAt }).from(accountSettings)
-      .where(eq(accountSettings.accountId, accountId));
-    return r?.at != null;
+    return (await readPassProgress(db, accountPass("list_address_backfill", accountId))).doneAt != null;
   }
 
   it("announces the outage once, quarantines nothing, and the next tail stamps the account", async () => {

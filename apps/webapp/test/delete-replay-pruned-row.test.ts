@@ -1,16 +1,16 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTranslator } from "next-intl";
 import {
   HttpAdapter,
   MemoryMirrorStore,
   OhmailEngine,
-  type EngineMessage,
   type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
-import { armDeleteIntent, takeDeleteIntents } from "../app/shell/delete-intents";
-import { replayDeleteIntents, type ReplayEnv } from "../app/shell/delete-undo";
+import { armDeleteIntent, takeDeleteIntents } from "@ohmail/app-logic/press/delete-intents";
+import { replayDeleteIntents, type ReplayEnv } from "@ohmail/app-logic/press/delete-undo";
 
 /**
  * ═══ A ROW THE WINDOW EVICTED IS NOT A ROW THAT WAS DELETED ═════════════════════════════════
@@ -181,15 +181,15 @@ describe("a replayed delete asks the mailbox about a row the window evicted", ()
     ).toBeUndefined();
     expect(store.isTombstoned("message", "m1"), "a prune is not a deletion").toBe(false);
 
-    armDeleteIntent({ id: "press-1", messageIds: ["m1"], at: Date.now(), kind: "delete" });
+    armDeleteIntent({ id: "press-1", messageIds: ["m1"], at: Date.now(), kind: "delete" }, null);
     const said: string[] = [];
-    replayDeleteIntents(dispatchOver(engine), Date.now(), undefined, envOver(engine, said));
+    replayDeleteIntents(dispatchOver(engine), Date.now(), null, undefined, envOver(engine, said));
     await settle();
 
     expect(deleted, "THE MASTER WAS ASKED — the mailbox decides, never the window").toEqual(["m1"]);
     expect(keys[0], "under this press's own key, so a replay is not a second press")
       .toBe("delete-replay:press-1:m1");
-    expect(takeDeleteIntents(Date.now()), "and only then was the record cleared").toEqual([]);
+    expect(takeDeleteIntents(Date.now(), null), "and only then was the record cleared").toEqual([]);
     expect(said, "nothing to explain: it finished").toEqual([]);
   });
 
@@ -201,13 +201,13 @@ describe("a replayed delete asks the mailbox about a row the window evicted", ()
     await store.applyChanges([deleteChange("m1", 7)]);
     expect(store.isTombstoned("message", "m1"), "memory put that row down").toBe(true);
 
-    armDeleteIntent({ id: "press-2", messageIds: ["m1"], at: Date.now(), kind: "delete" });
+    armDeleteIntent({ id: "press-2", messageIds: ["m1"], at: Date.now(), kind: "delete" }, null);
     const said: string[] = [];
-    replayDeleteIntents(dispatchOver(engine), Date.now(), undefined, envOver(engine, said));
+    replayDeleteIntents(dispatchOver(engine), Date.now(), null, undefined, envOver(engine, said));
     await settle();
 
     expect(deleted, "nothing on the wire: this device already knows").toEqual([]);
-    expect(takeDeleteIntents(Date.now()), "and the record is settled").toEqual([]);
+    expect(takeDeleteIntents(Date.now(), null), "and the record is settled").toEqual([]);
     expect(said).toEqual([]);
   });
 
@@ -219,13 +219,13 @@ describe("a replayed delete asks the mailbox about a row the window evicted", ()
     await engine.hydrate();
     await store.prune([{ type: "message", id: "m1" }]);
 
-    armDeleteIntent({ id: "press-3", messageIds: ["m1"], at: Date.now(), kind: "delete" });
+    armDeleteIntent({ id: "press-3", messageIds: ["m1"], at: Date.now(), kind: "delete" }, null);
     const said: string[] = [];
-    replayDeleteIntents(dispatchOver(engine), Date.now(), undefined, envOver(engine, said));
+    replayDeleteIntents(dispatchOver(engine), Date.now(), null, undefined, envOver(engine, said));
     await settle();
 
     expect(deleted, "it asked").toEqual(["m1"]);
-    expect(takeDeleteIntents(Date.now()), "and the mailbox's answer settled it").toEqual([]);
+    expect(takeDeleteIntents(Date.now(), null), "and the mailbox's answer settled it").toEqual([]);
     expect(said, "a delete that had already happened owes no sentence").toEqual([]);
 
     /* THE DOOR'S OWN ANSWER, and it is asserted because the journal alone cannot see it: the
@@ -245,13 +245,13 @@ describe("a replayed delete asks the mailbox about a row the window evicted", ()
     await engine.hydrate();
     await store.prune([{ type: "message", id: "m1" }]);
 
-    armDeleteIntent({ id: "press-4", messageIds: ["m1"], at: Date.now(), kind: "delete" });
+    armDeleteIntent({ id: "press-4", messageIds: ["m1"], at: Date.now(), kind: "delete" }, null);
     const said: string[] = [];
-    replayDeleteIntents(dispatchOver(engine), Date.now(), undefined, envOver(engine, said));
+    replayDeleteIntents(dispatchOver(engine), Date.now(), null, undefined, envOver(engine, said));
     await settle();
 
     expect(deleted).toEqual(["m1"]);
-    expect(takeDeleteIntents(Date.now()), "STILL WRITTEN DOWN").toHaveLength(1);
+    expect(takeDeleteIntents(Date.now(), null), "STILL WRITTEN DOWN").toHaveLength(1);
     expect(said, "and said out loud").toEqual([t("ohbox.deleteReplayFailed", { count: 1 })]);
   });
 

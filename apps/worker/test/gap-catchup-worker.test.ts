@@ -12,7 +12,7 @@ import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-prof
 import { carryDialect } from "@trafficflow/db/dialect";
 import { startWorker } from "../src/index.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * LETTERS FROM A GAP, ON THE HOSTED WORKER (review HIGH-1). The reader's peek opens
@@ -44,7 +44,7 @@ async function seedConsentedMailbox(db: Db): Promise<{ accountId: string; mailbo
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };

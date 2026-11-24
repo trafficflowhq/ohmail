@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, ne, sql, type SQL } from "drizzle-orm";
 import {
-  accountSettings, approvals, auditAction, auditLog, cutlineInstant, drafts, folderState, mailboxes,
+  accountOfMessage, accountSettings, approvals, auditAction, auditLog, cutlineInstant, drafts, folderState, mailboxes,
   messageBodies, messageStates, messageTags, messages, readOwnAddresses, recordChanges,
   weAnsweredThisSenderWhere, type LedgerTx, type Tx,
 } from "@trafficflow/db";
@@ -17,7 +17,8 @@ import { LEGACY_NEWS_FOLDER, NEWS_FOLDER, type Destination, type NormalizedMessa
 /* OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — the set named ONCE, for its doors. The
    Screener's offer ("Screen N") reads and presses it account-wide; the organize decision reads it
    for one mailbox inside the window before the press and the organizer moves exactly that set after
-   it, in slices; asked of News or Receipts with no window, it is the note on those piles. Membership
+   it, in slices. Asked of News or Receipts inside the account's screening window, it is the note
+   on those piles. Membership
    is one rule for all ({@link gateHoldsSender}): the arrival gate's own
    `evaluateRules` answer, `screenerAdmits` on the server's receive clock (`messages.arrived_at`),
    with a letter that has no recorded arrival outside the window, and the gate's reply arm. A bulk
@@ -95,15 +96,14 @@ export function unscreenedSourceFolder(scope: UnscreenedScope): Destination {
 }
 
 /**
- * Which set: the account-wide offer, or one mailbox (the organize decision); both inside the
- * account's window. `storedBy` is the sweep's start: it moves only what the store held then.
+ * Which set inside the account's window: the account-wide offer, one mailbox (the organize
+ * decision), or News or Receipts account-wide. `storedBy` is the sweep's start: it moves only what the store held then.
  * `after` is the last letter a previous slice read; a letter gone since restarts from the top.
- * `pile`: News or Receipts account-wide, with no window — an old letter there is offered too.
  */
 export type UnscreenedScope =
   | { kind: "offer"; cutoff: Date | undefined; from?: UnscreenedCursor | null }
   | { kind: "agree"; mailboxId: string; cutoff: Date | undefined; storedBy?: Date; after?: string | null }
-  | { kind: "pile"; pile: UnscreenedPile; from?: UnscreenedCursor | null };
+  | { kind: "pile"; pile: UnscreenedPile; cutoff: Date | undefined; from?: UnscreenedCursor | null };
 
 /**
  * WHERE A SENDER WALK STANDS: every letter up to this one, by sender address and then id, is read.
@@ -130,9 +130,6 @@ export function unscreenedCursorOf(text: string): UnscreenedCursor | null {
   if (typeof sender !== "string" || typeof id !== "string" || !CURSOR_ID.test(id)) return null;
   return { sender, id };
 }
-
-/** The scope's window; a pile has none. */
-const cutoffOf = (scope: UnscreenedScope): Date | undefined => (scope.kind === "pile" ? undefined : scope.cutoff);
 
 /** The gate's knowledge, read by the caller inside the transaction the walk runs in. */
 export interface UnscreenedKnowledge extends Pick<RepoPort, "isCorrespondent"> {
@@ -194,13 +191,12 @@ function asRuleInput(row: UnscreenedRow): NormalizedMessage {
  * identity fact must be the Screener; the letter needs a recorded arrival inside the window
  * (`screenerAdmits` admits a missing one for a new delivery, never for stored history); and the
  * gate's reply arm ({@link correspondentAtGate}) must not admit it as an answer to the person.
- * `window: false` (a pile's note) asks only the gate's answer and the reply arm.
  */
 export async function gateHoldsSender(
   row: UnscreenedRow,
-  { rules, known, own, cutoff, ask, accountId, window = true }: {
+  { rules, known, own, cutoff, ask, accountId }: {
     rules: readonly Rule[]; known: KnownSenders; own: ReadonlySet<string>; cutoff: Date | undefined;
-    ask: Pick<RepoPort, "isCorrespondent">; accountId: string; window?: boolean;
+    ask: Pick<RepoPort, "isCorrespondent">; accountId: string;
   },
 ): Promise<boolean> {
   const msg = asRuleInput(row);
@@ -209,12 +205,9 @@ export async function gateHoldsSender(
     auth: "unavailable", ohboxPolicy: DEFAULT_OHBOX_POLICY, identity: null,
   });
   if (decision.source !== "screener") return false;
-  if (window) {
-    if (row.arrivedAt === null) return false;
-    if (!screenerAdmits({ arrivedAt: row.arrivedAt, cutoff, source: decision.source, authFailed: false })) {
-      return false;
-    }
-  }
+  if (row.arrivedAt === null || !screenerAdmits({
+    arrivedAt: row.arrivedAt, cutoff, source: decision.source, authFailed: false,
+  })) return false;
   return (await correspondentAtGate(ask, accountId, msg, decision, "unavailable", known)) === null;
 }
 
@@ -272,8 +265,7 @@ export async function unscreenedWalk(
       last = row.messageId;
       stood = at;
       const holds = await gateHoldsSender(row, {
-        rules, known, own: ownSet, cutoff: cutoffOf(opts.scope), ask: knowledge, accountId,
-        window: opts.scope.kind !== "pile",
+        rules, known, own: ownSet, cutoff: opts.scope.cutoff, ask: knowledge, accountId,
       });
       await checked();
       if (!holds) continue;
@@ -381,7 +373,7 @@ interface PageRow { letter: UnscreenedRow; at: UnscreenedCursor }
  * start — with the arrival window as a prefilter {@link gateHoldsSender} re-asks. A pile's
  * candidates are desired in that pile on a mailbox this install organizes, placed by ohmail (never
  * `'external'`: a hand filing, or a letter an open import question kept for the travelling
- * document), the offer's exclusions but the window's. `end` is where the next page goes on, null
+ * document), with the same window and exclusions as the offer. `end` is where the next page goes on, null
  * when this one was the last.
  *
  * WHO THE PERSON ANSWERED IS ASKED OF THE PAGE, NOT INSIDE IT. Inside, the planner knows the
@@ -419,13 +411,12 @@ async function selectCandidates(
       select 1 from ${messageTags} mt where mt.message_id = ${messages.id}
     )`,
   ];
-  if (pile === null) {
-    filters.push(isNotNull(messages.arrivedAt));
-  } else {
+  filters.push(isNotNull(messages.arrivedAt));
+  if (pile !== null) {
     // Only ohmail's own placements: an open import question keeps the travelling document's letters 'external'.
     filters.push(ne(folderState.lastSetBy, "external"));
   }
-  const cutoff = cutoffOf(opts.scope);
+  const cutoff = opts.scope.cutoff;
   if (cutoff !== undefined) {
     // The arrival prefilter only bounds what the walk reads, a day wider: the gate decides.
     filters.push(gte(messages.arrivedAt, new Date(cutoff.getTime() - PREFILTER_SLACK_MS)));
@@ -565,7 +556,7 @@ export async function writeScreenerIntents(
      and held the phone store's only transaction slot for minutes on a slow device. */
   for (let i = 0; i < rows.length; i += INTENT_SLICE) {
     await t.insert(folderState).values(rows.slice(i, i + INTENT_SLICE).map((row) => ({
-      messageId: row.messageId, desiredFolder: SCREENER, observedFolder: row.observedFolder,
+      messageId: row.messageId, accountId: accountOfMessage(row.messageId), desiredFolder: SCREENER, observedFolder: row.observedFolder,
       lastSetBy: "us" as const, reconcileStatus: SCREENER === row.observedFolder ? "reconciled" as const : "pending" as const,
       conflict: false,
     }))).onConflictDoUpdate({

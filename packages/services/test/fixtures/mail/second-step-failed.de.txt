@@ -1,0 +1,18 @@
+Subject: Dein ohmail-Passwort wurde benutzt, und der zweite Schritt schlug fehl
+
+ohmail.
+
+Dein Passwort wurde benutzt, und der zweite Schritt schlug fehl.
+
+Jemand hat sich mit deinem Passwort bei deinem ohmail-Konto angemeldet und ist dann mehrmals am zweiten Schritt gescheitert.
+
+Warst du das, ist nichts zu tun.
+
+Warst du es nicht, kennt jemand dein Passwort, und dein zweiter Faktor hat ihn aufgehalten. Öffne ohmail selbst und prüfe Einstellungen › Geräte (https://ohmail.app/settings/devices). Schreib dann an support@ohmail.app, und wir helfen dir, das Konto zu sichern.
+
+Zeit: 26. September 2026, 12:00 UTC
+
+Wir fragen dich nie per Mail nach einem Code, einem Passwort oder einem Wiederherstellungscode.
+
+--
+TrafficFlow GmbH, Zürich, Schweiz

@@ -6,7 +6,7 @@ import type { SQL } from "drizzle-orm";
 import { OUTSTANDING_FILING_WHERE, ourOutstandingFiling } from "../src/folder-state-pending.js";
 import {
   FOLDER_STATE_OUTSTANDING_COLUMN_DDL, FOLDER_STATE_OUTSTANDING_INDEX_DDL, FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC,
-  MAILBOXES_ACCOUNT_PREBUILD_SPEC, PREMIGRATION_PREBUILD_SPECS,
+  MAILBOXES_ACCOUNT_PREBUILD_SPEC, PREMIGRATION_PREBUILD_SPECS, RETIRED_PREBUILD_SPECS,
 } from "../src/search-setup.js";
 import { HOT_PATH_INDEX_SPECS } from "../src/hot-path-indexes.js";
 
@@ -24,6 +24,8 @@ const PG = split(read("../../db-mail/drizzle/0160_folder_state_outstanding.sql")
 const LITE = split(read("../../db-mail/drizzle-sqlite/0160_folder_state_outstanding.sql"));
 const PG_0161 = split(read("../../db-mail/drizzle/0161_mailboxes_account_idx.sql"));
 const LITE_0161 = split(read("../../db-mail/drizzle-sqlite/0161_mailboxes_account_idx.sql"));
+const PG_0201 = split(read("../../db-mail/drizzle/0201_account_on_borrowers.sql"));
+const LITE_0201 = split(read("../../db-mail/drizzle-sqlite/0201_account_on_borrowers.sql"));
 const text = (q: SQL): string => new PgDialect().sqlToQuery(q).sql;
 const flat = (s: string): string => s.replace(/\s+/g, " ").trim().replace(/;$/, "");
 
@@ -52,6 +54,9 @@ describe("mail 0160's predicate is one text", () => {
     expect(norm(one(/ where (.*)$/is, PG.find((s) => /^create index/i.test(s))))).toBe(PREDICATE);
     expect(norm(one(/ WHERE (.*)$/s, LITE.find((s) => /^CREATE INDEX/.test(s))))).toBe(PREDICATE);
     expect(norm(one(/ where (.*)$/is, text(FOLDER_STATE_OUTSTANDING_INDEX_DDL)))).toBe(PREDICATE);
+    // Mail 0201 builds the index again on the row's own account: the same predicate, on both journals.
+    expect(norm(one(/ where (.*)$/is, PG_0201.find((s) => /^create index "folder_state_outstanding_idx"/i.test(s))))).toBe(PREDICATE);
+    expect(norm(one(/ WHERE (.*)$/s, LITE_0201.find((s) => /^CREATE INDEX "folder_state_outstanding_idx"/.test(s))))).toBe(PREDICATE);
   });
 
   it("every trigger WHEN, and both backfills", () => {
@@ -75,10 +80,13 @@ describe("mail 0160's predicate is one text", () => {
     expect(PG_0161).toHaveLength(1);
     expect(flat(PG_0161[0]!)).toBe(flat(text(MAILBOXES_ACCOUNT_PREBUILD_SPEC.ddl).replace(/\bconcurrently /, "")));
     expect(LITE_0161).toEqual([`CREATE INDEX IF NOT EXISTS "mailboxes_account_idx" ON "mailboxes" ("account_id", "id");`]);
-    for (const spec of [FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC]) {
-      expect(PREMIGRATION_PREBUILD_SPECS).toContain(spec);
-      expect(HOT_PATH_INDEX_SPECS).toContain(spec);
-    }
+    expect(PREMIGRATION_PREBUILD_SPECS).toContain(MAILBOXES_ACCOUNT_PREBUILD_SPEC);
+    expect(HOT_PATH_INDEX_SPECS).toContain(MAILBOXES_ACCOUNT_PREBUILD_SPEC);
+    // Mail 0201 dropped the column the outstanding spec's prelude adds and built the index again on
+    // `account_id`: no setup runs the spec any more, or it would put the column back.
+    expect(RETIRED_PREBUILD_SPECS).toContain(FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC);
+    expect(PREMIGRATION_PREBUILD_SPECS).not.toContain(FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC);
+    expect(HOT_PATH_INDEX_SPECS).not.toContain(FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC);
   });
 
   it("control: a predicate one operand off is told apart", () => {

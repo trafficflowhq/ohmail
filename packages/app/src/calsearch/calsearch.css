@@ -1,0 +1,81 @@
+/* Search's placement: the field on top of the sheet, the hits under it, as wide as a list reads well. */
+.cal-sr {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  container-type: inline-size;
+}
+.cal-sr-top {
+  padding: var(--s3) var(--s3) 0;
+  max-inline-size: var(--cal-reading-measure);
+}
+.cal-sr[data-device="phone"] .cal-sr-top {
+  padding: var(--s1) var(--s2) 0;
+}
+.cal-sr-field {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: var(--h-l);
+  padding: 0 var(--s2) 0 var(--s4);
+  border-radius: var(--r-row);
+  background: var(--soft-sheet);
+  color: var(--ink2);
+  min-width: 0;
+}
+.cal-sr-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  padding: 0;
+}
+.cal-sr-input::-webkit-search-cancel-button {
+  display: none;
+}
+.cal-sr-read,
+.cal-sr-count {
+  flex: none;
+  white-space: nowrap;
+}
+@container (max-width: 480px) {
+  .cal-sr-count {
+    display: none;
+  }
+}
+.cal-sr-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--s2) var(--s4);
+  max-width: 716px;
+}
+.cal-sr-day {
+  padding-top: var(--s2);
+}
+.cal-sr-hit + .cal-sr-hit {
+  margin-block-start: var(--s1);
+}
+.cal-sr-held {
+  margin: 0;
+  padding: var(--s3);
+  color: var(--ink3);
+}
+
+.cal-sr[data-date-query] .cal-sr-list {
+  padding-inline-end: var(--s1);
+}
+.cal-sr[data-date-query] .cal-sr-day {
+  padding-block-start: 0;
+}
+.cal-sr[data-date-query] .cal-sr-day:first-child {
+  padding-block-start: var(--s1);
+}
+.cal-sr[data-date-query] .cal-sr-hit + .cal-sr-hit {
+  margin-block-start: 0;
+}

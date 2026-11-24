@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -5,12 +6,9 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   consentPartition,
-  type EngineMessage,
-  type Folder,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
-import { planScreeningChange, senderScreening } from "../../webapp/app/shell/sender-screening";
+import { planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE DESKTOP WINDOW'S SENDER SHEET AND DECIDE OVER A SENDER'S RULE TWINS
@@ -54,11 +52,6 @@ async function store(folder: Folder, rules: RuleDTO[]): Promise<MemoryMirrorStor
 }
 
 describe("the desktop window's sheet and decide", () => {
-  it("is the shared shell's: the window mounts AppShell, which hands the sheet the list's placement", () => {
-    expect(code("../src/DesktopGate.tsx")).toMatch(/^import \{ AppShell \} from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell";$/m);
-    expect(code("../../webapp/app/shell/AppShell.tsx"))
-      .toMatch(/^ {4}\(\) => \(senderMenu \? senderScreening\(engine\.verbRead\(\), senderMenu\.messageId, senderMenu\.address, consentView\?\.placeOf\) : null\),$/m);
-  });
 
   it("over an allow twin and an outranking deny the sheet says Screened, where the list shows the row", async () => {
     const s = await store("INBOX", [rule("r-allow", "INBOX"), rule("r-deny", "ohmail/Screened")]);

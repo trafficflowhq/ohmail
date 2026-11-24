@@ -11,8 +11,8 @@ import { makeDb } from "@trafficflow/db/cloud";
 import { startWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE HOSTED WORKER'S OWN LOOP RUNS THE BLANK REPAIR IN THE CONFIGURED MODE — the door the Cloud
@@ -38,7 +38,7 @@ async function seed(db: Db): Promise<{ mailboxId: string; blankId: string }> {
   const mailboxId = row!.id;
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId, accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   // The fleet's epoch is "1", the one its targeted re-read answers under.
@@ -106,5 +106,55 @@ describe("the worker's loop runs the blank repair in the mode OHMAIL_BLANK_REPAI
     const r = await run(undefined);
     expect(r.moves).toContain("INBOX");
     expect(r).toMatchObject({ reads: 1, places: 0 });
+  }, 60_000);
+});
+
+/**
+ * THE BUILD THE CONFIGURATION NAMES IS THE CYCLE'S LABEL. A message set aside for a reason only a
+ * new build can change is read again when the build is another one, and left alone under the same
+ * one. The cycle takes that label from whoever composes it; this is the worker's composition.
+ */
+describe("the worker's loop labels its cycles with the build its configuration names", () => {
+  let OWN = "";
+  beforeAll(async () => { OWN = await prepareIsolatedDb("trafficflow_worker_buildlabel"); }, 120_000);
+  const closers: Array<() => Promise<void>> = [];
+  afterEach(async () => { for (const c of closers.splice(0)) { try { await c(); } catch { /* ignore */ } } }, ISOLATED_DB_RESET_BUDGET_MS);
+
+  it("a write-off of this build waits; an older build's is read again", async () => {
+    const db = makeDb(OWN);
+    const accountId = randomUUID();
+    const [row] = await db.insert(mailboxes)
+      .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test`, ...ORGANIZER_CONSENT }).returning();
+    const mailboxId = row!.id;
+    const enc = await KP.encrypt("pw");
+    await db.insert(mailboxCredentials).values({
+      mailboxId, accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
+    });
+    // Two write-offs with no clock, under the fleet's epoch: one this build made, one an older build made.
+    const owed = { accountId, mailboxId, folder: "INBOX", uidvalidity: 1n, code: "mime_too_large", nextAttemptAt: null };
+    await db.insert(messageFailures).values([
+      { ...owed, uid: 9001, attemptedVersion: "build-two" },
+      { ...owed, uid: 9002, attemptedVersion: "build-one" },
+    ]);
+    const fleet = new FakeAdapterFleet();
+    fleet.targetedRetry = true;
+    const worker = await startWorker({
+      databaseUrl: OWN, keyProvider: KP, sentDomain: "trafficflow.test", adapterFactory: fleet.factory,
+      pollIntervalMs: 150, rosterIntervalMs: 250, lockHeartbeatMs: 60_000, alertIntervalMs: 600_000,
+      maxSyncFailures: 3, mailboxRetryMs: 60_000, syncBlockGraceMs: 0,
+      buildVersion: "build-two",
+    });
+    closers.push(() => worker.stop());
+    await waitFor(() => fleet.syncs >= 3, 20_000, "three cycles");
+    await worker.stop();
+
+    const reread = fleet.targetedFetches.filter((f) => f.mailboxId === mailboxId && f.folder === "INBOX").flatMap((f) => f.uids);
+    const rows = await db.select({ uid: messageFailures.uid, attempts: messageFailures.attempts, by: messageFailures.attemptedVersion })
+      .from(messageFailures).where(eq(messageFailures.mailboxId, mailboxId));
+    expect({ reread, rows: rows.sort((a, b) => a.uid - b.uid) }).toEqual({
+      reread: [9002],
+      rows: [{ uid: 9001, attempts: 0, by: "build-two" }, { uid: 9002, attempts: 1, by: "build-two" }],
+    });
   }, 60_000);
 });

@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, type ReleaseIntent, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
-import { releaseCommit, releaseRules } from "../app/shell/sender-screening";
+import { MemoryMirrorStore, type ReleaseIntent, type SyncChange } from "@ohmail/client-engine";
+import { releaseCommit, releaseRules } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * A RELEASE OVER TWO COPIES OF ONE RULE IS ONE WRITE (H1). The server

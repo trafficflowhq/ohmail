@@ -29,7 +29,7 @@
  *  · write the format info without the 0x5412 XOR → the decoder's BCH check refuses.
  */
 import { describe, expect, it } from "vitest";
-import { qrEncode, qrSvgPath } from "../app/shell/qr";
+import { qrEncode, qrSvgPath } from "@ohmail/app-logic/doors/qr";
 import { decodeQr } from "./fixtures/qr-decode";
 import { v2, v5, v8, v10 } from "./fixtures/qr-known";
 

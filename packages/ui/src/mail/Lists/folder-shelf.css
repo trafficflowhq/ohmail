@@ -1,0 +1,39 @@
+/* The folders' group of the rail: its rows keep the rail's own pitch (`--oh-rail-between`), and the open fold takes the height that is left. */
+@layer oh {
+  .oh-foldershelf {
+    display: flex;
+    flex-direction: column;
+    gap: var(--oh-rail-between);
+    min-height: 0;
+  }
+
+  .oh-foldershelf > * {
+    flex: none;
+  }
+
+  .oh-foldershelf > .oh-folderfold {
+    flex: 0 1 auto;
+  }
+
+  .oh-foldershelf-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .oh-foldershelf-row > .oh-railentry {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+  }
+
+  /* The fold's own line is quieter than a folder. */
+  .oh-foldershelf-all {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .oh-foldershelf-all > .oh-railentry {
+    color: var(--ink2);
+  }
+}

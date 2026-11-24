@@ -4,20 +4,25 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { dropLocalStorageKeys } from "../app/shell/boot-cache";
-import { COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../app/shell/compose";
+import { dropLocalStorageKeys } from "@ohmail/app-logic/session/boot-cache";
+import { COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "@ohmail/app-logic/writing/compose";
 import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, SENT_COPY_NOTES_PREFIX,
-} from "../app/shell/mail-send";
-import { NOTIFICATION_SUBSCRIPTION_PREFIX } from "../app/shell/notification-settings";
-import { SCREENER_INTENTS_PREFIX } from "../app/shell/screener-intents";
-import { DELETE_INTENTS_PREFIX } from "../app/shell/delete-intents";
+} from "@ohmail/app-logic/writing/mail-send";
+import { CALENDAR_NOTICES_KEY, NOTIFICATION_SUBSCRIPTION_PREFIX } from "../app/shell/notification-settings";
+import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
+import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
-import { SEND_LOCKS_PREFIX } from "../app/shell/send-lock";
-import { READING_ALONG_PREFIX } from "../app/shell/reading-along";
+import { SUBJECT_DISPLAY_PREFIX, threadOrderKey } from "@ohmail/app-logic/storage/persisted-ui";
+import { SIGN_OUT_STORAGE_PREFIX } from "@ohmail/app-logic/storage/storage-owner";
+import { PENDING_SIGN_OUT_KEY } from "../app/pending-sign-out-storage";
+import { STORED_KEYS, type StoredKeyRow } from "../../../packages/client-engine/src/stored-keys";
+import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
+import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
+import { TOLD_DEVICES_PREFIX } from "@ohmail/app-logic/notices/use-notices";
 import { SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY } from "../app/session-refresh";
-import { ACCESS_VERDICT_PREFIX } from "../app/shell/wall-lift";
-import { ERASED_KEY } from "../app/shell/account-erased";
+import { ACCESS_VERDICT_PREFIX } from "@ohmail/app-logic/doors/wall-lift";
+import { ERASED_KEY } from "@ohmail/app-logic/session/account-erased";
 import { REVOKE_OWED_PREFIX, SHARED_NOTE_KEY } from "../app/(product)/resume/signed-out-note";
 
 /**
@@ -56,11 +61,17 @@ const APP = existsSync(resolve("apps/webapp/app")) ? resolve("apps/webapp/app") 
  * which is the same reach it had before.
  */
 const ENGINE = resolve("packages/client-engine/src");
+/** And the behaviour moved out of the shell runs on this origin too: its keys are this census's. */
+const LOGIC = resolve("packages/app-logic/src");
+/** So do the app's own parts that left the shell (the mail state's mount), and the slot's that follow. */
+const APP_PARTS = resolve("packages/app/src");
+const BODY = resolve("packages/letter-body/src");
 
 /** Prefixes sign-out sweeps, as sign-out itself names them. */
 const SWEPT = [
   "ohmail.boot.",
   SEND_LOCKS_PREFIX,
+  SUBJECT_DISPLAY_PREFIX,
   SENT_COPY_NOTES_PREFIX,
   SCREENER_INTENTS_PREFIX,
   DELETE_INTENTS_PREFIX,
@@ -74,6 +85,7 @@ const SWEPT = [
   OWNED_REPLY_DRAFT_PREFIX,
   OWNED_REPLY_META_PREFIX,
   NOTIFICATION_SUBSCRIPTION_PREFIX,
+  TOLD_DEVICES_PREFIX,
   READING_ALONG_PREFIX,
   SESSION_MINTED_KEY,
   SESSION_ATTEMPT_KEY,
@@ -101,7 +113,6 @@ const SURVIVES_SIGN_OUT = new Set([
   "ohmail.desktopCtaDismissed", // "you dismissed this banner"; a browser preference
   "ohmail.junkSweepDismissedAt", // a dismissal timestamp, no mail in it
   "ohmail.ui.seed.notNow.", // "Not now" on the sent-mail review, owner-keyed, no mail in it
-  "ohmail.reply.panelHeight", // a pane size
   "ohmail.ui.mail.original.", // "show original" toggle, per account: an erasure takes it
   "ohmail.ui.rail.foldersOpen", // rail disclosure state
   "ohmail.ui.rail.foldersOpened.", // the opened folder branches, per account: an erasure takes them
@@ -110,7 +121,7 @@ const SURVIVES_SIGN_OUT = new Set([
   "ohmail.ui.search.sort.", // a sort preference, owner-keyed but not content
   "ohmail.ui.reader.afterVerb", // what the pane does after a verb — `ui.search.sort.`'s class exactly
   // The newest impersonation filing this screen acknowledged, owner-keyed: a timestamp, no mail in it.
-  "ohmail.screener.impersonationSeen.",
+  "ohmail.screener.impersonationSeen.", "ohmail.screener.unsubscribeSeen.",
   // A per-TAB composer id in sessionStorage, naming no account: the compose keys it suffixes carry
   // the storage owner and are swept by their prefixes, so the next account in this tab starts on its own.
   "ohmail.compose.composer",
@@ -167,6 +178,10 @@ const SURVIVES_SIGN_OUT = new Set([
  * purpose on exactly the browsers it exists for.
  */
 const SWEPT_ELSEWHERE = new Set([
+  // The pending operation stays until revocation and cache cleanup finish. The cleanup prefix is
+  // swept by clearAccountCleanup only after an exclusive wipe, and per account on a later retry.
+  PENDING_SIGN_OUT_KEY,
+  SIGN_OUT_STORAGE_PREFIX,
   "ohmail.mirror.",
   /*
    * `ohmail.deviceCeremony` — the in-flight Microsoft device-code ceremony's HANDLE, and the first
@@ -293,10 +308,14 @@ describe("sign-out clears the durable decision stores", () => {
     }
   });
 
-  it("removes every one of them, for every owner, plus the legacy un-owned key", () => {
+  it("removes every one of them, for every owner, plus the legacy un-owned key", async () => {
     const jar: Record<string, string> = {
       [`${SEND_LOCKS_PREFIX}acct-a`]: "[]",
       [`${SEND_LOCKS_PREFIX}local`]: "[]",
+      [`${SUBJECT_DISPLAY_PREFIX}acct-a`]: "each",
+      [`${SUBJECT_DISPLAY_PREFIX}acct-b`]: "head",
+      [threadOrderKey("acct-a")]: "top",
+      [threadOrderKey("acct-b")]: "bottom",
       // A letter's Sent copy note: whom it was for and its subject.
       [`${SENT_COPY_NOTES_PREFIX}acct-a`]: "{}",
       [`${SCREENER_INTENTS_PREFIX}acct-a`]: "[]",
@@ -316,6 +335,8 @@ describe("sign-out clears the durable decision stores", () => {
       // …and the same two under the account that typed them.
       [`${OWNED_REPLY_DRAFT_PREFIX}acct-a:msg-2`]: "an unsent reply body, named",
       [`${OWNED_REPLY_META_PREFIX}acct-a:lane-2`]: "{}",
+      // The two numbers of the account's devices this browser has told: the key names the account.
+      [`${TOLD_DEVICES_PREFIX}acct-a`]: '{"made":2,"revoked":0}',
       "ohmail.boot.acct-a.piles": "{}",
     };
     for (const [k, v] of Object.entries(jar)) window.localStorage.setItem(k, v);
@@ -326,6 +347,17 @@ describe("sign-out clears the durable decision stores", () => {
 
     for (const key of Object.keys(jar)) expect(window.localStorage.getItem(key)).toBeNull();
     expect(window.localStorage.getItem("ohmail.locale")).toBe("de");
+
+    // A signed-out session's explicit scope goes, and the device's face pin survives.
+    const { forgetThisBrowser } = await import("../app/sign-out");
+    localStorage.setItem("ohmail.face", "ohmarchy");
+    localStorage.setItem("ohmail.face.scope", "device");
+
+    const result = await forgetThisBrowser(undefined, { revokeWake: false });
+
+    expect(result.inventoryComplete).toBe(true);
+    expect(localStorage.getItem("ohmail.face.scope")).toBeNull();
+    expect(localStorage.getItem("ohmail.face")).toBe("ohmarchy");
   });
 
   it("is wired into signOut itself, not merely available", () => {
@@ -334,6 +366,7 @@ describe("sign-out clears the durable decision stores", () => {
     expect(src).toContain("dropLocalStorageKeys(");
     for (const name of [
       "SEND_LOCKS_PREFIX",
+      "SUBJECT_DISPLAY_PREFIX",
       "SENT_COPY_NOTES_PREFIX",
       "SCREENER_INTENTS_PREFIX",
       "DELETE_INTENTS_PREFIX",
@@ -347,6 +380,7 @@ describe("sign-out clears the durable decision stores", () => {
       "OWNED_REPLY_DRAFT_PREFIX",
       "OWNED_REPLY_META_PREFIX",
       "NOTIFICATION_SUBSCRIPTION_PREFIX",
+      "TOLD_DEVICES_PREFIX",
       "READING_ALONG_PREFIX",
       "SESSION_MINTED_KEY",
       "SESSION_ATTEMPT_KEY",
@@ -390,6 +424,7 @@ describe("sign-out clears the durable decision stores", () => {
       "OWNED_REPLY_DRAFT_PREFIX",
       "OWNED_REPLY_META_PREFIX",
       "NOTIFICATION_SUBSCRIPTION_PREFIX",
+      "TOLD_DEVICES_PREFIX",
       "READING_ALONG_PREFIX",
       "SESSION_MINTED_KEY",
       "SESSION_ATTEMPT_KEY",
@@ -440,7 +475,7 @@ describe("sign-out clears the durable decision stores", () => {
 
   it("signOut forgets the row a jar-less browser was remembering", async () => {
     const { writeComposeRow, readComposeRow, forgetComposeRows } =
-      await import(`${APP}/shell/compose.ts`);
+      await import("@ohmail/app-logic/writing/compose");
     const jar = Object.getOwnPropertyDescriptor(window, "localStorage");
     const refuse = (): never => { throw new DOMException("denied", "SecurityError"); };
     Object.defineProperty(window, "localStorage", {
@@ -452,8 +487,8 @@ describe("sign-out clears the durable decision stores", () => {
     });
     try {
       forgetComposeRows();
-      writeComposeRow("d-departed");
-      expect(readComposeRow(), "the row is not remembered at all").toBe("d-departed");
+      writeComposeRow("d-departed", null);
+      expect(readComposeRow(null), "the row is not remembered at all").toBe("d-departed");
       const src = readFileSync(`${APP}/sign-out.ts`, "utf8");
       expect(
         src,
@@ -462,7 +497,7 @@ describe("sign-out clears the durable decision stores", () => {
       /* And the call does what the name says, driven through the real function. */
       forgetComposeRows();
       expect(
-        readComposeRow(),
+        readComposeRow(null),
         "the row remembered for a jar-less browser survived the sign-out — an id on the departed "
         + "account, held by the next account's composer",
       ).toBeNull();
@@ -471,38 +506,49 @@ describe("sign-out clears the durable decision stores", () => {
     }
   });
 
-  it("the wake registration is revoked BEFORE the session that authorizes the delete is gone", () => {
-    /*
-     * THE ORDER IS THE FIX, not the call.
-     *
-     * The server's own sign-out prune is DEVICE-scoped — `logout` reads the session's `device_id`
-     * and deletes the push rows carrying it — and a browser ceremony mints no device row
-     * (`session-lifecycle.ts`'s `AUTO_MINT_DEVICE_LABELS` covers only the desktop kinds, and
-     * `auth-service.test.ts` asserts the exchanged web session's `deviceId` is null through the
-     * real ceremony). So the browser's row is deviceless, the prune returns early, and the row
-     * survives the sign-out while the sender goes on POSTing wakes to its endpoint — a signed-out
-     * shared browser woken for the previous account's mail.
-     *
-     * This browser is the only party that can name that row, and the credential that authorizes
-     * `DELETE /push/subscriptions/:id` is the very session `auth.logout()` revokes. Called after
-     * it, the delete answers 401 for ever. Asserted on the SOURCE and by POSITION, because a call
-     * in the right place and a call in the wrong place are the same call.
-     */
+  it("browser revocation removes the departing family's wake registration", async () => {
+    const { apiRoutes, createApp, csrfTokenFor } = await import("@trafficflow/api");
+    const { refreshTokens, sessions } = await import("@trafficflow/db");
+    const { pushSubscriptions } = await import("@trafficflow/db/cloud");
+    const { generateToken, hashToken } = await import("@trafficflow/services");
+    const { eq } = await import("drizzle-orm");
+    const { FIXED_NOW, makeDeps, req, seedSession } = await import("../../../packages/api/test/helpers.js");
+    const { withNodeBlobs } = await import("./fixtures/node-blobs");
+    const { db, deps } = await withNodeBlobs(() => makeDeps());
+    const makeWake = async () => {
+      const session = await seedSession(db, { now: FIXED_NOW });
+      const [row] = await db.select({ family: sessions.familyId }).from(sessions)
+        .where(eq(sessions.id, session.sessionId));
+      const refresh = generateToken();
+      await db.insert(refreshTokens).values({
+        accountId: session.accountId, userId: session.userId, sessionId: session.sessionId,
+        familyId: row!.family, tokenHash: hashToken(refresh),
+        expiresAt: new Date(FIXED_NOW.getTime() + 60_000), createdAt: FIXED_NOW,
+      });
+      await db.insert(pushSubscriptions).values({
+        accountId: session.accountId, sessionFamilyId: row!.family, transport: "webpush",
+        endpoint: `https://push.example.invalid/${session.sessionId}`,
+      });
+      return { access: session.token, refresh, family: row!.family };
+    };
+    const departed = await makeWake();
+    const other = await makeWake();
+    const csrf = csrfTokenFor(departed.access);
+    const res = await createApp(apiRoutes).handle(req("POST", "/auth/refresh/logout", {
+      cookie: `tf_session=${departed.access}; tf_refresh=${departed.refresh}; tf_csrf=${csrf}`,
+      headers: { "X-CSRF-Token": csrf, "X-Ohmail-Expected-Family": departed.family },
+    }), deps);
+    expect(res.status).toBe(204);
+    expect(res.headers.has("set-cookie")).toBe(false);
+    const remaining = await db.select({ family: pushSubscriptions.sessionFamilyId }).from(pushSubscriptions);
+    expect(remaining.length === 1 && remaining[0]?.family === other.family).toBe(true);
+  });
+
+  it("account erasure still revokes browser wakes before discarding the stored registration", () => {
     const src = readFileSync(`${APP}/sign-out.ts`, "utf8");
-    /* THE CALL, NOT A CALLER'S SPELLING, AND NOT IN A COMMENT. `await revokeWakeRegistration();`
-     * pinned the `await` and the semicolon, which is today's caller: a worker census read
-     * `await runSyncCycle(` the same way, the call moved inside a store lane, and it read zero
-     * hosts and passed for hours. Asking for the call alone then found `auth.logout()` in the
-     * DOCBLOCK that explains the ordering — this file names it three times in prose — so the
-     * comments are blanked first, offsets preserved, and the positions are the code's. */
     const code = src
       .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
       .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
-    const revoke = code.indexOf("revokeWakeRegistration(", code.indexOf("export async function signOut"));
-    const logout = code.indexOf("auth.logout(");
-    expect(revoke, "signOut must revoke the wake registration").toBeGreaterThan(-1);
-    expect(logout, "…and still log out").toBeGreaterThan(-1);
-    expect(revoke, "the delete is authenticated by the session logout revokes").toBeLessThan(logout);
     // And the erasure door reaches it too — `forgetThisBrowser` is the half account deletion
     // calls, and it must revoke BEFORE the sweep takes the id that names the row.
     const forget = code.indexOf("export async function forgetThisBrowser");
@@ -522,7 +568,7 @@ describe("sign-out clears the durable decision stores", () => {
        literal, because the call grew a second option (`serverHeld`) and a spelling match would
        have read an ordinary addition as a removed call site. */
     expect(src, "the second revoke must be skipped, not the call site removed")
-      .toMatch(/forgetThisBrowser\(owner, \{[\s\S]{0,200}?revokeWake: false/);
+      .toMatch(/forgetThisBrowser\(departed, \{[\s\S]{0,200}?revokeWake: false/);
     expect(src, "…and the erasure door must still revoke by default")
       .toContain("if (opts.revokeWake !== false) await revokeWakeRegistration();");
   });
@@ -541,103 +587,79 @@ describe("sign-out clears the durable decision stores", () => {
   });
 
   it("a stored ceremony is bound to its ACCOUNT, so a reused tab cannot render another's code", () => {
-    /*
-     * FOUND BY REVIEW on the fix that introduced the persistence. A tab is not a session: sign out,
-     * or erase the account, and sign in as somebody else inside the fifteen minutes a grant lives,
-     * and this tab's storage still holds the previous account's record. Restoring it with no owner
-     * check paints THEIR code and verification URI on the new account's settings pane — the server
-     * would refuse the poll with a 403, but only after the values were already on screen.
-     *
-     * Asserted on the SOURCE because the reader is module-private to the pane. What matters is that
-     * the record carries an account id, that the reader compares it, and that a mismatch discards
-     * the entry rather than merely declining to use it.
-     */
-    const src = readFileSync(`${APP}/(product)/mailbox/MailboxSection.tsx`, "utf8");
-    expect(src, "the stored record must carry its owner").toMatch(/accountId: string;/);
-    expect(src, "the reader must compare the stored owner to the signed-in one")
-      .toContain("d.accountId !== accountId");
-    // A mismatch DELETES: leaving it would keep another account's record in a shared machine's tab
-    // until somebody happened to open this pane again.
-    expect(src).toMatch(/d\.accountId !== accountId\)\s*\{\s*forgetDevice\(\);/);
-    // And the restore is gated on the account being KNOWN — a null owner never matches, which is
-    // the fail-closed direction. The stage joined that line for a second reader (the connect form
-    // must not have a live code restored underneath it) and is pinned here so neither is dropped.
-    expect(src).toContain('if (!deviceAvailable || !accountId || stage !== "list") return;');
+    const device = readFileSync(`${APP}/(product)/mailbox/device-sign-in.ts`, "utf8");
+    const pane = readFileSync(`${APP_PARTS}/mailboxes/pane/OutlookConnect.tsx`, "utf8");
+    const part = readFileSync(`${APP_PARTS}/mailboxes/pane/pane.tsx`, "utf8");
+    expect(device, "the stored record must carry its owner").toMatch(/account: string;/);
+    const recall = device.slice(device.indexOf("function recall"), device.indexOf("function displayCode"));
+    expect(recall, "a stored handle is usable only by its signed-in account")
+      .toMatch(/if \(entry\?\.account === account[\s\S]*return \{ account, handle:/);
+    expect(recall, "a mismatch must remove the stored handle").toMatch(/forget\(\);\s*return null;/);
+    expect(device).toMatch(/resume\(\): void \{\s*const account = owner\(\);\s*if \(account === null[\s\S]*const entry = recall\(account\);/);
+    expect(device).toContain("view !== null && stillOwns(view) ? view.value : null");
+    expect(device).toMatch(/return owner\(\) === entry\.account && familyOf\(entry\.account\) === entry\.family\s*&& \(current === null \|\| current === entry\.family\);/);
+    const session = readFileSync(`${APP_PARTS}/host/session.ts`, "utf8");
+    expect(part).toContain("deviceReady={confirmedAccountForScope(host) !== null}");
+    expect(session).toMatch(/const owner = mirrorOwnerOf\(engine\) \?\? session\.scope;\s*return session\.account === owner \? owner : null;/);
+    expect(pane).toMatch(/const code =\s*resting && deviceReady && microsoft\.device && signIn !== NONE && signIn\.code !== NONE/);
+    expect(pane).toContain("useEffect(() => code?.resume?.(), [code]);");
   });
 
   it("the record is only ever WRITTEN with a real owner, so the restore cannot delete a live one", () => {
-    /*
-     * FOUND BY REVIEW, third round. The pane makes three independent reads on mount and the Outlook
-     * affordance is enabled by the availability one, so a ceremony can legitimately start before the
-     * session read lands. Stamping whatever `accountId` held at that moment wrote an EMPTY owner —
-     * and the restore effect then read that record back, could not match it, and deleted it, while
-     * the in-memory poll loop carried on. The ceremony worked and the reload recovery was gone.
-     *
-     * The guard is that there is exactly ONE writer and it is gated on both facts, so a record with
-     * an empty owner is unrepresentable rather than merely unlikely.
-     */
-    const src = readFileSync(`${APP}/(product)/mailbox/MailboxSection.tsx`, "utf8");
-    /*
-     * THE INVARIANT IS "EVERY WRITE IS OWNER-GUARDED", not "there is exactly one write".
-     *
-     * An earlier version of this test asserted the start path must not persist at all, which was
-     * the right property for the wrong reason and pushed the code into a passive effect as the sole
-     * writer — reopening the recovery gap it was meant to close, because an effect runs after the
-     * browser has been yielded to and a reload in that window loses the handle. There are now two
-     * paths deliberately (synchronous for the ordinary case, the effect for a late session read),
-     * so what has to hold is that NEITHER can write an owner it does not have.
-     */
-    const calls = [...src.matchAll(/^.*rememberDevice\(\{[^\n]*$/gm)].map((m) => m[0]!.trim());
-    expect(calls.length, "expected the two deliberate persistence paths").toBe(2);
-    for (const c of calls) {
-      expect(c, `an unguarded write: ${c}`).toMatch(/accountId(:| )/);
-    }
-    // The synchronous one is guarded inline; the effect one by an early return above it.
-    expect(src, "the synchronous write must be gated on a known owner")
-      .toContain("if (owner) rememberDevice({ ...live, accountId: owner });");
-    /*
-     * …and it must read the storage owner through the REF, not the render-time state. `startDeviceFlow`
-     * awaits a network round trip, and the session read can resolve during it — the very ordering
-     * this guard exists for, since a different read enables the button. A closure holding the
-     * render-time `accountId` would skip the synchronous write on exactly that path.
-     */
-    expect(src, "the async write must read the LATEST owner, not the captured one")
-      .toContain("const owner = accountIdRef.current;");
-    expect(src, "the ref must be written before the state it mirrors")
-      .toMatch(/accountIdRef\.current = user\.accountId;\s*\n\s*setAccountId\(user\.accountId\);/);
-    expect(src, "the late-session write must be gated on a known owner")
-      .toMatch(/if \(!device \|\| !accountId\) return;\s*\n\s*rememberDevice\(\{ \.\.\.device, accountId \}\);/);
+    const device = readFileSync(`${APP}/(product)/mailbox/device-sign-in.ts`, "utf8");
+    const calls = [...device.matchAll(/durableSessionSet\(DEVICE_SIGN_IN_KEY,[^\n]+/g)];
+    expect(calls, "every persistence path must be guarded").toHaveLength(1);
+    expect(device).toContain("const account = owner();");
+    expect(device).toContain("if (account === null || starting !== null || active !== null) return");
+    expect(device).toMatch(/await mailboxes\.deviceOAuthStart\(\{ expectedOwner: account,[^\n]+/);
+    expect(device).toContain("if (starting !== request || !stillOwns({ account, family }) || !stillWanted()) return");
+    expect(device).toMatch(/const entry: StoredCeremony = \{ handle: reply\.state, deadline, account \};\s*durableSessionSet\(DEVICE_SIGN_IN_KEY, JSON\.stringify\(entry\)/);
   });
 
   it("a TERMINAL poll failure is shown outside the ceremony block it destroys", () => {
-    /*
-     * The ceremony's own error line lives inside the ceremony's markup, so setting it and nulling
-     * `device` in the same tick unmounted the container and the message with it — the code vanished
-     * with nothing said. A terminal refusal therefore goes to the pane-wide `error`, which outlives
-     * the block; a transient one stays on the ceremony's line, where the loop is still running.
-     */
-    const src = readFileSync(`${APP}/(product)/mailbox/MailboxSection.tsx`, "utf8");
-    const terminal = src.slice(
-      src.indexOf('if (codeOf(err) === "oauth_device_state_invalid"'),
-      src.indexOf("setDevicePollError(messageOf(err));", src.indexOf('if (codeOf(err) === "oauth_device_state_invalid"')),
-    );
-    expect(terminal, "a terminal failure must reach the pane-wide error").toContain("setError(messageOf(err))");
-    expect(terminal, "…and must not be left only on the line it is about to unmount")
-      .toContain("setDevicePollError(null)");
+    const device = readFileSync(`${APP}/(product)/mailbox/device-sign-in.ts`, "utf8");
+    const pane = readFileSync(`${APP_PARTS}/mailboxes/pane/OutlookConnect.tsx`, "utf8");
+    expect(device).toContain('finish(entry, { kind: "ended", why: "refused", refusal });');
+    expect(device).toMatch(/function finish\(\{ account, family \}: ActiveCeremony, value: CodeCeremony\): void \{\s*retireWork\(\);\s*forget\(\);\s*publish\(\{ account, family, value \}\);/);
+    expect(pane).toContain('if (code !== null && (result?.kind === "checking" || result?.kind === "shown"))');
+    expect(pane).toContain('{result?.kind === "ended" && !offer ? <DeviceSignIn result={result}');
   });
 
   /**
    * THE CENSUS — the guard that stops the NEXT store being forgotten.
    *
-   * Every `ohmail.*` localStorage key literal in the app is either swept by sign-out or named in
-   * `SURVIVES_SIGN_OUT` with a reason. A new key is a deliberate decision either way; what is not
-   * allowed is a new key that nobody decided about, which is exactly how five of these were left
-   * behind.
+   * Every `ohmail.*` localStorage key literal in the app has a documented sign-out decision.
    */
   it("every localStorage key in the app is either swept or deliberately exempt", () => {
     const undecided: string[] = [];
-    const files = [...walk(APP), ...(existsSync(ENGINE) ? walk(ENGINE) : [])];
+    const project = resolve(APP, "../../..");
+    const calendarPreference = STORED_KEYS.find((row: StoredKeyRow) =>
+      row.key === CALENDAR_NOTICES_KEY && row.family === undefined && row.store === "localStorage" &&
+      row.owner === "web" && row.words === false && row.erased === "never" && row.mark === "kept" &&
+      row.holds.includes("on this device"),
+    );
+    const signalFile = resolve(APP, "signed-out-signal.ts");
+    const signals = readFileSync(signalFile, "utf8");
+    const sessionSignal = /const SESSION_CHANGE_SIGNAL = "([^"]+)";/.exec(signals)?.[1];
+    const tabEvent = /const LOCAL_SIGN_OUT = "([^"]+)";/.exec(signals)?.[1];
+    expect(sessionSignal).toBeDefined();
+    expect(tabEvent).toBeDefined();
+    expect(signals).toContain("post(SESSION_CHANGE_SIGNAL);");
+    expect(signals).toMatch(/localStorage\.setItem\(key, JSON\.stringify\(message\)\);\s*window\.localStorage\.removeItem\(key\);/);
+    expect(signals).toContain("window.dispatchEvent(new CustomEvent(LOCAL_SIGN_OUT");
+    const cleanup = readFileSync(resolve(APP, "pending-sign-out-storage.ts"), "utf8");
+    const signOut = readFileSync(resolve(APP, "sign-out.ts"), "utf8");
+    expect(cleanup).toContain("dropLocalStorageKeys([CLEANUP_PREFIX])");
+    expect(cleanup).toContain('durableRemove(cleanupKey(owner), "session.signOut")');
+    expect(signOut).toContain('durableRemove(PENDING_SIGN_OUT_KEY, "session.signOut")');
+    const files = [
+      ...walk(APP), ...(existsSync(ENGINE) ? walk(ENGINE) : []), ...(existsSync(APP_PARTS) ? walk(APP_PARTS) : []),
+      ...(existsSync(LOGIC) ? walk(LOGIC) : []), ...(existsSync(BODY) ? walk(BODY) : []),
+    ];
     for (const file of files) {
+      // The register of stored names spells every key of every store and keeps none itself; its
+      // rows are held to the tree by `test/stored-keys-registry.test.ts`.
+      if (file.endsWith("/client-engine/src/stored-keys.ts")) continue;
       const src = readFileSync(file, "utf8");
       if (!src.includes("localStorage")) continue;
       for (const m of src.matchAll(/["`](ohmail\.[A-Za-z0-9._:-]*)/g)) {
@@ -646,12 +668,16 @@ describe("sign-out clears the durable decision stores", () => {
         const swept = SWEPT.some((p) => key.startsWith(p) || p.startsWith(key));
         const exempt = [...SURVIVES_SIGN_OUT, ...SWEPT_ELSEWHERE]
           .some((e) => key.startsWith(e) || e.startsWith(key));
-        if (!swept && !exempt) undecided.push(`${file}: ${key}`);
+        const keepsCalendarChoice = key === CALENDAR_NOTICES_KEY && calendarPreference?.at.some(
+          (path) => resolve(project, path) === resolve(file),
+        );
+        const transientSignal = file === signalFile && (key === sessionSignal || key === tabEvent);
+        if (!swept && !exempt && !keepsCalendarChoice && !transientSignal) undecided.push(`${file}: ${key}`);
       }
     }
     expect(
       [...new Set(undecided)].sort(),
-      "a new localStorage key must be swept by sign-out or listed in SURVIVES_SIGN_OUT with its reason",
+      "a localStorage key must be swept by sign-out or have a documented reason to survive",
     ).toEqual([]);
   });
 });

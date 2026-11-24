@@ -2,6 +2,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ISO, installShellEnv, teardownShellEnv } from "./fixtures/live-walk-shell.js";
 import { LENA, click, mountThread, msg, patches, readSlot } from "./fixtures/thread-read-shell.js";
+import { letterShown, openLetter } from "./ohbox/_finders.js";
 
 /**
  * OFF THE OHBOX THE READ SLOT IS THE OPENED MESSAGE'S OWN, and its press flips in the direction its
@@ -18,7 +19,7 @@ const views = [
 ] as const;
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 beforeEach(() => { installShellEnv(); });
@@ -28,12 +29,14 @@ describe("the read slot off the Ohbox", () => {
   for (const [label, hash] of views) {
     it(`in ${label}, a read message beside an unread sibling says Mark unread and flips itself`, async () => {
       window.location.hash = hash;
-      await mountThread([msg("a1", 0, { unread: false, labels: ["tg1"] }), msg("x2", 60, { labels: ["tg1"] }), tag]);
-      const pane = document.querySelector<HTMLElement>('[data-conv-id="a1"][aria-current="true"]')?.closest<HTMLElement>(".conv");
-      expect(pane, `the premise: ${label} opens a1 in its conversation`).toBeTruthy();
-      expect(pane!.querySelector('article.pm[data-conv-id="x2"][data-unseen]'), "x2 is an unread panel").toBeTruthy();
-      expect(readSlot(pane!)?.getAttribute("aria-label")).toBe("Mark unread");
-      await click(readSlot(pane!), "the read slot");
+      await mountThread([tag, msg("a1", 0, { unread: false, labels: ["tg1"] }), msg("x2", 60, { labels: ["tg1"] })]);
+      const pane = openLetter(document);
+      const opened = pane?.querySelector('[data-conv-id="a1"]');
+      expect(opened, `the premise: ${label} opens a1 in its conversation`).toBeTruthy();
+      expect(pane?.querySelector('[data-conv-id][aria-current="true"]')?.getAttribute("data-conv-id")).toBe("x2");
+      expect(letterShown(document, "x2")?.hasAttribute("data-unseen"), "x2 is an unread panel").toBe(true);
+      expect(readSlot(document)?.getAttribute("aria-label")).toBe("Mark unread");
+      await click(readSlot(document), "the read slot");
       expect(patches, "the flip of the opened message, in the face's direction").toEqual([{ ids: ["a1"], unread: true }]);
     }, 30_000);
   }

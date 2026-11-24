@@ -5,7 +5,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, drafts } from "@trafficflow/db";
 import { plainTextToOutboundBody } from "@trafficflow/core/mail";
 import type { DraftInput, DraftPort, OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { DraftingService, DraftsService, SendService } from "../src/index.js";
+import { DraftingService, DraftsService, SendService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import { htmlToPlainText, sanitizeOutboundHtml } from "../src/outbound-html.js";
 
@@ -140,7 +140,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: managedAddress("fixture.desk"),
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   const [msg] = await db.insert(messages).values({
     accountId,
     mailboxId: mb!.id,

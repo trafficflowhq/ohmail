@@ -6,17 +6,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider } from "@ohmail/ui";
+import { within } from "@testing-library/react";
 
 import en from "../../webapp/messages/en.json";
-import { FirstRun } from "../../webapp/app/shell/FirstRun";
-import { KeymapProvider } from "../../webapp/app/shell/keymap";
+import { connectWireOver } from "@ohmail/app/host";
+import { mountStage, stageRow } from "../../webapp/test/_first-run-stage.js";
+import { O, P } from "../../../packages/app/test/mailboxes/connect/support.js";
 
 import {
   deriveOnboardingStep, onboardingPath, type OnboardingFacts,
-} from "../../webapp/app/shell/onboarding";
-import type { FirstRunHost } from "../../webapp/app/shell/first-run-host";
+} from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import { railFor } from "@ohmail/app-logic/mailboxes/first-run/rules";
 import { firstRunDoorFor } from "../src/doors.js";
 import {
   localAiPosture, localProbeReason, LocalWireError, useLocalFirstRun,
@@ -27,7 +28,7 @@ import type { LocalAiStatus } from "../src/local-ai.js";
 /**
  * THE GUIDED SETUP FLOW OPENS ON THE STANDALONE DOOR — the seam, driven rather than described.
  *
- * The stage (`app/shell/FirstRun.tsx`) is shared and knows about no door; what decides whether
+ * The stage is shared and knows about no door; what decides whether
  * standalone onboarding exists at all is one object handed to `AppShell`. Before this slice the
  * desktop passed none, so `#/first-run` rendered NOTHING on the door the flow was written for and
  * the consent route the engine serves had no caller anywhere in the product.
@@ -475,47 +476,6 @@ describe("the AI posture this door can report", () => {
   });
 });
 
-describe("the gate hands the stage its door", () => {
-  const gate = fs.readFileSync(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/DesktopGate.tsx"),
-    "utf8",
-  );
-
-  it("passes `firstRun` to the shared shell", () => {
-    // The prop is the whole seam: `AppShell` renders no stage without it, so an absent spread
-    // is a `#/first-run` that draws nothing — the state this slice exists to end.
-    expect(gate).toMatch(/\{\.\.\.\(firstRun \? \{ firstRun \} : \{\}\)\}/);
-    expect(gate).toMatch(/useLocalFirstRun\(\{/);
-  });
-
-  it("wires the consent read on the standalone door, and the spend wire only on the hosted one",
-    () => {
-      // `consent.known` is one of the four conditions `AppShell` gates the stage on, and it
-      // comes from `GET /consent` — which `localRoutes` serves (mail 0083).
-      //
-      // ONE WIRE PER DOOR, and the standalone one is a DIFFERENT object rather than the same
-      // constant behind an `||`. The two route tables are not the same: `localRoutes` wraps the
-      // consent group in `withoutFoldersFlag`, so a standalone install can read and write the
-      // screening window and cannot store the folders flag at all. Sharing the constant is how
-      // the Folders pane came to be drawn on that door over a switch that snapped back.
-      // ONE RULE NOW, NOT TWO CONDITIONS. This read `accountDoor ? … : firstRunDoorFor === "local"
-      // ? …`, and that pair had a hole exactly where a third door appeared: a desktop paired to
-      // another computer of the person's own is NEITHER, so it would have got no consent
-      // transport at all — no screening window, and nothing on screen saying why — on a door
-      // where the far side serves the row perfectly well. `consentDoorFor` is the rule, and it
-      // answers "standalone" for the paired door because the far side IS a standalone install.
-      expect(gate).toMatch(
-        /consentDoorFor\(status, hostedSession\) === "cloud"\s*\n?\s*\?\s*\{ consentTransport: consentOverBridge \}/,
-      );
-      expect(gate).toMatch(
-        /consentDoorFor\(status, hostedSession\) === "standalone"\s*\n?\s*\?\s*\{ consentTransport: consentOverBridgeStandalone \}/,
-      );
-      // And the half of the old rule that survived: a spend control needs a ledger, and a
-      // standalone engine has none.
-      expect(gate).toMatch(/\{\.\.\.\(accountDoor \? \{ suggestWire: cloudSuggestWire \} : \{\}\)\}/);
-    });
-});
-
 /**
  * THE STAGE ACTUALLY OPENS ON THIS DOOR — the shared component, mounted with the local host.
  *
@@ -526,42 +486,25 @@ describe("the gate hands the stage its door", () => {
  *
  * So the real component is mounted, with the real catalogue, on the facts this door produces the
  * moment its door chooser has connected a mailbox: consented to by nobody, importing, no model.
- * The assertion is the CONSENT screen's own heading, which is the screen the derivation names for
- * that state and the first thing a standalone install sees.
+ * The consent step shows the folder map alongside the import window.
  */
 describe("the shared stage, mounted on the local host", () => {
+  const consentHeading = O.organizeLast.replace("<window></window>", O.windowYear).replace(/\.$/, "");
+  const stage = (made: FirstRunHost, completed: string | null) => mountStage({
+    rows: [stageRow()],
+    account: { onboardingCompletedAt: completed },
+    door: made.door,
+    verbs: made,
+  });
+
   it("opens on the consent screen for a freshly connected standalone mailbox", async () => {
     const made = (await makeHost())!;
-    const el = document.createElement("div");
-    document.body.append(el);
-    const root = createRoot(el);
-    mounted = root;
-    await act(async () => {
-      root.render(
-        h(ThemeProvider, null,
-          h(NextIntlClientProvider, { locale: "en", messages: en as never },
-            h(KeymapProvider, null,
-            h(FirstRun, {
-              host: made,
-              facts: {
-                door: "local",
-                mailbox: { organizeConsentedAt: null, initialImportCompletedAt: null },
-                account: {}, ai: made.ai, queuedSenders: 0,
-              },
-              mailboxId: "11111111-2222-3333-4444-555555555555",
-              mailboxAddress: "me@example.org",
-              pull: { screened: 0, history: 0, pulled: 0 },
-              decide: null,
-              screening: { dormancyDays: 365, scope: "window" },
-              onRefresh: () => {},
-              onLeave: () => {},
-            }))))); 
-    });
-    const text = el.textContent ?? "";
-    /* eslint-disable-next-line no-console -- the render under test, for the record */
-    if (!text) console.log("RENDERED NOTHING");
-    // The consent statement's heading — `onboarding.consentTitle`, the screen row 4 names.
-    expect(text).toContain("What ohmail will do to this mailbox");
+    const { el, heading } = await stage(made, null);
+    const text = el.querySelector(".mbx-run")?.textContent ?? "";
+    expect(heading()).toBe(consentHeading);
+    expect(text).toContain(O.mapInbox);
+    expect(text).toContain(O.mapNewFolders);
+    expect(within(el).getByRole("button", { name: O.windowYear })).toBeTruthy();
     // And the flow is genuinely on THIS door: the provider step exists here and nowhere else,
     // so the rail carries a step the hosted stage does not have.
     expect(text.length).toBeGreaterThan(80);
@@ -570,48 +513,20 @@ describe("the shared stage, mounted on the local host", () => {
   /* A connect on an install that has been through setup (Remove, then the same mailbox again) opens
      `#/first-run` with nothing to draw: the shell behind it is inert while the route stands, so the
      stage must hand the route back, or the window ignores every click and key. */
-  const stage = (made: FirstRunHost, completed: string | null, onLeave: () => void) =>
-    h(ThemeProvider, null,
-      h(NextIntlClientProvider, { locale: "en", messages: en as never },
-        h(KeymapProvider, null,
-          h(FirstRun, {
-            host: made,
-            facts: {
-              door: "local",
-              mailbox: { organizeConsentedAt: null, initialImportCompletedAt: null },
-              account: { onboardingCompletedAt: completed }, ai: made.ai, queuedSenders: 0,
-            },
-            mailboxId: "11111111-2222-3333-4444-555555555555",
-            pull: { screened: 0, history: 0, pulled: 0 },
-            decide: null,
-            onRefresh: () => {},
-            onLeave,
-          }))));
-
   it("hands the route back when a reconnect on a finished install has nothing to draw", async () => {
     const made = (await makeHost())!;
-    const el = document.createElement("div");
-    document.body.append(el);
-    const root = createRoot(el);
-    mounted = root;
-    const onLeave = vi.fn();
-    await act(async () => { root.render(stage(made, "2026-10-30T10:00:00.000Z", onLeave)); });
-    expect(el.textContent).toBe("");
-    expect(onLeave).toHaveBeenCalledTimes(1);
+    const current = await stage(made, "2026-10-30T10:00:00.000Z");
+    expect(current.el.querySelector(".mbx-run")).toBeNull();
+    expect(current.writes()).toEqual([{ next: "#/ohbox", how: "push" }]);
   });
 
   it("leaves without failing when the flow closes under an open stage", async () => {
     const made = (await makeHost())!;
-    const el = document.createElement("div");
-    document.body.append(el);
-    const root = createRoot(el);
-    mounted = root;
-    const onLeave = vi.fn();
-    await act(async () => { root.render(stage(made, null, onLeave)); });
-    expect(el.textContent).toContain("What ohmail will do to this mailbox");
-    await act(async () => { root.render(stage(made, "2026-10-30T10:00:00.000Z", onLeave)); });
-    expect(el.textContent).toBe("");
-    expect(onLeave).toHaveBeenCalledTimes(1);
+    const current = await stage(made, null);
+    expect(current.heading()).toBe(consentHeading);
+    await current.moveAccount({ onboardingCompletedAt: "2026-10-30T10:00:00.000Z" });
+    expect(current.el.querySelector(".mbx-run")).toBeNull();
+    expect(current.writes()).toEqual([{ next: "#/ohbox", how: "push" }]);
   });
 });
 
@@ -624,16 +539,14 @@ describe("the shared stage, mounted on the local host", () => {
  * `goFirstRun({ rerun: true })` was wired in the web client's mailbox pane and nowhere else, so on
  * the desktop the only way back into setup was to type the route.
  *
- * Asserted over the SOURCE rather than by mounting the pane, and deliberately: the pane needs the
- * mail-state provider, a facts poll and an engine, and what can go wrong here is not rendering —
- * it is the two gates. A row without them is a button that navigates to a blank overlay on the
- * hosted door, or offers to re-run a setup that has never run.
+ * The two gates are also checked here at their source. The mounted Settings cases hold the
+ * actual add route and the re-run route for the named mailbox.
  */
 describe("the guided flow's way back in, on the desktop", () => {
-  const pane = fs.readFileSync(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/DesktopMailboxes.tsx"),
-    "utf8",
-  );
+  const src = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src");
+  const pane = fs.readFileSync(path.join(src, "DesktopMailboxes.tsx"), "utf8");
+  const frame = fs.readFileSync(path.join(src, "DesktopFrame.tsx"), "utf8");
+  const gate = fs.readFileSync(path.join(src, "DesktopGate.tsx"), "utf8");
 
   it("offers the re-run ON EACH ROW, naming that row's mailbox in the route", () => {
     /* ── IT WAS ONE ROW AT THE FOOT OF THE PANE, AND THE PLACE STOPPED BEING RIGHT ───────────
@@ -647,9 +560,10 @@ describe("the guided flow's way back in, on the desktop", () => {
      *
      * `facts.length > 0` went with it and lost nothing: a row control cannot render without a row.
      */
-    expect(pane).toMatch(/goFirstRun\(\{ rerun: true, mailboxId: shown\.id \}\)/);
+    expect(frame).toMatch(/<DesktopMailboxes[\s\S]+?goToSetup=\{goToSetup\}/);
+    expect(pane).toMatch(/goToSetup\?\.\("again", shown\.id\)/);
     // The bare hash would open, find the completion stamp, and close on the same render.
-    expect(pane).not.toMatch(/goFirstRun\(\)/);
+    expect(pane).not.toMatch(/goToSetup\?\.\(\)/);
     expect(pane).toContain('t("setupAgainAction")');
   });
 
@@ -657,16 +571,20 @@ describe("the guided flow's way back in, on the desktop", () => {
     /* Two entry points now — the row's re-run and the pane's "Add mailbox" — and each would be a
        button navigating somewhere blank on the hosted door, where this window gives the stage no
        host at all. Counted rather than matched once, so a third one added without the gate reds. */
-    const gates = pane.match(/firstRunDoorFor\(statusOf\(door\)\) === "local"/g) ?? [];
-    expect(gates.length, "a first-run entry point is ungated on the hosted door")
-      .toBeGreaterThanOrEqual(2);
+    const localControls = [...pane.matchAll(/firstRunDoorFor\(statusOf\(door\)\) === "local" \? \(([\s\S]*?)\) : null\}/g)]
+      .map((match) => match[1]);
+    expect(localControls.length, "a first-run entry point is ungated on the hosted door").toBeGreaterThanOrEqual(2);
+    expect(localControls).toEqual(expect.arrayContaining([
+      expect.stringContaining('goToSetup?.("add")'),
+      expect.stringContaining('goToSetup?.("again", shown.id)'),
+    ]));
   });
 
   it("offers ADD MAILBOX at the add route, which is the only intent that opens the form", () => {
     /* `#/first-run/add`, never the bare hash and never the re-run's. A finished install derives
        to "nothing to do"; the re-run opens on the consent statement for a mailbox that EXISTS;
        only the add intent opens on the connect form. */
-    expect(pane).toMatch(/goFirstRun\(\{ add: true \}\)/);
+    expect(pane).toMatch(/goToSetup\?\.\("add"\)/);
     for (const key of ["desktopAdd", "desktopAddWhy", "desktopAddAction"]) {
       expect(pane, key).toContain(`t("${key}")`);
     }
@@ -677,6 +595,7 @@ describe("the guided flow's way back in, on the desktop", () => {
     // come to disagree, which is the failure that ships a button to nowhere.
     expect(pane).toMatch(/import \{ firstRunDoorFor \} from "\.\/doors\.js"/);
     expect(pane).not.toMatch(/door === "local" \?/);
+    expect(gate).toMatch(/function openSetupOnStandalone\(status: EngineStatus \| null\): void \{\s+if \(firstRunDoorFor\(status\) !== "local"\) return;/);
   });
 
   it("the copy it promises exists in the catalogue", () => {
@@ -820,6 +739,19 @@ describe("the two connect modes", () => {
  * Driven through the real component with the real catalogue, because 2 and 3 are both invisible
  * to a source-level assertion: the first is a derivation over a stamp, the second is one argument.
  */
+function setField(input: HTMLInputElement, value: string): void {
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+async function fillConnection(el: HTMLElement, address: string, imapHost: string): Promise<void> {
+  await act(async () => {
+    setField(el.querySelector<HTMLInputElement>('input[type="email"]')!, address);
+    setField(el.querySelector<HTMLInputElement>('input[type="password"]')!, "fixture-password");
+    setField(within(el).getByRole<HTMLInputElement>("textbox", { name: /incoming.*server/i }), imapHost);
+  });
+}
+
 describe("adding a further mailbox to a standalone install", () => {
   const ADD_FACTS: OnboardingFacts = {
     door: "local",
@@ -833,45 +765,30 @@ describe("adding a further mailbox to a standalone install", () => {
   };
 
   /** Mount the stage with a host whose `connect` records what it was asked for. */
-  async function driveAdd(): Promise<{
-    el: HTMLElement;
-    modes: string[];
-    connected: string[];
-  }> {
+  async function driveAdd() {
     const made = (await makeHost())!;
     const modes: string[] = [];
-    const connected: string[] = [];
+    const addresses: string[] = [];
     const host: FirstRunHost = {
       ...made,
       probe: async () => ({ host: "imap.example.org", user: "second@example.org", folders: 7 }),
       connect: async (input, mode) => {
         modes.push(mode);
-        return { id: `mbx-for-${input.address}` };
+        addresses.push(input.address);
+        return { id: "mbx-second" };
       },
     };
 
-    const el = document.createElement("div");
-    document.body.append(el);
-    const root = createRoot(el);
-    mounted = root;
-    await act(async () => {
-      root.render(
-        h(ThemeProvider, null,
-          h(NextIntlClientProvider, { locale: "en", messages: en as never },
-            h(KeymapProvider, null,
-              h(FirstRun, {
-                host,
-                facts: ADD_FACTS,
-                mailboxId: null,
-                add: true,
-                onConnected: (id: string) => { connected.push(id); },
-                pull: { screened: 0, history: 0, pulled: 0 },
-                decide: null,
-                onRefresh: () => {},
-                onLeave: () => {},
-              })))));
+    const stage = await mountStage({
+      at: "#/first-run/add",
+      rows: [stageRow()],
+      account: { onboardingCompletedAt: ADD_FACTS.account.onboardingCompletedAt ?? null },
+      door: host.door,
+      verbs: host,
+      connect: connectWireOver(host),
     });
-    return { el, modes, connected };
+    await stage.press(P.otherShort);
+    return { ...stage, modes, addresses };
   }
 
   /* BY PREFIX, because every verb in this flow wears its keycap: the primary's text content is
@@ -896,11 +813,12 @@ describe("adding a further mailbox to a standalone install", () => {
   });
 
   it("walks 1-2-3-4-7-8-9: no welcome, no AI question, no provider form, no pairing", () => {
+    /* The folder map and history window now share the consent step. */
     /* The install's answers, not the mailbox's. The model is a property of the install
        (`ai-provider.ts`) and so is the paired phone; asking again per mailbox would imply a
        per-mailbox answer that nothing stores. */
     const walk = onboardingPath(ADD_FACTS, true);
-    expect(walk).toEqual(["mailbox", "consent", "window", "pull", "summary"]);
+    expect(walk).toEqual(["mailbox", "consent", "pull", "summary"]);
     // The claim question joins it when the peek finds a holder — step 2 of the plan.
     expect(onboardingPath(
       {
@@ -908,7 +826,7 @@ describe("adding a further mailbox to a standalone install", () => {
         mailbox: { organizedBy: { kind: "cloud", name: "ohmail Cloud", since: null } },
       },
       true,
-    )).toEqual(["mailbox", "elsewhere", "consent", "window", "pull", "summary"]);
+    )).toEqual(["mailbox", "elsewhere", "consent", "pull", "summary"]);
     // And a FIRST run is untouched — the four screens are dropped for the add intent alone.
     expect(onboardingPath(ADD_FACTS)).toContain("welcome");
     expect(onboardingPath(ADD_FACTS)).toContain("ai");
@@ -929,61 +847,40 @@ describe("adding a further mailbox to a standalone install", () => {
      * A first run needs no id in its hash: its new row is the only row, so `facts[0]` is already
      * the right answer. MUTATION: drop the `add === true` guard and this reds. */
     const made = (await makeHost())!;
-    const connected = [];
+    const modes: string[] = [];
     const host = {
       ...made,
       probe: async () => ({ host: "imap.example.org", user: "me@example.org", folders: 3 }),
-      connect: async () => ({ id: "mbx-first" }),
+      connect: async (_input: Parameters<FirstRunHost["connect"]>[0], mode: string) => {
+        modes.push(mode);
+        return { id: "mbx-first" };
+      },
     };
-    const el = document.createElement("div");
-    document.body.append(el);
-    const root = createRoot(el);
-    mounted = root;
-    await act(async () => {
-      root.render(
-        h(ThemeProvider, null,
-          h(NextIntlClientProvider, { locale: "en", messages: en as never },
-            h(KeymapProvider, null,
-              h(FirstRun, {
-                host,
-                // A FIRST run: no completion stamp, no mailbox, no add intent.
-                facts: {
-                  door: "local", mailbox: null, account: {}, ai: "unset", queuedSenders: 0,
-                },
-                mailboxId: null,
-                onConnected: (id) => { connected.push(id); },
-                pull: { screened: 0, history: 0, pulled: 0 },
-                decide: null,
-                onRefresh: () => {},
-                onLeave: () => {},
-              })))));
-    });
+    const current = await mountStage({ rows: [], door: host.door, verbs: host, connect: connectWireOver(host) });
+    const { el } = current;
     /* A first run opens on the WELCOME — which is the whole point: those are the screens the
        defect took away. Walk onto the form through whichever verb it wears. */
     const step = async (labels: string[]) => {
       const all = [...el.querySelectorAll("button")];
-      const b = all.find((x) => labels.some((l) => (x.textContent ?? "").trim().startsWith(l)));
+      const b = all.find((x) => labels.some((l) => (x.getAttribute("aria-label") ?? x.textContent ?? "").trim().startsWith(l)));
       expect(b, `no ${labels.join("/")} — buttons: ${
         all.map((x) => (x.textContent ?? "").trim()).join(" | ")}`).toBeDefined();
       await act(async () => { b!.click(); await Promise.resolve(); });
     };
     /* The welcome screen — the first of the three the defect took away. Recognised by its own
        primary rather than by a greeting: `welcomeTitle` is a sentence about what ohmail does. */
-    await step(["Set up a mailbox"]);
-    const address = el.querySelector('input[type="email"]');
-    const pass = el.querySelector('input[type="password"]');
-    const set = (input, value) => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!
-        .call(input, value);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    };
-    await act(async () => { set(address, "me@example.org"); set(pass, "pw"); });
+    await step(["Connect a mailbox"]);
+    await current.press(P.otherShort);
+    await act(async () => { within(el).getByText(en.join.manualPorts).click(); });
+    await fillConnection(el, "me@example.org", "imap.example.org");
     await step(["Test connection"]);
     await act(async () => { await Promise.resolve(); });
-    await step(["Connect and continue"]);
+    await step([en.join.manualConnect]);
     await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
 
-    expect(connected, "a first run re-pointed its own route at the add intent").toEqual([]);
+    expect(modes).toEqual(["seed"]);
+    expect(current.address(), "a first run re-pointed its own route at the add intent").toBe("#/first-run");
+    expect(current.writes()).toEqual([]);
   });
 
   it("THE RAIL PROMISES ONLY THE PHASES THIS RUN WALKS", async () => {
@@ -1002,28 +899,16 @@ describe("adding a further mailbox to a standalone install", () => {
      * an empty Screener queue, and its dot sat there unlit for ever. Same fix, same line.
      */
     const { el } = await driveAdd();
-    const labels = [...el.querySelectorAll(".join-rail-label")].map((n) => n.textContent?.trim());
-    expect(labels).toEqual(["Mailbox", "Organize", "How far back", "First pull", "Done"]);
-    // The narrow form counts towards the same total.
-    expect(el.querySelector(".ob-step")?.textContent).toContain(`/ ${labels.length} ·`);
+    const rail = within(el).getByRole("img", { name: "Step 1 of 2, Mailbox, 2 of 3" });
+    expect(rail.children).toHaveLength(2);
+    expect(railFor(onboardingPath(ADD_FACTS, true)).map(({ id }) => id)).toEqual([
+      "mailbox", "organize", "pull", "done",
+    ]);
   });
 
   it("CONNECTS IN `add` MODE, and hands the new mailbox's id back to the route", async () => {
-    const { el, modes, connected } = await driveAdd();
-
-    const address = el.querySelector('input[type="email"]') as HTMLInputElement;
-    const pass = el.querySelector('input[type="password"]') as HTMLInputElement;
-    const set = (input: HTMLInputElement, value: string): void => {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype, "value",
-      )!.set!;
-      setter.call(input, value);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    };
-    await act(async () => {
-      set(address, "second@example.org");
-      set(pass, "pw-2");
-    });
+    const { el, modes, addresses, writes } = await driveAdd();
+    await fillConnection(el, "second@example.org", "imap.example.org");
     // The primary is disarmed until a verdict exists — the form's own rule, not this test's.
     await act(async () => {
       button(el, "Test connection")!.click();
@@ -1045,67 +930,48 @@ describe("adding a further mailbox to a standalone install", () => {
        replace the engine, and the first-connect order that follows seals the typed password onto
        whatever mailbox the replaced engine settles on — this install's ORIGINAL row. */
     expect(modes, "the add run connected as a seed").toEqual(["add"]);
+    expect(addresses).toEqual(["second@example.org"]);
     /* AND THE ROUTE LEARNS WHICH ROW. Without it every later screen — consent, the window, the
        pull, the summary — would be about whichever mailbox `GET /mailboxes` returns first. */
-    expect(connected).toEqual(["mbx-for-second@example.org"]);
+    expect(writes()).toEqual([{ next: "#/first-run/add?mailbox=mbx-second", how: "replace" }]);
   });
 });
 
 describe("a mail server on this computer — the wait's own line and the server's own refusal", () => {
-  const FACTS: OnboardingFacts = {
-    door: "local", mailbox: null,
-    account: { onboardingCompletedAt: "2026-08-01T09:00:00.000Z" }, ai: "on", queuedSenders: 0,
-  };
   const button = (el: HTMLElement, label: string): HTMLButtonElement | undefined =>
     [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label));
-  const set = (input: HTMLInputElement, value: string): void => {
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  };
 
   /** The add form on the manual preset, with `imapHost` typed and Test pressed once. */
   async function pressTest(
     imapHost: string, probe: FirstRunHost["probe"], over: Partial<FirstRunHost> = {},
-  ): Promise<HTMLElement> {
+  ) {
     const made = (await makeHost())!;
     const host: FirstRunHost = { ...made, probe, ...over };
-    const el = document.createElement("div");
-    document.body.append(el);
-    const root = createRoot(el);
-    mounted = root;
-    await act(async () => {
-      root.render(
-        h(ThemeProvider, null,
-          h(NextIntlClientProvider, {
-            locale: "en", messages: en as never,
-            children: h(KeymapProvider, null,
-              h(FirstRun, {
-                host, facts: FACTS, mailboxId: null, add: true, onConnected: () => {},
-                pull: { screened: 0, history: 0, pulled: 0 }, decide: null,
-                onRefresh: () => {}, onLeave: () => {},
-              })),
-          })));
+    const stage = await mountStage({
+      at: "#/first-run/add",
+      rows: [stageRow()],
+      account: { onboardingCompletedAt: "2026-08-01T09:00:00.000Z" },
+      door: host.door,
+      verbs: host,
+      connect: connectWireOver(host),
     });
-    await act(async () => {
-      (el.querySelector('input[type="radio"][value="imap"]') as HTMLInputElement).click();
-    });
-    await act(async () => {
-      set(el.querySelector('input[type="email"]') as HTMLInputElement, "me@gateway.test");
-      set(el.querySelector('input[type="password"]') as HTMLInputElement, "pw");
-      set(el.querySelector('input[id$="-imap"]') as HTMLInputElement, imapHost);
-    });
-    await act(async () => {
-      button(el, "Test connection")!.click();
-      for (let i = 0; i < 12; i++) await Promise.resolve();
-    });
-    return el;
+    await stage.press(P.otherShort);
+    await fillConnection(stage.el, "me@gateway.test", imapHost);
+    await stage.press(O.test);
+    return stage;
   }
   /* A held request is answered when its case ends, as the bridge's deadline ends a real one: the hold
      lives beyond the form (LOW 2), so a request left out for ever would shut every later case's Test. */
   const outstanding: Array<() => void> = [];
-  const pending = (): Promise<never> => new Promise((_resolve, reject) => {
-    outstanding.push(() => reject(new LocalWireError("cleanup", "mailbox_probe_failed", { reason: "timeout" })));
-  });
+  function pending(onHeld?: (release: () => void) => void): Promise<never> {
+    return new Promise((_resolve, reject) => {
+      const release = () => reject(new LocalWireError("refused", "mailbox_probe_failed", {
+        reason: "timeout", transport: "imap", localServer: true,
+      }));
+      outstanding.push(release);
+      onHeld?.(release);
+    });
+  }
   afterEach(async () => {
     await act(async () => {
       for (const end of outstanding.splice(0)) end();
@@ -1117,40 +983,40 @@ describe("a mail server on this computer — the wait's own line and the server'
   };
 
   it("while the engine is asked, 127.0.0.1 gets the local line and a remote host the plain one", async () => {
-    const local = await pressTest("127.0.0.1", pending);
+    const localStage = await pressTest("127.0.0.1", () => pending());
+    const local = localStage.el;
     expect(local.textContent).toContain(en.onboarding.testingLocal);
-    expect(button(local, "Test")?.disabled, "Test stays disabled for the wait").toBe(true);
+    expect(button(local, "Asking")?.disabled, "Test stays disabled for the wait").toBe(true);
     // The held request answers before the remote one is asked: the hold outlives the form (LOW 2).
     await act(async () => { for (const end of outstanding.splice(0)) end(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
-    await act(async () => { mounted?.unmount(); mounted = null; });
-    document.body.innerHTML = "";
-    const remote = await pressTest("imap.example.com", pending);
+    localStage.unmount();
+    const { el: remote } = await pressTest("imap.example.com", () => pending());
     expect(remote.textContent).toContain("Asking imap.example.com");
     expect(remote.textContent).not.toContain(en.onboarding.testingLocal);
   });
 
   it("a refusal the engine stamped localServer says the local server's sentence, not the app-password one", async () => {
-    const el = await pressTest("127.0.0.1", refusal({ localServer: true }));
+    const { el } = await pressTest("127.0.0.1", refusal({ localServer: true }));
     expect(el.textContent).toContain(en.mailboxes.probe_auth_local);
     expect(el.textContent).not.toContain(en.mailboxes.probe_auth);
   });
 
   it("LOW 1: a door without the long wait says the plain line for 127.0.0.1, never the two minutes", async () => {
-    const el = await pressTest("127.0.0.1", pending, { localServerWait: undefined });
+    const { el } = await pressTest("127.0.0.1", () => pending(), { localServerWait: undefined });
     expect(el.textContent).toContain("Asking 127.0.0.1");
     expect(el.textContent).not.toContain(en.onboarding.testingLocal);
   });
 
   it("LOW 2: while the server on this computer holds a Test, an edit keeps Test shut until it answers", async () => {
-    let answer: (e: unknown) => void = () => {};
-    const held = (): Promise<never> => new Promise((_resolve, reject) => { answer = reject; });
-    const el = await pressTest("127.0.0.1", held);
-    expect(button(el, "Test")?.disabled, "Test is shut while the gateway holds the sign-in").toBe(true);
-    await act(async () => { set(el.querySelector('input[type="password"]') as HTMLInputElement, "pw-edited"); });
+    let answer = () => {};
+    const held = () => pending((release) => { answer = release; });
+    const { el } = await pressTest("127.0.0.1", held);
+    expect(button(el, "Asking")?.disabled, "Test is shut while the gateway holds the sign-in").toBe(true);
+    await act(async () => { setField(el.querySelector('input[type="password"]')!, "pw-edited"); });
     expect(button(el, "Test")?.disabled, "an edit re-opened Test under a held sign-in").toBe(true);
     expect(el.textContent, "the wait is still said").toContain(en.onboarding.testingLocal);
     await act(async () => {
-      answer(new LocalWireError("refused", "mailbox_probe_failed", { reason: "timeout", transport: "imap", localServer: true }));
+      answer();
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
     expect(button(el, "Test")?.disabled, "Test opens again once the held request answered").toBe(false);
@@ -1159,37 +1025,42 @@ describe("a mail server on this computer — the wait's own line and the server'
 
   it("LOW 2 (verify): leave setup during a held Test and open it again — no second Test is sent while the first is held", async () => {
     let calls = 0;
-    let answer: (e: unknown) => void = () => {};
-    const held = (): Promise<never> => { calls++; return new Promise((_resolve, reject) => { answer = reject; }); };
+    let answer = () => {};
+    const held = () => {
+      calls++;
+      return pending((release) => { answer = release; });
+    };
     const first = await pressTest("127.0.0.1", held);
     expect(calls).toBe(1);
-    await act(async () => { button(first, en.onboarding.cancel)?.click(); });
+    await first.press(O.cancel);
     await act(async () => {
-      [...first.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === en.onboarding.cancelConfirm)?.click();
+      within(document.body).getByRole("button", { name: O.cancelConfirm }).click();
     });
     // The shell answers onLeave by closing the stage: the form unmounts; the engine's request runs on.
-    await act(async () => { mounted?.unmount(); mounted = null; });
-    document.body.innerHTML = "";
-    const again = await pressTest("127.0.0.1", held);
+    expect(first.el.querySelector(".mbx-run")).toBeNull();
+    first.unmount();
+    const { el: again } = await pressTest("127.0.0.1", held);
     expect(calls, "a second sign-in went to the gateway while the first was held").toBe(1);
     expect(button(again, "Test")?.disabled, "the reopened form offers Test under a held sign-in").toBe(true);
     expect(again.textContent, "the reopened form says what it is waiting for").toContain(en.onboarding.testingLocal);
     await act(async () => {
-      answer(new LocalWireError("refused", "mailbox_probe_failed", { reason: "timeout", transport: "imap", localServer: true }));
+      answer();
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
     expect(button(again, "Test")?.disabled, "Test opens once the held request answered").toBe(false);
   });
 
   it("the same refusal without the stamp keeps the app-password sentence (positive control)", async () => {
-    const el = await pressTest("127.0.0.1", refusal({}));
+    const { el } = await pressTest("127.0.0.1", refusal({}));
     expect(el.textContent).toContain(en.mailboxes.probe_auth);
     expect(el.textContent).not.toContain(en.mailboxes.probe_auth_local);
   });
 
   it("an outgoing-leg timeout from it says the outgoing server's sentence: the two minutes are the incoming leg's", async () => {
-    const el = await pressTest("127.0.0.1", refusal({ reason: "timeout", transport: "smtp", localServer: true }));
-    expect(el.textContent).toContain(en.mailboxes.probe_timeout_smtp);
-    expect(el.textContent).not.toContain(en.mailboxes.probe_timeout_local);
+    const { el } = await pressTest("127.0.0.1", refusal({ reason: "timeout", transport: "smtp", localServer: true }));
+    const said = within(el).getByRole("alert").textContent;
+    expect(said).toContain("That outgoing (SMTP) mail server did not answer in time.");
+    expect(said).toContain("Check the SMTP server name and try again.");
+    expect(said).not.toContain(en.mailboxes.probe_timeout_local);
   });
 });

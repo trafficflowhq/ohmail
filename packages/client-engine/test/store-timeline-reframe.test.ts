@@ -1,5 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { StoreTimelineWalker, type EngineMessage } from "../src/index.js";
+import { StoreTimelineWalker } from "../src/index.js";
 import { FAKE_NOW, FakeStore, idOf, settle, storeMessage } from "./helpers/fake-store.js";
 
 /**

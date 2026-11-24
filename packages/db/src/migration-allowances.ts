@@ -19,6 +19,9 @@ export interface MigrationAllowance {
   readonly reason: string;
 }
 
+const REPLAY_GUARD_REASON =
+  "IF NOT EXISTS added before release; column, type, default and NOT NULL unchanged, so the schema is identical";
+
 /**
  * ONE entry. Mail 0037 ran `ADD CONSTRAINT drafts_html_cap CHECK (octet_length(html) <= 262144)`
  * bare; the file later gained a `DO $$ ... EXCEPTION WHEN duplicate_object THEN null; END $$;`
@@ -109,6 +112,48 @@ export const MIGRATION_ALLOWANCES: readonly MigrationAllowance[] = [
       "after apply, so the entry can be re-executed the way mail 0118 — its other half — already " +
       "can; the three keys, their names, their columns and their references are unchanged, and a " +
       "drop of a constraint the next statement re-adds leaves the same schema",
+  },
+  {
+    journal: "mail",
+    tag: "0214_invitation_proposals",
+    recorded: "7343a3baa62f050aba6c4fb2027735853825e819c1158c968857ad7cb4761b9d",
+    shipped: "a10dc0d832c1487a8dc133ab4b12478d5d429bfa7c00bf430f01bf5fc0ee871d",
+    reason: REPLAY_GUARD_REASON,
+  },
+  {
+    journal: "mail",
+    tag: "0215_calendar_removed_occurrences",
+    recorded: "10686a3b7e8baff72f2fa5cb58c5b374681c6d12348fe9f3980970cd6ff8f9d5",
+    shipped: "a3b8a503103ab657d759cc103ef1074a8c11e2ea75bec1b76e413035a30994b7",
+    reason: REPLAY_GUARD_REASON,
+  },
+  {
+    journal: "mail",
+    tag: "0216_calendar_native_move",
+    recorded: "cb4e271d2635f17eedc180dc4cb1da3341afd2ddeba0077cca6efb8685097d21",
+    shipped: "57261b6587c438f5cf90f8e4698a06172f3787d01ee457c94dd8085087f1ae17",
+    reason: REPLAY_GUARD_REASON,
+  },
+  {
+    journal: "mail",
+    tag: "0217_calendar_portable_copy",
+    recorded: "3eb593144386ac280eb8a9917ca32cc9615d0eccddd24ede4b05fd32eecd7f7c",
+    shipped: "4a5ea7b4b064a1f826d05cab79829efd24bc3d76314c428ae96996ec102480fb",
+    reason: REPLAY_GUARD_REASON,
+  },
+  {
+    journal: "mail",
+    tag: "0219_hosted_invitation_details",
+    recorded: "ba48747593712fda9ccc22919c19c97fa0b9058939658e50be688bce4f4b2149",
+    shipped: "c332f3198566c98f00cabcffb334f6cd48d3a14ed728af5749e6f76ff96d53cd",
+    reason: REPLAY_GUARD_REASON,
+  },
+  {
+    journal: "cloud",
+    tag: "0106_security_notice_recipients",
+    recorded: "ea2373a2a699f73a9451f000141f8d6b5286bdd7e63c3519bbe92d670f318b18",
+    shipped: "6868a3224192c76c19c1a506ff77cfd02df729023e0073494663fc4610a7287d",
+    reason: REPLAY_GUARD_REASON,
   },
 ] as const;
 

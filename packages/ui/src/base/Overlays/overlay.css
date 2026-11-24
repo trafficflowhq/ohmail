@@ -1,0 +1,109 @@
+/* What every overlay stands in: one layer over the window, a veil or a scrim behind the part. */
+@layer oh {
+  .oh-over {
+    position: fixed;
+    inset: 0;
+    z-index: var(--oh-layer-over);
+    pointer-events: none;
+    color: var(--ink);
+    font-family: var(--f-text);
+    font-size: var(--t-ui);
+    font-weight: var(--w-text);
+    line-height: var(--oh-lh);
+  }
+  .oh-over > * {
+    pointer-events: auto;
+  }
+  /* A press beside a menu lands here. */
+  .oh-veil {
+    position: absolute;
+    inset: 0;
+  }
+  :root[data-device="phone"] .oh-veil,
+  .oh-veil[data-dim] {
+    background: var(--scrim);
+  }
+  .oh-scrim {
+    --oh-scrim-edge: var(--s4);
+    position: absolute;
+    inset: 0;
+    display: grid;
+    /* One column as wide as the window: what the part holds never widens it past the window's edge. */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    /* In the middle, unless what holds it says another place (`--oh-scrim-place`). */
+    place-items: var(--oh-scrim-place, center);
+    isolation: isolate;
+  }
+  .oh-scrim:not([data-scrim-motion="backdrop"]) {
+    background: var(--scrim);
+  }
+  .oh-scrim[data-place="start"] {
+    --oh-drawer-scrim: 1;
+    background: none;
+  }
+  .oh-scrim[data-place="start"]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: var(--oh-layer-recessed);
+    background: var(--scrim);
+    opacity: var(--oh-drawer-scrim, 1);
+    pointer-events: none;
+  }
+  .oh-scrim[data-place="start"][data-drawer-snap]::before {
+    transition: opacity var(--d-pop) var(--e-out);
+  }
+  .oh-scrim[data-scrim-motion="backdrop"]::before {
+    /* Fade the backdrop independently of the sheet above it. The scrim keeps the same hit area. */
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: var(--oh-layer-recessed);
+    pointer-events: none;
+    background: var(--scrim);
+    animation: oh-scrim-in var(--d-fade) var(--e-std) backwards;
+  }
+  .oh-scrim[data-scrim-motion="together"] {
+    animation: oh-scrim-in var(--d-fade) var(--e-std) backwards;
+  }
+  .oh-scrim[data-place="top"] {
+    --oh-scrim-place: start center;
+  }
+  /* The part on the scrim: a sheet that floats. Its own class says its measure. */
+  .oh-overlay {
+    --oh-soft: var(--soft-sheet);
+    width: min(var(--oh-overlay-max, 480px), calc(100% - 2 * var(--oh-scrim-edge)));
+    max-height: calc(100% - 2 * var(--oh-scrim-edge));
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: var(--overlay-shadow);
+  }
+  .oh-overlay:focus {
+    outline: none;
+  }
+  .oh-overlay,
+  .oh-menu {
+    animation: oh-overlay-in var(--d-pop) var(--e-pop) backwards;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .oh-overlay,
+    .oh-menu,
+    .oh-scrim[data-scrim-motion="backdrop"]::before,
+    .oh-scrim[data-scrim-motion="together"] {
+      /* The shared reset makes other animations instant. Keep the kit's opacity-only arrival. */
+      animation-duration: var(--d-reduced) !important;
+    }
+  }
+  @keyframes oh-scrim-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes oh-overlay-in {
+    from {
+      opacity: var(--o-pop);
+      transform: var(--x-pop);
+    }
+  }
+}

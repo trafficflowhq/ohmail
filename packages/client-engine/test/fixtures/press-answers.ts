@@ -1,4 +1,4 @@
-import type { MutationQueued } from "../../src/adapters/adapter.js";
+import type { MutationQueued } from "@ohmail/wire";
 import type { MutationResult } from "../../src/engine.js";
 
 /**

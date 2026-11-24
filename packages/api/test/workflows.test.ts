@@ -1,3 +1,4 @@
+import type { Db } from "@trafficflow/services";
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { workflowRuns, changeLog, idempotencyKeys } from "@trafficflow/db";
@@ -7,7 +8,7 @@ import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
 
-const runsFor = (db: ApiDeps["db"], accountId: string) =>
+const runsFor = (db: Db, accountId: string) =>
   db.select().from(workflowRuns).where(eq(workflowRuns.accountId, accountId));
 
 describe("workflows CRUD (§5.10, REST-only)", () => {
@@ -88,7 +89,7 @@ describe("workflows — tool allowlist", () => {
 });
 
 describe("workflows — run enqueue idempotency", () => {
-  async function makeEnabledWorkflow(db: ApiDeps["db"], deps: ApiDeps, token: string): Promise<string> {
+  async function makeEnabledWorkflow(db: Db, deps: ApiDeps, token: string): Promise<string> {
     const created = await H(req("POST", "/workflows", {
       bearer: token, body: JSON.stringify({ name: "wf", enabled: true, trigger: { kind: "manual" } }),
     }), deps);
@@ -248,7 +249,7 @@ describe("workflows — draft_reply refused at ENQUEUE when no drafter is wired"
 });
 
 describe("workflow-runs undo", () => {
-  async function enqueueRun(db: ApiDeps["db"], deps: ApiDeps, token: string): Promise<string> {
+  async function enqueueRun(db: Db, deps: ApiDeps, token: string): Promise<string> {
     const created = await H(req("POST", "/workflows", {
       bearer: token, body: JSON.stringify({ name: "wf", enabled: true, trigger: { kind: "manual" } }),
     }), deps);

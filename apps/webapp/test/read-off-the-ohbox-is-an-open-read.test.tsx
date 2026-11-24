@@ -1,10 +1,12 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { OhmailEngine } from "@ohmail/client-engine";
-import { ISO, act, answerConsentWith, goTo, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
+import { screen } from "@testing-library/react";
+import { ISO, act, answerConsentWith, goTo, installShellEnv, liveAccountResponse, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
 import { LENA, arriveLater, click, key, keyAsBrowser, mountThread, msg, patches, settle, toastText } from "./fixtures/thread-read-shell.js";
+import { letterShown, menuItem, moreButton, readSlot, readingScroller, seatedList } from "./ohbox/_finders.js";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
-import { LANDING_REST_MS } from "../app/shell/reader-seen";
+import { LANDING_REST_MS } from "@ohmail/app-logic/reading/reader-seen";
 
 /**
  * AN OHBOX MESSAGE READ IN THE READER OVER ANOTHER VIEW IS A READ IN OHMAIL (owner 2026-10-21:
@@ -27,13 +29,28 @@ const views = [
   ["History", "#/history/m/old"],
 ] as const;
 const ids = (label: string): string[] =>
-  [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] .row[data-id]`)]
+  [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] [role="option"][data-id]`)]
     .map((e) => (e as HTMLElement).dataset.id!);
-/** The one reader on screen: the column, the sender's pane or the sheet. */
-const slot = (): HTMLElement | null => {
-  const all = document.querySelectorAll<HTMLElement>(".abar .abar-read");
-  return all.length === 1 ? all[0]! : null;
-};
+const slot = () => readSlot(document);
+const list = () => seatedList(document);
+const rows = () => [...(list()?.querySelectorAll<HTMLElement>('[role="option"][data-id]') ?? [])];
+const row = (id: string) => rows().find((element) => element.dataset.id === id) ?? null;
+const order = () => rows().map((element) => element.dataset.id);
+const sheet = () => document.querySelector('[role="dialog"][aria-label="Reading"]');
+const BODY = "[data-read-body]";
+
+function phoneWidth(): void {
+  vi.stubGlobal("innerWidth", 390);
+}
+
+async function openReadControl() {
+  const direct = slot();
+  if (direct) return { element: direct, name: direct.getAttribute("aria-label") };
+  await click(moreButton(document), "More");
+  const element = menuItem("Mark read") ?? menuItem("Mark unread");
+  return { element, name: element?.textContent?.trim() };
+}
+
 const openReads = () => patches.filter((p) => (p as { openRead?: boolean }).openRead === true);
 async function goOhbox(): Promise<void> {
   window.location.hash = "#/ohbox";
@@ -42,11 +59,14 @@ async function goOhbox(): Promise<void> {
 }
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 beforeEach(() => { installShellEnv(); });
-afterEach(async () => { await teardownShellEnv(); });
+afterEach(async () => {
+  await teardownShellEnv();
+  vi.unstubAllGlobals();
+});
 
 describe("the reader's Mark read off the Ohbox is an open read", () => {
   for (const [label, hash] of views) {
@@ -63,18 +83,13 @@ describe("the reader's Mark read off the Ohbox is an open read", () => {
   }
 
   it("the narrow sheet over the Tag view: an open read", async () => {
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true, writable: true,
-      value: (query: string) => ({
-        matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {},
-        addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false,
-      }),
-    });
+    phoneWidth();
     window.location.hash = "#/tag/tg1/m/old";
     await mountThread(two());
-    const sheet = document.querySelector<HTMLElement>(".reader .abar .abar-read");
-    expect(sheet?.getAttribute("aria-label"), "the premise: the sheet shows old").toBe("Mark read");
-    await click(sheet, "Mark read");
+    expect(sheet()?.querySelector('[data-conv-id="old"]') ?? null).not.toBeNull();
+    const control = await openReadControl();
+    expect(control.name, "the premise: the sheet shows old").toBe("Mark read");
+    await click(control.element, "Mark read");
     expect(patches.at(-1)).toEqual({ ids: ["old"], unread: false, openRead: true });
   }, 30_000);
 });
@@ -113,17 +128,9 @@ describe("the read rule in the readers off the Ohbox", () => {
   afterEach(() => { layout.restore(); });
   const glances = () => patches.filter((p) => p.via === "glance").map((p) => p.ids);
   const dwell = async (): Promise<void> => { await layout.passDwell(); await settle(); };
-  const rowIn = (view: string, id: string): HTMLElement | null =>
-    document.querySelector<HTMLElement>(`.view-${view} [role="listbox"] .row[data-id="${id}"]`);
   const panel = (id: string): HTMLElement | null =>
     layout.scroller()?.querySelector<HTMLElement>(`[data-conv-id="${id}"]`) ?? null;
   const unseen = (id: string): boolean => panel(id)?.hasAttribute("data-unseen") ?? false;
-  const narrow = (): void => {
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true, writable: true,
-      value: (query: string) => ({ matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
-    });
-  };
   const press = async (el: Element | null | undefined): Promise<void> => {
     expect(el, "nothing to press").toBeTruthy();
     await act(async () => { el!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
@@ -134,26 +141,24 @@ describe("the read rule in the readers off the Ohbox", () => {
   const folder = { type: "folder", op: "create", id: "fd1", seq: 901, updatedAt: ISO, entity: { id: "fd1", name: "Projects", mailboxId: "mb_1", mailbox: "walker@example.invalid", updatedAt: ISO } };
   const filed = () => [msg("f1", 20, { threadId: "t-f1", folder: "Projects" }), msg("f2", 10, { threadId: "t-f2", folder: "Projects" }), folder];
   const later = (id: string, n: number) => msg(id, n, { threadId: `t-${id}`, triage: { id: `ms_${id}`, messageId: id, state: "reply_later", bubbleUpAt: null, setAt: ISO, updatedAt: ISO } });
-  const order = (view: string): string[] =>
-    [...document.querySelectorAll<HTMLElement>(`.view-${view} [role="listbox"] .row[data-id]`)].map((e) => e.dataset.id!);
 
   it("History: a click reads after the dwell, as a glance and an open read; the row and the panel turn read", async () => {
     window.location.hash = "#/history";
     await mountThread([msg("h1", 30, { threadId: "t-h1" }), msg("h2", 0, { threadId: "t-h2" })]);
     await dwell();
     expect(patches, "the first row the list shows is a preview").toEqual([]);
-    await click(rowIn("history", "h2"), "h2's row");
+    await click(row("h2"), "h2's row");
     expect(patches, "nothing before the dwell").toEqual([]);
     await dwell();
     expect(patches).toEqual([{ ids: ["h2"], unread: false, via: "glance", openRead: true }]);
     expect(unseen("h2"), "the panel").toBe(false);
-    expect(rowIn("history", "h2")?.hasAttribute("data-unseen"), "the row").toBe(false);
+    expect(row("h2")?.hasAttribute("data-unseen"), "the row").toBe(false);
   }, 30_000);
 
   it("a tag's conversation: the clicked letter reads, an older one whose top stays reads after its own dwell, a pass reads nothing", async () => {
     window.location.hash = "#/tag/tg1";
     await mountThread(tagged());
-    await click(rowIn("tag", "p3"), "p3's row");
+    await click(row("p3"), "p3's row");
     await dwell();
     expect(glances()).toEqual([["p3"]]);
     await layout.handScroll(layout.topOf("p1") - 10);
@@ -166,9 +171,9 @@ describe("the read rule in the readers off the Ohbox", () => {
     await settle();
     await dwell();
     expect(glances()).toEqual([["p3"], ["p2"]]);
-    expect(document.querySelector(".thread-marks"), "no squares off the Ohbox").toBeNull();
-    expect(document.querySelector("[data-thread-read]"), "no tint off the Ohbox").toBeNull();
-    expect(panel("p1")?.querySelector(".dot-unread"), "an unread sibling keeps its dot").not.toBeNull();
+    expect(panel("p1")?.querySelector("[data-unread]"), "no tint off the Ohbox").toBeNull();
+    expect(panel("p1")?.querySelector(".oh-avatar .oh-dot") ?? null, "an unread sibling keeps its dot").not.toBeNull();
+    expect(screen.getByRole("group", { name: "3 messages, 1 unread" }), "the tagged conversation shows its squares").toBeTruthy();
   }, 30_000);
 
   it("a link to a tagged letter is a preview until a press in it", async () => {
@@ -177,7 +182,7 @@ describe("the read rule in the readers off the Ohbox", () => {
     expect(panel("p3"), "the link opened it").not.toBeNull();
     await dwell();
     expect(patches).toEqual([]);
-    await press(panel("p3")?.querySelector(".msg-body, .pm-body"));
+    await press(panel("p3")?.querySelector(BODY));
     await dwell();
     expect(glances()).toEqual([["p3"]]);
   }, 30_000);
@@ -186,16 +191,16 @@ describe("the read rule in the readers off the Ohbox", () => {
     answerConsentWith({ foldersEnabledAt: ISO });
     window.location.hash = "#/folder/fd1";
     await mountThread(filed());
-    await click(rowIn("folder", "f1"), "f1's row");
+    await click(row("f1"), "f1's row");
     await dwell();
     expect(patches).toEqual([{ ids: ["f1"], unread: false, via: "glance" }]);
-    expect(order("folder"), "read, f1 keeps its place while shown").toEqual(["f1", "f2"]);
+    expect(order(), "read, f1 keeps its place while shown").toEqual(["f1", "f2"]);
     await keyAsBrowser("ArrowDown");
     expect(panel("f2"), "↓ shows f2").not.toBeNull();
-    expect(order("folder"), "left, f1 files under Earlier").toEqual(["f2", "f1"]);
+    expect(order(), "left, f1 files under Earlier").toEqual(["f2", "f1"]);
     await tick(LANDING_REST_MS / 2);
     expect(glances(), "a step passed is a preview").toEqual([["f1"]]);
-    await press(panel("f2")?.querySelector(".msg-body, .pm-body"));
+    await press(panel("f2")?.querySelector(BODY));
     await dwell();
     expect(glances()).toEqual([["f1"], ["f2"]]);
   }, 30_000);
@@ -203,22 +208,22 @@ describe("the read rule in the readers off the Ohbox", () => {
   it("Answer Later: a click reads as a glance, and the letter stays in its pile", async () => {
     window.location.hash = "#/triage";
     await mountThread([later("a1", 20), later("a2", 10)]);
-    await click(rowIn("triage", "a2"), "a2's row");
+    await click(row("a2"), "a2's row");
     await dwell();
     expect(patches).toEqual([{ ids: ["a2"], unread: false, via: "glance" }]);
     const sent = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls
       .map(([, init]) => String((init as RequestInit | undefined)?.body ?? ""));
     expect(sent.some((b) => b.includes("triage")), "no triage write").toBe(false);
-    expect(rowIn("triage", "a2"), "still in Answer Later").not.toBeNull();
+    expect(row("a2"), "still in Answer Later").not.toBeNull();
   }, 30_000);
 
   it("Mark unread on the bar is kept for the visit; a sibling's ⋯ offers Mark unread", async () => {
     window.location.hash = "#/tag/tg1";
     await mountThread([msg("p1", 0, { labels: ["tg1"], unread: false }), msg("p2", 10, { labels: ["tg1"] }), tag]);
-    await click(rowIn("tag", "p2"), "p2's row");
+    await click(row("p2"), "p2's row");
     await dwell();
     expect(glances()).toEqual([["p2"]]);
-    const slot = layout.scroller().querySelector<HTMLElement>(".abar .abar-read");
+    const slot = readSlot(document);
     expect(slot?.getAttribute("aria-label")).toBe("Mark unread");
     await click(slot, "Mark unread");
     expect(patches.at(-1)).toEqual({ ids: ["p2"], unread: true });
@@ -227,9 +232,9 @@ describe("the read rule in the readers off the Ohbox", () => {
     await settle();
     await dwell();
     expect(glances(), "not read back").toEqual([["p2"]]);
-    const more = panel("p1")?.querySelector(".msg-more");
+    const more = panel("p1")?.querySelector('button[aria-label="Message"]');
     await click(more, "p1's ⋯");
-    const item = panel("p1")?.querySelector<HTMLElement>('.msg-menu [role="menuitem"][data-item="mark_unread"]');
+    const item = menuItem("Mark unread");
     expect(item, "the sibling's Mark unread").not.toBeNull();
     await click(item, "Mark unread");
     expect(patches.at(-1)).toEqual({ ids: ["p1"], unread: true });
@@ -238,15 +243,15 @@ describe("the read rule in the readers off the Ohbox", () => {
   it("the sheet over a tag at phone width: a tap reads after the dwell, and still with a key every 400 ms", async () => {
     layout.restore();
     layout = stubThreadLayout({ columnHidden: () => true });
-    narrow();
+    phoneWidth();
     window.location.hash = "#/tag/tg1";
     await mountThread([msg("s1", 0, { threadId: "t-s1", labels: ["tg1"] }), msg("s2", 10, { threadId: "t-s2", labels: ["tg1"] }), tag]);
-    await click(rowIn("tag", "s1"), "s1's row");
-    expect(document.querySelector('.reader [data-conv-id="s1"]'), "the sheet shows it").not.toBeNull();
+    await click(row("s1"), "s1's row");
+    expect(sheet()?.querySelector('[data-conv-id="s1"]') ?? null, "the sheet shows it").not.toBeNull();
     await dwell();
     expect(glances()).toEqual([["s1"]]);
-    await click(document.querySelector(".reader-close"), "Back");
-    await click(rowIn("tag", "s2"), "s2's row");
+    await click(screen.queryByRole("button", { name: "Back" }), "Back");
+    await click(row("s2"), "s2's row");
     for (let i = 0; i < 4; i++) {
       await act(async () => {
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift", bubbles: true, cancelable: true }));
@@ -260,44 +265,17 @@ describe("the read rule in the readers off the Ohbox", () => {
   it("the sheet raised by a link at phone width is a preview until a press", async () => {
     layout.restore();
     layout = stubThreadLayout({ columnHidden: () => true });
-    narrow();
+    phoneWidth();
     window.location.hash = "#/history/m/h1";
     await mountThread([msg("h1", 0, { threadId: "t-h1" })]);
-    expect(document.querySelector('.reader [data-conv-id="h1"]'), "the link raised the sheet").not.toBeNull();
+    expect(sheet()?.querySelector('[data-conv-id="h1"]') ?? null, "the link raised the sheet").not.toBeNull();
     await dwell();
     expect(patches).toEqual([]);
-    await press(document.querySelector('.reader [data-conv-id="h1"] .msg-body'));
+    await press(sheet()?.querySelector(`[data-conv-id="h1"] ${BODY}`));
     await dwell();
     expect(glances()).toEqual([["h1"]]);
   }, 30_000);
 
-  for (const width of ["wide", "narrow"] as const) {
-    it(`Trash (${width}): a click, a press and a scroll read nothing and say nothing`, async () => {
-      if (width === "narrow") {
-        layout.restore();
-        layout = stubThreadLayout({ columnHidden: () => true });
-        narrow();
-      }
-      const trashed = {
-        id: "x1", accountId: "acct_live_1", mailboxId: "mb_1", threadId: "t-x1", folder: "Trash", subject: "Deleted",
-        from: LENA, to: [], labels: [], unread: true, date: ISO, updatedAt: ISO, trashedAt: ISO, restoreTo: "INBOX",
-      };
-      await mountThread([msg("h1", 0, { threadId: "t-h1" }), msg("x1", 10, { threadId: "t-x1", folder: "Trash" })]);
-      const inner = globalThis.fetch;
-      globalThis.fetch = (async (input: unknown, init?: RequestInit) => String(input).includes("view=trash")
-        ? new Response(JSON.stringify({ items: [trashed], nextCursor: null }), { status: 200, headers: { "content-type": "application/json" } })
-        : (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init)) as typeof globalThis.fetch;
-      await goTo("trash");
-      await settle();
-      await click(rowIn("trash", "x1"), "the deleted letter's row");
-      expect(panel("x1"), "the reader shows it").not.toBeNull();
-      await press(panel("x1")?.querySelector(".msg-body, .pm-body"));
-      await layout.handScroll(30);
-      await dwell();
-      expect(patches).toEqual([]);
-      expect(toastText()).toBe("");
-    }, 30_000);
-  }
 });
 
 /**
@@ -316,8 +294,6 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
   const brief = (): Promise<void> => tick(LANDING_REST_MS / 2);
   const panel = (id: string): HTMLElement | null =>
     layout.scroller()?.querySelector<HTMLElement>(`[data-conv-id="${id}"]`) ?? null;
-  const order = (view: string): string[] =>
-    [...document.querySelectorAll<HTMLElement>(`.view-${view} [role="listbox"] .row[data-id]`)].map((e) => e.dataset.id!);
   const own = (id: string, n: number, over: Record<string, unknown> = {}) => msg(id, n, { threadId: `t-${id}`, ...over });
   const folder = { type: "folder", op: "create", id: "fd1", seq: 901, updatedAt: ISO, entity: { id: "fd1", name: "Projects", mailboxId: "mb_1", mailbox: "walker@example.invalid", updatedAt: ISO } };
   const tagged = () => [own("g1", 30, { labels: ["tg1"] }), own("g2", 20, { labels: ["tg1"] }), own("g3", 10, { labels: ["tg1"] }), tag];
@@ -359,7 +335,7 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
     window.location.hash = "#/tag/tg1";
     await mountThread(tagged());
     await keyAsBrowser("ArrowDown");
-    await act(async () => { document.querySelector<HTMLElement>(".view-tag .read-col")!.focus(); });
+    await act(async () => { readingScroller(document)!.focus(); });
     await keyAsBrowser("ArrowDown");
     expect(layout.scroller().scrollTop, "↓ scrolled the column").toBeGreaterThan(0);
     await rest();
@@ -369,7 +345,7 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
   it("a tag: ↓ passed inside the rest reads nothing; ↓ rested on reads", async () => {
     window.location.hash = "#/tag/tg1";
     await mountThread(tagged());
-    expect(order("tag")).toEqual(["g1", "g2", "g3"]);
+    expect(order()).toEqual(["g1", "g2", "g3"]);
     await keyAsBrowser("ArrowDown");
     expect(panel("g2")).not.toBeNull();
     await brief();
@@ -382,37 +358,35 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
   it("Answer Later: ↓ rested on reads as a glance, writes no triage and the letter stays in its pile", async () => {
     window.location.hash = "#/triage";
     await mountThread([later("a1", 20), later("a2", 10)]);
-    const [, second] = order("triage");
+    const [first] = order();
     await keyAsBrowser("ArrowDown");
-    expect(panel(second!), "↓ shows the second letter").not.toBeNull();
+    expect(panel(first!), "↓ shows the first letter: a bare Answer Later address rests on its list").not.toBeNull();
     await rest();
-    expect(patches).toEqual([{ ids: [second], unread: false, via: "glance" }]);
+    expect(patches).toEqual([{ ids: [first], unread: false, via: "glance" }]);
     const sent = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls
       .map(([, init]) => String((init as RequestInit | undefined)?.body ?? ""));
     expect(sent.some((b) => b.includes("triage")), "no triage write").toBe(false);
-    expect(order("triage"), "still in Answer Later").toContain(second);
+    expect(order(), "still in Answer Later").toContain(first);
   }, 30_000);
 
   it("a folder holds the row the cursor is on in its group: ↓ walks New though each rested row reads", async () => {
     answerConsentWith({ foldersEnabledAt: ISO });
-    window.location.hash = "#/folder/fd1";
+    window.location.hash = "#/folder/fd1/m/u1";
     const inFolder = { folder: "Projects" };
     await mountThread([own("u1", 30, inFolder), own("u2", 20, inFolder), own("u3", 10, inFolder), own("r1", 0, { ...inFolder, unread: false }), folder]);
-    expect(order("folder")).toEqual(["u1", "u2", "u3", "r1"]);
+    expect(order()).toEqual(["u1", "u2", "u3", "r1"]);
     await keyAsBrowser("ArrowDown");
     await rest();
     expect(glances()).toEqual([["u2"]]);
-    expect(order("folder"), "read, u2 keeps its place under New").toEqual(["u1", "u2", "u3", "r1"]);
+    expect(order(), "read, u2 keeps its place under New").toEqual(["u1", "u2", "u3", "r1"]);
     await keyAsBrowser("ArrowDown");
     expect(panel("u3"), "↓ goes on to u3").not.toBeNull();
-    expect(order("folder"), "left, u2 files under Earlier").toEqual(["u1", "u3", "u2", "r1"]);
+    expect(order(), "left, u2 files under Earlier").toEqual(["u1", "u3", "u2", "r1"]);
   }, 30_000);
 
   /** Mark unread on the bar, then a step away and back, then a long rest (found on 0.30.12): no landing reads it back. */
-  const rowOf = (view: string, id: string): HTMLElement | null =>
-    document.querySelector<HTMLElement>(`.view-${view} [role="listbox"] .row[data-id="${id}"]`);
   const markUnread = async (id: string): Promise<void> => {
-    const slot = layout.scroller().querySelector<HTMLElement>(".abar .abar-read");
+    const slot = readSlot(document);
     expect(slot?.getAttribute("aria-label")).toBe("Mark unread");
     await click(slot, "Mark unread");
     expect(patches.at(-1)).toEqual({ ids: [id], unread: true });
@@ -423,7 +397,7 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
     layout = stubThreadLayout({ heights: { h2: 2000 } });
     window.location.hash = "#/history";
     await mountThread([own("h1", 30), own("h2", 20), own("h3", 10)]);
-    await click(rowOf("history", "h2"), "h2's row");
+    await click(row("h2"), "h2's row");
     await dwell();
     expect(glances()).toEqual([["h2"]]);
     await markUnread("h2");
@@ -435,12 +409,12 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
     await tick(5000);
     await dwell();
     expect(glances(), "the landing's rest read it back").toEqual([["h2"]]);
-    await act(async () => { document.querySelector<HTMLElement>(".view-history .read-col")!.focus(); });
+    await act(async () => { readingScroller(document)!.focus(); });
     await keyAsBrowser("ArrowDown");
     expect(layout.scroller().scrollTop, "↓ scrolled the column").toBeGreaterThan(0);
     await dwell();
     expect(glances(), "the arrow scroll read it back").toEqual([["h2"]]);
-    await click(rowOf("history", "h2"), "↵ on h2's row");
+    await click(row("h2"), "↵ on h2's row");
     await dwell();
     expect(glances()).toEqual([["h2"], ["h2"]]);
   }, 30_000);
@@ -448,10 +422,10 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
   it("History: Mark unread on the bar and j in one breath (never shown unread), k back, a long rest: it stays unread", async () => {
     window.location.hash = "#/history";
     await mountThread([own("h1", 30), own("h2", 20), own("h3", 10)]);
-    await click(rowOf("history", "h2"), "h2's row");
+    await click(row("h2"), "h2's row");
     await dwell();
     expect(glances()).toEqual([["h2"]]);
-    const slot = layout.scroller().querySelector<HTMLElement>(".abar .abar-read");
+    const slot = readSlot(document);
     expect(slot?.getAttribute("aria-label")).toBe("Mark unread");
     await act(async () => {
       slot!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -472,7 +446,7 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
     answerConsentWith({ foldersEnabledAt: ISO });
     window.location.hash = "#/folder/fd1";
     await mountThread([own("f1", 20, { folder: "Projects" }), own("f2", 10, { folder: "Projects" }), folder]);
-    await click(rowOf("folder", "f1"), "f1's row");
+    await click(row("f1"), "f1's row");
     await dwell();
     expect(glances()).toEqual([["f1"]]);
     await markUnread("f1");
@@ -484,7 +458,7 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
     await tick(5000);
     await dwell();
     expect(glances(), "the landing's rest read it back").toEqual([["f1"]]);
-    await act(async () => { panel("f1")!.querySelector(".msg-body, .pm-body")!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+    await act(async () => { panel("f1")!.querySelector(BODY)!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
     await settle();
     await dwell();
     expect(glances()).toEqual([["f1"], ["f1"]]);
@@ -494,10 +468,10 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
     answerConsentWith({ foldersEnabledAt: ISO });
     window.location.hash = "#/folder/fd1";
     await mountThread([own("f1", 20, { folder: "Projects" }), own("f2", 10, { folder: "Projects", unread: false }), folder]);
-    await click(rowOf("folder", "f1"), "f1's row");
+    await click(row("f1"), "f1's row");
     await dwell();
     expect(glances(), "a read on the wire: the drains now serve what arrives").toEqual([["f1"]]);
-    await click(rowOf("folder", "f2"), "f2's row, read from the start");
+    await click(row("f2"), "f2's row, read from the start");
     // Above every seq a mount serves: an update the mirror must not take for a stale one.
     arriveLater([{ ...own("f2", 10, { folder: "Projects", unread: true }), seq: 100_000 }], ["f2"], "t-f2");
     await tick(20_000);
@@ -511,7 +485,7 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
     await tick(5000);
     await dwell();
     expect(glances(), "the landing's rest read it back").toEqual([["f1"]]);
-    await act(async () => { panel("f2")!.querySelector(".msg-body, .pm-body")!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+    await act(async () => { panel("f2")!.querySelector(BODY)!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
     await settle();
     await dwell();
     expect(glances()).toEqual([["f1"], ["f2"]]);
@@ -556,17 +530,17 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
       window.location.hash = "#/tag/tg1";
       await mountThread(tagged());
       await keyAsBrowser("ArrowDown");
-      await act(async () => { document.querySelector('.view-tag [role="listbox"]')!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+      await act(async () => { list()?.querySelector('[role="listbox"]')!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
       await rest();
       await tick(5000);
       expect(patches).toEqual([]);
     }, 30_000);
 
-    it("a tag: the cursor a verb key places after the column's ✕ rests and reads nothing", async () => {
+    it("a tag: after Escape closes the column a verb key places a cursor that rests and reads nothing", async () => {
       window.location.hash = "#/tag/tg1";
       await mountThread(tagged());
       await keyAsBrowser("ArrowDown");
-      await click(document.querySelector(".view-tag .read-col-close"), "the column's ✕");
+      await keyAsBrowser("Escape");
       expect(panel("g2"), "closed").toBeNull();
       await keyAsBrowser("e");
       expect(panel("g1"), "the placer put the cursor on the first row").not.toBeNull();
@@ -578,33 +552,10 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
     it("a tag at phone width (the column hidden): ↓ rested on reads nothing", async () => {
       layout.restore();
       layout = stubThreadLayout({ columnHidden: () => true });
-      Object.defineProperty(window, "matchMedia", {
-        configurable: true, writable: true,
-        value: (query: string) => ({ matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
-      });
+      phoneWidth();
       window.location.hash = "#/tag/tg1";
       await mountThread(tagged());
       await keyAsBrowser("ArrowDown");
-      await rest();
-      await tick(5000);
-      expect(patches).toEqual([]);
-    }, 30_000);
-
-    it("Trash: ↓ rested on reads nothing", async () => {
-      const trashed = (id: string, n: number) => ({
-        id, accountId: "acct_live_1", mailboxId: "mb_1", threadId: `t-${id}`, folder: "Trash", subject: "Deleted",
-        from: LENA, to: [], labels: [], unread: true, date: new Date(Date.UTC(2026, 7, 3, 8, n)).toISOString(), updatedAt: ISO, trashedAt: ISO, restoreTo: "INBOX",
-      });
-      await mountThread([own("h1", 0), own("x1", 20, { folder: "Trash" }), own("x2", 10, { folder: "Trash" })]);
-      const inner = globalThis.fetch;
-      globalThis.fetch = (async (input: unknown, init?: RequestInit) => String(input).includes("view=trash")
-        ? new Response(JSON.stringify({ items: [trashed("x1", 20), trashed("x2", 10)], nextCursor: null }), { status: 200, headers: { "content-type": "application/json" } })
-        : (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init)) as typeof globalThis.fetch;
-      await goTo("trash");
-      await settle();
-      await click(document.querySelector('.view-trash [role="listbox"] .row[data-id="x1"]'), "x1's row");
-      await keyAsBrowser("ArrowDown");
-      expect(panel("x2"), "↓ shows x2").not.toBeNull();
       await rest();
       await tick(5000);
       expect(patches).toEqual([]);
@@ -620,15 +571,15 @@ describe("a hit opened from Search reads in a folder's column and in the sheet",
   const dwell = async (): Promise<void> => { await layout.passDwell(); await settle(); };
   const folder = { type: "folder", op: "create", id: "fd1", seq: 901, updatedAt: ISO, entity: { id: "fd1", name: "Projects", mailboxId: "mb_1", mailbox: "walker@example.invalid", updatedAt: ISO } };
   const kettle = (over: Record<string, unknown>) => msg("k1", 20, { threadId: "t-k1", subject: "Harbour kettle", ...over });
-  const hit = (): HTMLButtonElement | null => document.querySelector<HTMLButtonElement>('.view-search .hit-w[data-hit="k1"] button.hit-open');
+  const hit = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="listitem"][data-hit="k1"] [role="button"]');
   async function search(found: unknown): Promise<HTMLInputElement> {
     const inner = globalThis.fetch;
     globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
       if (!/\/search\?/.test(String(input))) return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-      return new Response(JSON.stringify({ items: [found], total: 1, totalExact: true, ms: 4 }), { status: 200, headers: { "content-type": "application/json" } });
+      return liveAccountResponse(Response.json({ items: [found], total: 1, totalExact: true, ms: 4 }));
     }) as typeof globalThis.fetch;
     await goTo("search");
-    const box = document.querySelector<HTMLInputElement>(".view-search .search-box input")!;
+    const box = screen.getByRole<HTMLInputElement>("textbox", { name: "Search" });
     const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     await act(async () => { set.call(box, "harbour"); box.dispatchEvent(new Event("input", { bubbles: true })); });
     await tick(1_000);
@@ -639,26 +590,27 @@ describe("a hit opened from Search reads in a folder's column and in the sheet",
   const entity = (m: unknown) => (m as { entity: unknown }).entity;
 
   it("Return on a hit filed in Answer Later: the sheet opens it and reads it", async () => {
+    phoneWidth();
     const k1 = kettle({ triage: { id: "ms_k1", messageId: "k1", state: "reply_later", bubbleUpAt: null, setAt: ISO, updatedAt: ISO } });
     await mountThread([k1]);
     const box = await search(entity(k1));
     await act(async () => { box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); });
     await settle();
-    expect(document.querySelector('.reader [data-conv-id="k1"]'), "the sheet shows it").not.toBeNull();
+    expect(sheet()?.querySelector('[data-conv-id="k1"]') ?? null, "the sheet shows it").not.toBeNull();
     expect(patches, "nothing before the dwell").toEqual([]);
     await dwell();
     await dwell();
     expect(glances()).toEqual([["k1"]]);
   }, 60_000);
 
-  it("a click on a hit in a folder: the folder's column reads it", async () => {
+  it("a click on a hit in a folder: Search's column reads it", async () => {
     answerConsentWith({ foldersEnabledAt: ISO });
     const k1 = kettle({ folder: "Projects" });
     await mountThread([k1, msg("k0", 30, { threadId: "t-k0", folder: "Projects" }), folder]);
     await search(entity(k1));
     await click(hit(), "the hit");
-    expect(window.location.hash).toContain("#/folder/fd1");
-    expect(document.querySelector('.read-col [data-conv-id="k1"]'), "the column shows it").not.toBeNull();
+    expect(window.location.hash).toBe("#/search/m/k1?q=harbour");
+    expect(letterShown(document, "k1"), "the column shows it").not.toBeNull();
     await dwell();
     await dwell();
     expect(glances()).toEqual([["k1"]]);
@@ -668,7 +620,7 @@ describe("a hit opened from Search reads in a folder's column and in the sheet",
     answerConsentWith({ foldersEnabledAt: ISO });
     window.location.hash = "#/folder/fd1/m/k1";
     await mountThread([kettle({ folder: "Projects" }), msg("k0", 30, { threadId: "t-k0", folder: "Projects" }), folder]);
-    expect(document.querySelector('.read-col [data-conv-id="k1"]'), "the link opened it").not.toBeNull();
+    expect(letterShown(document, "k1"), "the link opened it").not.toBeNull();
     await dwell();
     await dwell();
     expect(patches).toEqual([]);

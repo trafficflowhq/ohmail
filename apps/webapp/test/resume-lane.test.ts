@@ -6,7 +6,7 @@ import {
   createResumeLane,
   type LaneTicket,
   type ResumeLane,
-} from "../app/shell/resume-lane";
+} from "@ohmail/app-logic/session/resume-lane";
 
 /**
  * THE RESUME LANE ON ITS OWN: admission order and concurrency, on a fake clock. The real shell's
@@ -236,6 +236,26 @@ describe("the resume lane", () => {
     (confirm as LaneTicket).done(true);
     await flush();
     expect(r.went).toEqual(["/hello", "/mailboxes"]);
+  });
+
+  it("a stored-open page can ask for capabilities alongside the confirm without releasing the queue", async () => {
+    const lane = createResumeLane();
+    lane.confirming({ alongsideHello: true });
+    const hello = enterAll(lane, ["/hello"]);
+    const confirm = enterAll(lane, ["/auth/session"], { urgent: true });
+    const background = enterAll(lane, ["/hello", "/mailboxes"]);
+    await flush();
+    expect(hello.went).toEqual(["/hello"]);
+    expect(confirm.went).toEqual(["/auth/session"]);
+    expect(background.went).toEqual([]);
+
+    hello.tickets.get("/hello")!.done(true);
+    await flush();
+    expect(background.went).toEqual([]);
+
+    confirm.tickets.get("/auth/session")!.done(true);
+    await flush();
+    expect(background.went).toEqual(["/hello", "/mailboxes"]);
   });
 
   it("the access read never leads a cold lane: it goes at once, counted, and the next read leads", async () => {

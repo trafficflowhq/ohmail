@@ -8,7 +8,7 @@
  * React. The predicate is `screenerReadOnly` over `readerStandDown` (`app/shell/mail-state.ts`);
  * `null` means this install organizes — the safe direction. `DOOR_COPY` is the non-hook route.
  */
-import type { ReaderHolding } from "../../webapp/app/shell/mail-state";
+import type { ReaderHolding } from "@ohmail/app-logic/mail-state/mail-state";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 
 /**

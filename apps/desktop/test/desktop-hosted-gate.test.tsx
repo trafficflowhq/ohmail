@@ -9,7 +9,7 @@ import path from "node:path";
 
 import { DesktopGate } from "../src/DesktopGate.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
-import { resetUpdateStoreForTests } from "../../webapp/app/shell/app-update.js";
+import { resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 import messages from "../../webapp/messages/en.json";
 
 /**
@@ -201,7 +201,7 @@ async function signIn(el: HTMLElement): Promise<void> {
   });
 }
 
-/** The mail app's unmistakable text — the rail's Ohbox entry only `AppShell` renders. */
+/** The mail app's unmistakable text — the rail's Ohbox entry, which only the mounted mail app (the frame) draws. */
 const mounted = (el: HTMLElement): boolean => (el.textContent ?? "").includes("Ohbox");
 const signInSurface = (el: HTMLElement): boolean =>
   (el.textContent ?? "").includes("Sign in to ohmail Cloud");
@@ -229,40 +229,6 @@ describe("the hosted auth gate", () => {
     const el = await render();
     expect(mounted(el)).toBe(true);
     expect(shell.healthAsks(), "the mount rode a real answer").toBeGreaterThanOrEqual(1);
-  });
-
-  it("the mounted mail app carries the Pull-new-mail control — on BOTH doors", async () => {
-    /* THE REGRESSION: the control gated itself on `apiConfigured()` from `app/api-client`,
-       which every desktop artifact folds to `false` at build time (`vite.config.ts` defines
-       `NEXT_PUBLIC_API_BASE` as `undefined`; the packaged tree aliases the whole module to a
-       refusing stub) — so the control shipped unable to render on either desktop door,
-       although the bridge adapter behind both doors serves
-       `POST /sync/pull` (the hosted door forwards it to the Cloud; the standalone door stamps
-       its own engine, whose ≤15 s poll answers it). The gate is now the ENGINE's own
-       `pullAvailable()`, which reads the adapter that will take the press. Mutation-watched:
-       re-gating `available` on a build-env base (`process.env.NEXT_PUBLIC_API_BASE`, the old
-       predicate's shape) turned this red on both doors; restored. */
-    const shell = fakeShell(CLOUD_SERVING);
-    shell.health({ signedIn: true });
-    const cloudDoor = await render();
-    expect(mounted(cloudDoor)).toBe(true);
-    expect(
-      cloudDoor.querySelector(".rail-pull"),
-      "the hosted door's rail has no Pull-new-mail control",
-    ).not.toBeNull();
-    expect(cloudDoor.querySelector(".rail-pull")!.textContent).toContain("Pull new mail");
-
-    // The standalone door: the same shell over `mode: "local"` — no hosted session to gate on.
-    await act(async () => { root!.unmount(); });
-    mountPoint?.remove();
-    root = null;
-    fakeShell({ ...CLOUD_SERVING, mode: "local" });
-    const localDoor = await render();
-    expect(mounted(localDoor)).toBe(true);
-    expect(
-      localDoor.querySelector(".rail-pull"),
-      "the standalone door's rail has no Pull-new-mail control",
-    ).not.toBeNull();
   });
 
   it("a PRE-AUTH cloud engine gets the sign-in surface, never the mail app", async () => {
@@ -304,7 +270,7 @@ describe("the hosted auth gate", () => {
     // A FRESH ask happened, its answer is pre-auth, and the mail app stayed withheld.
     expect(shell.healthAsks(), "no fresh /health was asked after the sign-in")
       .toBeGreaterThan(asksBeforeSignIn);
-    expect(mounted(el), "AppShell mounted on a stale auth answer").toBe(false);
+    expect(mounted(el), "the mail app mounted on a stale auth answer").toBe(false);
     expect(signInSurface(el)).toBe(true);
   });
 
@@ -323,6 +289,44 @@ describe("the hosted auth gate", () => {
     expect(mounted(el)).toBe(true);
     // The mount rode a FRESH answer — the stale latch mounts with zero new asks.
     expect(shell.healthAsks(), "mounted without re-asking the engine").toBeGreaterThan(asksBeforeSignIn);
+  });
+
+  /* The rail's Pull new mail is the frame's: an entry in the rail's foot, found by its words. */
+  const pullControl = (el: HTMLElement): HTMLElement | null =>
+    [...el.querySelectorAll<HTMLElement>("button")].find((b) => (b.textContent ?? "").includes("Pull new mail")) ?? null;
+
+  it("the mounted mail app carries the Pull-new-mail control — on BOTH doors", async () => {
+    /* THE REGRESSION: the control gated itself on `apiConfigured()` from `app/api-client`,
+       which every desktop artifact folds to `false` at build time (`vite.config.ts` defines
+       `NEXT_PUBLIC_API_BASE` as `undefined`; the packaged tree aliases the whole module to a
+       refusing stub) — so the control shipped unable to render on either desktop door,
+       although the bridge adapter behind both doors serves
+       `POST /sync/pull` (the hosted door forwards it to the Cloud; the standalone door stamps
+       its own engine, whose ≤15 s poll answers it). The gate is now the ENGINE's own
+       `pullAvailable()`, which reads the adapter that will take the press. Mutation-watched:
+       re-gating `available` on a build-env base (`process.env.NEXT_PUBLIC_API_BASE`, the old
+       predicate's shape) turned this red on both doors; restored. */
+    const shell = fakeShell(CLOUD_SERVING);
+    shell.health({ signedIn: true });
+    const cloudDoor = await render();
+    expect(mounted(cloudDoor)).toBe(true);
+    expect(
+      pullControl(cloudDoor),
+      "the hosted door's rail has no Pull-new-mail control",
+    ).not.toBeNull();
+    expect(pullControl(cloudDoor)!.textContent).toContain("Pull new mail");
+
+    // The standalone door: the same shell over `mode: "local"` — no hosted session to gate on.
+    await act(async () => { root!.unmount(); });
+    mountPoint?.remove();
+    root = null;
+    fakeShell({ ...CLOUD_SERVING, mode: "local" });
+    const localDoor = await render();
+    expect(mounted(localDoor)).toBe(true);
+    expect(
+      pullControl(localDoor),
+      "the standalone door's rail has no Pull-new-mail control",
+    ).not.toBeNull();
   });
 });
 

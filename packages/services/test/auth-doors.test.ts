@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { eq, like } from "drizzle-orm";
+import { eq, like, sql } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { sessions } from "@trafficflow/db";
+import { bindDb, sessions } from "@trafficflow/db";
 import { authThrottle } from "@trafficflow/db/cloud";
 import {
-  AuthService, MailService, SpyMailer, makeTestAuthDeps, throttleKeysFor, ServiceError,
+  AuthService, MailService, SpyMailer, dbFor, makeTestAuthDeps, throttleKeysFor, ServiceError,
   type AuthDeps, type MailerPort, type ServiceContext, type SessionUser,
 } from "../src/index.js";
 
@@ -38,8 +38,10 @@ async function harness(over: Parameters<typeof makeTestAuthDeps>[0] = {}, mailer
     : undefined;
   const deps: AuthDeps = makeTestAuthDeps(over, mail);
   const svc = new AuthService(deps);
+  // A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
   const ctx = (ip: string, extra: Partial<ServiceContext> = {}): ServiceContext => ({
-    db, accountId: "", userId: null, now: clock.now, requestId: "r", ip, ...extra,
+    db: extra.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, extra.accountId),
+    accountId: "", userId: null, now: clock.now, requestId: "r", ip, ...extra,
   });
   return { db, clock, deps, svc, ctx };
 }
@@ -248,6 +250,23 @@ describe("the second factor: a day cap, replays free, step-up untouched, the acc
     expect(spy.sent.filter((s) => s.template === "security_notice").map((s) => (s.data as { kind: string }).kind)).toEqual(["factor_refused"]);
     const text = spy.sent.find((s) => s.template === "security_notice")!;
     expect(JSON.stringify(text), "the notice tells a person to change a password there is no page for").not.toMatch(/change your password/i);
+  }, 60_000);
+
+  it("a language read that throws leaves the notice owed, and the next drain sends it", async () => {
+    const spy = new SpyMailer();
+    const h = await harness({ maxFailures: 3 }, spy);
+    const { user } = await totpUser(h, "stranded@x.example");
+    for (let i = 0; i < 3; i++) {
+      await h.svc.totpVerify(h.ctx("10.8.0.1"), { loginToken: await token(h, "stranded@x.example"), code: "000000" }).catch(() => {});
+    }
+    // The settings read fails as a dropped connection would: its table is not there for this drain.
+    await h.db.execute(sql`alter table account_settings rename to account_settings_away`);
+    await expect(h.svc.drainSecurityNotices(h.ctx(""))).rejects.toThrow();
+    await h.db.execute(sql`alter table account_settings_away rename to account_settings`);
+    const row = (await h.db.select().from(authThrottle).where(eq(authThrottle.key, `notice:factor:${user.userId}`)))[0];
+    expect(row?.failures, "the notice was claimed and then stranded").toBe(1);
+    expect(await h.svc.drainSecurityNotices(h.ctx(""))).toEqual({ sent: 1, dropped: 0, failed: 0 });
+    expect(spy.sent.filter((s) => s.template === "security_notice").map((s) => s.to)).toEqual(["stranded@x.example"]);
   }, 60_000);
 });
 

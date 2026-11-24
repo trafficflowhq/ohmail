@@ -1,3 +1,12 @@
+import type {
+  EngineMessage,
+  MailboxDTO,
+  MessageDTO,
+  RuleDTO,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -5,11 +14,8 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { changeLog, rules } from "@trafficflow/db/mail";
 import { materializeRule } from "@trafficflow/services/mail";
-import type {
-  MailboxDTO, MessageDTO, RuleDTO, SnapshotResponse, SyncChange, SyncResponse,
-} from "@trafficflow/services/mail";
 import {
-  consentIndex, consentPartition, decidedDestination, type EngineMessage, type EntityReader,
+  consentIndex, consentPartition, decidedDestination, type EntityReader,
 } from "@ohmail/client-engine";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, type LocalWorld } from "../src/identity.js";

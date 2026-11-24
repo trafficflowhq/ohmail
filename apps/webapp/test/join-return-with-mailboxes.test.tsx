@@ -93,7 +93,7 @@ afterEach(async () => {
 });
 
 async function mountReturn(props: Record<string, unknown> = { billingReturn: "success" }): Promise<HTMLElement> {
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -112,7 +112,7 @@ describe("the paid return for an account that already has a mailbox", () => {
   it("lands on the done step with the mailbox named, never the connect step", async () => {
     const c = await mountReturn();
     expect(accessReads, "the return's poll never read access, so this proves nothing").toBeGreaterThan(1);
-    expect(c.textContent).not.toContain(messages.join.step_mailbox_lead);
+    expect(c.textContent).not.toContain(messages.onboarding.providerFirst);
     expect(c.textContent).toContain("pat@example.invalid");
   });
 
@@ -120,7 +120,8 @@ describe("the paid return for an account that already has a mailbox", () => {
     mailboxItems = [];
     const c = await mountReturn();
     expect(accessReads).toBeGreaterThan(1);
-    expect(c.textContent).toContain(messages.join.step_mailbox_lead);
+    expect(c.querySelector("h1")?.textContent?.trim()).toBe(messages.onboarding.providerFirst);
+    expect([...c.querySelectorAll("button")].some((button) => button.textContent === "Gmail")).toBe(true);
   });
 });
 
@@ -131,7 +132,7 @@ describe("the paid return for an account that already has a mailbox", () => {
 describe("a signed-in account resuming setup", () => {
   const signUpShown = (c: HTMLElement): boolean =>
     c.querySelector("#join-email") !== null || c.querySelector("#join-code") !== null
-    || c.querySelector("h1")?.textContent === messages.join.step_account_title;
+    || c.querySelector("h1")?.textContent === messages.join.account.replace("<name>,</name>", `${messages.join.nameLabel},`).replace("<email>,</email>", `${messages.join.emailLabel},`).replace("<password></password>.", messages.join.passwordLabel);
   const settle = async (): Promise<void> => {
     for (let i = 0; i < 12; i += 1) await act(async () => { await Promise.resolve(); });
   };
@@ -162,7 +163,8 @@ describe("a signed-in account resuming setup", () => {
     expect(c.querySelector("h1")?.textContent).toBe(messages.onboarding.resumeCheckingTitle);
     await act(async () => { release(); });
     await settle();
-    expect(c.textContent).toContain(messages.join.step_mailbox_lead);
+    expect(c.querySelector("h1")?.textContent?.trim()).toBe(messages.onboarding.providerFirst);
+    expect([...c.querySelectorAll("button")].some((button) => button.textContent === "Gmail")).toBe(true);
   });
 
   it("a 503 on the mailbox read is a retryable fault, never the sign-up form", async () => {
@@ -176,7 +178,8 @@ describe("a signed-in account resuming setup", () => {
     const retry = [...c.querySelectorAll("button")].find((b) => b.textContent === messages.onboarding.resumeRetry);
     await act(async () => { retry!.click(); });
     await settle();
-    expect(c.textContent).toContain(messages.join.step_mailbox_lead);
+    expect(c.querySelector("h1")?.textContent?.trim()).toBe(messages.onboarding.providerFirst);
+    expect([...c.querySelectorAll("button")].some((button) => button.textContent === "Gmail")).toBe(true);
   });
 
   it("CONTROL: a request with no owner marker and no session is the invite step at once", async () => {

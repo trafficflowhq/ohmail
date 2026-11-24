@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
+import { bindDb } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, inArray } from "drizzle-orm";
 import {
-  accounts, awayReplies, awayResponders, awayResponderSent, awaySenderState, folderState,
+  accounts, awayReplies, awayResponders, awaySenderState, folderState,
   mailboxes, messageBodies, messages,
 } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
@@ -53,18 +52,18 @@ const NOW = new Date("2026-09-02T12:00:00.000Z");
 /** One more than the page, which is the whole subject. */
 const N = AWAY_ACCOUNTS_PER_RUN + 1;
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 beforeAll(async () => {
   if (!PG_UP) return;
   await runMigrations(PG_TEST_URL);
-  client = postgres(PG_TEST_URL, { max: 4 });
-  db = brandDialect(drizzle(client), "pg");
+  owned = makeOwnedDb(PG_TEST_URL);
+  db = owned.db;
 });
 
 afterAll(async () => {
-  await client?.end({ timeout: 5 });
+  await owned?.close();
 });
 
 /**
@@ -143,10 +142,10 @@ async function seedFleet(n: number): Promise<Fleet> {
   }));
   await db.insert(messages).values(msgRows);
   await db.insert(messageBodies).values(msgRows.map((m) => ({
-    messageId: m.id, text: "hello", headers: {},
+    messageId: m.id, accountId: m.accountId, text: "hello", headers: {},
   })));
   await db.insert(folderState).values(msgRows.map((m) => ({
-    messageId: m.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" as const,
+    messageId: m.id, accountId: m.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" as const,
   })));
 
   for (let i = 0; i < n; i++) {
@@ -166,7 +165,6 @@ afterEach(async () => {
   await db.delete(messageBodies).where(inArray(messageBodies.messageId, messageIds));
   await db.delete(awayReplies).where(inArray(awayReplies.accountId, accountIds));
   await db.delete(awaySenderState).where(inArray(awaySenderState.accountId, accountIds));
-  await db.delete(awayResponderSent).where(inArray(awayResponderSent.accountId, accountIds));
   await db.delete(messages).where(inArray(messages.accountId, accountIds));
   await db.delete(awayResponders).where(inArray(awayResponders.accountId, accountIds));
   await db.delete(mailboxes).where(inArray(mailboxes.accountId, accountIds));
@@ -189,7 +187,8 @@ async function answered(f: Fleet): Promise<Set<string>> {
 async function tick(handle: typeof db, f: Fleet, at: Date) {
   const r = recorder();
   const spy = logSpy();
-  const result = await runAwayResponderPass(handle as never, {
+  // The pass's walk is bound to nothing, as its door hands it (`doorDb`).
+  const result = await runAwayResponderPass(bindDb(handle, { account: null }), {
     openSendAdapter: r.factory, now: () => at, mailboxIds: f.mailboxIds, sendsPerRun: N * 2,
     log: spy.log,
   });
@@ -308,12 +307,11 @@ describe.skipIf(!PG_UP)("the away pass reaches every enabled responder", () => {
     await tick(db, f, minutes(0));
     expect((await answered(f)).has(last)).toBe(false);
 
-    const second = postgres(PG_TEST_URL, { max: 2 });
+    const second = makeOwnedDb(PG_TEST_URL);
     try {
-      const fresh = brandDialect(drizzle(second), "pg");
-      await tick(fresh as never, f, minutes(1));
+      await tick(second.db, f, minutes(1));
     } finally {
-      await second.end({ timeout: 5 });
+      await second.close();
     }
 
     expect((await answered(f)).has(last)).toBe(true);

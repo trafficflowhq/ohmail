@@ -1,0 +1,11 @@
+{
+  "about": "What a notice's title does with each character, read by packages/client-engine/test/notices-seam.test.ts (cleanNoticeText) and by apps/desktop/src-tauri/src/notice_tests.rs (clean_title). Code points in hex, one or a range. space: becomes one space between words. dropped: never shown. Any other character is kept.",
+  "space": [
+    "0009-000D", "0020", "0085", "00A0", "1680", "2000-200A", "2028-2029", "202F", "205F", "3000"
+  ],
+  "dropped": [
+    "0000-0008", "000E-001F", "007F-0084", "0086-009F", "00AD", "034F", "061C", "115F-1160", "180E",
+    "200B-200F", "202A-202E", "2060-2064", "2066-2069", "2800", "3164", "FE00-FE0F", "FEFF", "FFA0",
+    "E0000-E007F", "E0100-E01EF"
+  ]
+}

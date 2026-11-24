@@ -1,0 +1,18 @@
+Subject: Connect your mailbox to ohmail
+
+ohmail.
+
+Connect your mailbox.
+
+You started an ohmail trial, and no mailbox is connected yet. So ohmail has no mail to organize for you.
+
+For an Outlook.com or Hotmail address, reply to this mail and a person helps you connect it. If your mail is in a Microsoft 365 work or school account, connect it in Settings › Mailboxes with Connect Outlook: you sign in with Microsoft and need no app password.
+
+The button below opens the mailbox step, through sign-in if needed. Connecting takes a few minutes.
+
+Connect your mailbox:
+https://app.ohmail.app/login?next=join
+
+--
+We send this reminder once. If you have questions or are stuck, reply to this mail and a person answers.
+TrafficFlow GmbH, Zürich, Switzerland

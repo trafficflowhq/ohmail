@@ -1,18 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import {
   changeLog, closeStoodDownAppointments, drafts, mailboxes, outboundSends, scheduledSendFiles,
-  STAND_DOWN_SEND_SENTENCES,
+  STAND_DOWN_SEND_SENTENCES, bindDb,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { ScheduleService, runScheduledSendPass, sweepScheduledSendFiles } from "../src/index.js";
+import { ScheduleService, dbFor, runScheduledSendPass, sweepScheduledSendFiles } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -58,7 +56,7 @@ import type { ServiceContext } from "../src/index.js";
  * half — that no stand-down path anywhere can be added without this call — is
  * `packages/db/test/stand-down-sends-census.test.ts`.
  *
- * ## Why REAL Postgres (CLAUDE.md)
+ * ## Why REAL Postgres (AGENTS.md)
  * Two of the claims here are one connection blocking behind another's uncommitted transaction and
  * then re-evaluating its own predicate. PGlite is single-connection and cannot hold a lock against
  * anything, so it would report both as green without ever running them.
@@ -73,9 +71,11 @@ import type { ServiceContext } from "../src/index.js";
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
+// The factory's handle: the pass binds each appointment's account, and the binder takes a server
+// handle only from the factory that registered its door. `sqlB` is a second session's raw client.
+const owned = makeOwnedDb(PG_TEST_URL);
+const dbA = owned.db;
 const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
 
 const NOW = new Date("2026-09-01T12:00:00.000Z");
 /** Twelve minutes out — the measurement's own interval. */
@@ -118,7 +118,7 @@ async function seeded(opts: { at?: Date; files?: { filename: string; contentType
     to: [{ name: null, address: "you@example.com" }], status: "draft",
     createdAt: NOW, updatedAt: NOW,
   }).returning();
-  const ctx: ServiceContext = { db: dbA, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(dbA, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   await schedules.schedule(
     ctx, d!.id, (opts.at ?? DUE).toISOString(), opts.files ? { files: opts.files, surfaceMaxTotalBytes: null } : undefined,
   );
@@ -159,7 +159,7 @@ const standDownRow = async (mailboxId: string, reason: string): Promise<void> =>
 };
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await owned.close(); await sqlB.end({ timeout: 5 }); });
 
 describe.skipIf(!PG_UP)("a handover orphans a pending scheduled send", () => {
   it("REPRODUCES the measurement — the stood-down side runs no pass, and the row lies for ever", async () => {
@@ -228,7 +228,7 @@ describe.skipIf(!PG_UP)("a handover orphans a pending scheduled send", () => {
     // process. Both claim arms require a standing `send_key`, and the close cleared it, so there
     // is nothing here to find however late the pass runs.
     const fake = fakeAdapter();
-    await runScheduledSendPass(dbA, {
+    await runScheduledSendPass(bindDb(dbA, { account: null }), {
       openSendAdapter: fake.factory,
       now: () => new Date(DUE.getTime() + 48 * 60 * 60 * 1000),
     });
@@ -257,10 +257,10 @@ describe.skipIf(!PG_UP)("a handover orphans a pending scheduled send", () => {
     });
     const files = () => dbA.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, w.draftId));
     expect(await files(), "the close itself leaves the bytes to the sweep").toHaveLength(1);
-    await sweepScheduledSendFiles(dbA, { mailboxIds: [w.mailboxId] });
+    await sweepScheduledSendFiles(bindDb(dbA, { account: null }), { mailboxIds: [w.mailboxId] });
     expect(await files()).toHaveLength(0);
     expect(await rowOf(w.draftId)).toMatchObject({ status: "draft", sendKey: null, sendFiles: 1 });
-    await runScheduledSendPass(dbA, { openSendAdapter: fakeAdapter().factory, now: () => new Date(DUE.getTime() + 60_000) });
+    await runScheduledSendPass(bindDb(dbA, { account: null }), { openSendAdapter: fakeAdapter().factory, now: () => new Date(DUE.getTime() + 60_000) });
     expect(await dbA.select().from(outboundSends).where(eq(outboundSends.accountId, w.accountId))).toHaveLength(0);
   });
 
@@ -440,7 +440,7 @@ describe.skipIf(!PG_UP)("a handover orphans a pending scheduled send", () => {
     });
 
     const fake = fakeAdapter();
-    await runScheduledSendPass(dbA, {
+    await runScheduledSendPass(bindDb(dbA, { account: null }), {
       openSendAdapter: fake.factory, now: () => new Date(DUE.getTime() + 60_000),
     });
     // Account-scoped for the reason the test above states in full: this pass is global and the

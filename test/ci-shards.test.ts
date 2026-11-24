@@ -2,16 +2,17 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  ALONE_MARKER, SERVICE_GATE_PREFIX, SHARDS, SQLITE_BUDGET_S, SQLITE_SHARDS, aloneFiles, checkMap, checkSqliteMap, costsFrom, dovecotPinned, hashShard, packSqlite,
+  ALONE_MARKER, DESKTOP_INSTALL_MARKER, SERVICE_GATE_PREFIX, SHARDS, SQLITE_BUDGET_S, SQLITE_SHARDS, aloneFiles, checkMap, checkSqliteMap, costsFrom, dovecotPinned, hashShard, pack, packSqlite,
   readMap, readSqliteMap, shardFiles, sqliteShardFiles, testFiles, treeCosts, verifyList, verifyReport, verifySqliteReport,
   type ShardMap, type SqliteShardMap,
 } from "./support/ci-shards.mjs";
 import { publicRel } from "./support/public-root.mjs";
+import { laneRoleHostVerdict } from "../scripts/lane-db.mjs";
 
 const yaml = createRequire(import.meta.url)("js-yaml") as { load(text: string): unknown };
 
@@ -28,6 +29,8 @@ const WORKFLOW = publicRel("github/workflows/ci.yml", ROOT);
 const workflowText = readFileSync(join(ROOT, WORKFLOW), "utf8");
 const composeText = readFileSync(join(ROOT, "docker-compose.yml"), "utf8");
 const dockerignoreText = readFileSync(join(ROOT, "apps/webapp/Dockerfile.dockerignore"), "utf8");
+/** The desktop window's program as the root install can compile it: the package's own, without the bundler's config. */
+const DESKTOP_WINDOW = "apps/desktop/tsconfig.src.json";
 /** Every directory name a checkout holds under apps/ and packages/ (git's tracked set: a fresh checkout's). */
 const TRACKED_DIRS = new Set(execFileSync("git", ["ls-files", "-z", "--", "apps", "packages"], { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 26 })
   .split("\0").filter(Boolean).flatMap((p) => p.split("/").slice(0, -1)));
@@ -40,7 +43,7 @@ function imageDrops(dockerignore: string, dirs: Set<string> = TRACKED_DIRS): str
 
 type Step = { name?: string; run?: string; uses?: string; env?: Record<string, unknown> };
 type Job = { name?: string; permissions?: unknown; env?: Record<string, unknown>; steps: Step[]; services?: Record<string, { image: string; env?: Record<string, string>; ports?: string[]; options?: string }> };
-type Workflow = { on: Record<string, unknown>; permissions?: unknown; jobs: Record<string, Job> };
+type Workflow = { on: Record<string, unknown>; permissions?: unknown; env?: Record<string, unknown>; jobs: Record<string, Job> };
 
 /** Every refusal the workflow earns, read from its text against the compose file's and the web image's dockerignore. */
 function workflowProblems(text: string, compose: string, imageDrop: string[] = imageDrops(dockerignoreText)): string[] {
@@ -81,6 +84,8 @@ function workflowProblems(text: string, compose: string, imageDrop: string[] = i
   const typecheckRuns = (Object.values(wf.jobs).find((j) => j.name === "typecheck")?.steps ?? []).map((st) => st.run ?? "");
   if (!typecheckRuns.some((r) => /^npm run build$/m.test(r))) problems.push("TYPECHECK the typecheck job does not run npm run build");
   if (!typecheckRuns.some((r) => r.includes("tsc --noEmit -p apps/webapp/tsconfig.json"))) problems.push("TYPECHECK the typecheck job does not compile the web app's program");
+  /* The desktop window's sources are in neither of those two programs, and no other required check compiles them. */
+  if (!typecheckRuns.some((r) => r.includes(`tsc --noEmit -p ${DESKTOP_WINDOW}`))) problems.push("TYPECHECK the typecheck job does not compile the desktop window's sources");
   if (typecheckRuns.some((r) => drops(r).length)) problems.push("TYPECHECK the typecheck job drops test directories, and the web app's program reads its tests");
   /* The desktop job runs the desktop's own files on the desktop's own install, and reads its report back. */
   const desktopRuns = (wf.jobs.desktop?.steps ?? []).map((st) => st.run ?? "");
@@ -103,7 +108,8 @@ function workflowProblems(text: string, compose: string, imageDrop: string[] = i
   const hostPort = (p: string) => p.split(":").slice(-2).join(":");
   for (const [id, job] of Object.entries(wf.jobs)) {
     for (const [name, svc] of Object.entries(job.services ?? {})) {
-      const twin = services[name === "postgres" ? "db" : name];
+      /* `postgres` is compose's `db`; `postgres-N`, a second server on another major, is its `db-N`. */
+      const twin = services[name === "postgres" ? "db" : name.replace(/^postgres-(\d+)$/, "db-$1")];
       if (!twin) { problems.push(`SERVICE ${id}.${name} has no twin in docker-compose.yml`); continue; }
       if (svc.image !== twin.image) problems.push(`IMAGE ${id}.${name} is ${svc.image}, docker-compose.yml runs ${twin.image}`);
       const want = (twin.ports ?? []).map((p) => hostPort(p.replace(/\s+#.*$/, ""))).sort();
@@ -112,6 +118,20 @@ function workflowProblems(text: string, compose: string, imageDrop: string[] = i
         if (svc.env?.[k] !== v) problems.push(`ENV ${id}.${name} ${k} differs from docker-compose.yml`);
       }
       if (twin.shm_size && !(svc.options ?? "").includes(`--shm-size=${twin.shm_size}`)) problems.push(`SHM ${id}.${name} lacks --shm-size=${twin.shm_size}`);
+    }
+  }
+  /* scripts/lane-db.sh makes its database on the box's port and on no other, unless the port is named to it:
+     a job that starts its Postgres elsewhere names that port where the step reads it, by the script's own verdict. */
+  for (const [id, job] of Object.entries(wf.jobs)) {
+    const lane = job.steps.find((st) => (st.run ?? "").includes("scripts/lane-db.sh"));
+    if (!lane) continue;
+    const env = Object.fromEntries(Object.entries({ ...wf.env, ...job.env, ...lane.env }).map(([k, v]) => [k, String(v)]));
+    for (const [name, svc] of Object.entries(job.services ?? {})) {
+      if (name !== "postgres" && !/^postgres-\d+$/.test(name)) continue;
+      for (const published of svc.ports ?? []) {
+        const verdict = laneRoleHostVerdict(`postgres://localhost:${published.split(":").slice(-2)[0]}/x`, env);
+        if (!verdict.ok) problems.push(`LANE_PORT ${id}.${name}: ${verdict.say}`);
+      }
     }
   }
   /* RustFS and Dovecot start by `docker run` (a service cannot be given a command or a checkout file). */
@@ -143,6 +163,34 @@ describe("the suite workflow", () => {
     const loose = text.replace('      TF_REQUIRE_PG: "1"\n', "").replace("image: ghcr.io/trafficflowhq/mirror-postgres:", "image: ghcr.io/x/postgres:");
     expect(workflowProblems(loose, composeText).filter((p) => !absent(p)).map((p) => p.split(" ").slice(0, 2).join(" ")))
       .toEqual(["REQUIRE_PG search-budget", "IMAGE search-budget.postgres"]);
+  });
+
+  it("the transition's nightly on Postgres 17 runs after the budget, on compose's second server", () => {
+    const text = readFileSync(join(ROOT, publicRel("github/workflows/search-budget.yml", ROOT)), "utf8");
+    const wf = yaml.load(text) as Workflow & { jobs: Record<string, { needs?: string | string[] }> };
+    expect([wf.jobs["transition-nightly-pg17"]!.needs].flat()).toEqual(["search-budget"]);
+    // The two files it runs are the ones ci.yml's nightly runs alone on the test stack's server.
+    const run = wf.jobs["transition-nightly-pg17"]!.steps.map((st) => st.run ?? "").find((r) => /\bvitest run\b/.test(r))!;
+    expect(run).toContain("packages/db/test/transition.pg.test.ts packages/db/test/transition-fresh-equals-moved.pg.test.ts");
+    expect(Object.keys(wf.jobs["transition-nightly-pg17"]!.services ?? {})).toEqual(["postgres-17"]);
+    // The budget is judged once, on the first job's quiet runner: the leg after it does not ask for it again.
+    const judges = Object.entries(wf.jobs).filter(([, j]) => "OHMAIL_BUDGET_MUST_JUDGE" in (j.env ?? {})).map(([id]) => id);
+    expect(judges).toEqual(["search-budget"]);
+    // A second server is held to its own twin: an image `db-17` does not run is refused by name, and so is a port.
+    const absent = (p: string) => /^(IMAGE_TREE (webapp-build|proxy-e2e)|BUILD (suite|alone|sqlite)|TYPECHECK|DESKTOP|(IMAGE|PORTS) (rustfs|dovecot)|DOVECOT_CONF) /.test(p);
+    const other = text.replace(/image: postgres:17\.6@sha256:[0-9a-f]{64}/, "image: postgres:17");
+    expect(other).not.toBe(text);
+    expect(workflowProblems(other, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^IMAGE transition-nightly-pg17\.postgres-17 is postgres:17,/)]);
+    const port = text.replace('ports: ["5434:5432"]', 'ports: ["5433:5432"]');
+    expect(workflowProblems(port, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^PORTS transition-nightly-pg17\.postgres-17 /)]);
+    const stranger = text.replace("      postgres-17:\n", "      postgres-18:\n");
+    expect(workflowProblems(stranger, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^SERVICE transition-nightly-pg17\.postgres-18 has no twin/)]);
+    // The database step runs scripts/lane-db.sh, which refuses any port but the box's unless the job names it.
+    const unnamed = text.replace('      OHMAIL_LANE_DB_THROWAWAY_PORT: "5434"\n', "");
+    expect(unnamed).not.toBe(text);
+    expect(workflowProblems(unnamed, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^LANE_PORT transition-nightly-pg17\.postgres-17: REFUSED: port 5434 /)]);
+    const another = text.replace('      OHMAIL_LANE_DB_THROWAWAY_PORT: "5434"\n', '      OHMAIL_LANE_DB_THROWAWAY_PORT: "5435"\n');
+    expect(workflowProblems(another, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^LANE_PORT transition-nightly-pg17\.postgres-17: /)]);
   });
 
   it("refuses a vitest job without TF_REQUIRE_PG, a lane database made after the run, and the shared box", () => {
@@ -214,6 +262,9 @@ describe("the suite workflow", () => {
     expect(workflowProblems(dropping, composeText)).toEqual(["TYPECHECK the typecheck job drops test directories, and the web app's program reads its tests"]);
     const noWeb = workflowText.replace("        run: ./node_modules/.bin/tsc --noEmit -p apps/webapp/tsconfig.json", "        run: echo skipped");
     expect(workflowProblems(noWeb, composeText)).toEqual(["TYPECHECK the typecheck job does not compile the web app's program"]);
+    const noWindow = workflowText.replace(`        run: ./node_modules/.bin/tsc --noEmit -p ${DESKTOP_WINDOW}`, "        run: echo skipped");
+    expect(noWindow).not.toBe(workflowText);
+    expect(workflowProblems(noWindow, composeText)).toEqual(["TYPECHECK the typecheck job does not compile the desktop window's sources"]);
     const rootOnly = workflowText.replace('        run: cd apps/desktop && bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund', "        run: echo root tree only");
     expect(rootOnly).not.toBe(workflowText);
     expect(workflowProblems(rootOnly, composeText)).toEqual(["DESKTOP the desktop job runs vitest before it installs apps/desktop's own tree"]);
@@ -245,12 +296,40 @@ describe("the suite workflow", () => {
     expect(run).toContain("node test/support/ci-shards.mjs --needs-dovecot \"$SHARD\"");
   });
 
+  it.each([
+    ["12", "self-hosted", "", true],
+    ["11", "self-hosted", "", false],
+    ["12", "github-hosted", "", false],
+    ["12", "self-hosted", "test/selected.test.ts", false],
+  ] as const)("records resources for the full VM shard (shard %s, %s, selected files %s)", (shard, runner, files, diagnostic) => {
+    const run = wf.jobs.suite.steps.find((s) => s.name?.startsWith("Test shard "))!.run!;
+    const script = [
+      'node() { printf "%s\\n" test/first.test.ts test/second.test.ts; }',
+      'mkdir() { :; }',
+      'awk() { printf "guest memory\\n"; }',
+      'df() { printf "guest disk\\n"; }',
+      'npx() { printf "arg=%s\\n" "$@"; }',
+      run,
+    ].join("\n");
+    const output = execFileSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: { ...process.env, SHARD: shard, RUNNER_ENVIRONMENT: runner, FILES: files },
+    });
+    expect(output.includes("guest memory\n")).toBe(diagnostic);
+    expect(output.includes("guest disk\n")).toBe(diagnostic);
+    const args = output.split("\n").filter((line) => line.startsWith("arg=")).map((line) => line.slice(4));
+    expect(args).toEqual([
+      "vitest", "run", "--reporter=default", "--reporter=json", `--outputFile=build/ci-suite-${shard}.json`,
+      ...(files ? [files] : ["test/first.test.ts", "test/second.test.ts"]),
+    ]);
+  });
+
   it("splits the SQLite run by its own map, over the file set vitest lists for it, and reads each report back", () => {
     expect(wf.jobs.sqlite.name).toBe("suite · sqlite (${{ matrix.shard }})");
     const run = wf.jobs.sqlite.steps.map((s) => s.run ?? "").join("\n");
-    expect(run).toContain("npx vitest list --config vitest.sqlite.config.ts --filesOnly --json=build/sqlite-files.json");
+    expect(run).toContain("npx vitest list --config test/vitest.sqlite.config.ts --filesOnly --json=build/sqlite-files.json");
     expect(run).toContain("node test/support/ci-shards.mjs --sqlite-shard \"$SHARD\" build/sqlite-files.json");
-    expect(run).toMatch(/npx vitest run --config vitest\.sqlite\.config\.ts [^\n]*"\$\{files\[@\]\}"/);
+    expect(run).toMatch(/npx vitest run --config test\/vitest\.sqlite\.config\.ts [^\n]*"\$\{files\[@\]\}"/);
     expect(run).toContain("node test/support/ci-shards.mjs --verify-sqlite-report \"$SHARD\" build/sqlite-files.json");
     const plan = wf.jobs.plan.steps.map((s) => s.run ?? "").join("\n");
     expect(plan).toContain("node test/support/ci-shards.mjs --sqlite-indexes");
@@ -297,6 +376,23 @@ describe("the suite workflow", () => {
     expect(runs.indexOf("npm run build")).toBeLessThan(runs.indexOf("npm run typecheck:mobile"));
   });
 
+  it("compiles in the typecheck job what the desktop's own typecheck compiles, but for the bundler's config", () => {
+    const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
+    const program = (config: string) => {
+      const host = { ...ts.sys, onUnRecoverableConfigFileDiagnostic: (d: { messageText: unknown }) => { throw new Error(String(d.messageText)); } };
+      const parsed = ts.getParsedCommandLineOfConfigFile(join(ROOT, config), {}, host)!;
+      expect(parsed.errors, config).toEqual([]);
+      return { roots: parsed.fileNames.map((f) => relative(ROOT, f).split("\\").join("/")).sort(), options: { ...parsed.options, configFilePath: "" } };
+    };
+    const whole = program("apps/desktop/tsconfig.json");
+    const window = program(DESKTOP_WINDOW);
+    // The root install lacks the config's plugin, and nothing else: every other root, and every option, is the package's.
+    expect(window.roots).toEqual(whole.roots.filter((f) => f !== "apps/desktop/vite.config.ts"));
+    expect(window.options).toEqual(whole.options);
+    // The two answers to the host contract that live in this program.
+    expect(window.roots).toEqual(expect.arrayContaining(["apps/desktop/src/host-contract.ts", "apps/paired-page/src/host.ts"]));
+  });
+
   it("plans the alone jobs from the marker and refuses a list the shard map's own walk disagrees with", () => {
     const plan = wf.jobs.plan.steps.map((s) => s.run ?? "").join("\n");
     expect(plan).toContain(`git grep -l '${ALONE_MARKER}' -- ':(glob)apps/*/test/**' ':(glob)packages/*/test/**'`);
@@ -306,6 +402,8 @@ describe("the suite workflow", () => {
 });
 
 type PlanStep = Step & { id?: string; if?: string; "continue-on-error"?: boolean; "timeout-minutes"?: number; with?: Record<string, unknown> };
+/** The plan job's line naming the merge it checked out: its head (HEAD^2) onto the base's tip (HEAD^1). */
+const TESTED_RUN = 'echo "TESTED: merge of $(git rev-parse HEAD^2) onto $(git rev-parse HEAD^1)"';
 type FullJob = Omit<Job, "steps"> & { if?: string; strategy?: { matrix?: Record<string, unknown> }; steps: PlanStep[]; "timeout-minutes"?: number };
 
 /**
@@ -322,6 +420,11 @@ function selectionProblems(text: string): string[] {
   const checkout = plan.find((s) => (s.uses ?? "").startsWith("actions/checkout@"));
   if (checkout?.with?.["fetch-depth"] !== 2 || checkout?.with?.["persist-credentials"] !== false) problems.push("PLAN_CHECKOUT the plan does not check out the merge commit's parents without credentials");
   const scope = at(/node \.github\/scripts\/ci-select\.mjs scope\b/);
+  // The merge this run tested, on a pull request alone and before it decides (a landing reads it).
+  const tested = plan.findIndex((s) => (s.run ?? "").trim() === TESTED_RUN);
+  if (tested < 0 || plan[tested]!.if !== "github.event_name == 'pull_request'" || !(plan.indexOf(checkout!) < tested && tested < scope)) {
+    problems.push("PLAN_TESTED the plan does not say which merge it tested, on a pull request alone, before it decides");
+  }
   const install = at(/npm ci\b/);
   const sel = at(/node \.github\/scripts\/ci-select\.mjs select\b/);
   const out = at(/node \.github\/scripts\/ci-select\.mjs outputs\b/);
@@ -352,7 +455,11 @@ function selectionProblems(text: string): string[] {
   for (const [id, job] of Object.entries(wf.jobs)) {
     for (const s of job.steps) if ((s.run ?? "").includes("${{")) problems.push(`ENV_ONLY ${id}: "${s.name ?? s.uses}" interpolates an expression into its run text`);
   }
-  for (const id of ["plan", "typecheck", "webapp-build"]) if (wf.jobs[id]!.if !== undefined) problems.push(`REQUIRED ${id} does not run on every pull request`);
+  // A required check runs on every pull request that can merge: a draft cannot, and its push starts no job.
+  const DRAFT_GUARD = "github.event.pull_request.draft != true";
+  for (const id of ["plan", "typecheck", "webapp-build"]) {
+    if (wf.jobs[id]!.if !== undefined && wf.jobs[id]!.if !== DRAFT_GUARD) problems.push(`REQUIRED ${id} does not run on every pull request`);
+  }
   return problems;
 }
 
@@ -376,7 +483,9 @@ describe("a pull request's selected run", () => {
       ["files in the run text", workflowText.replace("            list=$FILES\n", "            list=\"${{ matrix.files }}\"\n"), /^ENV_ONLY suite: /],
       ["a selected report not read back", workflowText.replace(/--verify-list "selected sqlite shard \$SHARD"/, "--verify-sqlite-report \"$SHARD\""), /^VERIFY sqlite /],
       ["selected durations uploaded", workflowText.replace("        if: always() && env.FILES == ''\n", "        if: always()\n"), /^DURATIONS suite /],
-      ["a required check skipped", workflowText.replace("    name: typecheck\n", "    name: typecheck\n    if: needs.plan.outputs.shards != '[]'\n"), /^REQUIRED typecheck /],
+      ["a required check skipped", workflowText.replace("    name: typecheck\n    if: github.event.pull_request.draft != true\n", "    name: typecheck\n    if: needs.plan.outputs.shards != '[]'\n"), /^REQUIRED typecheck /],
+      ["a required check skipped beside the draft guard", workflowText.replace("    name: typecheck\n    if: github.event.pull_request.draft != true\n", "    name: typecheck\n    if: github.event.pull_request.draft != true && needs.plan.outputs.shards != '[]'\n"), /^REQUIRED typecheck /],
+      ["a draft guard against the string", workflowText.replace("    name: typecheck\n    if: github.event.pull_request.draft != true\n", "    name: typecheck\n    if: github.event.pull_request.draft != 'true'\n"), /^REQUIRED typecheck /],
     ];
     for (const [what, text, want] of planted) {
       expect(text, what).not.toBe(workflowText);
@@ -405,6 +514,46 @@ describe("a pull request's selected run", () => {
       const costs = costsFrom(ROOT, [{ path: "a/ci-suite-3.json", report: suite }, { path: "b/ci-sqlite-1.json", report: sqlite }], "123");
       expect(costs).toEqual({ measuredAt: "123", suite: { [files[0]!]: 2000, [files[1]!]: 1000 }, sqlite: { [files[2]!]: 700 } });
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("the plan job says which merge it tested, on a pull request alone", () => {
+    const wf = yaml.load(workflowText) as { jobs: Record<string, FullJob> };
+    const step = wf.jobs.plan!.steps.find((s) => (s.run ?? "").trim() === TESTED_RUN);
+    expect(step?.if).toBe("github.event_name == 'pull_request'");
+    // Run on a merge commit as the job checks one out, it names the head and the base's tip.
+    const dir = mkdtempSync(join(tmpdir(), "ci-shards-tested-"));
+    try {
+      const g = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: dir, encoding: "utf8" }).trim();
+      g("init", "-q", "-b", "next");
+      writeFileSync(join(dir, "a.txt"), "a\n");
+      g("add", "-A");
+      g("commit", "-q", "-m", "base");
+      g("checkout", "-q", "-b", "pr/x");
+      writeFileSync(join(dir, "b.txt"), "b\n");
+      g("add", "-A");
+      g("commit", "-q", "-m", "head");
+      const head = g("rev-parse", "HEAD");
+      g("checkout", "-q", "next");
+      writeFileSync(join(dir, "c.txt"), "c\n");
+      g("add", "-A");
+      g("commit", "-q", "-m", "next moved");
+      const base = g("rev-parse", "HEAD");
+      g("merge", "-q", "--no-ff", "-m", "merge", "pr/x");
+      writeFileSync(join(dir, "step.sh"), `set -euo pipefail\n${step!.run}`);
+      expect(execFileSync("bash", [join(dir, "step.sh")], { cwd: dir, encoding: "utf8" })).toBe(`TESTED: merge of ${head} onto ${base}\n`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+    // The admission names it: gone, on every event, or after the scope is decided.
+    const at = workflowText.indexOf(TESTED_RUN);
+    const block = workflowText.slice(workflowText.lastIndexOf("\n      - ", at) + 1, workflowText.indexOf("\n", at) + 1);
+    const planted: Array<[string, string]> = [
+      ["no line", workflowText.replace(TESTED_RUN, 'echo "a merge"')],
+      ["every event", workflowText.replace(block, block.replace("        if: github.event_name == 'pull_request'\n", ""))],
+      ["after the scope", workflowText.replace(block, "").replace("      - name: Install the locked dependency tree\n", `${block}      - name: Install the locked dependency tree\n`)],
+    ];
+    for (const [what, text] of planted) {
+      expect(text, what).not.toBe(workflowText);
+      expect(selectionProblems(text), what).toEqual([expect.stringMatching(/^PLAN_TESTED /)]);
+    }
   });
 });
 
@@ -480,6 +629,35 @@ describe("the map's two rules, on a planted tree", () => {
     }
   });
 
+  it("balances observed costs and still schedules unmeasured and future files once", () => {
+    const normal = Array.from({ length: SHARDS - 1 }, (_, i) => `packages/p/test/f${i}.test.ts`);
+    const pinned = ["packages/core/test/adapters/imap.first.test.ts", "packages/core/test/adapters/imap.second.test.ts"];
+    for (const file of pinned) plant(file);
+    const alone = "packages/p/test/twin.pg.test.ts";
+    const desktop = "apps/desktop/test/desktop-install.test.ts";
+    plant(desktop, `// ${DESKTOP_INSTALL_MARKER}`);
+    const cost = new Map<string, number>(normal.map((file) => [file, 10_000]));
+    cost.set(pinned[0]!, 6_000);
+    cost.set(pinned[1]!, 4_000);
+    cost.set(alone, 50_000);
+    cost.set(desktop, 60_000);
+
+    const { map: repacked, seconds } = pack(scratch, cost, "a".repeat(40));
+    expect(seconds).toEqual(Array.from({ length: SHARDS }, () => 10));
+    expect(repacked.pins.dovecot).toEqual(pinned);
+    expect(repacked.shards).toContainEqual(pinned);
+    expect(repacked.shards.flat().sort()).toEqual([...normal, ...pinned].sort());
+
+    const future = "packages/p/test/future.test.ts";
+    plant(future);
+    const scheduled = repacked.shards.map((_, shard) => shardFiles(shard, scratch, repacked));
+    expect(scheduled.flat().sort()).toEqual(testFiles(scratch).filter((file) => file !== alone && file !== desktop));
+    for (const file of [`packages/p/test/f${SHARDS - 1}.test.ts`, future]) {
+      const holders = scheduled.flatMap((files, shard) => files.includes(file) ? [shard] : []);
+      expect(holders).toEqual([hashShard(file)]);
+    }
+  });
+
   it("refuses a mapped file that is gone, and a mapped file that runs alone", () => {
     expect(checkMap(scratch, map)).toEqual([]);
     const stale = { ...map, shards: map.shards.map((s, i) => (i === 3 ? [...s, "packages/p/test/gone.test.ts"] : s)) };
@@ -540,7 +718,7 @@ describe("the SQLite shard map of this tree", () => {
   });
 
   it("runs every file of the sqlite project exactly once, and names no file outside it", async () => {
-    const config = (await import("../vitest.sqlite.config.ts")).default as { test: { include: string[] } };
+    const config = (await import("./vitest.sqlite.config.ts")).default as { test: { include: string[] } };
     const listed = [...config.test.include].sort();
     expect(listed.length).toBeGreaterThan(100);
     const seen = new Map<string, number>();

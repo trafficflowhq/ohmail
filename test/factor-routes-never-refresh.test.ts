@@ -12,7 +12,7 @@ import { mayRelay, RELAY_ALLOWLIST } from "@trafficflow/api/relay-allowlist";
 import { isRecoverable, mayRefreshFor } from "../apps/webapp/app/session-refresh.js";
 import { CREDENTIAL_REFUSED } from "@ohmail/client-engine";
 import { BearerManagerRN } from "../apps/mobile/src/net/bearer.js";
-import { BearerManager, REFRESH_STORAGE_KEY } from "../apps/desktop/src/host-client/bearer.js";
+import { BearerManager, REFRESH_STORAGE_KEY } from "../apps/paired-page/src/bearer.js";
 import { createCloudAuth } from "../apps/sidecar/src/cloud-auth.js";
 import { withoutComments } from "../scripts/lib/source-scan.mjs";
 
@@ -264,7 +264,7 @@ function verdictsAsSession(runtime: readonly RuntimeRoute[], s: Scan): { refusal
 
 const RUNTIME: RuntimeRoute[] = [...apiRoutes, ...localRoutes, ...selfHostRoutes, ...desktopHostRoutes];
 const SOURCES = SCAN_ROOTS.flatMap((r) => walk(r, [".ts"]));
-const WEB = walk(WEB_ROOT, [".ts", ".tsx"]);
+const WEB = [...walk(WEB_ROOT, [".ts", ".tsx"]), ...walk("packages/app-logic/src", [".ts"]), ...walk("packages/letter-body/src", [".ts", ".tsx"])];
 const SCAN = scan(SOURCES);
 
 describe("every route that checks a factor or a single-use credential is never refreshed by the web", () => {

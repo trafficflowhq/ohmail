@@ -5,7 +5,7 @@ import {
 } from "@trafficflow/db/cloud";
 import { MS_TENANT_RE } from "@trafficflow/core";
 import { actorOf, resolveStaffSession, staffTokenOf, type StaffIdentity } from "./admin-staff.js";
-import { recordStaffEvents, adoptRequestId, rolesAdmit } from "../staff-audit.js";
+import { recordStaffEvents, adoptRequestId, rolesAdmit, staffDb } from "../staff-audit.js";
 import type { StaffAuditAction, StaffRole } from "@trafficflow/services";
 import { withStaffStepUp } from "../staff-step-up.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
@@ -79,7 +79,7 @@ function staffConfigRoute(name: string, action: StaffAuditAction, run: StaffRun)
       return json(400, { error: { code: "bad_request" } });
     }
 
-    const staff = await resolveStaffSession(deps.db, staffTokenOf(body), deps.now());
+    const staff = await resolveStaffSession(staffDb(deps), staffTokenOf(body), deps.now());
     if (!staff) {
       log.warn("admin_oauth_no_staff_session", {});
       return json(401, { error: { code: "staff_session_required" } });
@@ -89,7 +89,7 @@ function staffConfigRoute(name: string, action: StaffAuditAction, run: StaffRun)
     const event = { requestId: adoptRequestId(req, deps), at: deps.now(), actor: actorOf(staff), action };
     const refused = !rolesAdmit(staff.roles, OAUTH_CONFIG_ROLES);
     try {
-      await recordStaffEvents(deps.db, [refused
+      await recordStaffEvents(staffDb(deps), [refused
         ? { ...event, outcome: "refused", refusalCode: "role_required" }
         : { ...event, outcome: "ok" }]);
     } catch (err) {

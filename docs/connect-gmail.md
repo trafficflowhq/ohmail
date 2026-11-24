@@ -16,6 +16,9 @@ create for ohmail and can revoke at any time.
 The same works for Google Workspace on your own domain: choose Gmail and use
 your full work address.
 
+An App Password belongs to the Google account that created it. If you connect a
+second Gmail mailbox, create its App Password while signed in to that account.
+
 ## If it does not connect
 
 - **"App Passwords" says it is not available for your account.** 2-Step

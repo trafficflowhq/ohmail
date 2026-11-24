@@ -11,21 +11,31 @@ import {
   composeDraftKey,
   readComposeDraft,
   writeComposeDraft,
-} from "../app/shell/compose";
-import { dropLocalStorageKeys } from "../app/shell/boot-cache";
+} from "@ohmail/app-logic/writing/compose";
+import { bootCacheKey, dropLocalStorageKeys } from "@ohmail/app-logic/session/boot-cache";
 import {
-  COMPOSE_SEND_KEY, clearLaneScratch, clearReplyLane, readReplyDraft, readReplyMeta, replyDraftKey, replyMetaKey,
+  COMPOSE_SEND_KEY, clearLaneScratch, composeBufferFingerprint, clearReplyLane, readReplyDraft, readReplyMeta, replyDraftKey, replyMetaKey,
   sentCopyNotesKey, writeReplyDraft, writeReplyMeta,
-} from "../app/shell/mail-send";
-import { searchSortKey } from "../app/shell/persisted-ui";
+} from "@ohmail/app-logic/writing/mail-send";
+import { foldersOpenedKey, mailOriginalKey, searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
 import {
   armScreenerIntent,
   screenerIntentsKey,
   takeScreenerIntents,
   type ScreenerIntent,
-} from "../app/shell/screener-intents";
-import { claimSendLock, readSendLock, releaseSendLock, sendLocksKey } from "../app/shell/send-lock";
-import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "../app/shell/storage-owner";
+} from "@ohmail/app-logic/screener/screener-intents";
+import { claimSendLock, readSendLock, releaseSendLock, sendLocksKey } from "@ohmail/app-logic/writing/send-lock";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { routingIntentsKey } from "@ohmail/client-engine";
+import { armDeleteIntent, deleteIntentsKey, disarmDeleteIntent, takeDeleteIntents } from "@ohmail/app-logic/press/delete-intents";
+import { createDeleteUndo, replayDeleteIntents } from "@ohmail/app-logic/press/delete-undo";
+import { intentWindowsChannel } from "@ohmail/app-logic/press/intent-windows";
+import { readAfterVerb, writeAfterVerb } from "@ohmail/app-logic/press/after-verb";
+import { clearReadingAlong, readingAlong, readingAlongKey, setReadingAlong } from "@ohmail/app-logic/reading/reading-along";
+import {
+  imageQualityKeyFor, legacyImageShrinkKeyFor, readImageQualityLevel, writeImageQualityLevel,
+} from "@ohmail/app-logic/write/image-quality";
+import { seedNotNowKey } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
 /** The claims below are sends still in flight: owed, the one state a record resumes in. */
@@ -109,27 +119,38 @@ const intent = (id: string): ScreenerIntent => ({
 describe("a host-supplied owner partitions the shell's durable stores", () => {
   it("the compose scratch does not cross mailboxes on a door with no cookie", () => {
     setStorageOwner(A);
-    writeComposeDraft({ ...EMPTY_COMPOSE, to: "someone@example.com", subject: "confidential", body: "text" });
-    expect(readComposeDraft().subject, "the mailbox that wrote it still has it").toBe("confidential");
+    writeComposeDraft({ ...EMPTY_COMPOSE, to: "someone@example.com", subject: "confidential", body: "text" }, storageOwner());
+    expect(readComposeDraft(storageOwner()).subject, "the mailbox that wrote it still has it").toBe("confidential");
 
     setStorageOwner(B);
     expect(
-      readComposeDraft(),
+      readComposeDraft(storageOwner()),
       "the next mailbox on this install must not be handed the previous one's unfinished message",
     ).toEqual(EMPTY_COMPOSE);
 
     setStorageOwner(A);
-    expect(readComposeDraft().subject, "and going back finds it where it was left").toBe("confidential");
+    expect(readComposeDraft(storageOwner()).subject, "and going back finds it where it was left").toBe("confidential");
+  });
+
+  it("the composer's words are written and read under the scope handed in, whatever the storage owner says", () => {
+    setStorageOwner(B);
+    writeComposeDraft({ ...EMPTY_COMPOSE, to: "someone@example.com", subject: "A's letter", body: "A's words" }, A);
+    expect(window.localStorage.getItem(composeDraftKey(A)), "the words were not kept for their own mailbox").toContain("A's words");
+    expect(window.localStorage.getItem(composeDraftKey(B)), "the storage owner's mailbox was handed the words").toBeNull();
+    expect(readComposeDraft(A).subject).toBe("A's letter");
+    expect(readComposeDraft(B), "another mailbox read the words").toEqual(EMPTY_COMPOSE);
+    expect(composeBufferFingerprint(A), "the press guard could not see its own mailbox's letter").not.toBeNull();
+    expect(composeBufferFingerprint(B), "the press guard of another mailbox saw the letter").toBeNull();
   });
 
   it("a Screener decision armed under one mailbox is not offered to another's replay", () => {
     setStorageOwner(A);
-    armScreenerIntent(intent("msg-1"));
-    expect(takeScreenerIntents(Date.now()).live.map((r) => r.id)).toEqual(["msg-1"]);
+    armScreenerIntent(intent("msg-1"), storageOwner());
+    expect(takeScreenerIntents(Date.now(), storageOwner()).live.map((r) => r.id)).toEqual(["msg-1"]);
 
     setStorageOwner(B);
     expect(
-      takeScreenerIntents(Date.now()).live,
+      takeScreenerIntents(Date.now(), storageOwner()).live,
       "a decision made about one mailbox must never be committed against another",
     ).toEqual([]);
   });
@@ -137,12 +158,12 @@ describe("a host-supplied owner partitions the shell's durable stores", () => {
   it("a send lane does not outlive the mailbox whose key it holds", () => {
     const fp = "fingerprint-1";
     setStorageOwner(A);
-    claimSendLock({ v: 1, lane: "compose", key: "idem-a", fp, at: Date.now(), draftId: null, subject: "compose:sess-a", session: "sess-a" }, NONE_OWED);
-    expect(readSendLock("compose", fp, Date.now(), IN_FLIGHT)).toBe("idem-a");
+    claimSendLock({ v: 1, lane: "compose", key: "idem-a", fp, at: Date.now(), draftId: null, subject: "compose:sess-a", session: "sess-a" }, NONE_OWED, storageOwner());
+    expect(readSendLock("compose", fp, Date.now(), IN_FLIGHT, storageOwner())).toBe("idem-a");
 
     setStorageOwner(B);
     expect(
-      readSendLock("compose", fp, Date.now(), NONE_OWED),
+      readSendLock("compose", fp, Date.now(), NONE_OWED, storageOwner()),
       "another mailbox's idempotency key is not this mailbox's to resume",
     ).toBeNull();
   });
@@ -160,13 +181,13 @@ describe("a host-supplied owner partitions the shell's durable stores", () => {
      */
     const fp = "fp-a";
     setStorageOwner(A);
-    claimSendLock({ v: 1, lane: "compose", key: "idem-a", fp, at: Date.now(), draftId: null, subject: "compose:sess-a", session: "sess-a" }, NONE_OWED);
-    writeComposeDraft({ ...EMPTY_COMPOSE, to: "a@x.example", subject: "A's draft", body: "a" });
+    claimSendLock({ v: 1, lane: "compose", key: "idem-a", fp, at: Date.now(), draftId: null, subject: "compose:sess-a", session: "sess-a" }, NONE_OWED, storageOwner());
+    writeComposeDraft({ ...EMPTY_COMPOSE, to: "a@x.example", subject: "A's draft", body: "a" }, storageOwner());
 
     // The window moves to mailbox B, which has its own draft and its own in-flight claim.
     setStorageOwner(B);
-    writeComposeDraft({ ...EMPTY_COMPOSE, to: "b@x.example", subject: "B's draft", body: "b" });
-    claimSendLock({ v: 1, lane: "compose", key: "idem-b", fp: "fp-b", at: Date.now(), draftId: null, subject: "compose:sess-b", session: "sess-b" }, NONE_OWED);
+    writeComposeDraft({ ...EMPTY_COMPOSE, to: "b@x.example", subject: "B's draft", body: "b" }, storageOwner());
+    claimSendLock({ v: 1, lane: "compose", key: "idem-b", fp: "fp-b", at: Date.now(), draftId: null, subject: "compose:sess-b", session: "sess-b" }, NONE_OWED, storageOwner());
 
     // …and NOW mailbox A's send settles, carrying the storage owner it was started under.
     // Named by message now, not by lane: a lane can hold an unresolved record beside a live
@@ -174,21 +195,21 @@ describe("a host-supplied owner partitions the shell's durable stores", () => {
     releaseSendLock("compose", fp, NONE_OWED, A);
     clearComposeDraft(A);
 
-    expect(readComposeDraft().subject, "the new mailbox's draft was deleted by the old one").toBe("B's draft");
+    expect(readComposeDraft(storageOwner()).subject, "the new mailbox's draft was deleted by the old one").toBe("B's draft");
     expect(
-      readSendLock("compose", "fp-b", Date.now(), IN_FLIGHT),
+      readSendLock("compose", "fp-b", Date.now(), IN_FLIGHT, storageOwner()),
       "the new mailbox's durable send claim was deleted — the duplicate-send guard is gone",
     ).toBe("idem-b");
     setStorageOwner(A);
-    expect(readSendLock("compose", fp, Date.now(), NONE_OWED), "and its own lane was released").toBeNull();
-    expect(readComposeDraft()).toEqual(EMPTY_COMPOSE);
+    expect(readSendLock("compose", fp, Date.now(), NONE_OWED, storageOwner()), "and its own lane was released").toBeNull();
+    expect(readComposeDraft(storageOwner())).toEqual(EMPTY_COMPOSE);
   });
 
   it("all four owner-keyed builders differ between two mailboxes, and none is the shared literal", () => {
     setStorageOwner(A);
-    const first = [composeDraftKey(), sendLocksKey(), screenerIntentsKey(), searchSortKey(storageOwner())];
+    const first = [composeDraftKey(storageOwner()), sendLocksKey(storageOwner()), screenerIntentsKey(storageOwner()), searchSortKey(storageOwner())];
     setStorageOwner(B);
-    const second = [composeDraftKey(), sendLocksKey(), screenerIntentsKey(), searchSortKey(storageOwner())];
+    const second = [composeDraftKey(storageOwner()), sendLocksKey(storageOwner()), screenerIntentsKey(storageOwner()), searchSortKey(storageOwner())];
 
     expect(new Set([...first, ...second]).size, "eight distinct keys, not four").toBe(8);
     for (const key of [...first, ...second]) {
@@ -231,11 +252,11 @@ describe("the reply buffers are partitioned by the storage owner", () => {
     expect(new Set([replyMetaKey("m-1", A), replyMetaKey("m-1", B), replyMetaKey("m-1", null)]).size).toBe(3);
     expect([replyDraftKey("m-1", null), replyMetaKey("m-1", null)]).toEqual(["ohmail.ui.reply:m-1", "ohmail.ui.replymeta:m-1"]);
     setStorageOwner(A);
-    writeReplyDraft("m-1", words("A's reply"));
+    writeReplyDraft("m-1", words("A's reply"), storageOwner());
     setStorageOwner(B);
-    expect(readReplyDraft("m-1").text, "the next mailbox was handed the previous one's reply").toBe("");
+    expect(readReplyDraft("m-1", storageOwner()).text, "the next mailbox was handed the previous one's reply").toBe("");
     setStorageOwner(A);
-    expect(readReplyDraft("m-1").text).toBe("A's reply");
+    expect(readReplyDraft("m-1", storageOwner()).text).toBe("A's reply");
   });
 
   it("an old lane read under A moves to A's key; a refused copy keeps the old one and is still read", () => {
@@ -243,10 +264,10 @@ describe("the reply buffers are partitioned by the storage owner", () => {
     window.localStorage.setItem(replyDraftKey("m-1", null), old.body);
     window.localStorage.setItem(replyMetaKey("m-1", null), JSON.stringify(old.meta));
     setStorageOwner(A);
-    expect(refusingWrites(() => [readReplyDraft("m-1").text, readReplyMeta("m-1")]), "a refused copy hid the words")
+    expect(refusingWrites(() => [readReplyDraft("m-1", storageOwner()).text, readReplyMeta("m-1", storageOwner())]), "a refused copy hid the words")
       .toEqual([old.body, old.meta]);
     expect(window.localStorage.getItem(replyDraftKey("m-1", null)), "the old copy went before the new one stood").toBe(old.body);
-    expect([readReplyDraft("m-1").text, readReplyMeta("m-1")]).toEqual([old.body, old.meta]);
+    expect([readReplyDraft("m-1", storageOwner()).text, readReplyMeta("m-1", storageOwner())]).toEqual([old.body, old.meta]);
     expect([replyDraftKey("m-1", null), replyMetaKey("m-1", null)].map((k) => window.localStorage.getItem(k))).toEqual([null, null]);
     expect(window.localStorage.getItem(replyDraftKey("m-1", A))).toBe(old.body);
     expect(JSON.parse(window.localStorage.getItem(replyMetaKey("m-1", A))!)).toEqual(old.meta);
@@ -255,20 +276,20 @@ describe("the reply buffers are partitioned by the storage owner", () => {
   it("emptying or clearing a reply never brings its old copy back", () => {
     window.localStorage.setItem(replyDraftKey("m-1", null), "an old copy");
     setStorageOwner(A);
-    expect(refusingWrites(() => readReplyDraft("m-1")).text).toBe("an old copy");
-    writeReplyDraft("m-1", words(""));
-    expect(readReplyDraft("m-1").text, "the emptied reply came back from its old copy").toBe("");
+    expect(refusingWrites(() => readReplyDraft("m-1", storageOwner())).text).toBe("an old copy");
+    writeReplyDraft("m-1", words(""), storageOwner());
+    expect(readReplyDraft("m-1", storageOwner()).text, "the emptied reply came back from its old copy").toBe("");
     window.localStorage.setItem(replyMetaKey("m-1", null), JSON.stringify({ subject: "an old title" }));
-    clearReplyLane("m-1");
-    expect(readReplyMeta("m-1"), "a cleared lane came back from its old copy").toEqual({});
+    clearReplyLane("m-1", storageOwner());
+    expect(readReplyMeta("m-1", storageOwner()), "a cleared lane came back from its old copy").toEqual({});
   });
 
   it("a send that settles after a mailbox switch clears its own partition only, on every lane", () => {
     const lanes = ["m-1", "fwd:m-1", "draft:d-1"];
     for (const owner of [A, B]) {
       setStorageOwner(owner);
-      for (const lane of lanes) writeReplyMeta(lane, { subject: `${owner}'s` });
-      for (const lane of lanes.slice(0, 2)) writeReplyDraft(lane, words(`${owner}'s`));
+      for (const lane of lanes) writeReplyMeta(lane, { subject: `${owner}'s` }, storageOwner());
+      for (const lane of lanes.slice(0, 2)) writeReplyDraft(lane, words(`${owner}'s`), storageOwner());
     }
     // The window serves B when A's reply, forward and compose sends settle.
     const settled = (m: object) => m as Parameters<typeof clearLaneScratch>[1];
@@ -276,7 +297,7 @@ describe("the reply buffers are partitioned by the storage owner", () => {
     clearLaneScratch("fwd:m-1", settled({ inReplyTo: null, forwardOf: "m-1", draftId: null }), A, true);
     clearLaneScratch(COMPOSE_SEND_KEY, settled({ inReplyTo: null, draftId: "d-1" }), A, false);
     const held = (): Array<string | undefined> => [
-      ...lanes.map((lane) => readReplyMeta(lane).subject), ...lanes.slice(0, 2).map((lane) => readReplyDraft(lane).text),
+      ...lanes.map((lane) => readReplyMeta(lane, storageOwner()).subject), ...lanes.slice(0, 2).map((lane) => readReplyDraft(lane, storageOwner()).text),
     ];
     expect(held(), "the new mailbox's reply scratch went with the old one's sends").toEqual(Array(5).fill(`${B}'s`));
     setStorageOwner(A);
@@ -284,14 +305,135 @@ describe("the reply buffers are partitioned by the storage owner", () => {
   });
 
   it("the host door's sweep takes the reply text a pairing named, and its letters' copy notes", async () => {
-    const { HOST_SCRATCH_PREFIXES } = await import("../../desktop/src/host-client/HostGate");
+    const { HOST_SCRATCH_PREFIXES } = await import("../../paired-page/src/HostGate");
     setStorageOwner("pairing-scope-1");
-    writeReplyDraft("m-1", words("typed on a phone"));
-    writeReplyMeta("m-1", { subject: "a title" });
+    writeReplyDraft("m-1", words("typed on a phone"), storageOwner());
+    writeReplyMeta("m-1", { subject: "a title" }, storageOwner());
     window.localStorage.setItem(sentCopyNotesKey("pairing-scope-1"), JSON.stringify({ v: 1, notes: [] }));
     expect(Object.keys(window.localStorage)).toHaveLength(3);
     dropLocalStorageKeys(HOST_SCRATCH_PREFIXES);
     expect(Object.keys(window.localStorage), "an ended pairing left its reply text").toEqual([]);
+  });
+});
+
+/**
+ * The keys and the channel today's views and their press windows keep, for one scope: the delete and routing
+ * journals, the undo windows' channel, reading along, the search order, the opened folders, the original look, the
+ * review put off, and the two choices kept beside an account (the after-verb choice, written through its own door,
+ * and the picture quality).
+ */
+function viewsTable(s: string | null): Record<string, string> {
+  const afterVerb = (): string => {
+    window.localStorage.clear();
+    writeAfterVerb("stay", s);
+    return Object.keys(window.localStorage).join(" ");
+  };
+  return {
+    deleteIntents: deleteIntentsKey(s), routingIntents: routingIntentsKey(s), undoWindows: intentWindowsChannel(s),
+    readingAlong: readingAlongKey(s), searchOrder: searchSortKey(s), foldersOpened: foldersOpenedKey(s),
+    originalLook: mailOriginalKey(s), reviewPutOff: seedNotNowKey(s),
+    afterVerb: afterVerb(), pictureQuality: imageQualityKeyFor(s),
+  };
+}
+
+describe("a stored key's name does not change with the scope being handed in", () => {
+  it("one table of every family's key, for a scope and for none", async () => {
+    const { composerId, composeSessionKey, composeRowKey } = await import("@ohmail/app-logic/writing/compose");
+    const { sentCopyNotesKey } = await import("@ohmail/app-logic/writing/mail-send");
+    const { impersonationSeenKey } = await import("@ohmail/app-logic/screener/impersonation-filed");
+    const { CONSENT_BOOT_SCOPE } = await import("@ohmail/app-logic/consent/consent-state");
+    const c = composerId();
+    /* The two remembered answers are kept for somebody or not at all: under no scope none is kept. */
+    const kept = (s: string | null, cache: string): string => {
+      if (s !== null) return bootCacheKey(cache, s);
+      expect(() => bootCacheKey(cache, s as unknown as string), `${cache}: kept under no scope`).toThrow(/no owner/);
+      return "none is kept";
+    };
+    const table = (s: string | null): Record<string, string> => ({
+      compose: composeDraftKey(s), session: composeSessionKey(s), row: composeRowKey(s),
+      reply: replyDraftKey("m-1", s), replyMeta: replyMetaKey("m-1", s),
+      locks: sendLocksKey(s), notes: sentCopyNotesKey(s),
+      intents: screenerIntentsKey(s), impersonationSeen: impersonationSeenKey(s),
+      consentCache: kept(s, CONSENT_BOOT_SCOPE), ownAddresses: kept(s, "own-addresses"),
+      ...viewsTable(s),
+    });
+    expect(table("acc-1")).toEqual({
+      compose: `ohmail.ui.compose.acc-1.${c}`, session: `ohmail.compose.session.acc-1.${c}`, row: `ohmail.compose.row.acc-1.${c}`,
+      reply: "ohmail.ui.reply.acc-1:m-1", replyMeta: "ohmail.ui.replymeta.acc-1:m-1",
+      locks: "ohmail.send.locks.acc-1", notes: "ohmail.send.notes.acc-1",
+      intents: "ohmail.screener.intents.acc-1", impersonationSeen: "ohmail.screener.impersonationSeen.acc-1",
+      consentCache: "ohmail.boot.consent.acc-1", ownAddresses: "ohmail.boot.own-addresses.acc-1",
+      deleteIntents: "ohmail.delete.intents.acc-1", routingIntents: "ohmail.routing.intents.acc-1",
+      undoWindows: "ohmail.intent-windows.acc-1", readingAlong: "ohmail.ui.readingAlong.acc-1",
+      searchOrder: "ohmail.ui.search.sort.acc-1", foldersOpened: "ohmail.ui.rail.foldersOpened.acc-1",
+      originalLook: "ohmail.ui.mail.original.acc-1", reviewPutOff: "ohmail.ui.seed.notNow.acc-1",
+      afterVerb: "ohmail.ui.reader.afterVerb:acc-1", pictureQuality: "ohmail.ui.compose.imageQuality:acc-1",
+    });
+    expect(table(null)).toEqual({
+      compose: `ohmail.ui.compose.local.${c}`, session: `ohmail.compose.session.local.${c}`, row: `ohmail.compose.row.local.${c}`,
+      reply: "ohmail.ui.reply:m-1", replyMeta: "ohmail.ui.replymeta:m-1",
+      locks: "ohmail.send.locks.local", notes: "ohmail.send.notes.local",
+      intents: "ohmail.screener.intents.local", impersonationSeen: "ohmail.screener.impersonationSeen.local",
+      consentCache: "none is kept", ownAddresses: "none is kept",
+      deleteIntents: "ohmail.delete.intents.anon", routingIntents: "ohmail.routing.intents.local",
+      undoWindows: "ohmail.intent-windows.local", readingAlong: "ohmail.ui.readingAlong.local",
+      searchOrder: "ohmail.ui.search.sort.local", foldersOpened: "ohmail.ui.rail.foldersOpened.local",
+      originalLook: "ohmail.ui.mail.original.local", reviewPutOff: "ohmail.ui.seed.notNow.local",
+      afterVerb: "ohmail.ui.reader.afterVerb", pictureQuality: "ohmail.ui.compose.imageQuality",
+    });
+  });
+
+  it("a scope nobody handed in is refused by every family's key, never read as local", async () => {
+    const { composeSessionKey, composeRowKey } = await import("@ohmail/app-logic/writing/compose");
+    const { sentCopyNotesKey } = await import("@ohmail/app-logic/writing/mail-send");
+    const { impersonationSeenKey } = await import("@ohmail/app-logic/screener/impersonation-filed");
+    const missing = undefined as unknown as string | null;
+    for (const build of [
+      () => composeDraftKey(missing), () => composeSessionKey(missing), () => composeRowKey(missing),
+      () => replyDraftKey("m-1", missing), () => replyMetaKey("m-1", missing), () => sendLocksKey(missing),
+      () => sentCopyNotesKey(missing), () => screenerIntentsKey(missing), () => impersonationSeenKey(missing),
+    ]) expect(build, String(build)).toThrow(/no storage scope/);
+  });
+
+  it("a scope nobody handed in is refused by every key and channel today's views and their windows keep", () => {
+    const missing = undefined as unknown as string | null;
+    const refuses = (build: () => unknown): boolean => {
+      try {
+        build();
+        return false;
+      } catch (e) {
+        return /no storage scope/.test(String(e));
+      }
+    };
+    const press = { id: "p-1", messageIds: ["m-1"], at: 1 };
+    const builders: Record<string, () => unknown> = {
+      deleteIntentsKey: () => deleteIntentsKey(missing),
+      armDeleteIntent: () => armDeleteIntent(press, missing),
+      disarmDeleteIntent: () => disarmDeleteIntent("p-1", missing),
+      takeDeleteIntents: () => takeDeleteIntents(1, missing),
+      replayDeleteIntents: () => replayDeleteIntents(async () => ({ status: "confirmed" }), 1, missing),
+      createDeleteUndo: () => createDeleteUndo({
+        scope: missing, mutate: async () => ({ status: "confirmed" }), toast: () => {}, onHeld: () => {},
+        copy: { deleted: "", undo: "", undone: "", failed: "", noUndo: "" }, refusal: () => null,
+      }),
+      intentWindowsChannel: () => intentWindowsChannel(missing),
+      readingAlongKey: () => readingAlongKey(missing),
+      readingAlong: () => readingAlong("mbx-1", { kind: "local", name: "x", since: null }, missing),
+      setReadingAlong: () => setReadingAlong("mbx-1", { kind: "local", name: "x", since: null }, missing),
+      clearReadingAlong: () => clearReadingAlong("mbx-1", missing),
+      searchSortKey: () => searchSortKey(missing),
+      foldersOpenedKey: () => foldersOpenedKey(missing),
+      mailOriginalKey: () => mailOriginalKey(missing),
+      seedNotNowKey: () => seedNotNowKey(missing),
+      readAfterVerb: () => readAfterVerb(missing),
+      writeAfterVerb: () => writeAfterVerb("stay", missing),
+      imageQualityKeyFor: () => imageQualityKeyFor(missing),
+      legacyImageShrinkKeyFor: () => legacyImageShrinkKeyFor(missing),
+      readImageQualityLevel: () => readImageQualityLevel(missing),
+      writeImageQualityLevel: () => writeImageQualityLevel("low", missing),
+    };
+    expect(Object.keys(builders).filter((name) => !refuses(builders[name]!))).toEqual([]);
+    expect(window.localStorage.length, "a refused builder named no key").toBe(0);
   });
 });
 
@@ -300,20 +442,20 @@ describe("what the host may and may not decide", () => {
     jar("account-from-server");
     setStorageOwner(A);
     expect(storageOwner()).toBe("account-from-server");
-    expect(composeDraftKey()).toContain("account-from-server");
+    expect(composeDraftKey(storageOwner())).toContain("account-from-server");
   });
 
   it("a malformed id is treated as absent rather than repaired", () => {
     setStorageOwner("has spaces and /slashes");
     expect(storageOwner(), "a value that cannot name a key is not guessed at").toBeNull();
-    expect(composeDraftKey()).toBe(composeDraftKey(null));
+    expect(composeDraftKey(storageOwner())).toBe(composeDraftKey(null));
   });
 
   it("null is still a real answer, and still spells its own suffix", () => {
     setStorageOwner(A);
     setStorageOwner(null);
     expect(storageOwner()).toBeNull();
-    expect(composeDraftKey()).toBe(composeDraftKey(null));
+    expect(composeDraftKey(storageOwner())).toBe(composeDraftKey(null));
   });
 });
 
@@ -352,7 +494,7 @@ describe("a parent that sets the storage owner in render is early enough for a c
     function Editor({ onSeen }: { onSeen: (v: string) => void }) {
       const [text, setText] = React.useState("");
       React.useEffect(() => {
-        setText(readComposeDraft().subject);
+        setText(readComposeDraft(storageOwner()).subject);
       }, []);
       React.useEffect(() => {
         if (text) onSeen(text);
@@ -363,9 +505,9 @@ describe("a parent that sets the storage owner in render is early enough for a c
     const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
     setStorageOwner(A);
-    writeComposeDraft({ ...EMPTY_COMPOSE, to: "a@example.com", subject: "A's draft", body: "x" });
+    writeComposeDraft({ ...EMPTY_COMPOSE, to: "a@example.com", subject: "A's draft", body: "x" }, storageOwner());
     setStorageOwner(B);
-    writeComposeDraft({ ...EMPTY_COMPOSE, to: "b@example.com", subject: "B's draft", body: "y" });
+    writeComposeDraft({ ...EMPTY_COMPOSE, to: "b@example.com", subject: "B's draft", body: "y" }, storageOwner());
 
     for (const keyed of [false, true]) {
       const seen: string[] = [];
@@ -402,7 +544,7 @@ describe("a parent that sets the storage owner in render is early enough for a c
     /** Stands in for `AppShell`: reads the scratch buffer in its own effect, exactly as it does. */
     function Shell({ mailbox }: { mailbox: string }) {
       React.useEffect(() => {
-        seen.push(readComposeDraft().subject);
+        seen.push(readComposeDraft(storageOwner()).subject);
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [mailbox]);
       return null;
@@ -415,9 +557,9 @@ describe("a parent that sets the storage owner in render is early enough for a c
     }
 
     setStorageOwner(A);
-    writeComposeDraft({ ...EMPTY_COMPOSE, to: "a@example.com", subject: "A's draft", body: "x" });
+    writeComposeDraft({ ...EMPTY_COMPOSE, to: "a@example.com", subject: "A's draft", body: "x" }, storageOwner());
     setStorageOwner(B);
-    writeComposeDraft({ ...EMPTY_COMPOSE, to: "b@example.com", subject: "B's draft", body: "y" });
+    writeComposeDraft({ ...EMPTY_COMPOSE, to: "b@example.com", subject: "B's draft", body: "y" }, storageOwner());
     resetStorageOwnerForTest();
 
     const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -482,8 +624,8 @@ const DOORS: readonly Door[] = [
     // fixture composer read and overwrote their unsent message. Its partition is the demo's own now,
     // established in `EngineProvider` where the demo is resolved (both doors pass through it);
     // `demo-touches-nothing-the-product-owns.test.tsx` holds the partition.
-    file: "apps/webapp/app/(product)/demo/page.tsx",
-    call: /<AppShell demo/,
+    file: "apps/webapp/app/(product)/demo/DemoShell.tsx",
+    call: /<EngineProvider demo/,
     key: null,
   },
   {
@@ -492,15 +634,18 @@ const DOORS: readonly Door[] = [
     key: /key=\{shellKey\}/,
   },
   {
-    file: "apps/desktop/src/host-client/HostGate.tsx",
+    file: "apps/paired-page/src/HostGate.tsx",
     call: /setStorageOwner\(paired \? scope\b/,
     key: /key=\{scope\b/,
   },
 ];
 
-/** Every file in the tree that mounts the shell — derived, never remembered. */
+/**
+ * Every file in the tree that mounts the shell — derived, never remembered. Since today's views stand in the frame,
+ * a door mounts the shell as its engine provider with the frame under it: the provider is what the door keys.
+ */
 function mountsOfShell(): string[] {
-  const roots = ["apps/webapp/app", "apps/desktop/src"];
+  const roots = ["apps/webapp/app", "apps/desktop/src", "apps/paired-page/src"];
   const found: string[] = [];
   const walk = (dir: string): void => {
     for (const name of readdirSync(resolve(ROOT, dir)).sort()) {
@@ -508,7 +653,7 @@ function mountsOfShell(): string[] {
       const rel = `${dir}/${name}`;
       const st = statSync(resolve(ROOT, rel));
       if (st.isDirectory()) walk(rel);
-      else if (name.endsWith(".tsx") && readFileSync(resolve(ROOT, rel), "utf8").includes("<AppShell")) {
+      else if (name.endsWith(".tsx") && readFileSync(resolve(ROOT, rel), "utf8").includes("<EngineProvider")) {
         found.push(rel);
       }
     }
@@ -525,7 +670,7 @@ describe("every door that mounts the shared shell names its storage owner", () =
     for (const file of actual) {
       expect(
         listed.has(file),
-        `${file} mounts AppShell and is not in the door census — a new door inherits no owner ` +
+        `${file} mounts the shell (its engine provider) and is not in the door census — a new door inherits no owner ` +
           "and silently shares one partition with every other",
       ).toBe(true);
     }
@@ -575,11 +720,11 @@ describe("every door that mounts the shared shell names its storage owner", () =
     for (const door of DOORS) {
       if (door.key === null) continue;
       const src = readFileSync(resolve(ROOT, door.file), "utf8");
-      const mount = src.indexOf("<AppShell");
-      expect(mount, `${door.file} no longer mounts AppShell`).toBeGreaterThan(-1);
+      const mount = src.indexOf("<EngineProvider");
+      expect(mount, `${door.file} no longer mounts the shell's engine provider`).toBeGreaterThan(-1);
       expect(
         door.key.test(src.slice(mount, mount + 1600)),
-        `${door.file} does not key AppShell by its storage owner — a change of owner would keep ` +
+        `${door.file} does not key the shell by its storage owner — a change of owner would keep ` +
           "the previous mailbox's compose in state while the partition beneath it moved",
       ).toBe(true);
     }
@@ -606,7 +751,7 @@ describe("every door that mounts the shared shell names its storage owner", () =
    * The partition, the shell and the engine must all name the same identity or none of them does.
    */
   it("the host door rebuilds its engine on the pairing it is keyed and partitioned by", () => {
-    const src = readFileSync(resolve(ROOT, "apps/desktop/src/host-client/HostGate.tsx"), "utf8");
+    const src = readFileSync(resolve(ROOT, "apps/paired-page/src/HostGate.tsx"), "utf8");
     const deps = /\n\s*\[paired, bearer([^\]]*)\],/.exec(src);
     expect(deps, "the engine memo's dependency list is no longer where this can see it").not.toBeNull();
     expect(
@@ -617,7 +762,7 @@ describe("every door that mounts the shared shell names its storage owner", () =
   });
 
   it("the host door sweeps its at-rest scratch on BOTH departures, not only on a dead session", () => {
-    const src = readFileSync(resolve(ROOT, "apps/desktop/src/host-client/HostGate.tsx"), "utf8");
+    const src = readFileSync(resolve(ROOT, "apps/paired-page/src/HostGate.tsx"), "utf8");
     const sweeps = src.match(/dropLocalStorageKeys\(HOST_SCRATCH_PREFIXES\)/g) ?? [];
     expect(
       sweeps.length,
@@ -626,39 +771,5 @@ describe("every door that mounts the shared shell names its storage owner", () =
     ).toBe(2);
     expect(/onSessionDead\([\s\S]{0,600}?dropLocalStorageKeys/.test(src), "the death path sweeps").toBe(true);
     expect(/onPaired=\{\(\) => \{[\s\S]{0,600}?dropLocalStorageKeys/.test(src), "the re-pair path sweeps").toBe(true);
-  });
-
-  it("no owner-keyed key builder resolves through the cookie alone", () => {
-    const builders = [
-      "apps/webapp/app/shell/compose.ts",
-      "apps/webapp/app/shell/send-lock.ts",
-      "apps/webapp/app/shell/screener-intents.ts",
-    ];
-    /**
-     * The three surfaces that pass the storage owner IN rather than defaulting it. They were missing from
-     * this list, and the behavioural case above cannot see them because it supplies the storage owner to
-     * `searchSortKey` itself instead of rendering `SearchView` — so all three could regress to
-     * `readOwner()` and go back to one shared key on both cookie-less doors with nothing red.
-     */
-    for (const file of [
-      "apps/webapp/app/views/SearchView.tsx",
-      "apps/webapp/app/components/ComposeAttach.tsx",
-      "apps/webapp/app/shell/ImageQualityRow.tsx",
-    ]) {
-      const src = readFileSync(resolve(ROOT, file), "utf8");
-      expect(
-        /\breadOwner\(\)/.test(src),
-        `${file} resolves its owner from the cookie alone, which is null on both cookie-less doors`,
-      ).toBe(false);
-      expect(src.includes("storageOwner()"), `${file} does not resolve through the seam`).toBe(true);
-    }
-    for (const file of builders) {
-      const src = readFileSync(resolve(ROOT, file), "utf8");
-      expect(
-        /= readOwner\(\)\): string/.test(src),
-        `${file} defaults its key owner to the cookie, which is null on two of the three doors`,
-      ).toBe(false);
-      expect(src.includes("storageOwner()"), `${file} does not resolve through the seam`).toBe(true);
-    }
   });
 });

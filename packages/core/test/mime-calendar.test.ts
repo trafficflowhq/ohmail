@@ -1,6 +1,21 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { normalizeMime, countRealFiles, isRealFile, invitationWithoutEvent, itipReplyByHeaders } from "../src/mime.js";
 import { isCalendarMime, CALENDAR_FALLBACK_FILENAME } from "../src/ics.js";
+import { fingerprintDedupKey, messageFingerprint } from "../src/identity.js";
+import { INVITATION_PART_MAX_BYTES } from "../src/invitation-mail.js";
+
+/** The invitation reader as the hook calls it; one case makes it throw. */
+const reader = vi.hoisted(() => ({ throws: false }));
+vi.mock("../src/invitation-mail.js", async (load) => {
+  const real = await load<typeof import("../src/invitation-mail.js")>();
+  return {
+    ...real,
+    readLetterInvitation: (...args: Parameters<typeof real.readLetterInvitation>) => {
+      if (reader.throws) throw new RangeError("planted: the reader throws");
+      return real.readLetterInvitation(...args);
+    },
+  };
+});
 
 /**
  * ═══ A MEETING INVITATION'S CALENDAR PART IS A FILE THE READER CAN DOWNLOAD ═════════════════
@@ -229,5 +244,102 @@ describe("itipReplyByHeaders — the stored facts that say REPLY", () => {
   it("a method that is not a token is not kept, and a non-calendar part never gains one", async () => {
     const odd = await normalizeMime(NAMED_ICS_EML.replace(/method=REPLY/i, 'method="RE PLY;x"'));
     expect(odd.attachments.filter((a) => isCalendarMime(a.contentType)).map((a) => a.contentType)).toEqual(["text/calendar"]);
+  });
+});
+
+/**
+ * ═══ WHAT THE CALENDAR PARTS SAY, READ AT THE PARSE ═════════════════════════════════════════
+ *
+ * The bytes of a calendar part are in hand only here (they are never stored), so the invitation's
+ * identity is read here and handed to the commit as `calendar`. It is the card's reading of the same
+ * parts, and whatever a part does to the reader costs the letter nothing.
+ */
+const INVITE_ICS = (sequence: number) => [
+  "BEGIN:VCALENDAR", "METHOD:REQUEST", "BEGIN:VEVENT", "UID:kickoff-17@studio.example", `SEQUENCE:${sequence}`,
+  "DTSTART:20261201T100000Z", "ORGANIZER:mailto:tobias@studio.example", "ATTENDEE:mailto:mila@lichtgrat.example",
+  "END:VEVENT", "END:VCALENDAR",
+].join("\r\n");
+
+/** Google's shape: the iTIP alternative and the same event again as `invite.ics`. */
+function googleInvite(opts: { alternative?: string; file?: string; charset?: string } = {}): string {
+  return [
+    "Message-ID: <invite-1@studio.example>",
+    "From: Tobias <tobias@studio.example>",
+    "To: mila@lichtgrat.example",
+    "Subject: Invitation: Kickoff",
+    'Content-Type: multipart/mixed; boundary="MIX"',
+    "",
+    "--MIX",
+    'Content-Type: multipart/alternative; boundary="ALT"',
+    "",
+    "--ALT",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "You are invited.",
+    "",
+    "--ALT",
+    `Content-Type: text/calendar; charset=${opts.charset ?? "UTF-8"}; method=REQUEST`,
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from(opts.alternative ?? INVITE_ICS(1), "utf8").toString("base64"),
+    "",
+    "--ALT--",
+    "",
+    "--MIX",
+    'Content-Type: application/ics; name="invite.ics"',
+    'Content-Disposition: attachment; filename="invite.ics"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from(opts.file ?? INVITE_ICS(1), "utf8").toString("base64"),
+    "",
+    "--MIX--",
+    "",
+  ].join("\r\n");
+}
+
+describe("the letter's calendar parts, read at the parse", () => {
+  it("Google's two parts give one invitation", async () => {
+    const msg = await normalizeMime(googleInvite());
+    expect(msg.attachments.filter((a) => isCalendarMime(a.contentType))).toHaveLength(2);
+    expect(msg.calendar?.invitation).toMatchObject({
+      method: "REQUEST", uid: "kickoff-17@studio.example", sequence: 1, organizer: "tobias@studio.example",
+      attendees: ["mila@lichtgrat.example"],
+    });
+  });
+
+  it("a letter without a calendar part, or with one that keeps no row, has no `calendar` at all", async () => {
+    expect("calendar" in (await normalizeMime(OWA_LINK_INVITE_EML))).toBe(false);
+    // NAMED_ICS_EML's REPLY has no UID: nothing to keep.
+    expect("calendar" in (await normalizeMime(NAMED_ICS_EML))).toBe(false);
+  });
+
+  it("a part's bytes are read as UTF-8 whatever charset it declares, as the card reads them", async () => {
+    const msg = await normalizeMime(googleInvite({
+      alternative: INVITE_ICS(1).replace("kickoff-17@", "café-17@"), file: INVITE_ICS(1).replace("kickoff-17@", "café-17@"),
+      charset: "ISO-8859-1",
+    }));
+    expect(msg.calendar?.invitation?.uid).toBe("café-17@studio.example");
+  });
+
+  it("a part over the byte bound is not read, and the letter is stored as it would be", async () => {
+    const big = INVITE_ICS(1).replace("END:VEVENT", `X-PAD:${"x".repeat(INVITATION_PART_MAX_BYTES)}\r\nEND:VEVENT`);
+    const msg = await normalizeMime(googleInvite({ alternative: big, file: big }));
+    expect(msg.attachments.filter((a) => isCalendarMime(a.contentType))).toHaveLength(2);
+    expect("calendar" in msg).toBe(false);
+  });
+
+  it("a reader that throws costs the letter nothing: the same letter, the same fingerprint and key", async () => {
+    const raw = googleInvite();
+    const read = await normalizeMime(raw);
+    reader.throws = true;
+    try {
+      const thrown = await normalizeMime(raw);
+      expect("calendar" in thrown).toBe(false);
+      const { calendar: _calendar, ...rest } = read;
+      expect(thrown).toEqual(rest);
+      expect(fingerprintDedupKey(messageFingerprint(thrown))).toBe(fingerprintDedupKey(messageFingerprint(read)));
+    } finally {
+      reader.throws = false;
+    }
   });
 });

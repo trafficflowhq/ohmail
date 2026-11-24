@@ -1,15 +1,12 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO, ScreenerSenderDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   consentPartition,
   presentationReader,
   screenerSegments,
-  type EngineMessage,
   type EntityReader,
-  type Folder,
-  type RuleDTO,
   type ScreenerSegments,
-  type ScreenerSenderDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 

@@ -15,7 +15,7 @@ import {
   RESTART_FLUSH_MS,
   setSendWaits,
   UPDATE_PERIOD_MS,
-} from "../../webapp/app/shell/app-update.js";
+} from "@ohmail/app-logic/doors/app-update";
 import {
   checkDue,
   CHECK_EVERY_MS,

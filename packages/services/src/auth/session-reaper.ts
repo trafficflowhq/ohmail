@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { refreshTokens, sessions, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { authEvents } from "@trafficflow/db/cloud";
+import { assertPassWalk, bridgeDb, bridgeTx, rosterAccountDb, type PassRoster } from "../context.js";
 import { pruneWakeRows } from "../push-service.js";
 import type { AuthAuditEvent } from "./types.js";
 
@@ -32,8 +33,9 @@ export interface ReapResult {
 export async function reapStaleWebSessions(
   db: Tx,
   now: Date,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; roster?: PassRoster } = {},
 ): Promise<ReapResult> {
+  assertPassWalk(db);
   const budget = Math.min(Math.max(1, opts.limit ?? 5_000), 20_000);
   const reapable = and(
     isNull(sessions.deviceId),
@@ -43,48 +45,59 @@ export async function reapStaleWebSessions(
     sql`${sessions.refreshExpiresAt} - ${sessions.lastSeenAt} < ${dialect(db).interval(COOKIE_WINDOW_UNDER_MS)}`,
   );
 
-  const candidates = await db.select({ id: sessions.id }).from(sessions)
-    .where(reapable)
-    .limit(budget);
+  const groups = new Map<string | null, string[]>();
+  if (opts.roster) {
+    for (const row of await opts.roster(budget)) {
+      const ids = groups.get(row.accountId) ?? [];
+      ids.push(row.id);
+      groups.set(row.accountId, ids);
+    }
+  } else {
+    const candidates = await db.select({ id: sessions.id }).from(sessions).where(reapable).limit(budget);
+    groups.set(null, candidates.map((row) => row.id));
+  }
 
   let reaped = 0;
-  for (let i = 0; i < candidates.length; i += CHUNK) {
-    const ids = candidates.slice(i, i + CHUNK).map((r) => r.id);
-    // The claim re-states the WHOLE predicate, the window included, not just the id list: a
-    // session revoked (or paired — impossible today, but the predicate should not depend on
-    // that) between the read and this write is skipped, and — the arm the review caught
-    // missing — a session that ROTATED in that window (`mintRotation` rolls `refresh_expires_at`
-    // forward) is a browser that just came back to life, which a maintenance pass must not
-    // sign out. Only rows THIS statement flipped count.
-    const stale = and(inArray(sessions.id, ids), reapable);
-    // One transaction per chunk, its sessions locked in id order first, erasure's step-7 order: the
-    // update alone locks in scan order, and the two orders deadlocked over two stale sessions.
-    const claimed = await db.transaction(async (tx) => {
-      await dialect(db).forUpdate(tx.select({ id: sessions.id }).from(sessions).where(stale).orderBy(asc(sessions.id)));
-      const rows = await tx.update(sessions)
-        .set({ revokedAt: now })
-        .where(stale)
-        .returning({
-          id: sessions.id, accountId: sessions.accountId, userId: sessions.userId,
-          familyId: sessions.familyId, lastSeenAt: sessions.lastSeenAt,
-        });
-      if (rows.length > 0) {
-        await tx.update(refreshTokens)
+  for (const [accountId, candidates] of groups) {
+    const scoped = accountId === null ? db : bridgeTx(rosterAccountDb(bridgeDb(db), { accountId }));
+    for (let i = 0; i < candidates.length; i += CHUNK) {
+      const ids = candidates.slice(i, i + CHUNK);
+      // The claim re-states the WHOLE predicate, the window included, not just the id list: a
+      // session revoked (or paired — impossible today, but the predicate should not depend on
+      // that) between the read and this write is skipped, and — the arm the review caught
+      // missing — a session that ROTATED in that window (`mintRotation` rolls `refresh_expires_at`
+      // forward) is a browser that just came back to life, which a maintenance pass must not
+      // sign out. Only rows THIS statement flipped count.
+      const stale = and(inArray(sessions.id, ids), reapable, accountId === null ? undefined : eq(sessions.accountId, accountId));
+      // One transaction per chunk, its sessions locked in id order first, erasure's step-7 order: the
+      // update alone locks in scan order, and the two orders deadlocked over two stale sessions.
+      const claimed = await scoped.transaction(async (tx) => {
+        await dialect(scoped).forUpdate(tx.select({ id: sessions.id }).from(sessions).where(stale).orderBy(asc(sessions.id)));
+        const rows = await tx.update(sessions)
           .set({ revokedAt: now })
-          .where(and(
-            inArray(refreshTokens.familyId, [...new Set(rows.map((c) => c.familyId))]),
-            isNull(refreshTokens.revokedAt),
-          ));
-        await pruneWakeRows(tx, rows.map((c) => c.familyId));
-        // Under the session locks this chunk holds, which order it before an erasure's step 7.
-        await tx.insert(authEvents).values(rows.map((r) => ({
-          accountId: r.accountId, userId: r.userId, event: "session_reaped" satisfies AuthAuditEvent["event"], at: now,
-          device: `family=${r.familyId} session=${r.id} idle_d=${Math.floor((now.getTime() - r.lastSeenAt.getTime()) / DAY_MS)}`,
-        })));
-      }
-      return rows;
-    });
-    reaped += claimed.length;
+          .where(stale)
+          .returning({
+            id: sessions.id, accountId: sessions.accountId, userId: sessions.userId,
+            familyId: sessions.familyId, lastSeenAt: sessions.lastSeenAt,
+          });
+        if (rows.length > 0) {
+          await tx.update(refreshTokens)
+            .set({ revokedAt: now })
+            .where(and(
+              inArray(refreshTokens.familyId, [...new Set(rows.map((c) => c.familyId))]),
+              isNull(refreshTokens.revokedAt),
+            ));
+          await pruneWakeRows(tx, rows.map((c) => c.familyId));
+          // Under the session locks this chunk holds, which order it before an erasure's step 7.
+          await tx.insert(authEvents).values(rows.map((r) => ({
+            accountId: r.accountId, userId: r.userId, event: "session_reaped" satisfies AuthAuditEvent["event"], at: now,
+            device: `family=${r.familyId} session=${r.id} idle_d=${Math.floor((now.getTime() - r.lastSeenAt.getTime()) / DAY_MS)}`,
+          })));
+        }
+        return rows;
+      });
+      reaped += claimed.length;
+    }
   }
   return { reaped };
 }

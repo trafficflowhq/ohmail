@@ -1,15 +1,17 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
+import { useBulkAsk, useDecide } from "../../../packages/app-logic/src/screener/view-parts.js";
+import type { DecisionDestination } from "../../../packages/app-logic/src/screener/decision.js";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import {
   OhmailEngine,
   MemoryMirrorStore,
   mutationEffects,
   senderKey,
-  type EngineMessage,
-  type Folder,
   type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
@@ -108,12 +110,10 @@ async function engineWith(held: EngineMessage[]): Promise<OhmailEngine> {
   });
 }
 
-interface StateLike {
-  waiting: Array<{ id: string; from: { address: string } }>;
-  decide: (sender: unknown, dest: string, opts: { read: boolean; scope: string }) => void;
-  applyAll: (scopeOf: (s: unknown) => string) => void;
-  markAllSpam: (scopeOf: (s: unknown) => string) => void;
-}
+type DecisionSurface = {
+  one: ReturnType<typeof useDecide>;
+  bulk: ReturnType<typeof useBulkAsk>;
+};
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -125,21 +125,37 @@ async function mountState(
     locale?: "en" | "de";
     suggestions?: ReadonlyMap<string, unknown>;
   } = {},
-): Promise<{ get: () => StateLike }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  let latest: StateLike | null = null;
+): Promise<{ get: () => DecisionSurface }> {
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  let latest: DecisionSurface | null = null;
 
   function Probe(): null {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    latest = useScreenerState(
+    const state = useScreenerState(
       engine,
-      v,
+      null, v,
       ((message: string) => { toasts.push(message); }) as never,
-      opts.suggestions as never,
+      useScreenerWords(), opts.suggestions as never,
       undefined,
       opts.autoUnsubscribe,
-    ) as unknown as StateLike;
+    );
+    const openWaiting = state.waiting[0] ?? null;
+    const ids = state.waiting.map((sender) => sender.id);
+    const scopeOf = () => "sender" as const;
+    const one = useDecide({
+      state,
+      segment: "waiting",
+      openId: openWaiting?.id ?? null,
+      openWaiting,
+      ids,
+      isRow: (id) => ids.includes(id),
+      scopeOf,
+      left: () => {},
+      closeShown: () => {},
+    });
+    const bulk = useBulkAsk(state, "waiting", scopeOf, false);
+    latest = { one, bulk };
     return null;
   }
 
@@ -148,11 +164,10 @@ async function mountState(
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      h(NextIntlClientProvider, {
+      h(TextProvider, {
         locale: opts.locale ?? "en",
         messages: (opts.locale === "de" ? de : en) as never,
         timeZone: "UTC",
-        now: NOW,
         children: h(Probe),
       }),
     );
@@ -162,12 +177,18 @@ async function mountState(
 }
 
 /** File the one held sender to `dest` and return the toast sentence that was raised. */
-async function decideTo(dest: string, opts: Parameters<typeof mountState>[1] = {}): Promise<string> {
+async function decideTo(dest: DecisionDestination, opts: Parameters<typeof mountState>[1] = {}): Promise<string> {
   const engine = await engineWith(HELD);
   const state = await mountState(engine, opts);
   await act(async () => {
-    state.get().decide(state.get().waiting[0], dest, { read: false, scope: "sender" });
+    state.get().one.decide(dest, false);
   });
+  const question = state.get().one.unsub;
+  if (question !== null) {
+    expect(question.unsubscribeIds).toEqual(["h1"]);
+    expect(toasts).toEqual([]);
+    await act(async () => { state.get().one.answerUnsub(true); });
+  }
   expect(toasts, `no toast was raised for ${dest}`).toHaveLength(1);
   return toasts[0]!;
 }
@@ -208,7 +229,7 @@ describe("the Screener says that a screen-out also unsubscribes", () => {
     expect(text).toContain("one-click unsubscribe");
   });
 
-  it.each(["ohbox", "reads", "receipts"])(
+  it.each(["ohbox", "reads", "receipts"] as const)(
     "%s says nothing about unsubscribing — a KEEP destination arms nothing",
     async (dest) => {
       // `ohmail/News` and `ohmail/Receipts` were deliberately removed from the unsubscribe
@@ -254,7 +275,11 @@ describe("the Screener says that a screen-out also unsubscribes", () => {
       world.map((a) => [senderKey(a), { dest: dests[a], confidence: 0.9, rationale: "because" }]),
     );
     const state = await mountState(engine, { ...opts, suggestions });
-    await act(async () => { state.get()[kind](() => "sender"); });
+    await act(async () => { state.get().bulk.begin(kind === "applyAll" ? "applySuggestions" : "allSpam"); });
+    if (state.get().bulk.question !== null) {
+      expect(toasts).toEqual([]);
+      await act(async () => { state.get().bulk.answer(true); });
+    }
     // Every row is dispatched on its own timer and the SUMMARY lands after the last one.
     await act(async () => { vi.advanceTimersByTime(60_000); });
     expect(toasts.length, "no summary toast was raised").toBeGreaterThan(0);

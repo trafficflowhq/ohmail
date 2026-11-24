@@ -8,8 +8,8 @@ import { startWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { isProviderRefusal } from "../src/mailboxes.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * a mail server's "not now" is not a broken mailbox (mail 0130).
@@ -32,7 +32,7 @@ async function seedMailbox(db: Db): Promise<{ accountId: string; mailboxId: stri
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };

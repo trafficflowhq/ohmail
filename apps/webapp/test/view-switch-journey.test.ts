@@ -1,12 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
  * THE VIEW-SWITCH JOURNEY, IN A REAL ENGINE — keys 1, 2 and 3, and the rail's clicks, over a fixture
- * mailbox, through the page `scripts/perf/view-switch.mjs` measures (the real AppShell over a
+ * mailbox, through the page `scripts/perf/view-switch.mjs` measures (the mounted frame over a
  * FixturesAdapter, heavy newsletters in the streams). What it asserts is what the presses DID —
  * the pile's rows painted, the stream behind them, no sanitize pass and no request on a revisit,
  * no more framed documents at entry than one screen of cards — and never how long they took: a
@@ -85,7 +85,8 @@ describe("the Screener's segments, in Chromium", () => {
     try {
       const skip = (p: string) => !/\/(node_modules|dist|\.next|test)$/.test(p);
       for (const d of ["apps/webapp", "apps/desktop/src", "packages"]) cpSync(join(ROOT, d), join(tree, d), { recursive: true, filter: skip });
-      for (const f of ["package.json", "tsconfig.base.json"]) cpSync(join(ROOT, f), join(tree, f));
+      mkdirSync(join(tree, "tools"), { recursive: true });
+      for (const f of ["package.json", "tools/tsconfig.base.json"]) cpSync(join(ROOT, f), join(tree, f));
       symlinkSync(join(ROOT, "node_modules"), join(tree, "node_modules"));
       await harness.build(out, tree);
       const run = await harness.runArm({

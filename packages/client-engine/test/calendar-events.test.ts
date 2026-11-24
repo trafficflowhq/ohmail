@@ -1,7 +1,8 @@
+import type { AttachmentWire } from "@ohmail/wire";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { OhmailEngine, CALENDAR_TEXT_MAX_PARTS } from "../src/engine.js";
 import { calendarEventsOf, withoutCalendarBodies } from "../src/index.js";
-import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 import {
   APPLE, EMBEDDED_CALENDAR, EXCHANGE_ICAL, GOOGLE, OUTLOOK_RELATED, TWO_EVENTS, type InviteShape,
 } from "../../core/test/fixtures/invite-shapes.js";

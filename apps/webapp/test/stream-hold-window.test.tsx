@@ -2,7 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { HOLD_QUIET_MS, StreamShell } from "../app/shell/StreamShell";
+import { STREAM_HOLD_QUIET_MS } from "@ohmail/app-logic/streams";
+import { StreamScrollFixture } from "./stream-scroll-fixture";
+import { within } from "@testing-library/react";
 
 /**
  * ═══ THE ANCHOR-HOLD LOOP RUNS WHILE SOMETHING CAN MOVE, AND NOT OTHERWISE ═══════════════════
@@ -14,7 +16,7 @@ import { HOLD_QUIET_MS, StreamShell } from "../app/shell/StreamShell";
  * every frame, that nothing had happened.
  *
  * The rule now: armed by the things that can move the content it holds, stopped
- * {@link HOLD_QUIET_MS} after the last of them and while the document is hidden. Both halves are
+ * {@link STREAM_HOLD_QUIET_MS} after the last of them and while the document is hidden. Both halves are
  * here — a loop that never stops and a loop that never restarts are the same file passing.
  *
  * jsdom has no layout, so geometry is stubbed through the same reads a browser answers, and
@@ -115,17 +117,15 @@ async function mountStream(): Promise<Mounted> {
   const card = (sid: string) => h("div", { className: "scast", "data-sid": sid, key: sid });
   await act(async () => {
     root.render(
-      h(StreamShell, {
-        ariaLabel: "stream",
+      h(StreamScrollFixture, {
         onCurrentChange: () => {},
-        onSeen: () => {},
         contentKey: 1,
         children: ["c1", "c2", "c3", "c4"].map(card),
       }),
     );
   });
 
-  const el = container.querySelector<HTMLElement>(".stream")!;
+  const el = within(container).getByRole("region", { name: "stream" });
   let scrollTop = 300; // c2 is the topmost card fully inside the port — the anchor.
   const tops: Record<string, number> = { c1: 0, c2: 300, c3: 600, c4: 900 };
   const scrollTos: number[] = [];
@@ -168,26 +168,26 @@ describe("the anchor-hold loop's arming window", () => {
     await drainFrames();
     expect(holdPending(), "still armed inside the window").toBe(1);
 
-    clock += HOLD_QUIET_MS + 1;
+    clock += STREAM_HOLD_QUIET_MS + 1;
     await drainFrames();
     expect(holdPending(), "the window ran out and the loop let go").toBe(0);
     await drainFrames();
     expect(holdPending(), "and nothing re-armed it by itself").toBe(0);
     // Twenty more frames' worth of clock: an idle stream queues nothing at all.
-    clock += 20 * HOLD_QUIET_MS;
+    clock += 20 * STREAM_HOLD_QUIET_MS;
     expect(pending.size).toBe(0);
   });
 
   it("a scroll re-arms it, and a DOM change inside the stream re-arms it", async () => {
     const { el } = await mountStream();
-    clock += HOLD_QUIET_MS + 1;
+    clock += STREAM_HOLD_QUIET_MS + 1;
     expect(await runUntilQuiet()).toBeLessThan(3);
     expect(holdPending()).toBe(0);
 
     await act(async () => { el.dispatchEvent(new Event("scroll")); });
     expect(holdPending(), "a scroll is somebody using the stream").toBe(1);
 
-    clock += HOLD_QUIET_MS + 1;
+    clock += STREAM_HOLD_QUIET_MS + 1;
     await runUntilQuiet();
     expect(holdPending()).toBe(0);
 
@@ -244,7 +244,7 @@ describe("the anchor-hold loop's arming window", () => {
     // the held anchor on stop) and this goes red while every refusal above stays green.
     const m = await mountStream();
     await drainFrames();
-    clock += HOLD_QUIET_MS + 1;
+    clock += STREAM_HOLD_QUIET_MS + 1;
     await runUntilQuiet();
     expect(holdPending(), "asleep").toBe(0);
 

@@ -1,0 +1,111 @@
+{
+  "calsetup": {
+    "activate": "Einen Kalender verbinden",
+    "leave": "Nicht jetzt",
+    "back": "Zurück",
+    "continue": "Weiter",
+    "unread": "Der Kalender kann auf diesem Gerät nicht gelesen werden",
+    "way": {
+      "sentence": "Mein Kalender ist bei <way></way>",
+      "label": "Wo dein Kalender ist",
+      "inBrowser": "{provider} (öffnet im Browser)",
+      "group": "Wege, einen Kalender zu verbinden",
+      "none": "Von hier kann kein Kalender verbunden werden",
+      "icloud": "iCloud",
+      "caldav": "Ein anderer CalDAV-Server",
+      "ics": "Ein Abo",
+      "google": "Google Kalender",
+      "microsoft": "Microsoft Outlook"
+    },
+    "oauth": {
+      "connecting": "Dein Kalender wird verbunden…",
+      "connected": "Kalender verbunden.",
+      "consent_declined": "Der Kalenderzugriff wurde abgelehnt.",
+      "admin_consent_required": "Deine Organisation muss den Kalenderzugriff genehmigen.",
+      "consent_failed": "Der Anbieter konnte den Kalenderzugriff nicht genehmigen.",
+      "state_expired": "Diese Kalenderanmeldung ist abgelaufen. Beginne erneut.",
+      "state_invalid": "Diese Kalenderanmeldung ist nicht mehr gültig. Beginne erneut.",
+      "account_mismatch": "Diese Kalenderanmeldung wurde mit einem anderen ohmail-Account gestartet.",
+      "provider_off": "Dieser Kalenderanbieter ist nicht verfügbar.",
+      "exchange_failed": "Die Kalenderanmeldung konnte nicht abgeschlossen werden. Versuche es erneut.",
+      "start_failed": "Die Kalenderanmeldung konnte nicht gestartet werden. Versuche es erneut.",
+      "calendar_off": "Schalte deinen Kalender ein, bevor du ihn verbindest.",
+      "email_unverified": "Bestätige deine E-Mail-Adresse, bevor du einen Kalender verbindest.",
+      "conflict": "Entferne eine Kalenderverbindung, bevor du eine weitere hinzufügst.",
+      "missing_permissions": "Erlaube alle angefragten Kalenderberechtigungen und versuche es erneut.",
+      "provider_unavailable": "Der Kalenderanbieter war nicht erreichbar. Versuche es gleich noch einmal."
+    },
+    "signin": {
+      "icloud": "Ich bin <user></user> mit dem App-Passwort <password></password>",
+      "caldav": "Mein Server ist <server></server>, ich bin <user></user> mit dem Passwort <password></password>",
+      "ics": "Ich abonniere <address></address>",
+      "sameAppleId": "Dieselbe Apple-ID verwenden",
+      "factorBody": "Damit bestätigst du, dass du die Anmeldung des Postfachs für den Kalender verwenden möchtest.",
+      "factorDiscarded": "Die Bestätigung wurde abgebrochen. Es wurde nichts verbunden.",
+      "factorExpired": "Melde dich erneut an, um die gespeicherte Apple-ID zu verwenden.",
+      "factorBrowserTitle": "Im Browser bestätigen",
+      "factorBrowserOpen": "Kalendereinrichtung im Browser öffnen",
+      "factorBrowserFailed": "Der Browser konnte nicht geöffnet werden. Versuche es erneut.",
+      "appleIdFor": "Apple-ID für {address} verwenden",
+      "connect": "Verbinden",
+      "asking": "Wird gefragt",
+      "empty": "Jede Lücke muss gefüllt sein. Nichts wurde gesendet.",
+      "notSent": "Der Server von ohmail hat nicht geantwortet. Nichts wurde verbunden."
+    },
+    "blank": {
+      "icloud": {
+        "user": "E-Mail-Adresse des Apple Accounts",
+        "userHint": "E-Mail-Adresse",
+        "password": "App-spezifisches Passwort",
+        "passwordHint": "Passwort eintippen"
+      },
+      "caldav": {
+        "server": "Die Adresse des Servers",
+        "serverHint": "seine Adresse",
+        "user": "Benutzername",
+        "userHint": "Benutzername",
+        "password": "Passwort",
+        "passwordHint": "Passwort eintippen"
+      },
+      "ics": {
+        "address": "Die Adresse des Kalenders",
+        "addressHint": "seine Adresse"
+      }
+    },
+    "calendars": {
+      "sentence": "Meine Kalender",
+      "group": "Kalender",
+      "show": "{name} zeigen",
+      "notSaved": "Nicht gesichert.",
+      "checking": "Deine Kalender werden gelesen",
+      "checkingLine": "Das kann einen Moment dauern. Du kannst gehen: Sie kommen von selbst.",
+      "refused": "Nichts wurde verbunden",
+      "again": "Noch einmal"
+    },
+    "default": {
+      "sentence": "Neue Termine kommen in <calendar></calendar>",
+      "label": "Neue Termine kommen in",
+      "none": "einen Kalender",
+      "notSaved": "Nicht gesichert."
+    },
+    "wait": {
+      "counts": "{events, plural, one {# Termin} other {# Termine}} in {calendars, plural, one {# Kalender} other {# Kalendern}}",
+      "open": "Kalender öffnen"
+    },
+    "fault": {
+      "signInRefused": "Diese Anmeldung wurde nicht angenommen. iCloud braucht ein App-spezifisches Passwort, erstellt bei Apple, nicht das Passwort des Accounts.",
+      "signInRefusedCaldav": "Der Server hat den Benutzernamen und das Passwort nicht angenommen. Prüfe beides und die Serveradresse.",
+      "signInRefusedIcs": "Der Feed verlangt eine Anmeldung.",
+      "signInAgain": "Die Anmeldung gilt nicht mehr. Melde dich neu an.",
+      "forbidden": "Dieser Account darf die Kalender des Servers nicht lesen.",
+      "notFound": "Unter dieser Adresse wurde kein Kalender gefunden.",
+      "noService": "Dieser Server bietet keine Kalender an.",
+      "addressInvalid": "Von dieser Adresse kann kein Kalender gelesen werden.",
+      "addressRefused": "Von dieser Adresse werden keine Kalender gelesen.",
+      "hostUnknown": "Dieser Server wurde nicht gefunden.",
+      "unreachable": "Der Server hat nicht geantwortet. Es wird von selbst erneut versucht.",
+      "unreadable": "Was der Server geschickt hat, konnte nicht gelesen werden.",
+      "unknown": "Der Kalender konnte nicht verbunden werden."
+    }
+  }
+}

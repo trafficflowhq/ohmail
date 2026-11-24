@@ -1,6 +1,6 @@
-import type { FolderCreateBody, FolderRenameBody } from "@trafficflow/services/mail";
+import type { RequestOf, UntrustedBody } from "@ohmail/wire";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { folderOps, readBody } from "./shared.js";
 
@@ -18,34 +18,37 @@ export const foldersRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/folders",
+    wire: true,
     relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps) => {
-      const body = await readBody<FolderCreateBody>(req);
+      const body = await readBody<UntrustedBody<RequestOf<"POST /folders">>>(req);
       const { dto, seq } = await folderOps(deps).create(serviceContext(deps, req), body, {
         idempotency: deps.idempotency ?? null,
       });
-      return jsonResponse(dto, { status: 201, seq });
+      return answer<"POST /folders">()(dto, { status: 201, seq });
     },
   },
   {
     method: "PATCH",
     pattern: "/folders/:id",
+    wire: true,
     relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {
-      const body = await readBody<FolderRenameBody>(req);
+      const body = await readBody<UntrustedBody<RequestOf<"PATCH /folders/:id">>>(req);
       const { dto, seq } = await folderOps(deps).rename(serviceContext(deps, req), params.id!, body, {
         idempotency: deps.idempotency ?? null,
       });
-      return jsonResponse(dto, { seq });
+      return answer<"PATCH /folders/:id">()(dto, { seq });
     },
   },
   {
     method: "DELETE",
     pattern: "/folders/:id",
+    wire: true,
     relay: true,
     cost: "work",
     options: { idempotent: true },
@@ -53,7 +56,7 @@ export const foldersRoutes: Route[] = [
       const { dto, seq } = await folderOps(deps).remove(serviceContext(deps, req), params.id!, {
         idempotency: deps.idempotency ?? null,
       });
-      return jsonResponse(dto, { seq });
+      return answer<"DELETE /folders/:id">()(dto, { seq });
     },
   },
   {
@@ -61,6 +64,7 @@ export const foldersRoutes: Route[] = [
     // never-created row with it, so the answer may be `{ dismissed: true }` with no folder).
     method: "DELETE",
     pattern: "/folders/:id/op",
+    wire: true,
     relay: true,
     cost: "work",
     options: { idempotent: true },
@@ -68,7 +72,7 @@ export const foldersRoutes: Route[] = [
       const { dto, seq } = await folderOps(deps).dismiss(serviceContext(deps, req), params.id!, {
         idempotency: deps.idempotency ?? null,
       });
-      return jsonResponse(dto ?? { dismissed: true }, { seq });
+      return answer<"DELETE /folders/:id/op">()(dto ?? { dismissed: true }, { seq });
     },
   },
   {

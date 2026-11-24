@@ -7,7 +7,7 @@
  * the disk first. The reviewers' two-window probes are the acceptance: VERIFY-026-SEND-RECORD-2's
  * cross-window Cancel above all, and the window opened before the press.
  */
-/* @reads: apps/webapp/app/shell/mail-send.ts */
+/* @reads: packages/app-logic/src/writing/mail-send.ts */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -62,15 +62,16 @@ async function world(locks: EngineLocks | null) {
 
 type Surface = Awaited<ReturnType<typeof surface>>;
 async function surface(engine: OhmailEngine) {
-  const { useMailSend, replyDockState } = await import("../app/shell/mail-send.js");
+  const { useMailSend, replyDockState } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("./_write-1-send-text.js");
   const settled: string[] = [];
   const outcomes: string[] = [];
   let api!: { press: (kind: "reply" | "forward" | "compose", b: string) => Promise<void>; dock: (l: string) => string; withdraw: (l: string) => Promise<string> };
   const Probe = (): null => {
     const [, force] = React.useReducer((x: number) => x + 1, 0);
     React.useEffect(() => engine.subscribe(() => force()), []);
-    const mail = useMailSend(engine as never, (() => {}) as never,
-      ((key: string) => { settled.push(key); }) as never,
+    const mail = useMailSend(engine as never, null, (() => {}) as never,
+      useMailSendText(), ((key: string) => { settled.push(key); }) as never,
       ((key: string, _m: unknown, accepted: boolean, phase?: string) => { outcomes.push(`${key}:${accepted ? "sent" : phase}`); return false; }) as never);
     const send = mail.send as unknown as (m: unknown, o?: unknown) => void;
     api = {
@@ -106,12 +107,12 @@ async function closeWindow(win: Window, reg: ReturnType<typeof lockRegistry> | n
 }
 const rowsOf = (win: Window) => win.store.entries<{ key: string; owner?: string; withdrawn?: boolean }>(OUTBOX_TYPE).map((e) => e.entity);
 async function jarLanes(): Promise<string[]> {
-  const { sendLocksKey } = await import("../app/shell/send-lock.js");
-  return (JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]") as Array<{ lane: string }>).map((r) => r.lane);
+  const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
+  return (JSON.parse(window.localStorage.getItem(sendLocksKey(null)) ?? "[]") as Array<{ lane: string }>).map((r) => r.lane);
 }
-const scratch = async (lane: string): Promise<string> => (await import("../app/shell/mail-send.js")).readReplyDraft(lane).text;
+const scratch = async (lane: string): Promise<string> => (await import("@ohmail/app-logic/writing/mail-send")).readReplyDraft(lane, null).text;
 async function writeScratch(lane: string, text: string): Promise<void> {
-  (await import("../app/shell/mail-send.js")).writeReplyDraft(lane, { text, html: "" } as never);
+  (await import("@ohmail/app-logic/writing/mail-send")).writeReplyDraft(lane, { text, html: "" } as never, null);
 }
 async function online(w: Awaited<ReturnType<typeof world>>, wins: Window[]): Promise<void> {
   w.net.offline = false;
@@ -272,18 +273,18 @@ it("LOW 1 a row that leaves with no ending heard is not a delivery: B keeps the 
 
 it("compose: B is held for A's waiting message only when B holds that message", async () => {
   await idb();
-  const { writeComposeDraft } = await import("../app/shell/compose.js");
-  const { sendUnsettledFromLastSession, standingOf } = await import("../app/shell/mail-send.js");
-  const { sendLocksKey } = await import("../app/shell/send-lock.js");
+  const { writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+  const { sendUnsettledFromLastSession, standingOf } = await import("@ohmail/app-logic/writing/mail-send");
+  const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
   const reg = lockRegistry(); const w = await world(reg.api);
   const B = await openWindow(w);
   const A = await openWindow(w);
   w.net.offline = true;
-  writeComposeDraft({ to: "bo@fake.test", cc: "", bcc: "", subject: "Hello", body: WORDS, html: "", fromMailboxId: "mb-1", sig: null } as never);
+  writeComposeDraft({ to: "bo@fake.test", cc: "", bcc: "", subject: "Hello", body: WORDS, html: "", fromMailboxId: "mb-1", sig: null } as never, null);
   await A.surface.api().press("compose", WORDS); await settle(20);
   expect(rowsOf(A).find((r) => r.owner !== undefined)?.owner).toBe(ownerOf(A.engine));
   await settle(10);
-  const rec = (JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]") as Array<{ lane: string; bfp?: string; session?: string }>).find((r) => r.lane === "compose")!;
+  const rec = (JSON.parse(window.localStorage.getItem(sendLocksKey(null)) ?? "[]") as Array<{ lane: string; bfp?: string; session?: string }>).find((r) => r.lane === "compose")!;
   expect(rec.bfp, "the record names the buffer it was pressed from").toBeDefined();
   const held = (fp: string): boolean => sendUnsettledFromLastSession("compose", { fp, session: rec.session ?? null }, new Set(), false, null, standingOf(B.engine));
   expect({ that: held(rec.bfp!), another: held("another-message") }).toEqual({ that: true, another: false });

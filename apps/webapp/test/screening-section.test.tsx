@@ -2,8 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider } from "@ohmail/ui";
+import { within } from "@testing-library/react";
 import messages from "../messages/en.json";
 
 /**
@@ -41,12 +40,13 @@ interface Wire {
   ohboxPolicy: "people_only" | "people_and_replied" | null;
   ohboxBar: string | null;
   defaultBar: string;
-  screenerAutoApply: boolean;
+  /** The retired bulk-filing switch, as a server one release older still answers it. */
+  screenerAutoApply?: boolean;
   impersonationFiling?: boolean;
 }
 
 let stored: Wire;
-let patchBodies: Array<{ ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown; impersonationFiling?: unknown }>;
+let patchBodies: Array<{ ohboxPolicy?: unknown; ohboxBar?: unknown; impersonationFiling?: unknown }>;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
@@ -60,7 +60,7 @@ function installFetch(): void {
     if (path === "/account/screening") {
       if ((init?.method ?? "GET") === "PATCH") {
         const body = JSON.parse(init!.body as string) as {
-          ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown; impersonationFiling?: unknown;
+          ohboxPolicy?: unknown; ohboxBar?: unknown; impersonationFiling?: unknown;
         };
         patchBodies.push(body);
         if ("ohboxBar" in body) stored = { ...stored, ohboxBar: body.ohboxBar as string | null };
@@ -80,27 +80,20 @@ const flush = async (): Promise<void> => {
 };
 
 async function mount(): Promise<void> {
-  const { ScreeningSection } = await import("../app/shell/ScreeningSection.js");
+  const { screeningSettingsFrame } = await import("./fixtures/screening-settings.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC",
-        children: h(ThemeProvider, { storageKey: null, children: h(ScreeningSection) }),
-      }),
-    );
+    root!.render(h(screeningSettingsFrame(), { locale: "en", messages }));
   });
   await flush();
 }
 
 const textarea = (): HTMLTextAreaElement =>
-  host!.querySelector(".set-screening-textarea") as HTMLTextAreaElement;
+  within(host!).getByRole<HTMLTextAreaElement>("textbox", { name: messages.settings.screening.barLabel });
 const buttonNamed = (label: string): HTMLButtonElement | undefined =>
-  Array.from(host!.querySelectorAll("button")).find(
-    (b) => (b.textContent ?? "").trim() === label,
-  ) as HTMLButtonElement | undefined;
+  within(host!).queryByRole<HTMLButtonElement>("button", { name: label }) ?? undefined;
 
 /** Type into the controlled textarea the way React reads it — set the value, then dispatch input. */
 async function typeInto(el: HTMLTextAreaElement, value: string): Promise<void> {
@@ -116,7 +109,6 @@ beforeEach(() => {
   patchBodies = [];
   stored = {
     ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: DEFAULT_BAR,
-    screenerAutoApply: false,
   };
   installFetch();
 });
@@ -133,7 +125,7 @@ describe("the editable Ohbox bar", () => {
     // The words are the box's VALUE, editable — not merely its placeholder.
     expect(textarea().value).toBe(DEFAULT_BAR);
     // And an untouched prefill is not a pending change: Save stays disabled.
-    expect(buttonNamed(messages.settings.screening.save)!.disabled).toBe(true);
+    expect(buttonNamed(messages.settings.screening.save)).toBeUndefined();
     // Nothing has been written just by opening the pane.
     expect(patchBodies).toHaveLength(0);
   });
@@ -142,13 +134,12 @@ describe("the editable Ohbox bar", () => {
     stored.ohboxBar = "Only my clients and my kids' school.";
     await mount();
     expect(textarea().value).toBe("Only my clients and my kids' school.");
-    expect(buttonNamed(messages.settings.screening.save)!.disabled).toBe(true);
+    expect(buttonNamed(messages.settings.screening.save)).toBeUndefined();
   });
 
   it("arms Save once the text differs from the effective value, and writes the edited words", async () => {
     await mount();
-    const save = buttonNamed(messages.settings.screening.save)!;
-    expect(save.disabled).toBe(true);
+    expect(buttonNamed(messages.settings.screening.save)).toBeUndefined();
 
     await typeInto(textarea(), "Keep the mail from real people, and every receipt.");
     expect(buttonNamed(messages.settings.screening.save)!.disabled).toBe(false);
@@ -173,7 +164,7 @@ describe("no switch lets a first-time sender in", () => {
     const text = host!.textContent ?? "";
     expect(text).not.toContain("File obvious bulk out of my Screener");
     expect(text).not.toContain("Deterministic rules only");
-    const switches = [...host!.querySelectorAll('button[role="switch"]')].map((b) => b.getAttribute("aria-label"));
+    const switches = within(host!).getAllByRole("switch").map((b) => b.getAttribute("aria-label"));
     expect(switches).toEqual([messages.settings.screening.postureTitle, messages.settings.screening.impersonationTitle]);
     expect(patchBodies).toEqual([]);
   });
@@ -182,19 +173,20 @@ describe("no switch lets a first-time sender in", () => {
 /* FILE IMPERSONATIONS TO SPAM (owner, 2026-11-09): on by default, turned off and on in place, and
    absent against a server that does not know it. */
 describe("the impersonation filing switch", () => {
-  const sw = (): HTMLButtonElement | undefined => [...host!.querySelectorAll<HTMLButtonElement>('button[role="switch"]')]
-    .find((b) => b.getAttribute("aria-label") === messages.settings.screening.impersonationTitle);
+  const sw = (): HTMLButtonElement | undefined => within(host!).queryByRole<HTMLButtonElement>("switch", {
+    name: messages.settings.screening.impersonationTitle,
+  }) ?? undefined;
 
-  it("shows the stored value, writes only its own key, and says what off means", async () => {
+  it("names the Spam action, shows the stored value and writes only its own key", async () => {
     stored.impersonationFiling = true;
     await mount();
     expect(sw()!.getAttribute("aria-checked")).toBe("true");
-    expect(host!.textContent).toContain(messages.settings.screening.impersonationOn);
+    expect(within(host!).getByRole("switch", { name: "File impersonations to Spam", checked: true })).toBe(sw());
     await act(async () => { sw()!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await flush();
     expect(patchBodies).toEqual([{ impersonationFiling: false }]);
     expect(sw()!.getAttribute("aria-checked")).toBe("false");
-    expect(host!.textContent).toContain(messages.settings.screening.impersonationOff);
+    expect(within(host!).getByRole("switch", { name: "File impersonations to Spam", checked: false })).toBe(sw());
   });
 
   it("is absent against a server that does not send it", async () => {

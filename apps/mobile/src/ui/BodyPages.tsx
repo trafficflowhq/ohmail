@@ -5,25 +5,40 @@
  * message. A clamped caller (`numberOfLines`) draws the first page and offers no press.
  */
 import { Fragment, memo, useContext, useMemo, useState } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { QUOTED_HISTORY_LIMITS, quotedHistoryOfText } from "../mail/quoted-tree";
+import { useTheme, type Theme } from "../theme";
 import { Copy } from "../copy";
 import { Txt, type TxtProps } from "./base";
 import { bodyPages, pageBlocks, pagesAskedFor } from "./body-pages";
 import { FoldContext, HistoryRow, type FoldScope } from "./HistoryFold";
 
-type BodyPagesProps = Omit<TxtProps, "children"> & { text: string };
+type BodyPagesProps = Omit<TxtProps, "children"> & { text: string; highlight?: string };
+
+function marked(text: string, phrase: string | undefined, t: Theme) {
+  const start = phrase ? text.indexOf(phrase) : -1;
+  if (!phrase || start < 0) return text;
+  const end = start + phrase.length;
+  return (
+    <>{text.slice(0, start)}
+      <Text maxFontSizeMultiplier={t.textCap} minimumFontScale={t.textKey} style={{ backgroundColor: t.c.accentSoft }}>
+        {text.slice(start, end)}
+      </Text>{text.slice(end)}
+    </>
+  );
+}
 
 /** One page, kept across a further press: only the new page is laid out, in its blocks. */
 const Page = memo(
-  function Page({ text, style, ...rest }: BodyPagesProps) {
+  function Page({ text, style, highlight, ...rest }: BodyPagesProps) {
+    const theme = useTheme();
     return (
       <View style={style}>
-        {pageBlocks(text).map((block, i) => <Txt key={i} {...rest}>{block}</Txt>)}
+        {pageBlocks(text).map((block, i) => <Txt key={i} {...rest}>{marked(block, highlight, theme)}</Txt>)}
       </View>
     );
   },
-  (a, b) => a.text === b.text && a.variant === b.variant && a.tone === b.tone
+  (a, b) => a.text === b.text && a.highlight === b.highlight && a.variant === b.variant && a.tone === b.tone
     && a.selectable === b.selectable && a.numberOfLines === b.numberOfLines,
 );
 
@@ -74,17 +89,18 @@ function FoldedPages({ scope, text, ...rest }: BodyPagesProps & { scope: FoldSco
   );
 }
 
-function Pages({ text, ...rest }: BodyPagesProps) {
+function Pages({ text, highlight, ...rest }: BodyPagesProps) {
+  const theme = useTheme();
   const [kept, setKept] = useState<{ text: string; pages: number }>({ text, pages: 1 });
   const asked = pagesAskedFor(kept, text);
   const plan = bodyPages(text, asked, rest.numberOfLines !== undefined);
-  if (plan.pages === null) return <Txt {...rest}>{text}</Txt>;
+  if (plan.pages === null) return <Txt {...rest}>{marked(text, highlight, theme)}</Txt>;
   const more = plan.more;
   return (
     <>
       {/* The caller's top margin belongs above the first page, not between pages. */}
       {plan.pages.map((page, i) => (
-        <Page key={i} {...rest} style={i === 0 ? rest.style : [rest.style, { marginTop: 0 }]} text={page} />
+        <Page key={i} {...rest} highlight={highlight} style={i === 0 ? rest.style : [rest.style, { marginTop: 0 }]} text={page} />
       ))}
       {more !== null ? (
         <Txt

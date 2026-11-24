@@ -6,13 +6,19 @@
  * then nowhere, while the row held the only copy of a message that may never have been
  * delivered. The verbs are on the row's card (`src/ui/DraftReader.tsx`); this screen lists.
  */
+import { MailAppearance } from "../../src/theme/mail";
+import { ScheduledRow } from "../scheduled";
+import { useTheme } from "../../src/theme";
+import { MailAvatar } from "../../src/ui/MailAvatar";
 import { View } from "react-native";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface } from "../../src/state/surface";
 import { useWorld, type WorldDraft } from "../../src/state/world";
-import { Empty, Panel, Rule, Screen, Scroller, TapRow, Tail, Txt } from "../../src/ui/base";
-import { DetailBar, PaneTop } from "../../src/ui/chrome";
+import { Empty, Panel, Rule, Screen, Scroller, Section, TapRow, Tail, Txt, ViewHead } from "../../src/ui/base";
+import { DetailBar, PaneTop, TopBar } from "../../src/ui/chrome";
+import { MailCalendarSwitch } from "../../src/ui/MailCalendarSwitch";
+import { MailPlaceDock } from "../../src/ui/MailPlaceDock";
 import { DraftReader } from "../../src/ui/DraftReader";
 import { heldSentence } from "../../src/ui/draft-card";
 import { Gated } from "../../src/ui/Gated";
@@ -28,29 +34,34 @@ export default function DraftsScreen({ inPane = false }: { inPane?: boolean }) {
   useLocale();
   return (
     <SurfaceBoundary surface="drafts">
-      <Gated>
-        <DraftsBody inPane={inPane} />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <DraftsBody inPane={inPane} />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }
 
 function DraftsBody({ inPane }: { inPane: boolean }) {
   const w = useWorld();
+  const theme = useTheme();
   const pull = usePullToSync();
   /* In More's pane a row opens the Drafts pair. */
   const { open, openRow, close } = useListDetail((id) => `/drafts/${id}`, inPane ? (id) => `/drafts?open=${encodeURIComponent(id)}` : undefined);
   const rows = w.drafts;
+  const scheduled = theme.mail ? w.scheduled : [];
   /* Unknown ≠ empty (`state/surface.ts`): before this mirror has settled a drain, no rows means
      NOT KNOWN, and "Nothing half-written" would be a claim about the account made from an empty
      database. The silhouette stands until a drain has completed here at least once. */
-  const surface = listSurface({ settled: w.boot.settled, count: rows.length });
+  const surface = listSurface({ settled: w.boot.settled, count: rows.length + scheduled.length });
 
-  const list = (
+  const page = (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      {inPane ? <PaneTop /> : <DetailBar />}
+      {inPane ? <PaneTop /> : theme.mail ? <TopBar /> : <DetailBar />}
       <Scroller bounded refresh={pull}>
+        {theme.mail ? <ViewHead title={Copy.draftsTitle} leading={inPane ? undefined : <MailCalendarSwitch />} /> : (
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.draftsTitle}</Txt>
           {/* A sentence, not a bare figure — and the held count is the fact this screen
@@ -58,15 +69,15 @@ function DraftsBody({ inPane }: { inPane: boolean }) {
           <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
             {w.boot.settled
               ? Copy.draftsMeta(
-                rows.length,
+                rows.length + scheduled.length,
                 rows.filter((r) => r.state === "held" || r.state === "interrupted").length,
                 rows.filter((r) => r.state === "waiting").length,
               )
               : " "}
           </Txt>
-        </View>
+        </View>)}
 
-        <Panel style={{ paddingBottom: 10 }}>
+        <Panel style={{ paddingBottom: 10, ...(theme.mail ? { backgroundColor: "transparent", shadowOpacity: 0, elevation: 0 } : {}) }}>
           {surface === "skeleton" ? (
             <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
               <SkeletonList rows={2} stalled={w.boot.syncFailure} />
@@ -74,20 +85,30 @@ function DraftsBody({ inPane }: { inPane: boolean }) {
           ) : surface === "empty" ? (
             <Empty title={Copy.draftsEmptyTitle} hint={w.standalone ? Copy.draftsEmptyHintHere : Copy.draftsEmptyHint} />
           ) : (
-            rows.map((row, i) => (
+            <>
+              {scheduled.length ? (
+                <>
+                  <Section>{Copy.scheduledCount(scheduled.length)}</Section>
+                  {scheduled.map((row) => <ScheduledRow key={row.id} row={row} />)}
+                </>
+              ) : null}
+              {theme.mail && rows.length ? <Section>{Copy.draftListCount(rows.length)}</Section> : null}
+              {rows.map((row, i) => (
               <View key={row.id}>
                 {i > 0 ? <Rule inset={18} /> : null}
                 <DraftRow row={row} onPress={() => openRow(row.id)} />
               </View>
-            ))
+              ))}
+            </>
           )}
         </Panel>
-        <Tail>{Copy.draftsExplainer}</Tail>
+        {theme.mail ? null : <Tail>{Copy.draftsExplainer}</Tail>}
       </Scroller>
     </Screen>
   );
 
-  if (inPane) return list;
+  if (inPane) return page;
+  const list = theme.mail && open === null ? <MailPlaceDock>{page}</MailPlaceDock> : page;
   return (
     <ListDetail
       open={open}
@@ -100,6 +121,7 @@ function DraftsBody({ inPane }: { inPane: boolean }) {
 }
 
 function DraftRow({ row, onPress }: { row: WorldDraft; onPress: () => void }) {
+  const theme = useTheme();
   return (
     <TapRow
       onPress={onPress}
@@ -115,6 +137,14 @@ function DraftRow({ row, onPress }: { row: WorldDraft; onPress: () => void }) {
       }
       style={{ paddingHorizontal: 18, paddingVertical: 12, gap: 4 }}
     >
+      {theme.mail ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <MailAvatar person={{ name: row.to, address: row.to }} />
+          <Txt variant="rowSenderSeen" numberOfLines={1} style={{ flex: 1 }}>
+            {row.to === "" ? Copy.scheduledNoRecipient : Copy.draftToPerson(row.to)}
+          </Txt>
+        </View>
+      ) : null}
       <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
         <Txt variant="rowSender" style={{ flexShrink: 1 }} numberOfLines={1}>
           {row.subject}
@@ -124,9 +154,9 @@ function DraftRow({ row, onPress }: { row: WorldDraft; onPress: () => void }) {
           {row.when}
         </Txt>
       </View>
-      <Txt variant="caption" tone="ink3" numberOfLines={1}>
+      {theme.mail ? null : <Txt variant="caption" tone="ink3" numberOfLines={1}>
         {row.to === "" ? Copy.scheduledNoRecipient : row.to}
-      </Txt>
+      </Txt>}
       {row.preview !== "" ? (
         <Txt variant="caption" tone="ink2" numberOfLines={2}>
           {row.preview}

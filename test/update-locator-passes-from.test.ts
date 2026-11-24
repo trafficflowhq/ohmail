@@ -20,7 +20,7 @@ import { bracketSpan, lineOf, withoutComments } from "../scripts/lib/source-scan
 /** Files scanned, and the reason the set is this one: these are the writers of the projection. */
 const SITES = [
   "packages/core/src/pipeline.ts",
-  "apps/worker/src/junk-filing.ts",
+  "packages/organizer/src/junk-filing.ts",
 ];
 
 /** Call sites that may omit `from`, each with the reason. Empty, and that is the finding. */

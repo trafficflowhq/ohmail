@@ -4,9 +4,10 @@ import { silentLogger, type Logger } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import { accountsOf, loadEnabledMailboxes, organizedMailboxIdsOf } from "./mailboxes.js";
-import { isCliEntry } from "./entry.js";
+import { bindWorker } from "./start/bind.js";
+import { isCliEntry } from "@ohmail/organizer/entry";
 import { cronEvent, runCronCli } from "./cron-log.js";
-import { bubbleUpPass } from "./bubble-up-pass.js";
+import { bubbleUpPass } from "@ohmail/organizer/bubble-up";
 
 /**
  * THE PASS ITSELF MOVED, and the re-export is what keeps that from being a rename with a blast
@@ -15,7 +16,7 @@ import { bubbleUpPass } from "./bubble-up-pass.js";
  * graph — the leader lock, the `postgres` driver and the served-account roster, none of which
  * exists on a laptop. Everything that already imported it from here still can.
  */
-export { bubbleUpPass } from "./bubble-up-pass.js";
+export { bubbleUpPass } from "@ohmail/organizer/bubble-up";
 
 /**
  * MANUAL BACKSTOP — for a dead worker, not a scheduler. Guarded by the shard's session-level leader lock
@@ -33,17 +34,19 @@ export async function runBubbleUpCron(
   if (!lock) return { ran: false, flipped: 0 };
 
   const owned = makeOwnedDb(config.databaseUrl);
-  const db = owned.db;
+  // The pool's two views, as the organizer's own tail has them: the roster is read on the one that
+  // names no account, and each account's rows are flipped on that account's handle.
+  const binding = bindWorker(owned.db);
   try {
     const now = new Date();
     let flipped = 0;
     /* THE ROWS, NOT JUST THE ACCOUNTS — the pass is scoped by the mailboxes this host organizes
        (its own header says why), and a backstop that passed an account alone would flip rows in a
        mailbox another organizer holds. `accountsOf` over the same rows is the loop this replaced. */
-    const roster = await loadEnabledMailboxes(db, selectionOf(config));
+    const roster = await loadEnabledMailboxes(binding.roster, selectionOf(config));
     for (const accountId of accountsOf(roster)) {
       try {
-        const res = await bubbleUpPass(db as unknown as Tx, now, {
+        const res = await bubbleUpPass(binding.forAccount(accountId).db as unknown as Tx, now, {
           accountId, mailboxIds: organizedMailboxIdsOf(roster, accountId),
         });
         flipped += res.flipped;

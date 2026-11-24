@@ -7,7 +7,7 @@
  * in its address. A note that cannot be stored costs the sentence, never the navigation.
  */
 
-import { durableSessionRemove, durableSessionSet, durableSet } from "../../shell/durable";
+import { durableSessionRemove, durableSessionSet, durableSet } from "@ohmail/app-logic/storage/durable";
 import { SIGNED_OUT_COOKIE } from "../../session-gate";
 
 const NOTE_KEY = "ohmail.signed-out-reason";
@@ -30,13 +30,6 @@ export type SignedOutReason = "revoked" | "reused" | "expired" | "absent" | "pen
 
 /** The reasons a note may carry: the refresh door's. */
 const REASONS: readonly SignedOutReason[] = ["revoked", "reused", "expired", "absent"];
-
-/** The `resume.*` sentence each reason is told with, on the splash card and on `/login`. */
-export const REASON_BODY: Record<
-  SignedOutReason, "revokedBody" | "reusedBody" | "expiredBody" | "absentBody" | "pendingBody"
-> = {
-  revoked: "revokedBody", reused: "reusedBody", expired: "expiredBody", absent: "absentBody", pending: "pendingBody",
-};
 
 export function isSignedOutReason(v: unknown): v is SignedOutReason {
   return typeof v === "string" && (REASONS as readonly string[]).includes(v);

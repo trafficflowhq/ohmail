@@ -1,3 +1,4 @@
+import type { EngineMessage, RuleEntity as RuleDTO, ScreenerWaitingWire } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
@@ -6,15 +7,15 @@ import { accounts, contacts, folderState, mailboxes, messageBodies, messages, ru
 import type { ClassifierPort } from "@trafficflow/core";
 import {
   HttpAdapter, MemoryMirrorStore, consentPartition, presentationReader, screenerSegments, screenerWaitingOf,
-  type EngineMessage, type RuleDTO, type ScreenerWaitingWire, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { ScreenerService } from "../src/screener-service.js";
 import { cutlineCounts } from "../src/consent-cutline.js";
 import { messageRowToDTO } from "../src/dto/materialize.js";
 import { effectiveScreeningWindows } from "../src/screening-window.js";
 import type { ServiceContext } from "../src/context.js";
-import { screenerAutoSuggestPass } from "../../../apps/worker/src/screener-auto-suggest.js";
-import { screenerAutoActPass } from "../../../apps/worker/src/screener-auto-act.js";
+import { screenerAutoSuggestPass } from "../../organizer/src/screener-auto-suggest.js";
+import { screenerAutoActPass } from "../../organizer/src/screener-auto-act.js";
 import {
   LIVE_LETTERS, NOW as WORLD_NOW, SENDERS, removedMailboxWorld, type RemovedMailboxWorld,
 } from "./helpers/removed-mailbox-world.js";
@@ -43,9 +44,9 @@ async function world(claim: boolean, heldAt = new Date("2026-10-01T09:00:00.000Z
       senderCheck: check, senderCheckBrand: check === "impersonation" ? "PostFinance" : null,
       date: at, unread: false, createdAt: at, nativeLocator: { folder, ref: `1:${randomUUID().slice(0, 4)}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };
   // The admitted first mail, then the held one, read and arrived inside the screening window: a claim

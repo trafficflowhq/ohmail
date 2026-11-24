@@ -1,21 +1,20 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import messages from "../messages/en.json";
+import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
   STORE_SEARCH_FOLLOWUP_HOLD_MS,
 } from "@ohmail/client-engine";
-import messages from "../messages/en.json";
-import { ARCHIVE_TIMEOUT_MS, SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { ARCHIVE_TIMEOUT_MS } from "@ohmail/app-logic/search";
 
 /**
  * THE WHOLE-MAILBOX PASS ENDS IN EXACTLY ONE OF THREE VERDICTS, on every outcome: matched,
@@ -25,7 +24,6 @@ import { KeymapProvider } from "../app/shell/keymap";
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -68,10 +66,12 @@ async function engineWith(rows: EngineMessage[], over: Record<string, unknown>):
 let host: HTMLDivElement;
 let root: Root;
 let warn: ReturnType<typeof vi.spyOn>;
+let leaveSearch: () => void;
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: false });
   window.localStorage.clear();
+  leaveSearch = enterSearchRoute();
   warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -81,17 +81,14 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  leaveSearch();
   warn.mockRestore();
   vi.useRealTimers();
 });
 
-async function render(engine: OhmailEngine, query: string, version = 1): Promise<void> {
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW,
-      children: h(KeymapProvider, { children: h(SearchView, { engine, version, now: NOW, query, onQuery: () => {}, onOpen: () => {} }) }),
-    }));
-  });
+async function render(engine: OhmailEngine, query: string): Promise<void> {
+  await act(async () => { root.render(<RegisteredSearch engine={engine} now={NOW} />); });
+  await act(async () => { typeSearch(host, query); });
 }
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 /** Past a typed question's hold: its page, then its count. */
@@ -100,19 +97,26 @@ const text = (): string => host.textContent ?? "";
 
 const SENTENCES = {
   searching: "Searching your whole mailbox…",
-  matched: /Searched your whole mailbox — (at least |about )?[\d,]+ matched/,
-  nothing: "Searched your whole mailbox — nothing matched",
-  unanswered: "Your server did not answer — showing the recent mail this device holds.",
-  failed: "Your server could not run this search — showing the recent mail this device holds.",
+  matched: /(At least|About) [\d,]+ matched in your whole mailbox\./,
+  nothing: "Nothing matched",
+  unanswered: "Your server did not answer, so these are from the recent mail this device holds.",
+  failed: "Your server could not run this search, so these are from the recent mail this device holds.",
 } as const;
 /** Which of the four sentences are on screen — exactly one is the invariant. */
 function verdicts(): string[] {
   const t = text();
-  return Object.entries(SENTENCES)
-    .filter(([, s]) => (typeof s === "string" ? t.includes(s) : s.test(t)))
-    .map(([k]) => k);
+  const states = Object.entries(SENTENCES)
+    .filter(([state, sentence]) => state !== "nothing" &&
+      (typeof sentence === "string" ? t.includes(sentence) : sentence.test(t)))
+    .map(([state]) => state);
+  if (states.length) return states;
+  if (t.includes(SENTENCES.nothing)) return ["nothing"];
+  const query = (within(host).getByRole("textbox", { name: "Search" }) as HTMLInputElement).value;
+  return query.length >= 2 && within(host).queryByRole("heading", { name: /^Results/ }) ? ["matched"] : [];
 }
 const logged = (): string[] => warn.mock.calls.map((c: unknown[]) => c.join(" ")).filter((l: string) => l.startsWith("[search]"));
+/** The one press that asks the whole mailbox again: the line's own verb, found by its role and name. */
+const againButton = (): HTMLElement | null => within(host).queryByRole("button", { name: "Search again" });
 
 const CORPUS = [msg("local", "myAXA Portal")];
 
@@ -144,7 +148,7 @@ describe("the whole-mailbox verdict always renders", () => {
     await advance(300);
     expect(verdicts()).toEqual(["failed"]);
     expect(text()).not.toContain("a sentence about the account");
-    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toContain("Search your whole mailbox again");
+    expect(againButton()).not.toBeNull();
   });
 
   it("a transport that throws SYNCHRONOUSLY is a failed outcome, never a rejection of the engine", async () => {
@@ -175,12 +179,12 @@ describe("the whole-mailbox verdict always renders", () => {
     expect(verdicts()).toEqual(["searching"]);
     // The device arm re-renders over a changed mirror while the pass is out.
     await act(async () => { await store.applyChanges([create(msg("new", "AXA claim update"))]); });
-    await render(engine, "axa", 2);
+    await render(engine, "axa");
     await advance(2_000);
     expect(verdicts()).toEqual(["searching"]);
     await act(async () => { settle!({ items: [msg("wire", "Quarterly letter")], total: 3, tier: "exact" }); });
     expect(verdicts()).toEqual(["matched"]);
-    expect(text()).toContain("Searched your whole mailbox — 3 matched");
+    expect(within(host).getByRole("heading", { name: "Results 3" })).toBeTruthy();
   });
 
   it("a CUT page says at least N, the estimate about N, and the exact count replaces it in place", async () => {
@@ -199,13 +203,13 @@ describe("the whole-mailbox verdict always renders", () => {
     await render(engine, "axa");
     await advance(SETTLED);
     expect(asked).toEqual(["page", "estimate"]);
-    expect(text()).toContain("Searched your whole mailbox — at least 212 matched · ");
+    expect(text()).toContain(messages.search.saidAtLeast.replace("{total}", "212"));
     await act(async () => { estimate!({ items: [], total: 212, totalExact: false, totalEstimate: 7_874, ms: 9 }); });
     expect(asked).toEqual(["page", "estimate", "summary"]);
-    expect(text()).toContain("Searched your whole mailbox — about 7,874 matched · ");
+    expect(text()).toContain(messages.search.saidAbout.replace("{total}", "7,874"));
     expect(verdicts()).toEqual(["matched"]);
     await act(async () => { count!({ items: [], total: 7_901, totalExact: true, ms: 40 }); });
-    expect(text()).toContain("Searched your whole mailbox — 7,901 matched · ");
+    expect(within(host).getByRole("heading", { name: "Results 7,901" })).toBeTruthy();
     expect(text()).not.toContain("about 7,874");
     expect(verdicts()).toEqual(["matched"]);
   });
@@ -232,7 +236,7 @@ describe("the whole-mailbox verdict always renders", () => {
     await advance(SETTLED);
     await advance(SETTLED);
     expect(asked).toEqual(["page", "estimate"]);
-    expect(text()).toContain("Searched your whole mailbox — 38 matched · ");
+    expect(within(host).getByRole("heading", { name: "Results 38" })).toBeTruthy();
   });
 
   it("an exact estimate asks no summary, and a count that fails leaves the lower bound", async () => {
@@ -249,12 +253,13 @@ describe("the whole-mailbox verdict always renders", () => {
     await advance(SETTLED);
     // The estimate is always the second response — it carries the facets; exact, it is the last.
     expect(asked).toEqual(["exact:page", "exact:estimate"]);
-    expect(text()).toContain("Searched your whole mailbox — 4 matched · ");
+    expect(text()).not.toContain(SENTENCES.searching);
+    expect(text()).not.toContain("Searched your whole mailbox");
     await render(engine, "cut");
     await advance(SETTLED);
     // An estimate with no `totalEstimate` says nothing about how many: the lower bound stands.
     expect(asked).toEqual(["exact:page", "exact:estimate", "cut:page", "cut:estimate", "cut:summary"]);
-    expect(text()).toContain("Searched your whole mailbox — at least 250 matched · ");
+    expect(text()).toContain(messages.search.saidAtLeast.replace("{total}", "250"));
   });
 
   it("a pass that NEVER settles ends at the ceiling in the not-answered verdict", async () => {
@@ -265,7 +270,7 @@ describe("the whole-mailbox verdict always renders", () => {
     await advance(2);
     expect(verdicts()).toEqual(["unanswered"]);
     expect(logged()).toEqual(["[search] the whole-mailbox pass did not answer: timeout"]);
-    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toContain("Search your whole mailbox again");
+    expect(againButton()).not.toBeNull();
   });
 
   it("a one-character query asks nothing and never claims to be searching", async () => {
@@ -281,4 +286,200 @@ describe("the whole-mailbox verdict always renders", () => {
     expect(asked).toEqual(["my", "my"]); // the page, then its estimate — exact, so no summary
     expect(verdicts()).toEqual(["nothing"]);
   });
+
+  it("an empty page WITH a cursor is followed: the rows behind it are the verdict, never nothing matched", async () => {
+    const asked: string[] = [];
+    const { engine } = await engineWith(CORPUS, {
+      searchServer: async (_q: string, o: { parts?: string; cursor?: string }) => {
+        if (o.parts === "estimate" || o.parts === "summary") return { items: [], total: 1, totalExact: true, ms: 1 };
+        asked.push(o.cursor ?? "-");
+        return o.cursor === "c2" ? { items: [msg("wire", "Quarterly letter")], total: 1, totalExact: false, nextCursor: null, ms: 1 }
+          : { items: [], total: 0, totalExact: false, nextCursor: o.cursor === "c1" ? "c2" : "c1", ms: 1 };
+      },
+    });
+    await render(engine, "unread");
+    await advance(SETTLED);
+    expect(asked).toEqual(["-", "c1", "c2"]);
+    expect(verdicts()).toEqual(["matched"]);
+    expect(text()).toContain("Quarterly letter");
+    expect(text()).not.toContain("Nothing matched.");
+  });
+
+  it("five empty pages with cursors: no verdict says nothing matched or that the server did not answer", async () => {
+    const asked: string[] = [];
+    const { engine } = await engineWith([], {
+      searchServer: async (_q: string, o: { parts?: string; cursor?: string }) => {
+        asked.push(o.cursor ?? "-");
+        return { items: [], total: 0, totalExact: false, nextCursor: `${o.cursor ?? "c"}+`, ms: 1 };
+      },
+    });
+    await render(engine, "unread");
+    await advance(SETTLED);
+    expect(asked).toHaveLength(5);
+    expect(verdicts()).toEqual([]);
+    expect(text()).not.toContain("Nothing matched.");
+    expect(againButton()).toBeNull();
+  });
+
+  it("past the bound with rows on screen, the end of the list scrolled to looks further", async () => {
+    const asked: string[] = [];
+    const { engine } = await engineWith(CORPUS, {
+      searchServer: async (_q: string, o: { parts?: string; cursor?: string }) => {
+        if (o.parts === "estimate" || o.parts === "summary") return { items: [], total: 2, totalExact: true, ms: 1 };
+        const n = o.cursor ? Number(o.cursor) : 0;
+        asked.push(String(n));
+        if (n === 0) return { items: [msg("first", "Quarterly letter")], total: 2, totalExact: false, nextCursor: "1", ms: 1 };
+        if (n === 6) return { items: [msg("deep", "Old pension statement")], total: 2, totalExact: false, nextCursor: null, ms: 1 };
+        return { items: [], total: 0, totalExact: false, nextCursor: String(n + 1), ms: 1 };
+      },
+    });
+    await render(engine, "letter");
+    await advance(SETTLED);
+    expect(text()).toContain("Quarterly letter");
+    const scroller = host.querySelector(".sr-scroll") as HTMLElement;
+    const scroll = () => act(async () => { scroller.dispatchEvent(new Event("scroll")); await vi.advanceTimersByTimeAsync(10); });
+    await scroll();
+    expect(asked).toEqual(["0", "1", "2", "3", "4", "5"]);
+    expect(text()).not.toContain("Old pension statement");
+    await scroll();
+    expect(asked).toEqual(["0", "1", "2", "3", "4", "5", "6"]);
+    expect(text()).toContain("Old pension statement");
+  });
+
+  it("a followed page one, the list walked past the page cache: the top of the list is read again, with no loop of page asks", async () => {
+    let pageAsks = 0;
+    const { engine } = await engineWith([], {
+      searchServer: async (_q: string, o: { parts?: string; cursor?: string }) => {
+        if (o.parts === "estimate" || o.parts === "summary") return { items: [], total: 400, totalExact: true, ms: 1 };
+        if (!o.cursor) return { items: [], total: 0, totalExact: false, nextCursor: "p0", ms: 1 };
+        const k = Number(o.cursor.slice(1));
+        return {
+          items: Array.from({ length: 50 }, (_, i) => msg(`r${k * 50 + i}`, `Letter ${k * 50 + i} of the run`)),
+          total: 400, totalExact: false, nextCursor: k < 7 ? `p${k + 1}` : null, ms: 1,
+        };
+      },
+    });
+    const inner = engine.pageSearch.bind(engine);
+    (engine as unknown as { pageSearch: typeof engine.pageSearch }).pageSearch = (key, o) => {
+      pageAsks += 1;
+      // The test's own stop: a loop of asks would otherwise never let it return.
+      return pageAsks > 400 ? new Promise(() => undefined) : inner(key, o);
+    };
+    await render(engine, "letter");
+    await advance(SETTLED);
+    expect(text()).toContain("Letter 0 of the run");
+    const scroller = host.querySelector(".sr-scroll") as HTMLElement;
+    for (let i = 0; i < 5; i++) {
+      await act(async () => { scroller.dispatchEvent(new Event("scroll")); await vi.advanceTimersByTimeAsync(50); });
+    }
+    await advance(500);
+    expect(pageAsks, "the walk past the cache and the way back, not a loop").toBeLessThan(40);
+    expect(text()).toContain("Letter 0 of the run");
+  });
+});
+
+describe("a followed position below page one, after the top is read again", () => {
+  it("rows, two empty pages with cursors, rows: past the page cache, to the top, down a screen — the rows below the gap are drawn, with no loop of page asks", async () => {
+    let pageAsks = 0;
+    const wire: string[] = [];
+    const { engine } = await engineWith([], {
+      searchServer: async (_q: string, o: { parts?: string; cursor?: string }) => {
+        if (o.parts === "estimate" || o.parts === "summary") return { items: [], total: 400, totalExact: true, ms: 1 };
+        const c = o.cursor ?? "p0";
+        wire.push(c);
+        if (c === "e1" || c === "e2") return { items: [], total: 0, totalExact: false, nextCursor: c === "e1" ? "e2" : "p1", ms: 1 };
+        const k = Number(c.slice(1));
+        return {
+          items: Array.from({ length: 50 }, (_, i) => msg(`r${k * 50 + i}`, `Letter ${k * 50 + i} of the run`)),
+          total: 400, totalExact: false, nextCursor: k === 0 ? "e1" : k < 7 ? `p${k + 1}` : null, ms: 1,
+        };
+      },
+    });
+    const inner = engine.pageSearch.bind(engine);
+    (engine as unknown as { pageSearch: typeof engine.pageSearch }).pageSearch = (key, o) => {
+      pageAsks += 1;
+      // The test's own stop: a loop of asks would otherwise never let it return.
+      return pageAsks > 400 ? new Promise(() => undefined) : inner(key, o);
+    };
+    await render(engine, "letter");
+    await advance(SETTLED);
+    expect(text()).toContain("Letter 0 of the run");
+    const scroller = host.querySelector(".sr-scroll") as HTMLElement;
+    const scrollTo = async (slot: number): Promise<void> => {
+      scroller.scrollTop = slot * 80;
+      await act(async () => { scroller.dispatchEvent(new Event("scroll")); await vi.advanceTimersByTimeAsync(50); });
+      await advance(200);
+    };
+    // The reader scrolls to the end of the list: the walk passes the page cache.
+    for (let i = 1; i <= 8; i++) await scrollTo(i * 50 - 16);
+    expect(text()).toContain("Letter 399 of the run");
+    expect(text(), "the top is long off screen").not.toContain("Letter 0 of the run");
+    // Home, then down a screen: slots 50 and on come into the window again.
+    await scrollTo(0);
+    expect(text(), "the top is read again").toContain("Letter 0 of the run");
+    const before = pageAsks;
+    const sent = wire.length;
+    await scrollTo(52);
+    await advance(500);
+    expect(pageAsks - before, "the page asks for that screen: no loop").toBeLessThan(10);
+    expect(wire.slice(sent), "the rows below the gap by their followed cursor, no empty page").toEqual(["p1"]);
+    expect(text()).toMatch(/Letter 6\d of the run/);
+  });
+
+  // The page above the gap as the store answers it when the top is read again. A page holds fifty rows at most.
+  // Pushed: the same number of rows and another next (a new letter at the top; Letter 49 is the page after's first row now).
+  for (const change of ["fewer", "more", "empty", "pushed"] as const) {
+    it(`the page above the gap read again with ${change === "pushed" ? "the same number of rows and another next" : "another number of rows"} (${change}): the top, then down a screen — every row drawn once, no loop of page asks`, async () => {
+      let pageAsks = 0;
+      let again = false;
+      const row = (n: number) => msg(`r${n}`, `Letter ${n} of the run`);
+      const { engine } = await engineWith([], {
+        searchServer: async (_q: string, o: { parts?: string; cursor?: string }) => {
+          if (o.parts === "estimate" || o.parts === "summary") return { items: [], total: 400, totalExact: true, ms: 1 };
+          const c = o.cursor ?? "p0";
+          // Empty now, with a cursor: page one's letters are behind one more empty page.
+          if (c === "p0" && again && change === "empty") return { items: [], total: 0, totalExact: false, nextCursor: "y0", ms: 1 };
+          if (c === "y0") return { items: Array.from({ length: 50 }, (_, i) => row(i)), total: 400, totalExact: false, nextCursor: "e1", ms: 1 };
+          if (c === "e1" || c === "e2") return { items: [], total: 0, totalExact: false, nextCursor: c === "e1" ? "e2" : "p1", ms: 1 };
+          if (c === "p0" && again && change === "pushed") return { items: [row(900), ...Array.from({ length: 49 }, (_, i) => row(i))], total: 400, totalExact: false, nextCursor: "x1", ms: 1 };
+          if (c === "x1") return { items: [row(49)], total: 400, totalExact: false, nextCursor: "e2", ms: 1 };
+          const k = Number(c.slice(1));
+          let items = Array.from({ length: 50 }, (_, i) => row(k * 50 + i));
+          // Fewer: Letter 49 stopped matching. More: 49 rows the first time, a new letter above them the second.
+          if (k === 0 && (change === "more" || (again && change === "fewer"))) items = items.slice(0, 49);
+          if (k === 0 && again && change === "more") items = [row(900), ...items];
+          return { items, total: 400, totalExact: false, nextCursor: k === 0 ? "e1" : k < 7 ? `p${k + 1}` : null, ms: 1 };
+        },
+      });
+      const inner = engine.pageSearch.bind(engine);
+      (engine as unknown as { pageSearch: typeof engine.pageSearch }).pageSearch = (key, o) => {
+        pageAsks += 1;
+        // The test's own stop: a loop of asks would otherwise never let it return.
+        return pageAsks > 400 ? new Promise(() => undefined) : inner(key, o);
+      };
+      await render(engine, "letter");
+      await advance(SETTLED);
+      expect(text()).toContain("Letter 0 of the run");
+      const scroller = host.querySelector(".sr-scroll") as HTMLElement;
+      const scrollTo = async (slot: number): Promise<void> => {
+        scroller.scrollTop = slot * 80;
+        await act(async () => { scroller.dispatchEvent(new Event("scroll")); await vi.advanceTimersByTimeAsync(50); });
+        await advance(200);
+      };
+      for (let i = 1; i <= 8; i++) await scrollTo(i * 50 - 16);
+      expect(text()).toContain("Letter 399 of the run");
+      again = true;
+      await scrollTo(0);
+      expect(text(), "the top of the list is drawn").toContain(change === "more" || change === "pushed" ? "Letter 900 of the run" : "Letter 0 of the run");
+      const before = pageAsks;
+      // …and down a screen, as a reader's scroll does it: a few scroll events.
+      for (let i = 0; i < 3; i++) await scrollTo(52);
+      await advance(500);
+      expect(pageAsks - before, "the page asks for that screen: no loop").toBeLessThan(40);
+      const shown = [48, 49, 50, 51, 60, 70].filter((k) => text().includes(`Letter ${k} of the run`));
+      expect(shown, "every row the store answered is drawn").toEqual(change === "empty" || change === "pushed" ? [48, 49, 50, 51, 60, 70] : [48, 50, 51, 60, 70]);
+      const twice = [48, 49, 50, 51, 60].filter((k) => text().split(`Letter ${k} of the run`).length > 2);
+      expect(twice, "no row drawn twice").toEqual([]);
+    });
+  }
 });

@@ -3,14 +3,14 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { ServiceError, makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { ServiceError, dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * THE FORWARDING-DETECTION NOTICE's service half (mail 0078): the DTO carries the evidence
  * pair, and the dismissal is a per-mailbox write the caller's own account can make and nobody
  * else's can reach.
  *
- * The PREDICATE is not here — `apps/worker/test/inbound-quiet.test.ts` replays the incident
+ * The PREDICATE is not here — `packages/organizer/test/inbound-quiet.test.ts` replays the incident
  * against the pass that owns it. What this file holds is the wire contract the clients build
  * the show rule on: both instants projected unconditionally (a status gate here would be the
  * incident's invisibility restored one layer up), the dismissal stamping the context clock,
@@ -24,7 +24,7 @@ const svc = makeMailboxService({ keyProvider: KP });
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 async function seed(db: Db, opts: {
   inboundQuietSince?: Date | null; inboundQuietDismissedAt?: Date | null;

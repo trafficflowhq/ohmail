@@ -7,7 +7,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { accounts, mailboxes, messages, drafts, workflows, workflowRuns, type LedgerTx, type Tx } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import type { SpendPort } from "@trafficflow/db";
-import { fakeSpendPort, type FakeSpendPort } from "./_spendport.js";
+import { fakeSpendPort, type FakeSpendPort } from "../../../packages/organizer/test/_spendport.js";
 import { ledgerSources, sourceFor } from "@trafficflow/db";
 import { PLANE_PRICES } from "../../../packages/services/test/helpers/plane-pricing.js";
 import { runMigrations } from "@trafficflow/db/admin";

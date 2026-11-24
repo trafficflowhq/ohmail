@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as shell from "./fixtures/cloud-confirm-shell";
+import en from "../messages/en.json";
 
 /**
  * THE WAKE STREAM THROUGH THE REAL `CloudShell`, on the warm path every reload takes (a remembered
@@ -31,6 +32,10 @@ class FakeEventSource {
 }
 
 const OWNER = shell.ACCOUNT;
+/** The wall stands: its sentence, which names the closure it says (`accessLock.trialEnded`, its date as a reader reads it). */
+const wallStands = (): boolean =>
+  [...document.body.querySelectorAll("main p")].some((p) => p.textContent?.startsWith(en.accessLock.trialEnded.split("{date}")[0]!));
+
 const CLOSED = {
   metered: true, access: "refused", canAddMailbox: false, mailboxes: 0, aiEnabled: false,
   lifecycle: {
@@ -50,6 +55,7 @@ const refused402 = (): Response => jsonOf({
 let access: () => Response = () => jsonOf(OPEN);
 let walled = false;
 let asked: string[] = [];
+let pendingRenewal: Promise<Response> | null;
 
 beforeEach(async () => {
   (await import("../app/api-client")).forgetAccess();
@@ -60,6 +66,7 @@ beforeEach(async () => {
   sessionStorage.clear();
   access = () => jsonOf(OPEN);
   walled = false;
+  pendingRenewal = null;
   FakeEventSource.made = [];
   vi.stubGlobal("EventSource", FakeEventSource);
   const base = globalThis.fetch;
@@ -67,7 +74,7 @@ beforeEach(async () => {
   globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     asked.push(`${Math.round((Date.now() - Date.parse(shell.ISO)) / 1000)}s ${new URL(url, "https://ohmail.app").pathname}${walled ? "!" : ""}`);
-    if (url.includes("/auth/refresh")) return new Response(null, { status: 204 });
+    if (url.includes("/auth/refresh") && pendingRenewal === null) return new Response(null, { status: 204 });
     if (url.includes("/account/access")) return access();
     if (walled && (url.includes("/mailboxes") || url.includes("/sync"))) return refused402();
     return base(input as RequestInfo, init);
@@ -78,21 +85,39 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 }, 60_000);
 
+/* RE-POINTED TO THE NEW SHELL (RULING-NEW-SHELL-FIRST D (1)): the mail stands when the frame's root is drawn (`.fr-root`,
+   `packages/app/src/frame/FrameRoot.tsx`), where today's shell drew `.today`. */
 describe("the wall replaces the mail shell, so the lift streams again", () => {
+  it("opens the stream once the initial renewal has replaced the access cookie", { timeout: 60_000 }, async () => {
+    let settle!: (answer: Response) => void;
+    pendingRenewal = new Promise((resolve) => { settle = resolve; });
+    shell.scriptRefresh(() => pendingRenewal!);
+    await shell.mountCloudShell();
+    await shell.tick(1_000);
+    try {
+      expect(asked.filter((line) => line.endsWith(" /auth/refresh"))).toHaveLength(1);
+      expect(FakeEventSource.made, "the stream dialled with the old access cookie").toHaveLength(0);
+    } finally {
+      settle(shell.refresh204());
+      await shell.tick(1_000);
+    }
+    expect(FakeEventSource.made).toHaveLength(1);
+  });
+
   it("a warm mount dials its stream when the confirm opens the gate, with no tab flip", { timeout: 60_000 }, async () => {
     await shell.mountCloudShell();
     await shell.tick(5_000);
-    expect(document.body.querySelector(".app-root"), "the premise: the mail opened").not.toBeNull();
+    expect(document.body.querySelector(".fr-root"), "the premise: the mail opened").not.toBeNull();
     expect(shell.sessionCalls(), "the premise: the confirm was asked").toBeGreaterThanOrEqual(1);
     expect(FakeEventSource.made, "the warm mount held no stream until a tab flip").toHaveLength(1);
     expect(new URL(FakeEventSource.made[0]!.url, "https://ohmail.test").pathname).toBe("/api/events");
   });
 
   it("a stream latched dead at its re-dial, the wall, then the payment: the lift dials a NEW stream, and nothing dials while the wall stands", { timeout: 60_000 }, async () => {
-    const { RETURN_DEBOUNCE_MS } = await import("../app/shell/wall-lift");
+    const { RETURN_DEBOUNCE_MS } = await import("@ohmail/app-logic/doors/wall-lift");
     await shell.mountCloudShell();
     await shell.tick(5_000);
-    expect(document.body.querySelector(".app-root"), "the premise: the mail opened").not.toBeNull();
+    expect(document.body.querySelector(".fr-root"), "the premise: the mail opened").not.toBeNull();
     expect(FakeEventSource.made, "the premise: the open shell dialled its stream").toHaveLength(1);
     const first = FakeEventSource.made[0]!;
     await shell.act(async () => { first.open(); });
@@ -103,7 +128,7 @@ describe("the wall replaces the mail shell, so the lift streams again", () => {
     await shell.act(async () => { first.refuse(); });
     // Past the client's stale-refusal window after the first paint's open verdict (60 s).
     await shell.tick(75_000);
-    expect(document.body.querySelector(".wall-card"), `the poll's 402 did not raise the wall: ${asked.join(" ")}`).not.toBeNull();
+    expect(wallStands(), `the poll's 402 did not raise the wall: ${asked.join(" ")}`).toBe(true);
     expect(first.closed, "the dead stream was left open under the wall").toBe(true);
     await shell.tick(2 * 60_000);
     expect(FakeEventSource.made, "a stream was dialled while the account was refused").toHaveLength(1);
@@ -113,8 +138,8 @@ describe("the wall replaces the mail shell, so the lift streams again", () => {
     await shell.tick(RETURN_DEBOUNCE_MS);
     await shell.act(async () => { window.dispatchEvent(new Event("focus")); });
     await shell.tick(5_000);
-    expect(document.body.querySelector(".wall-card"), "the wall stood over an open verdict").toBeNull();
-    expect(document.body.querySelector(".app-root")).not.toBeNull();
+    expect(wallStands(), "the wall stood over an open verdict").toBe(false);
+    expect(document.body.querySelector(".fr-root")).not.toBeNull();
     expect(FakeEventSource.made, "the lift dialled no new stream").toHaveLength(2);
     expect(FakeEventSource.made[1]!.closed).toBe(false);
   });

@@ -6,7 +6,7 @@ import {
 } from "@trafficflow/db";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { MemoryMirrorStore, threadSizeIndex } from "@ohmail/client-engine";
-import { SyncService, ThreadService, type ServiceContext } from "@trafficflow/services";
+import { SyncService, ThreadService, dbFor, type ServiceContext } from "@trafficflow/services";
 import { materializeThread, materializeThreads } from "../src/dto/materialize.js";
 
 /**
@@ -22,7 +22,7 @@ const NOW = new Date("2026-09-27T05:00:00.000Z");
 const sync = new SyncService();
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "thread-live-letters" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "thread-live-letters" });
 
 async function seed(db: Db) {
   const [a] = await db.insert(accounts).values({ name: "thread-live-letters" }).returning();
@@ -118,7 +118,7 @@ describe("the batch thread reader answers what the single-thread reader answers"
     };
     // The seeded pair gains an older letter whose folder_state names the thread's folder.
     const first = await letter(s.pair, 9, { unread: false });
-    await db.insert(folderState).values({ messageId: first, desiredFolder: "Archive", observedFolder: "INBOX", lastSetBy: "us" });
+    await db.insert(folderState).values({ messageId: first, accountId: s.accountId, desiredFolder: "Archive", observedFolder: "INBOX", lastSetBy: "us" });
     await letter(s.pair, 8, { gone: true });
     const [mixed] = await db.insert(threads).values({ accountId: s.accountId }).returning();
     await letter(mixed!.id, 20, { folder: "Projects" });

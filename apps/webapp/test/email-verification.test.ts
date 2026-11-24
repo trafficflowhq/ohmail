@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { config as middlewareConfig } from "../middleware.js";
 import { OWN_PATHS } from "../next.config.mjs";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push() {}, replace() {} }) }));
 
 /**
  * Stage-2 the webapp half of email verification.
@@ -87,14 +89,30 @@ describe("the credential-page duties are discharged, not merely promised", () =>
   });
 
   it("the token is scrubbed out of the address bar on load", () => {
-    const screen = read("../app/(product)/verify-email/VerifyEmailScreen.tsx");
+    const screen = read("../app/(product)/verify-email/use-verify-door.ts");
     expect(screen).toMatch(/history\.replaceState/);
     expect(screen).toMatch(/searchParams\.delete\("token"\)/);
+  });
+
+  it("the page the server draws carries no part of the link's code: the ceremony holds it", async () => {
+    process.env.NEXT_PUBLIC_API_BASE = "/api";
+    const React = await import("react");
+    const { renderToString } = await import("react-dom/server");
+    const { NextIntlClientProvider } = await import("next-intl");
+    const { VerifyRoute } = await import("../app/(product)/verify-email/VerifyRoute");
+    const code = ["link", "code", "a1b2c3d4"].join("-");
+    const html = renderToString(React.createElement(NextIntlClientProvider, {
+      locale: "en", messages: MESSAGES, timeZone: "UTC",
+      children: React.createElement(VerifyRoute, { initialToken: code }),
+    }));
+    expect(html, "the form was not drawn").toContain(MESSAGES.verify.passwordLabel);
+    expect(html, "the page carried the link's code").not.toContain(code);
   });
 });
 
 describe("the screen never verifies on a token alone", () => {
-  const screen = read("../app/(product)/verify-email/VerifyEmailScreen.tsx");
+  /* The ceremony moved into its hook; the doors' page draws the form over it. */
+  const screen = read("../app/(product)/verify-email/use-verify-door.ts") + read("../../../packages/app/src/doors/verify/VerifyPage.tsx");
 
   it("there is a password field, and it is REQUIRED", () => {
     expect(screen).toMatch(/type="password"/);
@@ -122,8 +140,8 @@ describe("the screen never verifies on a token alone", () => {
     // Asking for a password on a link somebody clicked from an email looks, at a glance, exactly
     // like a phishing page. Explaining it is not decoration — it is what makes the honest flow
     // distinguishable from the dishonest one.
-    expect(MESSAGES.verify.passwordHint).toMatch(/only you/i);
-    expect(MESSAGES.verify.passwordHint).toMatch(/link on its own is not enough/i);
+    expect(MESSAGES.verify.line).toMatch(/only you/i);
+    expect(MESSAGES.verify.line).toContain("We ask for it here so that only you can confirm this address.");
   });
 });
 
@@ -131,7 +149,7 @@ describe("the copy is true under a CONSTANT register response", () => {
   it("the post-register screen never claims an account was created", () => {
     // The branch this screen is shown for may have created nothing (the address was already
     // registered). Every sentence has to hold either way, so none of them may assert a creation.
-    const sent = `${MESSAGES.join.step_sent_title} ${MESSAGES.join.step_sent_lead} ${MESSAGES.join.sentNote}`;
+    const sent = `${MESSAGES.join.openLink} ${MESSAGES.join.sentContinuing}`;
     for (const forbidden of [
       /your account (is|has been) (ready|created)/i,
       /we (have )?created your account/i,
@@ -141,8 +159,8 @@ describe("the copy is true under a CONSTANT register response", () => {
       expect(sent, `"${forbidden}" would re-open the oracle in the UI`).not.toMatch(forbidden);
     }
     // What it DOES say: a mail went to the address, and what to do with it.
-    expect(MESSAGES.join.step_sent_lead).toMatch(/\{email\}/);
-    expect(MESSAGES.join.step_sent_lead).toMatch(/link/i);
+    expect(MESSAGES.join.openLink).toMatch(/\{email\}/);
+    expect(MESSAGES.join.openLink).toMatch(/link/i);
   });
 
   it("the waitlist success copy states the confirmation, now that the mailer is armed", () => {
@@ -164,7 +182,7 @@ describe("the copy is true under a CONSTANT register response", () => {
     // The §1 set is closed and none of it is marketing, a receipt, or a password reset.
     const added = [
       ...Object.values(MESSAGES.verify),
-      MESSAGES.join.step_sent_lead, MESSAGES.join.sentNote,
+      MESSAGES.join.openLink, MESSAGES.join.sentContinuing,
       MESSAGES.join.step_verify_lead, MESSAGES.join.verifyWhy,
       MESSAGES.signup.successBody,
     ].join(" ");

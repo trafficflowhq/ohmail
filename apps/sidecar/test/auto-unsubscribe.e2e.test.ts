@@ -198,7 +198,7 @@ describe("auto-unsubscribe on the standalone door", () => {
       nativeLocator: { folder: "INBOX", ref: `1:${address.length}` },
     }).returning();
     await s.db.insert(messageBodies).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       text: "the letter",
       // Stored header values are string ARRAYS — the shape `rules.ts#headerValues` reads;
       // a bare string is treated as absent, which `unsubscribeHeaderState` reports `no_header`.
@@ -211,7 +211,7 @@ describe("auto-unsubscribe on the standalone door", () => {
       },
     });
     await s.db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       observedFolder: "INBOX",
       desiredFolder: SCREENER,
       lastSetBy: "us",
@@ -226,7 +226,9 @@ describe("auto-unsubscribe on the standalone door", () => {
     const held = await seedHeldOneClick(s, "letters@bulk.example", "Letters <letters.bulk.example>");
 
     const res = await s.handle(new Request(`http://local/screener/${held}`, {
-      method: "POST", headers: auth(s), body: JSON.stringify({ decision: "no" }),
+      method: "POST", headers: auth(s), body: JSON.stringify({
+        decision: "no", scope: "confirmed_sender", confirmedIds: [held], unsubscribeIds: [held], applyRetro: false,
+      }),
     }));
     expect(res.status, await res.clone().text()).toBe(200);
 
@@ -313,20 +315,22 @@ describe("auto-unsubscribe on the standalone door", () => {
     expect(post.calls).toHaveLength(0);
   }, 60_000);
 
-  it("the claim per list spans BOTH arms, so nobody asks a list twice", async () => {
+  it("the claim per list spans confirmation and the Reader press", async () => {
     const post = recordingPost();
     const s = await boot(post);
     const held = await seedHeldOneClick(s, "digest@bulk.example", "Digest <digest.bulk.example>");
 
-    // The automatic arm, on the screen-out: one post, recorded.
+    // The confirmed screen-out makes one request and records the result.
     await s.handle(new Request(`http://local/screener/${held}`, {
-      method: "POST", headers: auth(s), body: JSON.stringify({ decision: "no" }),
+      method: "POST", headers: auth(s), body: JSON.stringify({
+        decision: "no", scope: "confirmed_sender", confirmedIds: [held], unsubscribeIds: [held], applyRetro: false,
+      }),
     }));
     expect(post.calls).toEqual([{ url: ONE_CLICK_URL, pin: ["11.22.33.44"] }]);
 
     // The user then presses unsubscribe on the same message: the claim holds — the honest
     // "already recorded", no second request. Keyed on the List-Id identity, which is what makes
-    // the two arms one courtesy rather than two.
+    // the two surfaces share the same claim.
     const res = await s.handle(new Request(`http://local/messages/${held}/unsubscribe`, {
       method: "POST", headers: auth(s), body: JSON.stringify({}),
     }));
@@ -354,7 +358,9 @@ describe("auto-unsubscribe on the standalone door", () => {
     const held = await seedHeldOneClick(s, "refuses@bulk.example", "Refuses <refuses.bulk.example>");
 
     await s.handle(new Request(`http://local/screener/${held}`, {
-      method: "POST", headers: auth(s), body: JSON.stringify({ decision: "no" }),
+      method: "POST", headers: auth(s), body: JSON.stringify({
+        decision: "no", scope: "confirmed_sender", confirmedIds: [held], unsubscribeIds: [held], applyRetro: false,
+      }),
     }));
     expect(post.calls).toHaveLength(1);
     const [record] = await s.db.select().from(unsubscribeRecords)

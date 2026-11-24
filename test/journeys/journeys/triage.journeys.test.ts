@@ -10,6 +10,7 @@ journeysOf("triage", () => {
     const { person } = await signedIn(b);
     await person.arrive("triage");
     await person.see("triage-piles");
+    await person.see("triage-resurface");
     await person.act("press", "triage-set-aside");
     await person.until(async () => (await person.spoken("triage-set-aside")).pressed === "true", "Parked to be the pressed pile");
     expect((await person.spoken("triage-reply-later")).pressed).toBe("false");

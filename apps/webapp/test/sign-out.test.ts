@@ -1,13 +1,41 @@
 /** @vitest-environment jsdom */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import { IndexedDbMirrorStore } from "@ohmail/client-engine";
 import { sliceOfDeclaration } from "./source-anchor.js";
 
 /** The sign-out door's answer, as each case scripts it. Only `auth` is replaced (see the last describe). */
-const mockLogout = vi.fn(async (): Promise<void> => {});
+type Logout = typeof import("../app/api-client").auth.logout;
+const mockLogout = vi.fn<Logout>(async () => {});
+function mockClear() {
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+}
+function installPendingFamily() {
+  document.cookie = "tf_family=fixture-family; Path=/";
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: { request: async (_name: string, _opts: unknown, run: () => Promise<unknown>) => run() },
+  });
+}
+
+async function installMirrorInventory() {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const mirror = new IndexedDbMirrorStore({ owner: "fixture-account" });
+  await mirror.load();
+  mirror.close();
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  Reflect.deleteProperty(navigator, "locks");
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+});
 vi.mock("../app/api-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../app/api-client")>()),
-  auth: { logout: mockLogout, armLogoutOnLeave: () => undefined },
+  auth: { logout: mockLogout, clearLogoutCookies: mockClear, armLogoutOnLeave: () => undefined },
 }));
 
 /**
@@ -48,43 +76,21 @@ describe("signOut", () => {
   const src = read("../app/sign-out.ts");
 
   it("revokes the session AND wipes the local mirror", () => {
-    // The door is asked with the caller's predicate, which only the sign-in page's finisher passes.
-    expect(src).toMatch(/await auth\.logout\(\{ mayProceed: opts\.mayProceed \}\)/);
+    // The door checks the press again after waiting for the cookie lock.
+    expect(src).toMatch(/await auth\.logout\(\{ mayProceed, expectedFamily: family \?\? undefined, expectedAccount: departed \}\)/);
     expect(src).toMatch(/await clearAllMirrors\(owner\)/);
     expect(src).toContain('from "@ohmail/client-engine"');
   });
 
-  it("wipes even when the server call failed — the refusal is CAUGHT, never a short circuit", () => {
-    // A logout whose network call failed is still a user who asked to be signed out of
-    // THIS browser. Refusing to clear local mail because the server was unreachable would
-    // be exactly the wrong way round.
-    //
-    // ── THE SHAPE MOVED, AND THE ASSERTION WAS STRENGTHENED RATHER THAN RELAXED ───────────
-    //
-    // This used to read the body of a `try { … } finally { … }` and require the wipe to be
-    // inside the `finally`. That shape stopped being available the moment `signOut` had to
-    // ANSWER something (whether the wipe landed): a `return` inside a `finally` silently
-    // swallows the pending exception, which is the same class of quiet loss the rest of this
-    // file exists to prevent. So the refusal is caught into a value, and the wipe is
-    // unconditional code after it — a stronger property than "inside a finally", because it
-    // also forbids an early `return`/`throw` between the two.
-    expect(src).toMatch(/catch \(err\) \{[\s\S]*?serverRefused = /);
-    // Nothing may leave the function between catching the refusal and running the local half.
-    //
-    // THE ENDPOINT IS ASSERTED, and that is not ceremony. It was `lastIndexOf("…(owner)")`, an
-    // exact call SHAPE — so the day the call grew an option object the lookup returned -1 and
-    // `slice(start, -1)` silently widened to the rest of the function. It failed loudly that
-    // time, which was luck: a tail with no `return` in it would have passed vacuously over a
-    // slice this check was never meant to cover. The prefix matches either shape, and a lookup
-    // that finds nothing is now the failure it always should have been.
-    const start = src.indexOf("serverRefused = alreadyGone");
-    const end = src.lastIndexOf("forgetThisBrowser(owner");
-    expect(start, "the refusal assignment moved").toBeGreaterThan(-1);
-    expect(end, "the local half's call moved — this check is measuring nothing").toBeGreaterThan(start);
-    const between = src.slice(start, end);
-    expect(between, "no early exit may stand between the refusal and the wipe")
-      .not.toMatch(/\breturn\b|\bthrow\b/);
-    // …and the refusal is REPORTED rather than dropped: it rides the result.
+  it("keeps cleanup after a refusal and serializes the shared sweep", () => {
+    const start = src.indexOf("const alreadyGone = status === 401 && coded;");
+    const shared = src.indexOf("await forgetThisBrowser(departed, {", start);
+    const scoped = src.indexOf('await forgetThisBrowser(departed, { only: true', shared);
+    expect(start).toBeGreaterThan(-1);
+    expect(shared).toBeGreaterThan(start);
+    expect(scoped).toBeGreaterThan(shared);
+    expect(src.slice(start, shared)).toContain("withSessionCookieLock(async () => {");
+    expect(src.slice(shared, scoped)).toContain("{ requireLock: true }");
     expect(src).toMatch(/serverRefused,?\s*\}/);
 
     // THE DOOR'S ANSWER IS THE VERDICT: a 204, or a 401 in OUR envelope — the sign-out door saying
@@ -136,65 +142,48 @@ describe("signOut", () => {
     // A second call site that skipped the wipe would silently re-open the hole, and it
     // would look completely reasonable in review.
     const offenders: string[] = [];
-    for (const file of walk(APP)) {
+    for (const file of [...walk(APP), ...walk(`${process.cwd()}/packages/app-logic/src`), ...walk(`${process.cwd()}/packages/letter-body/src`)]) {
       if (file.endsWith("/sign-out.ts") || file.endsWith("/api-client.ts")) continue;
       const text = readFileSync(file, "utf8");
-      if (/\bauth\.logout\s*\(/.test(text)) offenders.push(file.slice(file.indexOf("apps/webapp")));
+      if (/\bauth\.logout\s*\(/.test(text)) offenders.push(file.slice(process.cwd().length + 1));
     }
     expect(offenders, "call `signOut()` from app/sign-out.ts instead").toEqual([]);
   });
 });
 
 describe("the sign-out CONTROL is wired", () => {
-  const account = readFileSync(`${APP}/(product)/mailbox/AccountSection.tsx`, "utf8");
+  const account = readFileSync(`${APP}/(product)/mailbox/account-door.ts`, "utf8");
+  const pane = readFileSync("packages/app/src/account/account/AccountPane.tsx", "utf8");
+  const erase = readFileSync(`${APP}/(product)/account/delete/use-delete-account-door.ts`, "utf8");
+  const erasePage = readFileSync("packages/app/src/doors/delete-account/DeleteAccountPage.tsx", "utf8");
+  const body = sliceOfDeclaration(account, "accountDoor");
   /* THE ARMS AND THEIR ORDER LIVE IN ONE READER since the lock screen said them too
      (ACCESS-LOCK-REFUSED-SIGN-OUT-IS-SILENT): the pane asks it once and gates the navigation on
      its answer. The pins below read the reader for the order and the pane for the gate. */
   const reader = readFileSync(`${APP}/sign-out-trouble.ts`, "utf8");
+  const stayReason = sliceOfDeclaration(readFileSync(`${APP}/sign-out.ts`, "utf8"), "signOutStayReason");
 
   it("Settings → Account reaches signOut, and does not call auth.logout itself", () => {
     // The helper existed for weeks with zero callers — correct, tested and unreachable. That
     // is the failure this asserts against, and it is the same shape as the refresh route and
     // `flagChanges`: built, verified, never wired.
-    // `forgetThisBrowser` rides the same import: the erasure door needs the LOCAL half without
-    // the server logout (that door revokes by erasing the account), and both come from the one
-    // module so the two cannot drift apart.
-    expect(account).toMatch(/import \{ forgetThisBrowser, signOut \} from "\.\.\/\.\.\/sign-out"/);
-    expect(account).toMatch(/signOut\(owner\)/);
+    expect(account).toMatch(/import \{ [^}]*\bsignOutAndSettle\b[^}]* \} from "\.\.\/\.\.\/sign-out"/);
+    expect(account).toMatch(/signOutAndSettle\(account, \{ expectedFamily: family \}\)/);
     expect(account).not.toMatch(/\bauth\.logout\s*\(/);
   });
 
   it("passes the storage owner, so the right mirror is the one wiped", () => {
     // `clearAllMirrors(undefined)` would be a best-effort sweep rather than this account's
     // database. The account is read from state that was loaded before the call.
-    expect(account).toMatch(/doSignOut\(who\.accountId\)/);
+    expect(body).toMatch(/named = \{ account: user\.accountId, family: familyId \?\? heldFamily \?\? undefined \}/);
+    expect(body).toMatch(/const session = named \?\? confirmedSignOutSession\(\)/);
+    expect(body).toMatch(/const \{ account, family \} = session;[\s\S]*signOutAndSettle\(account, \{ expectedFamily: family \}\)/);
   });
 
   it("leaves the SPA after signing out — the session is gone, the server must re-decide", () => {
     // A router push would keep the signed-in React tree alive on a dead session. This is the
     // same class of mistake as the resume `location.replace` that never re-requested.
     expect(account).toMatch(/window\.location\.assign\("\/"\)/);
-  });
-
-  it("SIGN OUT IS NOT INSIDE THE DELETE CARD, and that is the whole of this fix", () => {
-    /**
-     * Reported from a signed-in walk of the shipped build. The reading order was:
-     *
-     *   "Delete your account" → "Signed in as x@y. This cannot be undone." → "Sign out" [button]
-     *   → the Erased/Kept columns → type-to-confirm
-     *
-     * So the one REVERSIBLE control on the screen sat directly under the words "This cannot
-     * be undone", inside the destructive card, wearing its frame and its language. Separating
-     * the CARDS is what fixes it — a rule inside one panel still reads as two parts of one
-     * ceremony, which is what it had before and why it was still wrong.
-     */
-    const signOutCard = account.indexOf('className="acct acct-session"');
-    const deleteCard = account.indexOf("<Pane>\n      <h2");
-    expect(signOutCard, "the sign-out card must exist").toBeGreaterThan(-1);
-    expect(deleteCard, "the delete card must exist").toBeGreaterThan(-1);
-    expect(signOutCard, "sign out must come BEFORE the delete card").toBeLessThan(deleteCard);
-    // …and the button must live in the first card, not the second.
-    expect(account.indexOf("acct-signout-btn")).toBeLessThan(deleteCard);
   });
 
   it("`This cannot be undone` attaches to DELETION, not to being signed in", () => {
@@ -215,28 +204,29 @@ describe("the sign-out CONTROL is wired", () => {
     // `tf_session` is HttpOnly and server-set — nothing this page can do expires it — so a
     // refused logout leaves a live credential the next reachable request authenticates with,
     // while this control's own copy says "Ends this session".
-    const body = sliceOfDeclaration(account, "doSignOut");
     expect(reader).toMatch(/if \(outcome\.serverRefused !== null\) return \{ key: "signOutServerRefused"/);
-    expect(body).toMatch(/const said = signOutTrouble\(outcome\);/);
+    expect(body).toMatch(/const stay = signOutStayReason\(outcome\);/);
+    expect(stayReason).toMatch(/const trouble = signOutTrouble\(outcome\);/);
+    expect(stayReason).toMatch(/trouble\.key === "signOutServerRefused"[\s\S]*?return null;/);
     // ── THE REFUSAL NOW LEAVES, FOR THE SIGN-IN PAGE THAT FINISHES IT ─────────────────────
     //
     // It used to stay on the pane and say so, over a mailbox the blocked client could no longer
     // use. The browser is wiped and marked `signed_out_pending`, so `/` never serves it the app or a
     // resume (`session-gate.ts`): it sends it to the sign-in page, which presents the session at the
     // sign-out door behind its form, on the confirm ladder. The pane claims nothing either way.
-    const gate = body.indexOf('if (said !== null && said.key !== "signOutServerRefused") {');
+    const gate = body.indexOf("if (stay !== null) return stay;");
     const leave = body.indexOf("window.location.assign");
     expect(gate).toBeGreaterThan(-1);
     expect(leave, "leaving must come after the reader's gate").toBeGreaterThan(gate);
-    expect(body.slice(gate, leave)).toMatch(/return;/);
+    expect(body.slice(gate, leave)).toMatch(/return stay;/);
     expect(body.slice(leave), "the press leaves for anything but the front door").toMatch(/window\.location\.assign\("\/"\)/);
-    expect(account, "the pane still claims to say the server refused").not.toContain('t("signOutServerRefused"');
+    expect(pane, "the pane still claims to say the server refused").not.toContain('t("signOutServerRefused"');
     // …and it is finished where the form is, never behind a page with nothing on it: the sign-in
     // page asks the sign-out door under the marker, and so do the sign-up and confirmation pages one
     // link away (one hook, `pending-sign-out.tsx`); the splash never finishes a sign-out.
-    const login = read("../app/(product)/login/LoginScreen.tsx");
+    const login = read("../app/(product)/login/use-sign-in-door.ts") + read("../app/(product)/login/SignInRoute.tsx");
     expect(login).toMatch(/if \(readOwnerMarker\(\)\.kind === "signed-out"\) \{\s*void pending\.finish\(/);
-    const join = read("../app/(product)/join/JoinScreen.tsx");
+    const join = read("../app/(product)/join/use-join-door.ts") + read("../app/(product)/join/JoinRoute.tsx");
     const branch = join.indexOf('if (apiConfigured() && readOwnerMarker().kind === "signed-out") {');
     const finish = join.indexOf("void pending.finish(", branch);
     const back = join.indexOf("return () => { cancelled = true; };", finish);
@@ -245,16 +235,18 @@ describe("the sign-out CONTROL is wired", () => {
     expect(join.indexOf("void bootstrap();", branch), "the sign-up page reads the session under a pending sign-out")
       .toBeGreaterThan(back);
     expect(back).toBeGreaterThan(finish);
-    const verify = read("../app/(product)/verify-email/VerifyEmailScreen.tsx");
+    const verify = read("../app/(product)/verify-email/use-verify-door.ts") + read("../app/(product)/verify-email/VerifyRoute.tsx");
     expect(verify).toMatch(/void pending\.finish\(/);
     for (const [page, src] of [["sign-in", login], ["sign-up", join], ["confirmation", verify]] as const) {
       expect(src, `the ${page} page starts a ceremony beside the pending sign-out`).toMatch(/if \(!await pending\.settle\(\)\) return;/);
-      expect(src, `the ${page} page does not say how the sign-out ended`).toMatch(/<PendingSignOutSaid pending=\{pending\}/);
+      // An old card says it itself; a door's route hands it to the page, which says it first among its refusals.
+      expect(src, `the ${page} page does not say how the sign-out ended`)
+        .toMatch(/<PendingSignOutSaid pending=\{pending\}|usePendingDoor\(c\.pending\)/);
     }
     // …and what it ends on is said there, in this pane's words, through the same reader.
-    const said = read("../app/(product)/login/pending-sign-out.tsx");
+    const said = read("../app/(product)/login/use-pending-door.ts");
     expect(said).toMatch(/ta\(pending\.said\.key, \{ reason: pending\.said\.reason \}\)/);
-    const splash = read("../app/(product)/resume/ResumeScreen.tsx");
+    const splash = read("../app/(product)/resume/use-resume-door.ts");
     expect(splash).not.toMatch(/import\(["']\.\.\/\.\.\/sign-out["']\)|from ["']\.\.\/\.\.\/sign-out(?:-trouble)?["']/);
     const copy = JSON.parse(read("../messages/en.json")) as Record<string, Record<string, string>>;
     expect(copy.account!.signOutServerRefused).toMatch(/could not be ended/i);
@@ -265,11 +257,13 @@ describe("the sign-out CONTROL is wired", () => {
     // A blocked wipe means another tab is holding the database: close it and press again. An
     // unverifiable inventory means nothing is holding anything — this browser simply will not
     // say what it has — and "close your other tabs" would be a false instruction.
-    const body = sliceOfDeclaration(account, "doSignOut");
     expect(reader).toMatch(/if \(!outcome\.cleared\) return \{ key: "signOutBlocked" \};/);
+    expect(body).toMatch(/const stay = signOutStayReason\(outcome\);/);
+    expect(stayReason).toMatch(/return trouble\.key === "signOutUnverified" \? "unverified" : "blocked";/);
     expect(reader).toMatch(/if \(!outcome\.inventoryComplete\) return \{ key: "signOutUnverified" \};/);
-    expect(body).toContain("setSignOutUnverified(true)");
-    expect(account).toContain('t("signOutUnverified")');
+    expect(body).toContain("if (stay !== null) return stay;");
+    expect(pane).toContain("t(ACCOUNT_REFUSALS.account[model.stayed].key)");
+    expect(read("../../../packages/app/src/account/contract.ts")).toMatch(/unverified: at\("account", "signOutUnverified"\)/);
     // ── AND THE ORDER, because one of these is a SUBSET of the other ────────────────────────
     //
     // `cleared` is false whenever the inventory is partial, so checking `!cleared` first made
@@ -301,22 +295,21 @@ describe("the sign-out CONTROL is wired", () => {
     // the person will ever see for that account. The receipt still shows — refusing to show a
     // completed, irreversible act would be worse — and the sentence sits next to it.
     // The erased door's scope: this account's copy, never another account's in the browser.
-    expect(account).toMatch(/const local = await forgetThisBrowser\(owner, \{ only: true, erased: true \}\)/);
-    expect(account).toContain("setEraseMirrorBlocked(unclean)");
+    expect(erase).toMatch(/const local = await forgetThisBrowser\(owner, \{ only: true, erased: true \}\)/);
+    expect(erase).toContain("setEraseMirrorBlocked(unclean)");
     // …and the verdict DEFAULTS to unclean. Initialising it clean made every exception before or
     // during the wipe read as a verified clean browser, on the one screen nobody can come back to.
-    expect(account).toMatch(/let unclean = true;/);
+    expect(erase).toMatch(/let unclean = true;/);
     // BOTH halves of the verdict — an empty list from a browser that cannot be asked what it
     // holds proves only that the names we already knew are gone.
-    expect(account).toMatch(/local\.remaining\.length > 0 \|\| !local\.inventoryComplete/);
-    expect(account).toContain('t("erasedMirrorBlocked")');
+    expect(erase).toMatch(/local\.remaining\.length > 0 \|\| !local\.inventoryComplete/);
+    expect(erasePage).toMatch(/state\.unclean \? t\("erasedMirrorBlocked"\)/);
     const copy = JSON.parse(read("../messages/en.json")) as Record<string, Record<string, string>>;
     expect(copy.account!.erasedMirrorBlocked).toMatch(/could not be removed/i);
     expect(copy.account!.erasedMirrorBlocked).toMatch(/other tabs/i);
   });
 
   it("STAYS when the mail is still here — and says which server it is still on", () => {
-    const body = sliceOfDeclaration(account, "doSignOut");
 
     // ── WHAT THIS CASE USED TO ASSERT, AND WHY IT IS NOW WRONG ───────────────────────────
     //
@@ -328,17 +321,20 @@ describe("the sign-out CONTROL is wired", () => {
     // a live HttpOnly session this page cannot expire. `signOut` no longer throws at all (both
     // failures ride its result), so a `catch` here would be dead code standing in for a
     // property it no longer holds. Its sibling case above pins the server half.
-    expect(body).toMatch(/const outcome = await signOut\(owner\)/);
+    expect(body).toMatch(/const outcome = await signOutAndSettle\(account, \{ expectedFamily: family \}\)/);
     expect(reader).toMatch(/if \(!outcome\.cleared\) return \{ key: "signOutBlocked" \};/);
-    const gate = body.indexOf('if (said !== null && said.key !== "signOutServerRefused") {');
+    expect(body).toMatch(/const stay = signOutStayReason\(outcome\);/);
+    expect(stayReason).toMatch(/return trouble\.key === "signOutUnverified" \? "unverified" : "blocked";/);
+    const gate = body.indexOf("if (stay !== null) return stay;");
     const leave = body.indexOf("window.location.assign");
     expect(gate, "the wipe verdict must be checked before leaving").toBeGreaterThan(-1);
     expect(leave, "and leaving must come after it").toBeGreaterThan(gate);
     // The blocked arm returns rather than falling through to the navigation…
-    expect(body.slice(gate, leave)).toMatch(/return;/);
+    expect(body.slice(gate, leave)).toMatch(/return stay;/);
     // …and it SAYS SO. A stay with no sentence is a frozen button.
-    expect(body).toContain("setSignOutBlocked(true)");
-    expect(account).toContain('t("signOutBlocked")');
+    expect(body).toContain("if (stay !== null) return stay;");
+    expect(pane).toContain("t(ACCOUNT_REFUSALS.account[model.stayed].key)");
+    expect(read("../../../packages/app/src/account/contract.ts")).toMatch(/blocked: at\("account", "signOutBlocked"\)/);
   });
 });
 
@@ -370,17 +366,10 @@ describe("the door's answer is the verdict", () => {
 
   beforeEach(async () => {
     mockLogout.mockReset();
+    installPendingFamily();
     holdEveryRequest();
     localStorage.clear();
-    // jsdom has no IndexedDB: a factory that holds nothing, so the wipe completes and is not the subject.
-    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = {
-      databases: async () => [],
-      deleteDatabase: () => {
-        const req = { onsuccess: null } as unknown as IDBOpenDBRequest;
-        queueMicrotask(() => (req.onsuccess as unknown as (() => void) | null)?.());
-        return req;
-      },
-    } as unknown as IDBFactory;
+    await installMirrorInventory();
     document.cookie = "tf_owner=; Path=/; Max-Age=0";
     (await import("../app/api-client")).bindApiOwner(null);
   });
@@ -394,7 +383,7 @@ describe("the door's answer is the verdict", () => {
     const { signOut } = await import("../app/sign-out");
     const before = purgesSent();
     const out = await signOut(ACCOUNT);
-    const { readOwnerMarker } = await import("../app/shell/owner-cookie");
+    const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
     return {
       serverRefused: out.serverRefused, marker: readOwnerMarker().kind,
       binding: client.apiOwnerBinding().kind, verdict: client.apiOwnerVerdict("/mailboxes"),
@@ -408,8 +397,30 @@ describe("the door's answer is the verdict", () => {
   };
 
   it("a 204 ends it", async () => {
+    const { calendarChoicesOf } = await import("@ohmail/client-engine");
+    const { forgetOwner, readOwner, rememberOwner } = await import("@ohmail/app-logic/storage/owner-cookie");
+    const { composeDraftKey, EMPTY_COMPOSE, writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+    const { CALENDAR_NOTICES_KEY, readCalendarNotices } = await import("../app/shell/notification-settings");
+    const draftKey = composeDraftKey(ACCOUNT);
+    const choices = { cal_alert: true, showTitles: false, summaryAt: 570 };
+    writeComposeDraft({ ...EMPTY_COMPOSE, body: "An unfinished draft" }, ACCOUNT);
+    expect(localStorage.getItem(draftKey)).toContain("An unfinished draft");
+    localStorage.setItem(`${CALENDAR_NOTICES_KEY}.${ACCOUNT}`, JSON.stringify(choices));
+
     expect(await signOutAnswered("ok")).toEqual(ENDED);
     expect(mockLogout).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(draftKey)).toBeNull();
+
+    try {
+      rememberOwner("another-account");
+      expect(readOwner()).toBe("another-account");
+      expect(readCalendarNotices("another-account")).toBeNull();
+      const retained = readCalendarNotices(ACCOUNT);
+      expect(retained).toEqual(choices);
+      expect(calendarChoicesOf(retained, { ohcalPhone: false })).toMatchObject(choices);
+    } finally {
+      forgetOwner();
+    }
   });
 
   it("the tab's late-answer watch notes go with the session, every account's", async () => {
@@ -471,7 +482,7 @@ describe("the door's answer is the verdict", () => {
     const client = await import("../app/api-client");
     client.bindApiOwner(ACCOUNT);
     const { signedOutChannel } = await import("../app/signed-out-signal");
-    const { readOwnerMarker } = await import("../app/shell/owner-cookie");
+    const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
     const heard: unknown[] = [];
     const tab = new BroadcastChannel(signedOutChannel(ACCOUNT));
     tab.onmessage = (e: MessageEvent) => { heard.push(e.data); };
@@ -516,27 +527,34 @@ describe("the finisher's predicate", () => {
   const JOURNAL = "ohmail.screener.intents.";
   const pending = (): boolean => document.cookie.split("; ").includes(`tf_owner=${PENDING}`);
 
+  async function rememberPending() {
+    const { PENDING_SIGN_OUT_KEY } = await import("../app/sign-out");
+    localStorage.setItem(PENDING_SIGN_OUT_KEY, JSON.stringify({
+      press: "fixture-press", account: "acct_left", family: "fixture-family",
+    }));
+  }
+
   beforeEach(async () => {
     mockLogout.mockReset();
+    installPendingFamily();
     holdEveryRequest();
     localStorage.clear();
-    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = {
-      databases: async () => [],
-      deleteDatabase: () => {
-        const req = { onsuccess: null } as unknown as IDBOpenDBRequest;
-        queueMicrotask(() => (req.onsuccess as unknown as (() => void) | null)?.());
-        return req;
-      },
-    } as unknown as IDBFactory;
+    await installMirrorInventory();
     document.cookie = `tf_owner=${PENDING}; Path=/`;
+    await rememberPending();
     (await import("../app/api-client")).blockApiOwner();
   });
 
   it("is handed to the door, which asks it inside the cookie lock", async () => {
-    mockLogout.mockResolvedValueOnce(undefined);
+    mockLogout.mockImplementationOnce(async (opts) => {
+      expect(opts?.mayProceed?.()).toBe(true);
+      document.cookie = `tf_owner=${OTHER}; Path=/`;
+      expect(opts?.mayProceed?.()).toBe(false);
+      document.cookie = `tf_owner=${PENDING}; Path=/`;
+    });
     const { signOut } = await import("../app/sign-out");
     await signOut(undefined, { mayProceed: pending });
-    expect(mockLogout).toHaveBeenCalledWith({ mayProceed: pending });
+    expect(mockLogout).toHaveBeenCalledTimes(1);
   });
 
   it("a refusal over a jar another tab signed in to answers null, and marks and sweeps nothing", async () => {
@@ -570,10 +588,10 @@ describe("the finisher's predicate", () => {
     const { signOut } = await import("../app/sign-out");
     for (const answer of ["ok", new ApiError(401, "refresh_revoked", "revoked", undefined, { coded: true })] as const) {
       document.cookie = `tf_owner=${PENDING}; Path=/`;
+      installPendingFamily();
+      await rememberPending();
       localStorage.setItem(`${JOURNAL}acct_left`, "[]");
       mockLogout.mockImplementationOnce(async () => {
-        // The door's answer clears the jar, `tf_owner` with it.
-        document.cookie = "tf_owner=; Path=/; Max-Age=0";
         if (answer !== "ok") throw answer;
       });
       const before = purgesSent();
@@ -585,16 +603,16 @@ describe("the finisher's predicate", () => {
     }
   });
 
-  it("WITHOUT a predicate there is no such exit: every press runs its local half", async () => {
+  it("an ordinary refusal still wipes the local copy and leaves sign-out pending", async () => {
     const { ApiError, OFFLINE_CODE } = await import("../app/api-client");
-    mockLogout.mockImplementationOnce(async () => {
-      document.cookie = `tf_owner=${OTHER}; Path=/`;
-      throw new ApiError(0, OFFLINE_CODE, "We could not reach ohmail.");
-    });
+    const key = `${JOURNAL}acct_left`;
+    localStorage.setItem(key, "fixture");
+    mockLogout.mockRejectedValueOnce(new ApiError(0, OFFLINE_CODE, "We could not reach ohmail."));
     const { signOut } = await import("../app/sign-out");
-    const out = await signOut();
+    const out = await signOut("acct_left");
     expect(out.serverRefused).toBe("We could not reach ohmail.");
-    expect(pending(), "a press with no predicate skipped its local half").toBe(true);
+    expect(pending()).toBe(true);
+    expect(localStorage.getItem(key)).toBeNull();
   });
 });
 
@@ -607,9 +625,11 @@ describe("a one-account wipe takes only what its reach allows", () => {
   const A = "acct_A";
   const B = "acct_B";
   let engine: typeof import("@ohmail/client-engine");
-  let k = { locks: "", notes: "", reply: "", minted: "", owed: "" };
+  let k = { locks: "", notes: "", reply: "", minted: "", owed: "", told: "" };
   const ownKeys = (owner: string): string[] => [
     `${k.locks}${owner}`, `${k.notes}${owner}`, `ohmail.access.${owner}`, `ohmail.boot.ownAddresses.${owner}`,
+    // What this browser has told of the account's devices: one account's numbers never go with another's.
+    `${k.told}${owner}`,
   ];
   const jarKeys = (): string[] => [`${k.reply}m-b`, k.minted];
   const left = (keys: string[]): string[] => keys.filter((key) => localStorage.getItem(key) !== null);
@@ -624,11 +644,12 @@ describe("a one-account wipe takes only what its reach allows", () => {
     (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = new fake.IDBFactory();
     engine = await import("@ohmail/client-engine");
     k = {
-      locks: (await import("../app/shell/send-lock")).SEND_LOCKS_PREFIX,
-      notes: (await import("../app/shell/mail-send")).SENT_COPY_NOTES_PREFIX,
-      reply: (await import("../app/shell/mail-send")).REPLY_DRAFT_PREFIX,
+      locks: (await import("@ohmail/app-logic/writing/send-lock")).SEND_LOCKS_PREFIX,
+      notes: (await import("@ohmail/app-logic/writing/mail-send")).SENT_COPY_NOTES_PREFIX,
+      reply: (await import("@ohmail/app-logic/writing/mail-send")).REPLY_DRAFT_PREFIX,
       minted: (await import("../app/session-refresh")).SESSION_MINTED_KEY,
       owed: (await import("../app/(product)/resume/signed-out-note")).REVOKE_OWED_PREFIX,
+      told: (await import("@ohmail/app-logic/notices/use-notices")).TOLD_DEVICES_PREFIX,
     };
     for (const owner of [A, B]) {
       const store = new engine.IndexedDbMirrorStore({ owner });
@@ -684,9 +705,9 @@ describe("a one-account wipe takes only what its reach allows", () => {
   });
 
   it("each account's preferences outlive a whole sign-out and a revoke; an erasure takes its own", async () => {
-    const { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("../app/shell/persisted-ui");
-    const { seedNotNowKey } = await import("../app/shell/seed-offer");
-    const { readAfterVerb, writeAfterVerb } = await import("../app/shell/after-verb");
+    const { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
+    const { seedNotNowKey } = await import("@ohmail/app-logic/mailboxes/first-run/seed-offer");
+    const { readAfterVerb, writeAfterVerb } = await import("@ohmail/app-logic/press/after-verb");
     const prefs = (owner: string): string[] =>
       [searchSortKey(owner), seedNotNowKey(owner), foldersOpenedKey(owner), mailOriginalKey(owner)];
     for (const owner of [A, B]) {
@@ -719,8 +740,8 @@ describe("a one-account wipe takes only what its reach allows", () => {
     return [...FACE, ...PUSH].filter((key) => localStorage.getItem(key) !== null);
   }
   /** A's and B's reply text, body and meta, through the real writer. */
-  async function typeReplies(): Promise<typeof import("../app/shell/mail-send")> {
-    const send = await import("../app/shell/mail-send");
+  async function typeReplies(): Promise<typeof import("@ohmail/app-logic/writing/mail-send")> {
+    const send = await import("@ohmail/app-logic/writing/mail-send");
     for (const owner of [A, B]) {
       send.writeReplyDraft(`m-of-${owner}`, { text: `words of ${owner}`, html: "" }, owner);
       send.writeReplyMeta(`m-of-${owner}`, { subject: `subject of ${owner}` }, owner);
@@ -729,7 +750,7 @@ describe("a one-account wipe takes only what its reach allows", () => {
   }
   const holding = (text: string): string[] =>
     Object.keys(localStorage).filter((key) => localStorage.getItem(key)!.includes(text));
-  const repliesOf = (send: typeof import("../app/shell/mail-send"), owner: string): [string, string | undefined] =>
+  const repliesOf = (send: typeof import("@ohmail/app-logic/writing/mail-send"), owner: string): [string, string | undefined] =>
     [send.readReplyDraft(`m-of-${owner}`, owner).text, send.readReplyMeta(`m-of-${owner}`, owner).subject];
 
   it("`account`: A's reply text, face and push id go; B's reply text, an old key and what names B or nobody stay", async () => {

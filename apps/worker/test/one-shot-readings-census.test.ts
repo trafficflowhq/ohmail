@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { withoutComments, span, lineOf } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "./_start-function.js";
 
 /**
  * EVERY ROLE CHANGE NAMES THE READING IT DECIDED FROM.
@@ -15,6 +16,8 @@ import { withoutComments, span, lineOf } from "../../../scripts/lib/source-scan.
  */
 
 const SRC = join(__dirname, "..", "src");
+/** The organizer's package, where the worker's passes that moved out of it stand (ruling:organizer-cut). */
+const ORG_SRC = join(__dirname, "..", "..", "..", "packages", "organizer", "src");
 const WRITERS = ["clearOrganizerStandDown", "markMailboxStoodDown"] as const;
 
 interface Site { file: string; fn: string; line: number; args: string }
@@ -22,8 +25,8 @@ interface Site { file: string; fn: string; line: number; args: string }
 /** Every call to either writer under `apps/worker/src`, its own definitions excluded. */
 function sites(): Site[] {
   const found: Site[] = [];
-  for (const file of readdirSync(SRC).filter((f) => f.endsWith(".ts"))) {
-    const src = withoutComments(readFileSync(join(SRC, file), "utf8"));
+  for (const [dir, file] of [SRC, ORG_SRC].flatMap((d) => readdirSync(d).filter((f) => f.endsWith(".ts")).map((f) => [d, f] as const))) {
+    const src = withoutComments(readSource(join(dir, file)));
     for (const fn of WRITERS) {
       const needle = `${fn}(`;
       for (let at = src.indexOf(needle); at !== -1; at = src.indexOf(needle, at + 1)) {

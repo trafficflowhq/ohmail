@@ -3,11 +3,11 @@
  * transport and with no door in this module. The shared draft control decides when to spend, mints
  * the press's key and lands the text in the editor; this file only carries its two calls. The
  * desktop window hands in its bridge (`local-draft-reply.ts`), the served host client its bearer
- * socket (`host-client/transports.ts`): no transport is imported here, for `junk-wire.ts`'s reason
+ * socket (`apps/paired-page/src/transports.ts`): no transport is imported here, for `junk-wire.ts`'s reason
  * (`scan:host` refuses the bridge in the bundle a phone is handed).
  */
 
-import type { DraftReplyRead, DraftReplyWire } from "../../webapp/app/shell/draft-reply.js";
+import type { DraftReplyRead, DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 
 /**
  * A REFUSAL THAT CARRIES THE ENGINE'S OWN ENVELOPE — status, code, sentence and details, out of
@@ -62,7 +62,7 @@ export function draftReplyVia(
 ): DraftReplyWire {
   return {
     configured,
-    create: async (messageId, idempotencyKey) => answerOf<{ draftId: string }>(
+    create: async (messageId, idempotencyKey) => answerOf<Awaited<ReturnType<DraftReplyWire["create"]>>>(
       await fetchImpl(`/messages/${encodeURIComponent(messageId)}/draft`, {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },
@@ -71,6 +71,7 @@ export function draftReplyVia(
     read: async (draftId) => answerOf<DraftReplyRead>(
       await fetchImpl(`/drafts/${encodeURIComponent(draftId)}`),
     ),
+    fromText: "none",
     ...(noModel !== undefined ? { noModel } : {}),
   };
 }

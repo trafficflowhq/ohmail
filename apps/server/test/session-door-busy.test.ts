@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import {
   makeOwnedDb, makePooledDb, closePooledDbs, acquireCeilingHandle, HOSTED_IMAP_ADMISSION,
-  WORKER_POOL_MAX, POOLED_MAX_CONNECTIONS, SESSION_ACQUIRE_TIMEOUT_MS, POOLED_ACQUIRE_TIMEOUT_MS,
+  WORKER_POOL_MAX, POOLED_MAX_CONNECTIONS, POOLED_WRITE_MAX_CONNECTIONS, SESSION_ACQUIRE_TIMEOUT_MS, POOLED_ACQUIRE_TIMEOUT_MS,
 } from "@trafficflow/db/cloud";
 import { API_FAULT_RECORD_BUDGET_MS } from "@trafficflow/api";
 import { createLogger } from "@trafficflow/core";
@@ -142,6 +142,11 @@ describe("the session door under a held pool", () => {
     expectBusyInFive(a);
     expect(pg.seen.connections, "the session handle is the process pool, not a second one").toBe(WORKER_POOL_MAX);
   }, 20_000);
+
+  it("leaves eight managed connections for reads and two reserved for writes", () => {
+    expect(POOLED_MAX_CONNECTIONS).toBe(8);
+    expect(POOLED_WRITE_MAX_CONNECTIONS).toBe(2);
+  });
 
   it("the managed host answers the same, from the same fixture (control)", async () => {
     const pg = await heldPostgres();

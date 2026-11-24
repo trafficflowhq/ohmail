@@ -1,3 +1,4 @@
+import { accountOfUser } from "../src/parent-account.js";
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq, getTableName, is } from "drizzle-orm";
@@ -6,7 +7,7 @@ import { makeTestDb } from "../src/testing.js";
 // Every table either schema module exports, not only the ones the drizzle client is handed: a sealed
 // column on a table outside that list (mail 0180's pieces) must still be found.
 import * as schema from "../src/schema.js";
-import { accounts, users, mailboxes, mailboxCredentials, scheduledSendFiles } from "../src/schema-mail.js";
+import { accounts, users, mailboxes, mailboxCredentials, scheduledSendFiles, calConnections, calCredentials } from "../src/schema-mail.js";
 import {
   totpSecrets, staffUsers, mailboxOauthCeremonies,
   mailboxOauthDeviceCeremonies, oauthProviderConfig,
@@ -98,13 +99,15 @@ async function seedAllSites(version: number): Promise<Record<string, string>> {
     "oauth_provider_config.client_secret_enc": `client-secret-${randomUUID()}`,
     // Mail 0180: a server's scheduled-letter piece, whose envelope is the piece's own key.
     "scheduled_send_files.dek_enc": `piece-key-${randomUUID()}`,
+    // Mail 0205: a calendar connection's sealed secret.
+    "cal_credentials.secret_enc": `calendar-secret-${randomUUID()}`,
   };
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap",
+    mailboxId, accountId, transport: "imap",
     secretEnc: sealedAt(version, secrets["mailbox_credentials.secret_enc"]), keyVersion: version,
   });
   await db.insert(totpSecrets).values({
-    userId, secretEnc: sealedAt(version, secrets["totp_secrets.secret_enc"]), keyVersion: version,
+    userId, accountId: accountOfUser(userId), secretEnc: sealedAt(version, secrets["totp_secrets.secret_enc"]), keyVersion: version,
     activated: true,
     pendingSecretEnc: sealedAt(version, secrets["totp_secrets.pending_secret_enc"]),
     pendingKeyVersion: version, pendingStartedAt: new Date(),
@@ -141,6 +144,11 @@ async function seedAllSites(version: number): Promise<Record<string, string>> {
     filename: "a.pdf", contentType: "application/pdf", sizeBytes: 3, contentSha256: "ab".repeat(32), rawB64: "c2Vh",
     dekEnc: sealedAt(version, secrets["scheduled_send_files.dek_enc"]), dekKeyVersion: version,
   });
+  const [connection] = await db.insert(calConnections).values({ accountId, provider: "caldav" }).returning();
+  await db.insert(calCredentials).values({
+    accountId, connectionId: connection!.id, kind: "password",
+    secretEnc: sealedAt(version, secrets["cal_credentials.secret_enc"]), keyVersion: version,
+  });
   return secrets;
 }
 
@@ -153,6 +161,7 @@ async function readAll(): Promise<Record<string, { ct: string | null; kv: number
   const [d] = await db.select().from(mailboxOauthDeviceCeremonies);
   const [p] = await db.select().from(oauthProviderConfig);
   const [f] = await db.select().from(scheduledSendFiles);
+  const [k] = await db.select().from(calCredentials);
   return {
     "mailbox_credentials.secret_enc": { ct: c?.secretEnc ?? null, kv: c?.keyVersion ?? null },
     "totp_secrets.secret_enc": { ct: t?.secretEnc ?? null, kv: t?.keyVersion ?? null },
@@ -171,6 +180,7 @@ async function readAll(): Promise<Record<string, { ct: string | null; kv: number
       ct: p?.clientSecretEnc ?? null, kv: p?.clientSecretKeyVersion ?? null,
     },
     "scheduled_send_files.dek_enc": { ct: f?.dekEnc ?? null, kv: f?.dekKeyVersion ?? null },
+    "cal_credentials.secret_enc": { ct: k?.secretEnc ?? null, kv: k?.keyVersion ?? null },
   };
 }
 
@@ -259,10 +269,10 @@ describe("CRYPTO-4 — the census answers 'does anything still reference V<n>'",
     const census = await kekRewrapCensus(db as unknown as Tx, 2);
     // EIGHT since cloud 0046: `staff_users` and `totp_secrets` each carry two sealed sites, the
     // live pair and the pending one an enrolment or a replacement in progress holds. NINE with mail
-    // 0180's scheduled-letter pieces.
-    expect(census.outstanding).toBe(9);
+    // 0180's scheduled-letter pieces, TEN with mail 0205's calendar credential.
+    expect(census.outstanding).toBe(10);
     for (const s of census.sites) expect(s.outstanding, s.site).toBe(1);
-    expect(formatCensus(census).at(-1)).toContain("9 row(s) still below V" + "2");
+    expect(formatCensus(census).at(-1)).toContain("10 row(s) still below V" + "2");
   });
 
   /**
@@ -314,7 +324,7 @@ describe("CRYPTO-4 — the census answers 'does anything still reference V<n>'",
       { pendingSecretEnc: null, pendingKeyVersion: null, pendingStartedAt: new Date() },
     ]) {
       await expect(db.insert(totpSecrets).values({
-        userId, secretEnc: sealedAt(1, "live"), keyVersion: 1, activated: true, ...trio,
+        userId, accountId: accountOfUser(userId), secretEnc: sealedAt(1, "live"), keyVersion: 1, activated: true, ...trio,
       })).rejects.toThrow(/totp_secrets_pending_sealed_together/);
     }
   });
@@ -351,12 +361,12 @@ describe("CRYPTO-4 — the census answers 'does anything still reference V<n>'",
 });
 
 describe("CRYPTO-4 — the pass moves every site onto the current version", () => {
-  it("re-wraps all nine sites, preserving every plaintext exactly", async () => {
+  it("re-wraps all ten sites, preserving every plaintext exactly", async () => {
     const secrets = await seedAllSites(1);
     const kp = fakeProvider(2);
     const r = await runKekRewrap({ db: db as unknown as Tx, keyProvider: kp, apply: true });
 
-    expect(r.rewrapped).toBe(9);
+    expect(r.rewrapped).toBe(10);
     expect(r.failed).toBe(0);
     expect(r.raced).toBe(0);
     expect(r.truncated).toBe(false);
@@ -375,10 +385,10 @@ describe("CRYPTO-4 — the pass moves every site onto the current version", () =
     const r = await runKekRewrap({ db: db as unknown as Tx, keyProvider: kp, apply: false });
 
     expect(r.rewrapped).toBe(0);
-    expect(r.census.outstanding).toBe(9);
+    expect(r.census.outstanding).toBe(10);
     expect(kp.encrypts).toBe(0);                       // not one envelope was even built
     expect(await readAll()).toEqual(before);
-    expect(Object.keys(secrets)).toHaveLength(9);
+    expect(Object.keys(secrets)).toHaveLength(10);
   });
 
   /**
@@ -424,13 +434,13 @@ describe("CRYPTO-4 — the pass moves every site onto the current version", () =
     await seedAllSites(1);
     // A second credential row on the same mailbox, so one site holds two candidates.
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "smtp", secretEnc: sealedAt(1, "outgoing-relay-password"), keyVersion: 1,
+      mailboxId, accountId, transport: "smtp", secretEnc: sealedAt(1, "outgoing-relay-password"), keyVersion: 1,
     });
     const r = await runKekRewrap({
       db: db as unknown as Tx, keyProvider: fakeProvider(2), apply: true, batchLimit: 1,
     });
     expect(r.truncated).toBe(true);
-    expect(r.rewrapped).toBe(9);                       // one per site, the tenth deferred
+    expect(r.rewrapped).toBe(10);                      // one per site, the eleventh deferred
 
     const second = await runKekRewrap({
       db: db as unknown as Tx, keyProvider: fakeProvider(2), apply: true, batchLimit: 1,
@@ -460,7 +470,7 @@ describe("CRYPTO-4 — fail closed: a value that will not decrypt is REPORTED, n
     const r = await runKekRewrap({ db: db as unknown as Tx, keyProvider: kp, apply: true });
 
     expect(r.rewrapped).toBe(0);
-    expect(r.failed).toBe(9);
+    expect(r.failed).toBe(10);
     expect(await readAll()).toEqual(before);
     for (const f of r.failures) {
       expect(f.reason, f.site).toBe("no_kek_for_version");
@@ -470,7 +480,7 @@ describe("CRYPTO-4 — fail closed: a value that will not decrypt is REPORTED, n
 
   it("a corrupt envelope is reported as decrypt_failed and left alone", async () => {
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: "not-an-envelope", keyVersion: 1,
+      mailboxId, accountId, transport: "imap", secretEnc: "not-an-envelope", keyVersion: 1,
     });
     const r = await runKekRewrap({
       db: db as unknown as Tx, keyProvider: fakeProvider(2), apply: true,
@@ -497,7 +507,7 @@ describe("CRYPTO-4 — fail closed: a value that will not decrypt is REPORTED, n
     const r = await runKekRewrap({ db: db as unknown as Tx, keyProvider: kp, apply: true });
 
     expect(r.rewrapped).toBe(0);
-    expect(r.failed).toBe(9);
+    expect(r.failed).toBe(10);
     for (const f of r.failures) expect(f.reason, f.site).toBe("roundtrip_mismatch");
     expect(await readAll()).toEqual(before);
   });
@@ -505,13 +515,13 @@ describe("CRYPTO-4 — fail closed: a value that will not decrypt is REPORTED, n
   it("one failing row does not deny rotation to the rest", async () => {
     await seedAllSites(1);
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "smtp", secretEnc: "corrupt", keyVersion: 1,
+      mailboxId, accountId, transport: "smtp", secretEnc: "corrupt", keyVersion: 1,
     });
     const r = await runKekRewrap({
       db: db as unknown as Tx, keyProvider: fakeProvider(2), apply: true,
     });
     expect(r.failed).toBe(1);
-    expect(r.rewrapped).toBe(9);
+    expect(r.rewrapped).toBe(10);
     const census = await kekRewrapCensus(db as unknown as Tx, 2);
     expect(census.outstanding).toBe(1);               // the corrupt row, and only it
   });
@@ -538,7 +548,7 @@ describe("CRYPTO-4 — nothing this pass emits can carry key material", () => {
       expect(emitted, `${site} plaintext`).not.toContain(plaintext);
       expect(emitted, `${site} stored ciphertext`).not.toContain(before[site]!.ct);
     }
-    expect(events).toHaveLength(9);
+    expect(events).toHaveLength(10);
   });
 
   /**
@@ -571,7 +581,7 @@ describe("CRYPTO-4 — nothing this pass emits can carry key material", () => {
 describe("CRYPTO-4 — the pass visits rows the live system is still using", () => {
   it("re-wraps a mailbox credential without disturbing the mailbox row or its meta", async () => {
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: sealedAt(1, "pw"), keyVersion: 1,
+      mailboxId, accountId, transport: "imap", secretEnc: sealedAt(1, "pw"), keyVersion: 1,
       meta: { host: "imap.example.test", port: 993, secure: true },
     });
     await runKekRewrap({ db: db as unknown as Tx, keyProvider: fakeProvider(2), apply: true });
@@ -615,9 +625,9 @@ describe("retiring a version — what stored rows still name, asked at boot", ()
 
   it("a row still on the first version is named by its site; rows above the floor are never counted", async () => {
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: sealedAt(1, "still-v1"), keyVersion: 1,
+      mailboxId, accountId, transport: "imap", secretEnc: sealedAt(1, "still-v1"), keyVersion: 1,
     });
-    await db.insert(totpSecrets).values({ userId, secretEnc: sealedAt(2, "on-v2"), keyVersion: 2, activated: true });
+    await db.insert(totpSecrets).values({ userId, accountId: accountOfUser(userId), secretEnc: sealedAt(2, "on-v2"), keyVersion: 2, activated: true });
     await db.insert(staffUsers).values({
       email: `staff-${randomUUID()}@example.test`, passwordHash: "stored-row-password-hash",
       totpSecretEnc: sealedAt(3, "on-v3"), totpKeyVersion: 3,
@@ -699,7 +709,7 @@ describe("retiring a version — the step the re-wrap prints last", () => {
     const census = await kekRewrapCensus(db as unknown as Tx, 2);
     const text = formatRetireStep({ census, retiredThrough: 0, failed: 0 }).join("\n");
     expect(text).toContain("Do NOT remove any KEK version yet");
-    expect(text).toContain(`9 row(s) remain below ${v(2)}`);
+    expect(text).toContain(`10 row(s) remain below ${v(2)}`);
     expect(text).not.toContain(KEY_RING_RETIRED);
   });
 

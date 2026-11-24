@@ -1,12 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { kbEntries } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
-import { KbService } from "@trafficflow/services";
+import { KbService, dbFor } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 
@@ -17,10 +14,11 @@ import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing"
  * offline ILIKE degrade would MISS it), and stays accountId-scoped.
  */
 const URL = pgTestUrl(import.meta.url);
-const client = postgres(URL, { max: 5 });
-// BRANDED, like every production factory: a handle with no dialect brand refuses at the first
-// statement the seam composes for it.
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's own handle, BRANDED as every production one is (a handle with no dialect brand
+// refuses at the first statement the seam composes for it); the binder takes a server handle only
+// from the factory that registered its door.
+const owned = makeOwnedDb(URL);
+const db = owned.db;
 const svc = new KbService();
 
 const A = randomUUID();
@@ -29,7 +27,7 @@ const NOW = new Date("2026-07-28T12:00:00.000Z");
 const ids: Record<string, string> = {};
 
 function ctx(accountId: string): ServiceContext {
-  return { db, accountId, userId: null, now: () => NOW, requestId: "kb-test" };
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "kb-test" };
 }
 
 describe("KbService.retrieve (lexical + pg_trgm fuzzy) on real Postgres", () => {
@@ -48,7 +46,7 @@ describe("KbService.retrieve (lexical + pg_trgm fuzzy) on real Postgres", () => 
     await seed(B, "otherRefund", "Refund policy other tenant", "Different account refund text.");
   }, MIGRATED_DB_SETUP_BUDGET_MS);
 
-  afterAll(async () => { await client.end({ timeout: 5 }); });
+  afterAll(async () => { await owned.close(); });
 
   it("(a) an exact query ranks the relevant entry top", async () => {
     const hits = await svc.retrieve(ctx(A), "refund");

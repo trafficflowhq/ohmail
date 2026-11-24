@@ -43,7 +43,7 @@ export interface AnthropicLike {
    *  `opts.onUsage` is that one call's usage hook ({@link AiCallOptions}). `stop_reason` and
    *  `stop_details` are the answer's own, read by {@link declineOf} before any content is. */
   messages: {
-    create(params: unknown, opts?: { signal?: AbortSignal } & AiCallOptions): Promise<{
+    create(params: unknown, opts?: { signal?: AbortSignal; onText?: (delta: string) => void } & AiCallOptions): Promise<{
       content: unknown; usage?: unknown; stop_reason?: unknown; stop_details?: unknown;
     }>;
   };

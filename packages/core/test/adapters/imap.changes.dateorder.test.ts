@@ -11,7 +11,7 @@ import { FIXTURE_DOOR } from "./_door.js";
  * `fetchCapped` sorted the candidate UIDs descending and called the result `newestFirst`. UID
  * is an arrival counter, not a clock: on a real mailbox a high uid can carry an old date,
  * and a lower uid a newer one. Because the worker commits
- * `batch.creates` in array order (`apps/worker/src/sync.ts`) and each commit allocates the
+ * `batch.creates` in array order (`packages/organizer/src/sync.ts`) and each commit allocates the
  * next `change_log.seq`, ingest order IS the order `/sync` hands the client its mailbox. So
  * the first page of a fresh account's bootstrap was an arbitrary slice of its history —
  * measured on a seeded account: the newest mail did not arrive until page 4 of

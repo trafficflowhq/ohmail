@@ -1,13 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveApiOrigin, resolveInternalApiOrigin } from "./app/api-origin";
 import { canonicalRedirect } from "./app/canonical-host";
-import { API_BASE, HANDLER_PATHS, REFRESH_SCOPED_PATHS, zoneCaseVariantOf, zonePathOf } from "./routes.mjs";
+import { API_BASE, HANDLER_PATHS, REFRESH_SCOPED_PATHS, routedPath, zoneCaseVariantOf, zonePathOf } from "./routes.mjs";
 import { armedZone, resolveLandingZone, zoneRequestHeaders, zoneTarget } from "./landing-zone.mjs";
 import { newNonce, nonceCsp } from "./app/security-headers";
-import { cookieFromStore } from "./app/shell/cookie-jar";
-import { OWNER_COOKIE, OWNER_SIGNED_OUT, pendingSignOutCookie } from "./app/shell/owner-cookie";
+import { cookieFromStore } from "@ohmail/app-logic/storage/cookie-jar";
+import { OWNER_COOKIE, OWNER_SIGNED_OUT, pendingSignOutCookie } from "@ohmail/app-logic/storage/owner-cookie";
 import {
-  APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, SIGNED_OUT_COOKIE, resolveSurface,
+  APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, SIGNED_OUT_COOKIE, firstPageUnasked,
+  FIRST_PAGE_OWNER_HEADER,
+  resolveFirstPage, type Surface,
 } from "./app/session-gate";
 
 /**
@@ -51,10 +53,9 @@ import {
  *    can replace a request's header set; a config rewrite forwards the jar. Unarmed, they are
  *    served here exactly as before.
  *
- * `/api/*` (bar `/api/waitlist`, a zone path), `/auth/refresh` and the sign-out door below it,
- * `/_next/*`, `/demo/*` and the icons are deliberately NOT matched. They are proxied or static,
- * they are the hot path, and putting a function in front of them would buy nothing —
- * `next.config.mjs`'s `headers()` covers them.
+ * `/api/*` rewrites with proof of the Vercel client address when available. The waitlist keeps
+ * its landing-zone routing. The refresh handlers and static assets are handled outside
+ * middleware, with their security headers set by `next.config.mjs`.
  *
  * ## Caching
  *
@@ -112,6 +113,19 @@ const SELF_HOST_BUILD = process.env.NEXT_PUBLIC_OHMAIL_FLAVOR === "selfhost";
 const API_ORIGIN = SELF_HOST_BUILD
   ? resolveInternalApiOrigin(process.env.OHMAIL_INTERNAL_API_ORIGIN)
   : resolveApiOrigin(process.env.TF_API_ORIGIN);
+
+/**
+ * THE SIGNED-IN FIRST PAGE WITHOUT THE PROBE (`firstPageUnasked`): read here, once, and nowhere else. Off unless the
+ * setting is exactly `1`. It has no twin in the bundle, no query word, no cookie and no client header.
+ */
+const FIRST_PAGE_UNASKED = firstPageUnasked(process.env.OHMAIL_FIRST_PAGE_NO_PROBE);
+
+/**
+ * The page's word for its first frame (`(product)/mailbox/page.tsx`): `now` after a probe that named a full session,
+ * `wait` after none, and `resume` for the session renewal screen. Set only by {@link strict},
+ * which first deletes any the client sent.
+ */
+const FIRST_PAGE_HEADER = "x-ohmail-first-page";
 
 /**
  * The landing zone, validated against the compiled list like `API_ORIGIN` and for the same reason: a
@@ -183,6 +197,53 @@ function clientKey(request: NextRequest): string {
   return request.headers.get("x-real-ip") ?? "unknown";
 }
 
+const WEB_CLIENT_IP = "x-ohmail-client-ip";
+const HOP_BY_HOP_HEADERS = [
+  "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection",
+  "te", "trailer", "transfer-encoding", "upgrade",
+];
+
+function isApiPath(pathname: string): boolean {
+  const lower = pathname.toLowerCase();
+  return lower === API_BASE || lower.startsWith(`${API_BASE}/`);
+}
+
+/** Send the proof and the external destination in the same middleware rewrite. */
+async function forwardApi(request: NextRequest, routed: string): Promise<NextResponse> {
+  const secret = !SELF_HOST_BUILD && process.env.VERCEL === "1"
+    ? process.env.TF_WEB_CLIENT_IP_SECRET?.trim()
+    : undefined;
+  const ip = request.headers.get("x-vercel-forwarded-for");
+  if (!API_ORIGIN || !secret || !ip || !/^[0-9a-fA-F:.]{1,45}$/.test(ip)) {
+    return nextWithScrubbedHeaders(request);
+  }
+
+  const bytes = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", bytes.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const payload = `${ip};${Math.floor(Date.now() / 1000)}`;
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, bytes.encode(payload)));
+  const hex = Array.from(mac, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const headers = new Headers(request.headers);
+  // Let the rewrite set the upstream Host and manage the new connection.
+  const connectionOptions = (headers.get("connection") ?? "").toLowerCase().split(",").map((name) => name.trim());
+  for (const name of request.headers.keys()) {
+    if (name !== "content-length" && connectionOptions.includes(name)) headers.delete(name);
+  }
+  for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
+  headers.delete("host");
+  headers.set(WEB_CLIENT_IP, `${payload};${hex}`);
+
+  const { pathname, search } = request.nextUrl;
+  const destination = new URL(API_ORIGIN);
+  // Keep the original escapes in an API path. When only the decoded path matched, encode
+  // its segments again before assigning it. Assigning pathname keeps the origin fixed.
+  destination.pathname = isApiPath(pathname)
+    ? pathname.slice(API_BASE.length)
+    : routed.slice(API_BASE.length).split("/").map(encodeURIComponent).join("/");
+  destination.search = search;
+  return NextResponse.rewrite(destination, { request: { headers } });
+}
+
 /**
  * NO PAGE TAKES A REQUEST BODY. Next decodes a POST to any App Router page as a Server Action
  * BEFORE it looks the action up, and that decoder is where the React Server Components
@@ -193,7 +254,7 @@ function clientKey(request: NextRequest): string {
  */
 function refusesPageBody(request: NextRequest): boolean {
   const { pathname } = request.nextUrl;
-  if (pathname === API_BASE || pathname.startsWith(`${API_BASE}/`)) return false;
+  if (isApiPath(pathname)) return false;
   if (REFRESH_SCOPED_PATHS.includes(pathname)) return false;
   if (HANDLER_PATHS.includes(pathname)) return false;
   return (request.method !== "GET" && request.method !== "HEAD") || request.headers.has("next-action");
@@ -234,8 +295,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const bypass = (process.env.LANDING_ZONE_BYPASS ?? "").trim();
   const zone = armedZone(LANDING_ZONE, bypass);
 
-  // 3. Every matched path that is NOT `/` is an ordinary page: no cookie is read, no
-  //    session is looked up, nothing is fetched. `/login` and `/join` take credentials, so
+  // 3. Routes other than `/` do no session lookup. `/login` and `/join` take credentials, so
   //    they are served under the strict script policy; the marketing pages are static
   //    prerenders and keep the baseline policy from `next.config.mjs` (a nonce cannot
   //    survive a prerender — see `app/security-headers.ts`).
@@ -251,37 +311,53 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       canonical.pathname = variant;
       return NextResponse.redirect(canonical, 308);
     }
+    // Decided on the path the router serves, so `/%6cogin` or `/x/../approve` meets the same three headers.
+    const routed = routedPath(pathname) ?? pathname;
+    if ((isApiPath(pathname) || isApiPath(routed)) && routed.toLowerCase() !== "/api/waitlist") return forwardApi(request, routed);
     if (
-      pathname === "/login" || pathname === "/join" || pathname === "/verify-email" ||
+      routed === "/login" || routed === "/join" || routed === "/verify-email" ||
+      routed === "/forgot-password" || routed === "/reset-password" ||
       // `/link-desktop` receives no credential and PRINTS one, which needs the same three
       // headers for the same three reasons: the page must not carry a `Referer` off itself
       // (under one origin `strict-origin-when-cross-origin` would send the full URL to our own
       // API), no cache may hold a document with a live handoff code rendered into it, and the
       // strict nonce policy is what stops an injected inline script from reading the code out
       // of the DOM the moment it appears.
-      pathname === "/link-desktop" ||
+      routed === "/link-desktop" ||
       // `/authorize-desktop` carries a REQUEST HANDLE in its query string and its press hands out
       // a long-lived native credential. `no-referrer` is the one that matters: under the
       // single-origin merge the default policy would put the full URL, handle and all, in the
       // `Referer` of the page's own API calls. `no-store` and the nonce policy come with it for
       // `/link-desktop`'s reasons — no cache may hold this document and no injected inline script
       // may read the handle out of the URL.
-      pathname === "/authorize-desktop" ||
+      routed === "/authorize-desktop" ||
       // `/approve` carries a desktop's request id and its press lets a computer in: the same
       // three headers for `/authorize-desktop`'s reasons.
-      pathname === "/approve" ||
+      routed === "/approve" ||
       // `/setup` takes the self-host first-run token in a FORM — a credential page exactly as
       // `/login` is, so it gets the strict nonce policy plus no-referrer/no-store.
-      pathname === "/setup" ||
+      routed === "/setup" ||
       // `/join/invite` carries an invite's pairing token in its FRAGMENT. A fragment
       // never reaches this middleware, a log or a `Referer` on its own — the nonce CSP is the
       // header that matters here, because injected inline script reading `location.hash` is
       // the exposure that remains; the other two cost nothing and keep the class uniform.
-      pathname === "/join/invite"
+      routed === "/join/invite" ||
+      // `/account/delete` takes the address typed back and a second factor before an erasure.
+      routed === "/account/delete"
     ) {
       return credentialPage(request);
     }
-    return NextResponse.next();
+    return nextWithScrubbedHeaders(request);
+  }
+
+  const wakeEntry = request.nextUrl.searchParams.has("wake") &&
+    cookieFromStore(request.cookies, OWNER_COOKIE) !== OWNER_SIGNED_OUT;
+  if (request.nextUrl.searchParams.has("settingsHandoff") || wakeEntry) {
+    const response = strict(request, (init) =>
+      NextResponse.rewrite(withPathname(request, APP_ROUTE), init), "wait");
+    response.headers.set("Cache-Control", "private, no-store");
+    response.headers.set("Referrer-Policy", "no-referrer");
+    return response;
   }
 
   const token = cookieFromStore(request.cookies, SESSION_COOKIE);
@@ -317,7 +393,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const signOutPending = cookieFromStore(request.cookies, OWNER_COOKIE) === OWNER_SIGNED_OUT;
   const signedOutJustNow = /^[a-z]{1,16}$/.test(cookieFromStore(request.cookies, SIGNED_OUT_COOKIE) ?? "");
 
-  const surface = await resolveSurface({
+  const answer = await resolveFirstPage({
     sessionToken: token,
     throttled,
     resumeMarker: marker,
@@ -326,7 +402,11 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     search: request.nextUrl.searchParams,
     apiOrigin: API_ORIGIN,
     env: { NEXT_PUBLIC_DEMO: process.env.NEXT_PUBLIC_DEMO },
+    firstPageUnasked: FIRST_PAGE_UNASKED,
   });
+
+  const surface = typeof answer === "string" ? answer : "app";
+  const owner = typeof answer === "string" ? null : answer.account;
 
   // A SIGN-OUT THE SERVER NEVER CONFIRMED goes to the sign-in page, on both builds: it paints at once
   // and finishes the sign-out behind its form (the splash did it behind a blank page). Nothing is
@@ -362,16 +442,23 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return response;
   }
 
-  const target = surface === "resume" ? RESUME_ROUTE : APP_ROUTE;
-  const response =
-    surface === "marketing"
-      ? (zone !== null ? zoneRewrite(request, zone, bypass, "/") : NextResponse.next())
-      : strict(request, (init) => NextResponse.rewrite(withPathname(request, target), init));
+  const rewrite = (target: string, word?: "now" | "wait" | "resume", account?: string): NextResponse =>
+    strict(request, (init) => NextResponse.rewrite(withPathname(request, target), init), word, account);
+  const response = answerFor(surface, {
+    marketing: () => (zone !== null ? zoneRewrite(request, zone, bypass, "/") : nextWithScrubbedHeaders(request)),
+    resume: () => rewrite(RESUME_ROUTE, "resume"),
+    demo: () => rewrite(APP_ROUTE),
+    app: () => owner === null ? rewrite(APP_ROUTE, "wait") : rewrite(APP_ROUTE, "now", owner),
+    "app-unasked": () => rewrite(APP_ROUTE, "wait"),
+  });
 
   // Per-user responses must not be cached. A MARKER-bearing request is per-user too even
   // when no session cookie came with it — that is the whole `SameSite=Strict` cross-site
   // case — so a CDN must not be allowed to serve one browser's resume splash to another.
   if (token !== null || marker) response.headers.set("Cache-Control", "private, no-store");
+  // A provider's sign-in returns here with a single-use code in the query. The script takes it out of the address
+  // before its first request, but the document's own requests come first: they carry no referrer.
+  if (request.nextUrl.searchParams.has("oauth")) response.headers.set("Referrer-Policy", "no-referrer");
   return response;
 }
 
@@ -379,7 +466,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
  * The three pages that receive a CREDENTIAL IN THEIR URL, served under the strict script
  * policy plus the two headers that decision left owing.
  *
- * `/join?code=…` and `/verify-email?token=…` are linked from mail, so a live credential arrives
+ * `/join?code=…`, `/verify-email?token=…` and `/reset-password?token=…` are linked from mail, so a live credential arrives
  * in the query string. That was accepted deliberately (a link a person can click without
  * JavaScript beats an airtight design nobody implements correctly) with five mitigations as
  * the price. Two of them are headers, and this is where they are paid.
@@ -394,20 +481,20 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
  *     `strict-origin-when-cross-origin`, which strips the path only when the destination is
  *     ANOTHER origin — and under the single-origin merge the API is the SAME origin (`/api/*` is a rewrite on
  *     `ohmail.app`). So on the default policy the full URL, token and all, would ride in the
- *     `Referer` of the page's own API calls, and of every same-origin navigation off it. On these
- *     three paths nothing is allowed to carry a referrer at all.
+ *     `Referer` of the page's own API calls, and of every same-origin navigation off it. These
+ *     credential pages send no referrer.
  *  2. **`Cache-Control: no-store`.** These documents are per-request and their URL is a secret;
  *     a shared or disk cache holding one is a credential at rest that nobody chose to store.
  *
  * The remaining three mitigations are elsewhere and are not headers: `history.replaceState` in the
- * page component (`VerifyEmailScreen`, `JoinScreen`), and no edge access-log retention of query
+ * page's ceremony (`use-verify-door.ts`, `use-join-door.ts`, `ResetPasswordRoute.tsx`), and no edge access-log retention of query
  * strings, which is a platform setting rather than code.
  *
  * `/login` gains both too. It takes no credential in its URL, but it takes one in a FORM, and
  * neither header costs it anything.
  */
 function credentialPage(request: NextRequest): NextResponse {
-  const response = strict(request, (init) => NextResponse.next(init));
+  const response = strict(request, (init) => NextResponse.next(init), "wait");
   response.headers.set("Referrer-Policy", "no-referrer");
   response.headers.set("Cache-Control", "private, no-store");
   return holdPendingSignOut(request, response);
@@ -442,15 +529,42 @@ function holdPendingSignOut(request: NextRequest, response: NextResponse): NextR
 function strict(
   request: NextRequest,
   make: (init: { request: { headers: Headers } }) => NextResponse,
+  firstPage?: "now" | "wait" | "resume",
+  account?: string,
 ): NextResponse {
   const nonce = newNonce();
   const csp = nonceCsp(nonce);
   const headers = new Headers(request.headers);
+  headers.delete(FIRST_PAGE_HEADER);
+  headers.delete(FIRST_PAGE_OWNER_HEADER);
+  headers.delete(WEB_CLIENT_IP);
+  if (account !== undefined) headers.set(FIRST_PAGE_OWNER_HEADER, account);
+  if (firstPage !== undefined) headers.set(FIRST_PAGE_HEADER, firstPage);
   headers.set("x-nonce", nonce);
   headers.set("content-security-policy", csp);
   const response = make({ request: { headers } });
   response.headers.set("Content-Security-Policy", csp);
   return response;
+}
+
+/** Strip internal headers from requests that pass through without a rewrite or a nonce. */
+function nextWithScrubbedHeaders(request: NextRequest): NextResponse {
+  if (!request.headers.has(FIRST_PAGE_OWNER_HEADER) && !request.headers.has(WEB_CLIENT_IP)) return NextResponse.next();
+  const headers = new Headers(request.headers);
+  headers.delete(FIRST_PAGE_OWNER_HEADER);
+  headers.delete(WEB_CLIENT_IP);
+  return NextResponse.next({ request: { headers } });
+}
+
+/**
+ * The rewrite for each surface the redirects above left, by name. Exhaustive: a new surface is a compile error here,
+ * never a quiet fall-through to the app.
+ */
+function answerFor(
+  surface: Exclude<Surface, "sign-out" | "door">,
+  answers: { readonly [S in Exclude<Surface, "sign-out" | "door">]: () => NextResponse },
+): NextResponse {
+  return answers[surface]();
 }
 
 /**
@@ -475,7 +589,7 @@ function withPathname(request: NextRequest, pathname: string): URL {
  * The matcher is STATICALLY ANALYSED by `next build` — it is read out of the source,
  * not evaluated — so `APP_ROUTE` cannot appear here and the paths have to be spelled
  * again as literals. A drift guard asserts they never drift from `EDGE_PATHS` — the routes
- * marked `edge: true` in `routes.mjs` plus every landing-zone path, the two prefixes as
+ * marked `edge: true` in `routes.mjs`, the API prefix and every landing-zone path, the prefixes as
  * `/:path*` — because a silent divergence would leave the rewrite target publicly reachable
  * or a legacy host serving the product.
  *
@@ -495,21 +609,24 @@ function withPathname(request: NextRequest, pathname: string): URL {
  *
  * The last arm takes a path with a `.` or `..` segment, which no literal matches although the router
  * serves it (`/./privacy` is the privacy page): the middleware sees it already resolved.
- * The two arms before it reach EVERY page — the catch-all and `/demo` too — but only for a request that
- * carries `Next-Action` or a body type, the only requests Next's action decoder reads; a plain
- * GET off the list still costs no edge invocation, and `/api`, the two refresh-scoped paths and
- * `/_next` never run this function.
+ * The conditional arms before it reach every page, including the catch-all and `/demo`, for requests
+ * that could reach Next's action decoder or carry a forged first-page owner. A plain GET off the list
+ * still costs no edge invocation. The API, refresh handlers and Next assets do not use these arms.
  */
 export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
-    "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/de", "/privacy", "/imprint",
-    "/subprocessors", "/support", "/delete-account", "/flathub-verification", "/.well-known/org.flathub.VerifiedApps.txt",
-    "/api/waitlist",
+    "/forgot-password", "/reset-password",
+    "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/account/delete", "/de", "/privacy", "/imprint",
+    "/subprocessors", "/support", "/delete-account", "/ohcal", "/flathub-verification", "/.well-known/org.flathub.VerifiedApps.txt",
+    "/api/waitlist", "/api/:path*",
     "/site-assets/:path*", "/landing/:path*",
-    { source: "/((?:[Pp][Rr][Ii][Vv][Aa][Cc][Yy]|[Ii][Mm][Pp][Rr][Ii][Nn][Tt]|[Ss][Uu][Bb][Pp][Rr][Oo][Cc][Ee][Ss][Ss][Oo][Rr][Ss]|[Ss][Uu][Pp][Pp][Oo][Rr][Tt]|[Dd][Ee][Ll][Ee][Tt][Ee]-[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Dd][Ee]|[Aa][Pp][Ii]/[Ww][Aa][Ii][Tt][Ll][Ii][Ss][Tt]|[Ff][Ll][Aa][Tt][Hh][Uu][Bb]-[Vv][Ee][Rr][Ii][Ff][Ii][Cc][Aa][Tt][Ii][Oo][Nn]|\\.[Ww][Ee][Ll][Ll]-[Kk][Nn][Oo][Ww][Nn]/[Oo][Rr][Gg]\\.[Ff][Ll][Aa][Tt][Hh][Uu][Bb]\\.[Vv][Ee][Rr][Ii][Ff][Ii][Ee][Dd][Aa][Pp][Pp][Ss]\\.[Tt][Xx][Tt])|(?:[Ss][Ii][Tt][Ee]-[Aa][Ss][Ss][Ee][Tt][Ss]|[Ll][Aa][Nn][Dd][Ii][Nn][Gg])/.*)" },
+    { source: "/((?:[Pp][Rr][Ii][Vv][Aa][Cc][Yy]|[Ii][Mm][Pp][Rr][Ii][Nn][Tt]|[Ss][Uu][Bb][Pp][Rr][Oo][Cc][Ee][Ss][Ss][Oo][Rr][Ss]|[Ss][Uu][Pp][Pp][Oo][Rr][Tt]|[Dd][Ee][Ll][Ee][Tt][Ee]-[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Dd][Ee]|[Oo][Hh][Cc][Aa][Ll]|[Aa][Pp][Ii]/[Ww][Aa][Ii][Tt][Ll][Ii][Ss][Tt]|[Ff][Ll][Aa][Tt][Hh][Uu][Bb]-[Vv][Ee][Rr][Ii][Ff][Ii][Cc][Aa][Tt][Ii][Oo][Nn]|\\.[Ww][Ee][Ll][Ll]-[Kk][Nn][Oo][Ww][Nn]/[Oo][Rr][Gg]\\.[Ff][Ll][Aa][Tt][Hh][Uu][Bb]\\.[Vv][Ee][Rr][Ii][Ff][Ii][Ee][Dd][Aa][Pp][Pp][Ss]\\.[Tt][Xx][Tt])|(?:[Ss][Ii][Tt][Ee]-[Aa][Ss][Ss][Ee][Tt][Ss]|[Ll][Aa][Nn][Dd][Ii][Nn][Gg])/.*)" },
+    { source: "/([Aa][Pp][Ii](?:/.*)?)" },
+    { source: "/:path*", has: [{ type: "header", key: "x-ohmail-client-ip" }] },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "next-action" }] },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "content-type" }] },
+    { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "x-ohmail-first-page-owner" }] },
     { source: "/((?:[^/]*/)*\\.\\.?(?:/.*)?)" },
   ],
 };

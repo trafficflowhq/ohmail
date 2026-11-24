@@ -7,6 +7,7 @@
  * leaving it is the same act everywhere: closing goes back, and over a queued send the close
  * withdraws it first (`ComposeSheet.closeComposer`).
  */
+import { MailAppearance } from "../src/theme/mail";
 import { useRef, useState } from "react";
 import { router, useLocalSearchParams } from "expo-router";
 import { Copy } from "../src/copy";
@@ -27,9 +28,11 @@ export default function ComposeScreen() {
   useLocale();
   return (
     <SurfaceBoundary surface="composer">
-      <Gated>
-        <ComposeBody />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <ComposeBody />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }

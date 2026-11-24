@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { installShellEnv, teardownShellEnv } from "./fixtures/live-walk-shell.js";
-import { click, key, mountThread, msg, patches, readSlot, settle, toastText } from "./fixtures/thread-read-shell.js";
+import { click, key, mountThread, msg, patches, readSlot, settle, toastText, undoPress } from "./fixtures/thread-read-shell.js";
+import { cursorRow, readingColumn, seatedList } from "./ohbox/_finders.js";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
@@ -15,12 +16,20 @@ import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js
 
 const deliberate = () => patches.filter((p) => p.via === undefined);
 const openReads = () => patches.filter((p) => (p as { openRead?: boolean }).openRead === true);
-const col = (): HTMLElement => document.querySelector<HTMLElement>(".read-col")!;
+/** The reading column beside the list (today's `.read-col`). */
+const col = (): HTMLElement => readingColumn(document)!;
 const ids = (label: string): string[] =>
-  [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] .row[data-id]`)]
+  [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] :is(.row, [role=option])[data-id]`)]
     .map((e) => (e as HTMLElement).dataset.id!);
-const rowOf = (id: string): HTMLElement | null => document.querySelector<HTMLElement>(`.row[data-id="${id}"]`);
-const selected = (): string | null => document.querySelector(".view .row.sel")?.getAttribute("data-id") ?? null;
+const rowOf = (id: string): HTMLElement | null => document.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${id}"]`);
+/** The row the keys are on (today's `.row.sel`): the seated list's cursor row, or its open row. */
+const selected = (): string | null => cursorRow(document)?.getAttribute("data-id") ?? null;
+/**
+ * The read slot by its place on the open letter's panel (the kit's verb `read`), not by its name: over a conversation
+ * of two unread letters its name is the sentence the case reads ("Mark 2 unread messages as read"), its word "Mark read".
+ */
+const conversationReadSlot = (): HTMLElement | null =>
+  col().querySelector<HTMLElement>('[role="toolbar"][aria-label="Actions"] button[data-id="read"]');
 /** "old" unread (08:00) under "newer" read (08:30): New ["old"], Earlier ["newer"]. */
 const two = () => [msg("old", 0, { threadId: "t-old" }), msg("newer", 30, { threadId: "t-newer", unread: false })];
 /** Three seconds of nothing. */
@@ -28,7 +37,7 @@ const idle = async (): Promise<void> => { for (let i = 0; i < 10; i++) await key
 const OPEN_READ = { ids: ["old"], unread: false, openRead: true };
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 let layout: ThreadLayout;
@@ -98,13 +107,13 @@ describe("an explicit Mark read on the shown message files it at the top of Earl
       msg("a1", 0, { threadId: "t-old" }), msg("x2", 10, { threadId: "t-old" }),
       msg("newer", 30, { threadId: "t-newer", unread: false }),
     ]);
-    expect(readSlot(col())?.getAttribute("aria-label")).toBe("Mark 2 unread messages as read");
-    await click(readSlot(col()), "Mark read");
+    expect(conversationReadSlot()?.getAttribute("aria-label")).toBe("Mark 2 unread messages as read");
+    await click(conversationReadSlot(), "Mark read");
     expect(deliberate(), "one request for the conversation").toEqual([{ ids: ["a1", "x2"], unread: false, openRead: true }]);
-    expect(toastText()).toContain("2 messages marked read.");
-    await click(document.querySelector(".toast .toast-act"), "Undo");
+    expect(toastText()).toContain("2 · Read");
+    await click(undoPress(), "Undo");
     expect(deliberate().at(-1), "Undo takes back what the press wrote").toEqual({ ids: ["a1", "x2"], unread: true });
-    expect(readSlot(col())?.getAttribute("aria-label")).toBe("Mark 2 unread messages as read");
+    expect(conversationReadSlot()?.getAttribute("aria-label")).toBe("Mark 2 unread messages as read");
   }, 30_000);
 });
 
@@ -134,7 +143,7 @@ describe("CONTROLS: what keeps its arrival slot, and the open", () => {
     await key("j");
     await key("j");
     expect(selected()).toBe("p1");
-    await click(document.querySelector(".mark-all-read"), "Mark all read");
+    await click([...(seatedList(document)?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => /^Mark (all \d+ unread messages|the 1 unread message) read$/.test(b.getAttribute("aria-label") ?? "")) ?? null, "Mark all read");
     expect(patches.length).toBeGreaterThan(0);
     expect(openReads()).toEqual([]);
     await click(rowOf("p2"), "move on");

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The calendar's alert words in German, one for one the catalogue's (packages/app/messages/frame.de.json,
+     frame.systemNotice.alert*; the channel's name: calendar.de.json, calendar.landmark); a test holds them equal. -->
+<resources>
+  <string name="ohcal_alert_channel">Kalender</string>
+  <string name="ohcal_alert_busy">Belegt</string>
+  <string name="ohcal_alert_event">Termin</string>
+  <string name="ohcal_alert_now">Beginnt jetzt.</string>
+  <plurals name="ohcal_alert_minutes">
+    <item quantity="one">Beginnt in einer Minute.</item>
+    <item quantity="other">Beginnt in %d Minuten.</item>
+  </plurals>
+  <plurals name="ohcal_alert_hours">
+    <item quantity="one">Beginnt in einer Stunde.</item>
+    <item quantity="other">Beginnt in %d Stunden.</item>
+  </plurals>
+  <plurals name="ohcal_alert_days">
+    <item quantity="one">Beginnt in einem Tag.</item>
+    <item quantity="other">Beginnt in %d Tagen.</item>
+  </plurals>
+  <plurals name="ohcal_alert_weeks">
+    <item quantity="one">Beginnt in einer Woche.</item>
+    <item quantity="other">Beginnt in %d Wochen.</item>
+  </plurals>
+  <string name="ohcal_alert_today">Heute, ganztägig.</string>
+  <string name="ohcal_alert_tomorrow">Morgen, ganztägig.</string>
+  <string name="ohcal_alert_all_days">In %d Tagen, ganztägig.</string>
+  <plurals name="ohcal_alert_all_weeks">
+    <item quantity="one">In einer Woche, ganztägig.</item>
+    <item quantity="other">In %d Wochen, ganztägig.</item>
+  </plurals>
+  <!-- The widgets' words, one for one the catalogue's: agenda.until and agenda.nothing, calmail.now and
+       calmail.toAnswer, month.more; the widgets' names agenda.month, calendar.today, calsettings.view.week. The
+       language picks the weekday's and the month's names, so one widget speaks one language. -->
+  <string name="ohcal_widget_language">de</string>
+  <string name="ohcal_widget_now">jetzt</string>
+  <string name="ohcal_widget_until">bis %1$s</string>
+  <string name="ohcal_widget_more">+%d</string>
+  <string name="ohcal_widget_to_answer">Zu beantworten</string>
+  <string name="ohcal_widget_nothing">Nichts</string>
+  <string name="ohcal_widget_month">Monat</string>
+  <string name="ohcal_widget_today">Heute</string>
+  <string name="ohcal_widget_week">Woche</string>
+</resources>

@@ -12,8 +12,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@ohmail/ui";
-import { readOwnerMarker } from "../../shell/owner-cookie";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
+import { readPendingSignOut } from "../../pending-sign-out-storage";
 import type { SignOutTrouble } from "../../sign-out-trouble";
 import { finishPendingSignOut, pendingSignOutSettled, type Finish } from "./finish-sign-out";
 
@@ -57,7 +57,22 @@ export function usePendingSignOut(): PendingSignOut {
     })), []);
   const say = useCallback((end: Finish): void => {
     setSaid(end.outcome === "refused" || end.outcome === "stopped" ? end.said : null);
+    void end.cleanup?.then((updated) => {
+      if (mounted.current) setSaid((current) => current === end.said ? updated : current);
+    });
   }, []);
+
+  const retryCache = useCallback((): void => {
+    if (readPendingSignOut()?.cachePending !== true) return;
+    const incomplete = { key: "signOutUnverified" } as const;
+    const cleanup = import("../../sign-out").then(({ retryPendingCacheCleanup }) => retryPendingCacheCleanup())
+      .then((clean) => clean === false ? incomplete : null, () => incomplete);
+    say({ outcome: "stopped", said: { key: "signOutCleanupPending" }, cleanup });
+  }, [say]);
+
+  useEffect(() => {
+    if (readOwnerMarker().kind === "absent") retryCache();
+  }, [retryCache]);
 
   const finish = useCallback(async (isCancelled: () => boolean): Promise<void> => {
     await pendingSignOutSettled();
@@ -72,12 +87,16 @@ export function usePendingSignOut(): PendingSignOut {
     const end = await ladder({ isCancelled: () => !mounted.current, attempts: 1 });
     if (!mounted.current) return false;
     say(end);
-    return end.outcome === "confirmed" || end.outcome === "moved";
+    return end.outcome === "confirmed" || end.outcome === "stopped" || end.outcome === "moved";
   }, [ladder, say]);
 
   /* A door that answered with the wipe blocked has already cleared the marker, and the wipe is what is
      asked again then. A jar another tab signed in to is left alone. */
   const again = useCallback((): void => {
+    if (readOwnerMarker().kind === "absent") {
+      retryCache();
+      return;
+    }
     setSigningOut(true);
     void ladder({
       isCancelled: () => !mounted.current,
@@ -87,28 +106,7 @@ export function usePendingSignOut(): PendingSignOut {
       setSigningOut(false);
       say(end);
     });
-  }, [ladder, say]);
+  }, [ladder, retryCache, say]);
 
   return { finish, settle, again, said, signingOut };
-}
-
-/** How the pending sign-out ended, when it did not finish, and Sign out to ask again. Nothing otherwise. */
-export function PendingSignOutSaid({ pending, busy }: { pending: PendingSignOut; busy: boolean }) {
-  const ta = useTranslations("account");
-  if (pending.said === null) return null;
-  return (
-    <div className="join-error-note">
-      <p className="join-error" role="alert">
-        {pending.said.key === "signOutServerRefused"
-          ? ta(pending.said.key, { reason: pending.said.reason })
-          : ta(pending.said.key)}
-      </p>
-      <Button
-        variant="ghost" type="button" className="join-error-use"
-        onClick={pending.again} disabled={busy || pending.signingOut}
-      >
-        {pending.signingOut ? ta("signOutBusy") : ta("signOut")}
-      </Button>
-    </div>
-  );
 }

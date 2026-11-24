@@ -1,8 +1,10 @@
 /** @vitest-environment jsdom */
+import { screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, act, answerConsentWith, answerStoreWith, answerSyncWith, installShellEnv, mailbox, mountShell,
   teardownShellEnv, tick,
+  liveAccountFetch,
 } from "./fixtures/live-walk-shell";
 import messages from "../messages/en.json";
 
@@ -33,6 +35,7 @@ const pdf = (id: string, filename: string, messageId: string): Part =>
 /** The server's list per message, and the ids whose list read is slow (a long conversation's). */
 let files: Record<string, Part[]> = {};
 let slow = new Map<string, number>();
+let pendingSlow = 0;
 /** Every list asked, in order; every byte fetch; every file the browser was handed to save. */
 let listed: Array<{ id: string }> = [];
 let fetched: string[] = [];
@@ -83,25 +86,34 @@ beforeEach(() => {
   answerConsentWith({ foldersEnabledAt: ISO });
   files = { [INV]: [pdf("a-inv-pdf", "Rechnung.pdf", INV)] };
   slow = new Map();
+  pendingSlow = 0;
   listed = [];
   fetched = [];
   saved = [];
   searchDate = "2026-07-09T08:00:00.000Z";
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const inner = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) => {
+  globalThis.fetch = vi.fn(liveAccountFetch(async (input: unknown, init?: unknown) => {
     const url = String(input);
     const list = /\/messages\/([^/?]+)\/attachments(?:$|\?)/.exec(url);
     if (list) {
       const id = decodeURIComponent(list[1]!);
       listed.push({ id });
       const wait = slow.get(id);
-      if (wait !== undefined) await new Promise((r) => setTimeout(r, wait));
+      if (wait !== undefined) {
+        pendingSlow += 1;
+        await new Promise((r) => setTimeout(r, wait));
+        pendingSlow -= 1;
+      }
       return json({ items: files[id] ?? [] });
     }
     const body = /\/messages\/([^/?]+)\/body/.exec(url);
     if (body && decodeURIComponent(body[1]!) === INV) {
       return json({ text: "Anbei die Rechnung.", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null });
+    }
+    const metadata = /\/messages\/([^/?]+)(?:$|\?)/.exec(url);
+    if (metadata && decodeURIComponent(metadata[1]!) === INV && (init as RequestInit | undefined)?.method !== "PATCH") {
+      return json(invoice(searchDate));
     }
     const bytes = /\/attachments\/([^/?]+)$/.exec(url);
     if (bytes) {
@@ -114,7 +126,7 @@ beforeEach(() => {
       return json({ items, total: items.length, totalExact: true, ms: 4 });
     }
     return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-  }) as unknown as typeof globalThis.fetch;
+  }));
   (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => "blob:harness/1";
   (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
   const click = HTMLAnchorElement.prototype.click;
@@ -123,7 +135,7 @@ beforeEach(() => {
     else click.call(this);
   });
 });
-afterEach(async () => { await teardownShellEnv(); });
+afterEach(async () => { await teardownShellEnv(); vi.unstubAllGlobals(); });
 
 const goHash = async (hash: string, settle = 500): Promise<void> => {
   await act(async () => {
@@ -136,19 +148,27 @@ const goHash = async (hash: string, settle = 500): Promise<void> => {
 };
 const key = async (k: string): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
   });
   await tick(300);
 };
 const listsOf = (id: string): number => listed.filter((l) => l.id === id).length;
 const tilesIn = (scope: Element): string[] =>
-  [...scope.querySelectorAll(".att-strip .att-name")].map((n) =>
-    `${n.querySelector(".att-stem")?.textContent ?? ""}${n.querySelector(".att-ext")?.textContent ?? ""}`);
-const reader = (): Element => {
-  const el = document.querySelector("[role=dialog].reader");
-  expect(el, "the reader is not open").not.toBeNull();
-  return el!;
-};
+  [...scope.querySelectorAll(".oh-file-title")].map((name) => name.textContent ?? "");
+const reader = (): HTMLElement => screen.getByRole("region", { name: messages.reader.pane });
+const readingSheet = () => screen.queryByRole("dialog", { name: messages.frame.landmark.reading });
+const preview = () => screen.queryByRole("dialog", { name: /attachment preview/i });
+const searchBox = () => screen.getByRole<HTMLInputElement>("textbox", { name: messages.search.aria });
+function invoiceHit(): HTMLElement {
+  const row = screen.getAllByRole("listitem").find((item) => item.getAttribute("data-hit") === INV);
+  expect(row, "Search does not list the invoice").toBeTruthy();
+  return within(row!).getByRole("button", { name: /Rechnung September/ });
+}
+async function typeSearch(): Promise<void> {
+  const box = searchBox();
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => { set.call(box, "Rechnung"); box.dispatchEvent(new Event("input", { bubbles: true })); });
+}
 
 async function mount(creates: unknown[]): Promise<void> {
   answerSyncWith(() => page(creates, `c${creates.length}`));
@@ -158,31 +178,29 @@ async function mount(creates: unknown[]): Promise<void> {
 
 /** Search for the invoice and press its hit, the way a person does. */
 async function searchAndOpen(settle = 1_000): Promise<void> {
+  vi.stubGlobal("innerWidth", 390);
+  await act(async () => { window.dispatchEvent(new Event("resize")); });
   await goHash("#/search", 50);
-  const box = document.querySelector<HTMLInputElement>(".view-search .search-box input");
-  expect(box, "no search box").not.toBeNull();
-  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    set.call(box, "Rechnung");
-    box!.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  await typeSearch();
   await tick(1_000);
-  const hit = document.querySelector<HTMLButtonElement>(`.view-search .hit-w[data-hit="${INV}"] button.hit-open`);
-  expect(hit, "Search does not list the invoice").not.toBeNull();
-  await act(async () => { hit!.click(); });
+  await act(async () => { invoiceHit().click(); });
   await tick(settle);
+  expect(readingSheet(), "Search opens the reading dialog").toBeTruthy();
 }
 
 /** The tile is drawn, a press fetches the bytes and opens the look, and the look closes. */
-async function expectTheInvoiceOpens(scope: Element): Promise<void> {
+async function expectTheInvoiceOpens(scope: HTMLElement): Promise<void> {
   expect(tilesIn(scope), "the invoice shows no file").toEqual(["Rechnung.pdf"]);
-  const tile = scope.querySelector<HTMLButtonElement>(".att-strip button.att-tile");
+  const tile = within(scope).getByText("Rechnung.pdf").closest("button");
   await act(async () => { tile!.click(); });
   await tick(500);
   expect(fetched, "pressing Rechnung.pdf fetched no bytes").toContain("a-inv-pdf");
-  expect(document.querySelector(".ap-panel"), "pressing Rechnung.pdf opened no preview").not.toBeNull();
-  await key("Escape");
-  expect(document.querySelector(".ap-panel"), "the preview did not close").toBeNull();
+  const opened = preview();
+  expect.soft(opened, "pressing Rechnung.pdf opened no preview").not.toBeNull();
+  if (opened) {
+    await key("Escape");
+    expect(preview(), "the preview did not close").toBeNull();
+  }
 }
 
 describe("a sent invoice found by Search or History lists its PDF", () => {
@@ -198,8 +216,8 @@ describe("a sent invoice found by Search or History lists its PDF", () => {
       expect(listsOf(INV), "the list was not asked exactly once").toBe(1);
       await expectTheInvoiceOpens(reader());
       await key("Escape");
-      expect(document.querySelector("[role=dialog].reader"), "the reader did not close").toBeNull();
-      const again = document.querySelector<HTMLButtonElement>(`.view-search .hit-w[data-hit="${INV}"] button.hit-open`);
+      expect(readingSheet(), "the reader did not close").toBeNull();
+      const again = invoiceHit();
       await act(async () => { again!.click(); });
       await tick(1_000);
       expect(tilesIn(reader()), "a re-open shows no file").toEqual(["Rechnung.pdf"]);
@@ -214,8 +232,8 @@ describe("a sent invoice found by Search or History lists its PDF", () => {
     expect(listsOf(INV), "the list was not asked exactly once").toBe(1);
     await expectTheInvoiceOpens(reader());
     await key("Escape");
-    expect(document.querySelector("[role=dialog].reader"), "the reader did not close").toBeNull();
-    const again = document.querySelector<HTMLButtonElement>(`.view-search .hit-w[data-hit="${INV}"] button.hit-open`);
+    expect(readingSheet(), "the reader did not close").toBeNull();
+    const again = invoiceHit();
     await act(async () => { again!.click(); });
     await tick(1_000);
     expect(tilesIn(reader()), "a re-open shows no file").toEqual(["Rechnung.pdf"]);
@@ -225,13 +243,13 @@ describe("a sent invoice found by Search or History lists its PDF", () => {
   it("(c) the evicted row opened from History lists its file", async () => {
     answerStoreWith([invoice("2026-07-09T08:00:00.000Z")]);
     await mount([inbox("o1", 1), rule(2)]);
-    const openRow = async (): Promise<Element> => {
+    const openRow = async (): Promise<HTMLElement> => {
       await goHash("#/history", 1_000);
-      const row = document.querySelector<HTMLElement>(`.view-history .row[data-id="${INV}"]`);
+      const row = screen.getByRole("option", { name: /Rechnung September/ });
       expect(row, "History does not list the invoice").not.toBeNull();
       await act(async () => { row!.click(); });
       await tick(1_000);
-      const col = document.querySelector(".view-history .read-col");
+      const col = reader();
       expect(col, "History shows no reading column").not.toBeNull();
       return col!;
     };
@@ -247,9 +265,9 @@ describe("a sent invoice found by Search or History lists its PDF", () => {
 
 describe("Download all saves the list it was pressed over", () => {
   /** A queued conversation sweep: the Ohbox thread grows by eight members with slow lists. */
-  async function queueASweep(): Promise<void> {
+  async function queueASweep(delay = 2_000): Promise<void> {
     const grown = conversation(3, 10, 20);
-    for (const m of grown) slow.set(m.id, 2_000);
+    for (const m of grown) slow.set(m.id, delay + (m.id === "c3" ? 0 : 2_000));
     answerSyncWith(() => page([...conversation(1, 2, 10), ...grown, inbox("o1", 1), rule(2)], "c-grown"));
     for (let i = 0; i < 40 && !listed.some((l) => l.id === "c10" || l.id === "c3"); i += 1) await tick(250);
     expect(listed.some((l) => slow.has(l.id)), "the grown conversation was never swept").toBe(true);
@@ -259,10 +277,11 @@ describe("Download all saves the list it was pressed over", () => {
     files[INV] = [pdf("a-inv-pdf", "Rechnung.pdf", INV), pdf("a-inv-agb", "AGB.pdf", INV)];
     await mount([...conversation(1, 2, 10), inbox("o1", 1), rule(2)]);
     await goHash("#/ohbox/m/c2");
-    await searchAndOpen();
-    expect(tilesIn(reader()), "the reader shows no files").toEqual(["Rechnung.pdf", "AGB.pdf"]);
-    await queueASweep();
-    const all = reader().querySelector<HTMLButtonElement>(".att-strip button.att-all");
+    await queueASweep(3_200);
+    await searchAndOpen(3_000);
+    expect(tilesIn(reader()), `the reader shows no files (asked ${listed.map(({ id }) => id).join(", ")})`).toEqual(["Rechnung.pdf", "AGB.pdf"]);
+    expect(pendingSlow, "the Ohbox file reads have already settled").toBeGreaterThan(0);
+    const all = within(reader()).getByRole("button", { name: messages.attachments.downloadAll });
     expect(all, "no Download all").not.toBeNull();
     await act(async () => { all!.click(); });
     await tick(30_000);
@@ -276,7 +295,9 @@ describe("Download all saves the list it was pressed over", () => {
     await mount([...conversation(1, 2, 10), inbox("o1", 1), rule(2)]);
     await goHash("#/ohbox/m/c2", 2_000);
     await queueASweep();
-    const all = [...document.querySelectorAll<HTMLButtonElement>(".att-strip button.att-all")];
+    /* The letter's files' own Download all, by its name (the reader's catalogue: `attachments.downloadAll`). */
+    const all = [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .filter((b) => (b.getAttribute("aria-label") ?? (b.textContent ?? "").trim()) === "Download all");
     expect(all, "the Ohbox shows no Download all").toHaveLength(1);
     await act(async () => { all[0]!.click(); });
     await tick(30_000);
@@ -293,14 +314,9 @@ describe("a Search reader's files do not wait for a long Ohbox thread", () => {
     await mount([...thread, inbox("o1", 1), rule(2)]);
     await goHash("#/ohbox/m/c50", 0);
     await goHash("#/search", 0);
-    const box = document.querySelector<HTMLInputElement>(".view-search .search-box input")!;
-    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => {
-      set.call(box, "Rechnung");
-      box.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await typeSearch();
     await tick(300);
-    const hit = document.querySelector<HTMLButtonElement>(`.view-search .hit-w[data-hit="${INV}"] button.hit-open`);
+    const hit = invoiceHit();
     expect(hit, "Search does not list the invoice").not.toBeNull();
     const swept = listed.filter((l) => slow.has(l.id)).length;
     expect(swept, "the thread's sweep had finished before the press: nothing measured").toBeLessThan(45);

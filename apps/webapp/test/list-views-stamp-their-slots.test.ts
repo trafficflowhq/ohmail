@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 
@@ -14,12 +14,9 @@ import ts from "typescript";
  * a list item of its own), or a screen reader counts only the mounted rows.
  */
 
-const VIEWS_DIR = resolve(process.cwd(), "apps/webapp/app/views");
 
 /** Rows rendered whole beside the window in the same component — server pages past the mirror. */
-const UNWINDOWED: readonly { file: string; receiver: string }[] = [
-  { file: "FolderView.tsx", receiver: "olderRows" },
-];
+const UNWINDOWED: readonly { file: string; receiver: string }[] = [];
 
 interface Reading {
   callsWindow: boolean;
@@ -67,13 +64,17 @@ function componentsOf(file: ts.SourceFile): ts.Node[] {
   return out;
 }
 
+/** The window, called where it is: by a view, or by the Ohbox's behaviour hook its view calls (held below). */
+const WINDOW_CALLS = new Set(["useListWindow", "useOhboxList"]);
+const OHBOX_LIST = resolve(process.cwd(), "packages/app-logic/src/ohbox/window.ts");
+
 function readComponent(file: ts.SourceFile, root: ts.Node): Reading {
   let callsWindow = false;
   let stamps = 0;
   const bare: Reading["bare"] = [];
   const unplaced: number[] = [];
   const walk = (node: ts.Node, slotted: boolean, receiver: string | null): void => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "useListWindow") {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && WINDOW_CALLS.has(node.expression.text)) {
       callsWindow = true;
     }
     let inSlot = slotted;
@@ -125,8 +126,9 @@ function refusals(file: string, r: Reading): string[] {
   return out;
 }
 
-const viewFiles = readdirSync(VIEWS_DIR).filter((f) => f.endsWith(".tsx")).sort();
-const readings = new Map(viewFiles.map((f) => [f, readView(readFileSync(join(VIEWS_DIR, f), "utf8"), f)]));
+const readings = new Map<string, Reading>();
+const rules = "RulesPane.tsx";
+readings.set(rules, readView(readFileSync("packages/app/src/settings/rules/" + rules, "utf8"), rules));
 
 describe("every windowed list stamps its slots", () => {
   it("the reader refuses a bare row and a stampless window, and admits both stamps", () => {
@@ -195,7 +197,36 @@ describe("every windowed list stamps its slots", () => {
   });
 
   it("reads the lists it is about", () => {
-    for (const f of ["ReceiptsView.tsx", "ReadsView.tsx", "FolderView.tsx", "TrashView.tsx", "RulesView.tsx", "OhboxView.tsx"]) {
+    const folder = readFileSync("packages/app/src/folder/FolderList.tsx", "utf8");
+    expect(folder).toMatch(/useCursorWindow\(rows\.length,/);
+    expect(folder).toContain("rows.slice(window.start, window.end)");
+    expect(folder).toMatch(/<LetterRows[\s\S]*?rows=\{visible\}[\s\S]*?slice=\{\{ index: window\.start, first: window\.start, total: rows\.length \}\}/);
+    const letterRows = readFileSync("packages/app/src/place-list/LetterRows.tsx", "utf8");
+    expect(letterRows).toMatch(/index = windowed \? windowed\.start \+ offset/);
+    expect(letterRows).toMatch(/at: windowed\.start \+ offset \+ 1, of: windowed\.total/);
+    expect(letterRows).toMatch(/: slice && slice\.index \+ offset/);
+    expect(letterRows).toMatch(/: slice && \{ at: slice\.first \+ offset \+ 1, of: slice\.total \}/);
+    expect(letterRows).toContain("mark={{ id: m.id, unseen: m.unread, index }}");
+    expect(letterRows).toContain("stop: open,\n              place,");
+    const piles = readFileSync("packages/app/src/piles/PilesList.tsx", "utf8");
+    expect(piles).toMatch(/<PileItem[\s\S]*?index=\{win\.start \+ offset\}/);
+    expect(piles).toMatch(/place: \{ at: index \+ 1, of: model\.rows\.length \}/);
+    expect(piles).toContain("mark={{ id: row.key, index }}");
+    expect(readFileSync(OHBOX_LIST, "utf8"), "useOhboxList mounts no window").toMatch(/useListWindow\(\{ scrollerRef: listScrollerRef/);
+    const trash = readFileSync("packages/app/src/trash/TrashList.tsx", "utf8");
+    expect(trash).toMatch(/useCursorWindow\(page\.items\.length,/);
+    expect(trash).toMatch(/const index = window\.start \+ offset/);
+    expect(trash).toMatch(/place: \{ at: index \+ 1, of: page\.items\.length \}/);
+    expect(trash).toContain("mark={{ id: r.id, index }}");
+    const stream = readFileSync("packages/app/src/stream/StreamList.tsx", "utf8");
+    expect(stream).toMatch(/for \(let w = win\.start; w < win\.end; w\+\+\)/);
+    expect(stream).toMatch(/<ItemRow[\s\S]*?index=\{w\}[\s\S]*?position=\{position\}/);
+    expect(stream).toContain("place: position");
+    expect(stream).toContain("mark={{ id: m.id, index, unseen: m.unread }}");
+    for (const place of ["news", "receipts"]) {
+      expect(readFileSync(`packages/app/src/${place}/place.ts`, "utf8")).toContain("List: StreamList");
+    }
+    for (const f of [rules]) {
       expect(readings.get(f)?.callsWindow, `${f} calls no useListWindow — the census reads nothing there`).toBe(true);
       expect(readings.get(f)?.stamps ?? 0, `${f} stamps no slot`).toBeGreaterThan(0);
     }

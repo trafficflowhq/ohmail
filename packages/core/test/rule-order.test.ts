@@ -1,7 +1,8 @@
+import type { AuthVerdict } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import {
   compareRules, effectForDestination, evaluateRules, standingRule,
-  type AuthVerdict, type Rule,
+  type Rule,
 } from "../src/rules.js";
 import { effectForDestination as leafEffect } from "../src/rule-order.js";
 import { DESTINATIONS, LEGACY_NEWS_FOLDER, type NormalizedMessage } from "../src/types.js";

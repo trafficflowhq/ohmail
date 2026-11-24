@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryMirrorStore, type EngineMessage, type EngineMutation, type SyncChange } from "@ohmail/client-engine";
-import { useRoutingUndo, type RoutingSendResult } from "../app/shell/routing-undo";
-import type { ScreeningToastKey } from "../app/shell/sender-screening";
+import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
+import { useRoutingUndo, type RoutingSendResult } from "@ohmail/app-logic/press/routing-undo";
+import type { ScreeningToastKey } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE ROUTING WINDOW'S CORRECTION SAYS WHICH WAIT IT IS. A move press held in the window makes the
@@ -40,13 +41,15 @@ async function correctionFor(answer: RoutingSendResult): Promise<ScreeningToastK
   const said: ScreeningToastKey[] = [];
   const sent: EngineMutation[] = [];
   let latest: ReturnType<typeof useRoutingUndo> | null = null;
+  /* One account per case, named once: a mount keeps the scope of its first render. */
+  const scope = `acct-${++seq}`;
   function Probe(): null {
     latest = useRoutingUndo({
       read: () => store,
       send: async (m) => { sent.push(m); return answer; },
       toast: () => {},
       copy: { gone: "gone", expired: () => "expired", correction: (key) => { said.push(key); return key; } },
-      owner: `acct-${++seq}`, windowMs: 1_000, now: () => Date.now(),
+      scope, windowMs: 1_000, now: () => Date.now(),
     });
     return null;
   }

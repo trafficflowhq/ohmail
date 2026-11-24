@@ -7,8 +7,8 @@ import {
   accounts, applyScreenerDecision, changeLog, folderState, mailboxes, messageBodies, messages,
   recordChange, rerouteAdvisedLetter, rerouteUnconfirmedHeld, rules, type Tx,
 } from "@trafficflow/db";
-import { autoFiledSummary, undoAutoFiled, type ServiceContext } from "@trafficflow/services";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { autoFiledSummary, undoAutoFiled, type ServiceContext, dbFor, type Db as ServicesDb } from "@trafficflow/services";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 
 /**
  * PUT BACK IS NEVER FILED AGAIN (row 140). An automatic filing that writes no rule — the act on
@@ -37,8 +37,8 @@ async function world() {
       accountId, mailboxId: mb!.id, bodyHash: `h${i}`, dedupKey: `pb:${randomUUID()}`, subject: `Weekly offers ${i}`,
       fromAddress: from, authVerdict: "unavailable", nativeLocator: { folder: SCREENER, ref: `1:${i}` },
     }).returning();
-    await tx.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
-    await tx.insert(folderState).values({ messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false });
+    await tx.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
+    await tx.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false });
     await recordChange(tx as never, { accountId, entityType: "message", entityId: m!.id, op: "create", meta: null });
     return m!.id;
   });
@@ -50,7 +50,7 @@ async function world() {
   /** The act's deny of one advised letter. */
   const fileAdvised = (from: string, messageId: string) => inTx((tx) =>
     rerouteAdvisedLetter(tx, { accountId, address: from, appliedFolder: SPAM, now: new Date(), messageId }));
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => new Date(), requestId: "pb" };
+  const ctx: ServiceContext = { db: dbFor(db as unknown as ServicesDb, accountId), accountId, userId: null, now: () => new Date(), requestId: "pb" };
   const desired = async (id: string) =>
     (await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
   return { db, accountId, ctx, held, inTx, fileUnconfirmed, fileAdvised, desired };

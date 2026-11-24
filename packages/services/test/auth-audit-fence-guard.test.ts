@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, users, fencedAccountOf, inTransactionHandle, type Tx } from "@trafficflow/db";
 import { authEvents } from "@trafficflow/db/cloud";
-import { AuthService, makeTestAuthDeps, ServiceError, type ServiceContext } from "@trafficflow/services";
+import { AuthService, dbFor, makeTestAuthDeps, ServiceError, type ServiceContext } from "@trafficflow/services";
 
 /**
  * THE AUDIT'S GUARD AND THE OPENER'S NESTING RULES, driven as a service body drives them. Inside a
@@ -29,8 +29,8 @@ class Probe extends AuthService {
 let db: Db;
 let probe: Probe;
 let user: User;
-const ctxOn = (handle: unknown): ServiceContext => ({
-  db: handle as never, accountId: user.accountId, userId: user.id, sessionId: null,
+const ctxOn = (handle: Db): ServiceContext => ({
+  db: dbFor(handle, user.accountId), accountId: user.accountId, userId: user.id, sessionId: null,
   now: () => new Date(), requestId: randomUUID(), ip: "10.26.7.7",
 });
 const rows = async (): Promise<number> =>

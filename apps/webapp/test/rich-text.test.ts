@@ -9,7 +9,7 @@ import {
   richToHtml,
   serializeRichValue,
   type RichValue,
-} from "../app/shell/rich-text";
+} from "@ohmail/app-logic/writing/rich-text";
 
 /**
  * THE SCRATCH BUFFER'S STORAGE RULES — the half of rich compose that must not lose anybody's

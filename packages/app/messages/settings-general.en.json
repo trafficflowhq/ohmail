@@ -1,0 +1,26 @@
+{
+  "settingsGeneral": {
+    "appearance": "Appearance",
+    "messages": "Messages",
+    "lookChoice": "Choose a look",
+    "lookScope": "Apply look to",
+    "allDevices": "All devices",
+    "thisDevice": "This device",
+    "followsOmarchy": "follows Omarchy",
+    "subject": "Subject",
+    "subjectHead": "One heading",
+    "subjectEach": "On each message",
+    "threadOrder": "Conversation order",
+    "threadOrderBottom": "Latest at the bottom",
+    "threadOrderTop": "Latest at the top",
+    "subjectSample": "Glaze order #2291",
+    "subjectReplySample": "Re: Glaze order #2291",
+    "picture": {
+      "title": "Ohbox",
+      "first": "Anna Berger",
+      "firstTime": "09:12",
+      "second": "Tom Keller",
+      "secondTime": "08:47"
+    }
+  }
+}

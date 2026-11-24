@@ -13,7 +13,7 @@ import {
 import { mailboxStorageStats, schema } from "@trafficflow/db/cloud";
 import type { Logger } from "@trafficflow/core/mail";
 import { MAILBOX_ERASURE_PASS_BUDGET_MS, mailboxErasurePass } from "../src/mailbox-erasure-pass.js";
-import { STORAGE_RECOUNT_EVERY_MS, storageEvictPass } from "../src/storage-evict.js";
+import { STORAGE_RECOUNT_EVERY_MS, storageEvictPass } from "@ohmail/organizer/storage-evict";
 
 /**
  * THE ERASURE PASS — the sweep a "Remove and erase" press owes, driven the way the worker cycle
@@ -37,7 +37,7 @@ async function mailbox(accountId: string, label: string, n: number): Promise<str
     const [m] = await db.insert(messages).values({
       accountId, mailboxId: mb!.id, bodyHash: k, dedupKey: k, subject: `m${i}`, fromAddress: "a@example.test",
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "body" });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "body" });
   }
   return mb!.id;
 }
@@ -87,6 +87,24 @@ describe.skipIf(!PG_UP)("mailboxErasurePass — the worker's half of the per-mai
     expect(await done(kept)).toBe(false);
     const third = await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([x, y]) });
     expect(third, "a pass with nothing owed did work").toMatchObject({ steps: 0, finished: 0 });
+  });
+
+  it("an owed erasure outside the pass's shard is left to the worker that leads it", async () => {
+    const mine = randomUUID(); const theirs = randomUUID();
+    await db.insert(accounts).values([{ id: mine, name: "erase-mine" }, { id: theirs, name: "erase-theirs" }]);
+    const m1 = await mailbox(mine, "m1", 2);
+    const t1 = await mailbox(theirs, "t1", 2);
+    // Theirs is the older stamp: a pass that read past its shard would take it first.
+    await stamp(theirs, t1, new Date(NOW.getTime() - 60_000));
+    await stamp(mine, m1, NOW);
+
+    const r = await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([mine]) });
+    expect(r.finished).toBe(1);
+    expect(await done(m1)).toBe(true);
+    expect(await done(t1), "another shard's mailbox was erased from here").toBe(false);
+    expect(await erasureRemaining(db, theirs, t1)).toBe(2);
+
+    expect((await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([theirs]) })).finished).toBe(1);
   });
 
   it("a finished erasure takes the mailbox's storage snapshot with it, and leaves the others' (cloud 0057)", async () => {
@@ -167,7 +185,7 @@ describe.skipIf(!PG_UP)("mailboxErasurePass — the worker's half of the per-mai
         }).returning();
         await db.transaction(async (tx) => {
           await reserveBodyBytes(tx as unknown as Tx, dialect(db), accountId, BODY.length, null);
-          await (tx as unknown as Tx).insert(messageBodies).values({ messageId: m!.id, text: BODY });
+          await (tx as unknown as Tx).insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: BODY });
         });
       }
       return mb!.id;

@@ -2,8 +2,8 @@
  * @ohmail/client-engine — the delta-first client spine (brief §4):
  *   MirrorStore  — IndexedDB (web) / in-memory (SSR, tests) local mirror
  *                  with the idempotent, seq-guarded apply;
- *   Adapters     — FixturesAdapter (?demo + UI tests) and HttpAdapter (the
- *                  real /sync + mutation protocol) behind one interface;
+ *   Adapters     — HttpAdapter (the real /sync + mutation protocol) behind
+ *                  one interface; the sample world's adapter is test support, not here;
  *   OhmailEngine — bootstrap → drain → apply, optimistic mutation queue
  *                  (user-always-wins), wake-signal hook, local search.
  */
@@ -122,6 +122,7 @@ export { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ic
  * once each, and the formatters both readers draw them with. The phone reaches core only here.
  */
 export { calendarEventsOf, withoutCalendarBodies } from "./calendar-events.js";
+export { askPlaces, type PlaceSuggestOutcome, type PlaceSuggestTransport } from "./place-suggest.js";
 export {
   distinctCalendarEvents, formatIcsWhen, icsDateGlyph, icsKicker, icsPeople, icsRecurrence, icsWeekdayName, parseIcsEvent,
   type DistinctCalendarEvent, type IcsEventPreview, type IcsFormatOptions, type IcsKickerKey, type IcsRecurrenceSaying,
@@ -212,24 +213,60 @@ export {
 // each have to remember the master switch. Pure: no platform, no catalogue, no sentence.
 export {
   DEFAULT_CHANNELS,
-  DELIVERABLE_EVENTS,
-  NOTICE_EVENTS,
   channelsAreLive,
   decideNotices,
-  type NoticeEvent,
+  mayDrawKind,
+  mayPost,
   type NoticePermission,
-  type NoticeSnapshot,
-  type NoticeSpec,
   type NotificationChannels,
-  type PairingEvent,
-  type ScheduledOutcome,
 } from "./notifications.js";
+
+// THE NOTICES' SEAM: the kinds and what each may say, the device's choices, what a surface hands
+// in to draw them, and what the page leaves the phone's native side.
+export {
+  CALENDAR_NOTICE_KINDS, MAIL_NOTICE_KINDS, NOTICE_ACTS, NOTICE_COUNT_MAX, NOTICE_KINDS, NOTICE_KIND_FACTS,
+  NOTICE_LEAD_MAX_MIN, NOTICE_NAMES_EVENT, noticeCount, noticeKindsOf,
+  type CalendarNotice, type CalendarNoticeKind, type Clock, type EventLabel, type MailNotice, type MailNoticeKind,
+  type Notice, type NoticeAct, type NoticeDate, type NoticeDevice, type NoticeKind, type NoticeKindFacts,
+  type NoticeStart, type NoticeSurface,
+} from "./notices/kinds.js";
+export {
+  LOCKED_LABEL, NOTICE_TEXT_MAX, cleanNoticeText, eventLabel, noticeTitleOf, type NoticeTitle,
+} from "./notices/label.js";
+export {
+  SUMMARY_AT_START, calendarChoicesOf, mailChoicesOf, noticeChoicesOf, noticeStartsOn,
+  type CalendarNoticeChoices, type MailNoticeChoices, type NoticeChoices, type NoticeWhere,
+} from "./notices/choices.js";
+export {
+  AHEAD_DAYS, AHEAD_ID_MAX, AHEAD_LATE_MS, AHEAD_MAX, type AheadSet, type NoticeAhead, type NoticeEmitter, type CalendarSummaryDetails, type MailNoticeDetails, type NoticeTaken,
+} from "./notices/emitter.js";
+export type { CalendarLook, CalendarSample, CalendarStanding, NoticeDevices, NoticeGate, NoticeSample, SendStanding } from "./notices/gate.js";
+export { TOLD_DEVICES_PREFIX, devicesOf, noticeSampleOf } from "./notices/sample.js";
+export {
+  aheadAlert, aheadSet, alertNotice, answeredNotice, cancelledNotice, dueNotice, foundNotice, invitationNotice,
+  movedNotice, summaryNotice,
+  type AheadWhen, type NoticedEvent,
+} from "./notices/make.js";
+export { readAhead, readAheadSet, readCalendarSnapshot, readLabel } from "./notices/closed.js";
+export { leadWords, type LeadWords } from "./notices/lead.js";
+export {
+  NOTICE_PRESSES, NOTICE_PRESS_WRITES, decidePress, pressWrites, type NoticePress, type NoticePressAnswer, type PressedOn,
+} from "./notices/press.js";
+export {
+  AlertBook, eventRings, mayRing, ringingLeads, type RingAsk, type RungCalendar, type RungEvent,
+} from "./notices/ring.js";
+export { noticeFields, type NoticeFacts, type NoticeFields, type NoticeWording } from "./notices/fields.js";
+export {
+  CALENDAR_SNAPSHOT_FILE, CALENDAR_SNAPSHOT_VERSION, SNAPSHOT_DAYS, SNAPSHOT_DAY_EVENTS_MAX,
+  type CalendarSnapshot, type SnapshotDay, type SnapshotEvent, type SnapshotMonth, type SnapshotSummary, type SummaryEvent,
+} from "./notices/snapshot.js";
 
 // Wire vocabulary + errors.
 export {
   CursorExpiredError,
   SnapshotCursorRefusedError,
   MutationRejectedError,
+  SyncAbortedError,
   UnsupportedMutationError,
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
@@ -237,71 +274,24 @@ export {
   isProtectedMessage,
   encodeSeqCursor,
   decodeSeqCursor,
-  type ChangeOp,
-  type ComposeAttachment,
-  type Cursor,
-  type EmailAddress,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMessageExtras,
-  type EngineMutation,
-  // The runtime census of the union above — what lets the verb-parity harness enumerate
+  // The runtime list of the wire's mutation kinds — what lets the verb-parity harness enumerate
   // every user verb and refuse a new one until its parity is proven (see types.ts).
   MUTATION_KINDS,
-  type MutationKind,
-  type Folder,
-  type ISODateTime,
-  type OhmailView,
-  type ScreenDest,
-  type BodyState,
-  type MessageBody,
   // The closed set behind `MessageBody.withheld` — exported because the surface owes each
   // member its own sentence (the reading pane's per-marker copy), and a surface that cannot
   // name the type re-derives it as string literals that drift.
-  type WithheldMarker,
-  type MessageBodyRecord,
-  type MessageBodyBatchWire,
-  type MessageBodyWire,
-  type MessageStateDTO,
   type MirrorEntityType,
-  type HeldReleaseGroupDTO,
   HELD_RELEASE_TYPE,
   RETIRED_DECIDED_TYPE,
-  type UnscreenedGroupDTO,
   UNSCREENED_TYPE,
   SCREENER_WAITING_TYPE,
   SCREENER_WAITING_PAGE_ID,
-  type ScreenerWaitingDTO,
-  type ScreenerWaitingPageDTO,
-  type ScreenerWaitingSenderDTO,
-  type RuleDTO,
-  type WaitingRequestWire,
-  type WaitingTargetWire,
-  type RuleKeyAddress,
-  type ScreenerHeldMail,
-  type ScreenerSegment,
-  type ScreenerSenderDTO,
-  type FailedAtGateDTO,
-  type ScreenerSuggestionEntity,
-  type MailboxProfileEntity,
   MAILBOX_PROFILE_TYPE,
-  type SensitivityFlags,
   type SyncChange,
   SYNC_ENTITY_TYPES,
-  type SyncEntityType,
+  NAMED_FEED_KINDS,
   type SyncResponse,
-  type SyncSnapshotPage,
-  type FolderEntity,
-  type TagDTO,
-  type TriageItemDTO,
   type TriageState,
-  type TriageWireState,
-  type UnsubscribeHeaderState,
-  type UnsubscribeRefusal,
-  type UnsubscribeResult,
-  type WaterlineMeta,
-  type FeedView,
-  type FeedSinceMeta,
   FEED_SINCE_ID,
   waterlineIdOf,
 } from "./types.js";
@@ -314,7 +304,6 @@ export {
   cutlineFor,
   cutlineOfMailbox,
   decidedDestination,
-  domainOfAddress,
   historyView,
   mailboxProfiles,
   messagePlacement,
@@ -341,6 +330,7 @@ export {
   ruleTwins,
   twinWinner,
   oneRowPerKey,
+  ruleKeyOf,
   heldRuleId,
   heldRuleKey,
   type TwinPress,
@@ -409,7 +399,9 @@ export {
   clock,
   dateClock,
   fullDateTime,
+  longDateStamp,
   messageStamp,
+  shortCivilDateStamp,
   shownDateOf,
   weekdayClock,
   weekdayDateClock,
@@ -500,6 +492,8 @@ export {
   heldUnpinned,
   threadSizeIndex,
   threadMarksIndex,
+  placedThreadMembers,
+  threadMarkOf,
   type ThreadMark,
   threadSubject,
   THREAD_PARTICIPANTS_MAX,
@@ -563,6 +557,8 @@ export {
 export {
   decideFolder,
   forwardSubject,
+  // Where a move may put a letter of a mailbox: the six, or a person's folder this mirror lists with no command on it.
+  movableInto,
   mutationEffects,
   replySubject,
   sentOverlayMessage,
@@ -577,7 +573,7 @@ export { forwardOffered, forwardPress, type ForwardAsk, type ForwardPress } from
 // Undo semantics — every verb's undo class, and the wire's own reversal for the "inverse" kinds.
 export { feedLineUndo, inverseMutations, undoInOrder, UNDO_CLASS, type UndoClass, type UndoSubject } from "./undo.js";
 // One chunk size for a read pressed over a set and for its Undo (the route caps a PATCH at 200 ids).
-export { MARK_SEEN_CHUNK, chunkMarkSeen } from "./mark-seen-chunk.js";
+export { MARK_SEEN_CHUNK, chunkMarkSeen, narrowRead } from "./mark-seen-chunk.js";
 // The thread-read rule both readers share: when a message in an entered conversation turns read.
 export {
   EVIDENCE_WINDOW_MS, THREAD_READ_FADE_MS, THREAD_READ_HOLD_MS, THREAD_TOP_LINES, THREAD_UNREAD_BACK_MS, createThreadRead,
@@ -645,13 +641,10 @@ export {
 
 // Adapters.
 export type {
-  CreatedDraftRow, EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams,
-  ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy, StayedWire, UnscreenedPileWire,
-  AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire,
-  WithdrawSendAnswer, WithdrawSendOutcome, ScheduleFilesAnswer,
+  CreatedDraftRow, EngineAdapter, ReadIntent, SyncParams,
+  WithdrawSendAnswer, ScheduleFilesAnswer,
   FetchingStanding, PullRing,
 } from "./adapters/adapter.js";
-export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";
 export {
   HttpAdapter,
   // The deadline a body fetch runs under. Exported so a SURFACE that says "still coming" can
@@ -675,6 +668,10 @@ export {
   type HttpAdapterOptions,
   type ServerMessageView,
 } from "./adapters/http-adapter.js";
+// The calendar's connect door as a setup reaches it: the six calls (the adapter is one), and the
+// ways an answer names as this build knows them.
+export { CALENDAR_WAYS, calendarWaysOf, type CalendarConnectTransport, type CalendarSetupAdapter, type CalendarSetupTransport } from "./calendar-connect.js";
+export type { WireCall } from "./adapters/route-path.js";
 
 // The retrying read transport: one wrapper over the client's idempotent GETs, shared by the
 // adapter and by the desktop window's roster polls. Exported so a caller wraps the shipped rule
@@ -740,7 +737,7 @@ export {
   NO_WAITING,
   // The boot replay's per-attempt deadline and the unkeyed-create replay horizon — exported so
   // the guards read the shipped numbers, not copies.
-  OUTBOX_REPLAY_DEADLINE_MS,
+  OUTBOX_MUTATE_DEADLINE_MS, OUTBOX_REPLAY_DEADLINE_MS,
   OUTBOX_UNKEYED_CREATE_TTL_MS,
   // How long one hung write may hold the outbox, how old it must be before a Try again ends its
   // wait, and the drain's belt for a door with no bound.
@@ -846,6 +843,7 @@ export {
   PART_REASK_DELAYS_MS,
   type KeptAsNewDraft,
 } from "./engine.js";
+export { deleteIntentKey } from "./engine/trash.js";
 /** One mailbox's byte asks in line: never more at once than the API's per-mailbox door admits. */
 export { PART_FETCHES_PER_MAILBOX, BUSY_PATIENCE_MS } from "./part-lane.js";
 
@@ -883,6 +881,7 @@ export {
   type TimelineSegment,
 } from "./store-pages.js";
 export {
+  EMPTY_PAGES_FOLLOWED,
   PagedWalk,
   StoreTimelineWalker,
   StoreSearchWalker,
@@ -938,6 +937,7 @@ export {
   authHintPreset,
   authHintWantsLinks,
   discoveryRequestFor,
+  domainOfAddress,
   hostsFor,
   isProtonAddress,
   passwordLabelKey,
@@ -1128,6 +1128,6 @@ export {
   type SelfCheckUnreadable,
 } from "./diagnostics.js";
 // The filing refusal classes every client words, and their narrowing. See `filing-reasons.ts`.
-export { FILING_REFUSAL_REASONS, filingRefusalReason, type FilingRefusalReason } from "./filing-reasons.js";
+export { FILING_REFUSAL_REASONS, filingRefusalReason } from "./filing-reasons.js";
 // The first-import floor's bounded window, read by the web strip and the phone Screener alike.
 export { IMPORT_FLOOR_MAX_MS, importFloorInWindow } from "./import-floor.js";

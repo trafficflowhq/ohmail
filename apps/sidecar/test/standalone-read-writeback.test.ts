@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import type {
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { auditLog, flagState, folderState, messageInstances, messages } from "@trafficflow/db";
-import { HttpAdapter, OhmailEngine, type EngineMessage } from "@ohmail/client-engine";
+import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
@@ -22,7 +23,7 @@ vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
  *
  * Reading a message in ohmail has to be reading it in the mailbox: open the same account in Apple
  * Mail or on a phone and the message must not be bold again. On a hosted account the always-on
- * worker is what keeps that true — `reconcileFlags` in `apps/worker/src/sync.ts` is the ONE code
+ * worker is what keeps that true — `reconcileFlags` in `packages/organizer/src/sync.ts` is the ONE code
  * path that adds the flag on a real server. A standalone install has no worker anywhere, so the
  * same promise is kept only if this process runs the same pass over its own mailbox.
  *
@@ -183,7 +184,7 @@ describe("the standalone door writes read-state back to the mailbox", () => {
       isPrimary: true,
     });
     await sidecar.db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       desiredFolder: folder,
       observedFolder: folder,
       lastSetBy: "external",

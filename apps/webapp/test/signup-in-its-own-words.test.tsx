@@ -26,6 +26,7 @@ const ENROLLING = {
     twofaEnrolled: { webauthn: false, totp: false, recoveryCodes: false },
   },
   scope: "enrollment",
+  familyId: "f1",
 };
 const UNVERIFIED = {
   user: { ...ENROLLING.user, emailVerified: false, twofaEnrolled: { webauthn: false, totp: true, recoveryCodes: true } },
@@ -62,6 +63,8 @@ beforeEach(() => {
 afterEach(async () => {
   if (unmount) await unmount();
   unmount = null;
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
 });
@@ -75,8 +78,8 @@ async function render(messages: Messages, screen: "join" | "verify") {
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
   const node = screen === "join"
-    ? React.createElement((await import("../app/(product)/join/JoinScreen.js")).JoinScreen, { initialCode: "", publicSignup: true })
-    : React.createElement((await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen, { initialToken: "tok" });
+    ? React.createElement((await import("../app/(product)/join/JoinRoute.js")).JoinRoute, { initialCode: "", publicSignup: true })
+    : React.createElement((await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute, { initialToken: "tok" });
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -93,19 +96,30 @@ async function render(messages: Messages, screen: "join" | "verify") {
   });
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
-  const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
-    expect(input, `#${id} is not on screen`).toBeTruthy();
+  /** A blank by its id (the join's card), or by the name its label gives it (a door's page). */
+  const blank = (key: string | { label: string }): HTMLInputElement | null => {
+    if (typeof key === "string") return host.querySelector<HTMLInputElement>(`#${key}`);
+    const label = [...host.querySelectorAll("label")].find((l) => l.textContent === key.label);
+    return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+  };
+  const type = async (key: string | { label: string }, value: string) => {
+    const input = blank(key);
+    expect(input, `${JSON.stringify(key)} is not on screen`).toBeTruthy();
     Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
     await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
   };
+  /** A button by its words; a door's ink button carries its key after them. */
   const press = async (label: string) => {
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label);
+    const buttons = [...host.querySelectorAll("button")];
+    const button = buttons.find((b) => b.textContent === label) ?? buttons.find((b) => b.textContent?.startsWith(label));
     expect(button, `no "${label}" button`).toBeTruthy();
     await act(async () => { button!.click(); });
     await settle();
   };
-  const alertText = () => [...host.querySelectorAll('[role="alert"], .join-error')].map((el) => el.textContent ?? "").join(" | ");
+  /* What the screen says of a refusal: its alerts, and what describes its blanks (a door's field says its own). */
+  const described = () => [...host.querySelectorAll("[aria-describedby]")].flatMap((el) =>
+    (el.getAttribute("aria-describedby") ?? "").split(/\s+/).map((id) => (id ? host.querySelector(`[id="${id}"]`) : null)));
+  const alertText = () => [...host.querySelectorAll('[role="alert"], .join-error'), ...described()].map((el) => el?.textContent ?? "").join(" | ");
   return { host, type, press, alertText };
 }
 
@@ -114,7 +128,7 @@ async function accountStep(messages: Messages) {
   await ui.type("join-email", "pat@family.example");
   await ui.type("join-name", "Pat");
   await ui.type("join-pw", "a-long-signup-password");
-  await ui.press(messages.join.createAccount);
+  await ui.press(messages.join.continue);
   return ui;
 }
 
@@ -169,9 +183,10 @@ describe("the authenticator step's refusal, in the screen's words", () => {
   for (const messages of [de, en]) {
     it(`${messages === de ? "de" : "en"}: a code that did not match`, async () => {
       session = { status: 200, body: ENROLLING };
+      document.cookie = "tf_family=f1; Path=/";
       answers["/auth/2fa/totp/activate"] = refusal(422, "unprocessable", "invalid TOTP code");
       const ui = await render(messages, "join");
-      await ui.press(messages.join.useTotp);
+      await ui.press(messages.join.factorApp);
       await ui.type("join-totp", "123456");
       await ui.press(messages.join.activate);
       expect(ui.alertText()).toContain(messages.join.refusedTotpCode);
@@ -192,7 +207,7 @@ describe("the verify page's refusals, in the screen's words", () => {
       it(`${messages === de ? "de" : "en"}: ${what}`, async () => {
         answers["/auth/verify-email"] = answer;
         const ui = await render(messages, "verify");
-        await ui.type("verify-pw", "a-long-signup-password");
+        await ui.type({ label: messages.verify.passwordLabel }, "a-long-signup-password");
         await ui.press(messages.verify.confirm);
         expect(ui.alertText()).toContain(sentence(messages));
         if (messages === de) expect(ui.alertText()).not.toContain((answer.body as { error: { message: string } }).error.message);
@@ -213,8 +228,8 @@ describe("the resend asks for the mail in the screen's language", () => {
 describe("two lines that were not true", () => {
   it("the password hint does not promise a passkey as the next step: on the open path the next step is the mail", () => {
     for (const m of [en, de]) {
-      expect(m.join.passwordHint).not.toMatch(/next step adds|nächsten Schritt kommt/);
-      expect(m.join.passwordHint).toMatch(/12/);
+      expect(m.join.minimum).not.toMatch(/next step adds|nächsten Schritt kommt/);
+      expect(m.join.minimum).toMatch(/12/);
     }
   });
 
@@ -231,4 +246,18 @@ describe("German on the signup screens says Mail, not Post", () => {
       .map(([k]) => k);
     expect(offenders).toEqual([]);
   });
+});
+
+
+it.each([
+  ["en", en, "My email address is already confirmed"],
+  ["de", de, "Meine E-Mail-Adresse ist bereits bestätigt"],
+] as const)("offers sign-in after an already confirmed address in %s", async (_locale, messages, title) => {
+  answers["/auth/verify-email"] = { status: 200, body: { status: "already_verified" } };
+  const ui = await render(messages, "verify");
+  await ui.type({ label: messages.verify.passwordLabel }, "a-long-signup-password");
+  await ui.press(messages.verify.confirm);
+  expect(ui.host.textContent).toContain(title);
+  expect([...ui.host.querySelectorAll("button")].some((b) => b.textContent === messages.verify.signInDone)).toBe(true);
+  expect(ui.host.querySelector('input[type="password"]')).toBeNull();
 });

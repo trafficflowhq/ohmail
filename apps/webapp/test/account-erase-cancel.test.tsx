@@ -2,6 +2,9 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
+import { getByRole, queryByRole, within } from "@testing-library/react";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
+import { bindApiOwner } from "../app/api-client";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
@@ -13,9 +16,8 @@ import de from "../messages/de.json";
  *
  * The erase was attached to a promise's resolution instead of to the ceremony's state: press
  * "Verify and erase", change your mind, press Cancel, and when the verify response landed the
- * account was erased — irreversibly, after the person had said no. The erase is now parked behind
- * `StepUpPrompt`, and the invariant is the same: the parked act runs only if the ceremony is still
- * CURRENT when the factor lands, at the one door both factor paths pass through.
+ * account was erased after the person had cancelled. The delete page parks the erase behind its
+ * shared step-up dialog. The parked act runs only if the ceremony is current when the factor lands.
  */
 (globalThis as unknown as { React: unknown }).React = React;
 
@@ -41,21 +43,18 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {}, replace: () => {} }),
 }));
 
-vi.mock("../app/sign-out", () => ({
+vi.mock("../app/sign-out", async (original) => ({
+  ...await original<typeof import("../app/sign-out")>(),
   forgetThisBrowser: async () => ({ remaining: [], inventoryComplete: true }),
   signOut: async () => ({ cleared: true, inventoryComplete: true, serverRefused: null, remaining: [] }),
 }));
 
-vi.mock("../app/api-client", () => {
-  class ApiError extends Error {
-    status: number;
-    code: string;
-    constructor(status: number, code: string, message: string) {
-      super(message);
-      this.status = status;
-      this.code = code;
-    }
-  }
+vi.mock("../app/(product)/session-outcome", () => ({
+  resolveOwnerOutcome: async () => ({ kind: "owner", accountId: rig.accountId }),
+}));
+
+vi.mock("../app/api-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../app/api-client")>();
   const held = (name: string): Promise<unknown> => {
     rig.calls.push(name);
     const p = new Promise<unknown>((resolve) => {
@@ -73,7 +72,7 @@ vi.mock("../app/api-client", () => {
     return answer;
   };
   return {
-    ApiError,
+    ...actual,
     apiConfigured: () => true,
     accessFeedFor: () => feed,
     onAccessFeed: (l: () => void) => { listeners.add(l); return () => { listeners.delete(l); }; },
@@ -82,6 +81,7 @@ vi.mock("../app/api-client", () => {
     codeOf: (e: unknown) => (e as { code?: string }).code ?? null,
     messageOf: (e: unknown) => (e as { message?: string }).message ?? String(e),
     auth: {
+      ...actual.auth,
       session: async () => ({
         user: {
           accountId: rig.accountId, email: "person@example.test",
@@ -91,18 +91,15 @@ vi.mock("../app/api-client", () => {
       }),
       login: async () => { rig.calls.push("login"); return { status: "twofa_required", loginToken: "tok", methods: rig.methods }; },
       recoveryVerify: () => held("recoveryVerify"),
+      stepUpRecoveryCode: () => held("recoveryVerify"),
       stepUpTotp: () => held("stepUpTotp"),
       stepUpWebauthnOptions: async () => ({ options: {} }),
       stepUpWebauthnVerify: () => held("stepUpWebauthnVerify"),
     },
     account: {
+      ...actual.account,
       access: async () => publish({ metered: false }),
-      /* The first press meets a closed step-up window, as it nearly always does. */
       erase: async () => {
-        if (!rig.calls.includes("account.erase:refused")) {
-          rig.calls.push("account.erase:refused");
-          throw new ApiError(403, "step_up_required", "recent two-factor authentication required");
-        }
         rig.calls.push("account.erase");
         return { erased: true, retained: "the accounts row", subscription: "none" };
       },
@@ -113,6 +110,10 @@ vi.mock("../app/api-client", () => {
 let roots: Root[] = [];
 
 beforeEach(() => {
+  bindApiOwner(null);
+  resetSessionTruthForTests();
+  document.cookie = `tf_owner=${rig.accountId}; Path=/`;
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
   rig.calls = [];
   rig.webauthn = false;
   rig.methods = ["totp"];
@@ -129,6 +130,10 @@ afterEach(async () => {
   }
   roots = [];
   document.body.innerHTML = "";
+  document.cookie = "tf_owner=; Max-Age=0; Path=/";
+  bindApiOwner(null);
+  resetSessionTruthForTests();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -165,7 +170,7 @@ async function submit(form: Element): Promise<void> {
 
 /** Mount the pane, press Delete, and stop at the prompt a closed window opens — where the defect lives. */
 async function toTheFactorStep(): Promise<HTMLElement> {
-  const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
+  const { DeleteAccountRoute } = await import("../app/(product)/account/delete/DeleteAccountRoute.js");
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -178,45 +183,38 @@ async function toTheFactorStep(): Promise<HTMLElement> {
         messages: en,
         timeZone: "UTC",
         now: new Date("2026-09-14T09:00:00.000Z"),
-        children: h(AccountSection),
+        children: h(DeleteAccountRoute),
       }),
     );
   });
 
-  await waitFor(() => container.querySelector("#acct-typed") != null, "the facts step");
-  await type(container.querySelector<HTMLInputElement>("#acct-typed")!, "person@example.test");
-  await submit(container.querySelector("form.acct-confirm")!);
+  const address = "person@example.test";
+  const label = en.deleteAccount.typeLabel.replace("{email}", address);
+  await waitFor(() => queryByRole(container, "textbox", { name: label }) !== null, "the facts step");
+  await type(getByRole<HTMLInputElement>(container, "textbox", { name: label }), address);
+  await click(getByRole(container, "button", { name: en.deleteAccount.begin }));
 
-  await waitFor(
-    () => container.querySelector('[data-testid="step-up-prompt"]') != null,
-    "the step-up prompt",
-  );
-  expect(rig.calls, "the press tried the erase before asking for a factor").toContain("account.erase:refused");
+  await waitFor(() => queryByRole(container, "dialog") !== null, "the step-up prompt");
+  expect(rig.calls, "the delete page requires a factor before sending the erase").not.toContain("account.erase");
   return container;
 }
 
 /** The prompt's Cancel — by its own label, never by position. */
 function cancelControl(container: HTMLElement): HTMLButtonElement {
-  const found = [...container.querySelectorAll<HTMLButtonElement>("button")]
-    .filter((b) => b.textContent?.trim() === en.devices.cancel);
-  expect(found, "exactly one Cancel control at the prompt").toHaveLength(1);
-  return found[0]!;
+  return within(getByRole(container, "dialog")).getByRole<HTMLButtonElement>("button", { name: en.stepUp.cancel });
 }
 
 /** Press whichever control this arm verifies with, leaving the verify response in flight. */
 async function pressVerify(container: HTMLElement, arm: "webauthn" | "totp"): Promise<void> {
+  const prompt = within(getByRole(container, "dialog"));
   if (arm === "webauthn") {
-    await waitFor(
-      () => [...container.querySelectorAll("button")].some((b) => b.textContent?.trim() === en.devices.stepUpPasskey),
-      "the passkey control",
-    );
-    const button = [...container.querySelectorAll("button")]
-      .find((b) => b.textContent?.trim() === en.devices.stepUpPasskey)!;
-    await click(button);
+    await waitFor(() => prompt.queryByRole("button", { name: en.stepUp.passkey }) !== null, "the passkey control");
+    await click(prompt.getByRole("button", { name: en.stepUp.passkey }));
   } else {
-    await waitFor(() => container.querySelector("#stepup-code") != null, "the code field");
-    await type(container.querySelector<HTMLInputElement>("#stepup-code")!, "123456");
-    await submit(container.querySelector("#stepup-code")!.closest("form")!);
+    await waitFor(() => prompt.queryByRole("textbox", { name: en.stepUp.codeLabel }) !== null, "the code field");
+    const code = prompt.getByRole<HTMLInputElement>("textbox", { name: en.stepUp.codeLabel });
+    await type(code, "123456");
+    await submit(code.closest("form")!);
   }
   await waitFor(() => rig.settle != null, `the ${arm} verify to be in flight`);
 }
@@ -260,9 +258,9 @@ describe("Cancel during the verify cancels the erase", () => {
         "the person pressed Cancel before the check finished: DELETE /account must never be sent",
       ).not.toContain("account.erase");
       expect(container.textContent, "and the pane must SAY nothing was erased")
-        .toContain(en.account.cancelledNothingErased);
+        .toContain(en.deleteAccount.cancelledNothingErased);
       expect(container.textContent, "the erasure receipt must not be shown either")
-        .not.toContain(en.account.doneTitle);
+        .not.toContain(en.deleteAccount.doneTitle.replace(/\.$/, ""));
     }, 20000);
   }
 
@@ -270,7 +268,7 @@ describe("Cancel during the verify cancels the erase", () => {
   it("the prompt offers no recovery code, and nothing at the erase can verify one", async () => {
     rig.methods = ["totp"];
     const container = await toTheFactorStep();
-    const promptText = container.querySelector('[data-testid="step-up-prompt"]')!.textContent ?? "";
+    const promptText = getByRole(container, "dialog").textContent ?? "";
     expect(promptText, "a recovery-code door at a prompt that cannot take one").not.toMatch(/recovery/i);
     expect(rig.calls, "the erase signed in to confirm").not.toContain("login");
     expect(rig.calls).not.toContain("recoveryVerify");
@@ -285,11 +283,11 @@ describe("Cancel during the verify cancels the erase", () => {
     await waitFor(() => rig.calls.includes("account.erase"), "the erase call");
     expect(rig.calls, "an uncancelled ceremony erases — this is the control").toContain("account.erase");
     await waitFor(
-      () => container.textContent!.includes(en.account.doneTitle),
+      () => container.textContent!.includes(en.deleteAccount.doneTitle.replace(/\.$/, "")),
       "the erasure receipt",
     );
     expect(container.textContent, "and it does not claim a cancellation that did not happen")
-      .not.toContain(en.account.cancelledNothingErased);
+      .not.toContain(en.deleteAccount.cancelledNothingErased);
   }, 20000);
 
   /**
@@ -297,8 +295,8 @@ describe("Cancel during the verify cancels the erase", () => {
    * explaining the discard are both a person who does not know whether their account exists.
    */
   it("the sentence is the catalogue's own string, rendered, in English and German", async () => {
-    const enText = (en.account as Record<string, string>).cancelledNothingErased;
-    const deText = (de.account as Record<string, string>).cancelledNothingErased;
+    const enText = en.deleteAccount.cancelledNothingErased;
+    const deText = de.deleteAccount.cancelledNothingErased;
     expect(enText, "en.json carries the sentence").toBeTruthy();
     expect(deText, "de.json carries the sentence as RAW TEXT").toBeTruthy();
     expect(deText, "the German is translated, not the English copied").not.toBe(enText);
@@ -309,10 +307,8 @@ describe("Cancel during the verify cancels the erase", () => {
     await click(cancelControl(container));
     await landTheVerify();
 
-    const paragraph = [...container.querySelectorAll("p")]
-      .find((p) => p.textContent?.trim() === enText);
-    expect(paragraph, "the sentence is a rendered paragraph of the pane").toBeTruthy();
-    expect(paragraph!.getAttribute("role"), "and it is announced").toBe("status");
+    const announced = getByRole(container, "alert");
+    expect(announced.textContent, "the page announces the cancellation").toContain(enText);
   }, 20000);
 });
 
@@ -324,6 +320,11 @@ describe("Cancel during the verify cancels the erase", () => {
  * censusing an empty set if it is not. A census that cannot find its corpus covers nothing.
  */
 const APP = `${process.cwd()}/apps/webapp/app`;
+/** The behaviour moved out of the shell: read with it, named from the repository's root. */
+const LOGIC = `${process.cwd()}/packages/app-logic/src`;
+/** The letter's body, moved out of the web app: read with it, named from the repository's root. */
+const BODY = `${process.cwd()}/packages/letter-body/src`;
+const siteName = (abs: string): string => (abs.startsWith(APP) ? abs.slice(APP.length + 1) : abs.slice(process.cwd().length + 1));
 
 /**
  * The SEAM every one of these ceremonies passes through: an awaited second-factor verify. What
@@ -387,11 +388,11 @@ function walk(dir: string, out: string[] = []): string[] {
  */
 const PINNED: Record<string, { gate: "generation" | "unmount" | "reversible" | "the login itself"; act: string }> = {
   "(product)/mailbox/StepUpPrompt.tsx": { gate: "generation", act: "runs the verb its host parked: an erase, a mailbox write, a desktop link, a device verb" },
-  "(product)/login/LoginScreen.tsx": { gate: "the login itself", act: "signs in" },
+  "(product)/login/use-sign-in-door.ts": { gate: "the login itself", act: "signs in" },
 };
 
 /** Where the mechanism lives: one hook, and the prompt every confirm parks behind calls it. */
-const HOOK = `${APP}/(product)/ceremony-generation.ts`;
+const HOOK = `${process.cwd()}/packages/app/src/doors/step-up/ceremony-generation.ts`;
 
 describe("The census of post-verify acts in apps/webapp/app", () => {
   /**
@@ -424,8 +425,8 @@ describe("The census of post-verify acts in apps/webapp/app", () => {
 
   it("every post-verify site in the tree is classified, and no unclassified one appears", () => {
     expect(existsSync(APP), `the census corpus must exist at ${APP} (run vitest from the repo root)`).toBe(true);
-    const sites = walk(APP).flatMap((abs) =>
-      postVerifySites(readFileSync(abs, "utf8"), abs.slice(APP.length + 1)),
+    const sites = [...walk(APP), ...walk(LOGIC), ...walk(BODY)].flatMap((abs) =>
+      postVerifySites(readFileSync(abs, "utf8"), siteName(abs)),
     );
     expect(sites.length, "the census found the ceremonies").toBeGreaterThan(0);
     const unpinned = [...new Set(sites.map((s) => s.file))].filter((f) => !(f in PINNED));
@@ -433,8 +434,8 @@ describe("The census of post-verify acts in apps/webapp/app", () => {
   });
 
   it("every post-verify act but the sign-in is gated on the ceremony's generation, and the pin may only FALL", () => {
-    const sites = walk(APP).flatMap((abs) =>
-      postVerifySites(readFileSync(abs, "utf8"), abs.slice(APP.length + 1)),
+    const sites = [...walk(APP), ...walk(LOGIC), ...walk(BODY)].flatMap((abs) =>
+      postVerifySites(readFileSync(abs, "utf8"), siteName(abs)),
     );
     const files = [...new Set(sites.map((s) => s.file))].sort();
     expect(files.length, "the pinned remainder may only fall").toBeLessThanOrEqual(
@@ -442,7 +443,7 @@ describe("The census of post-verify acts in apps/webapp/app", () => {
     );
     const ungated = files.filter((f) => PINNED[f]!.gate !== "generation");
     expect(ungated, "the sign-in is the one act that IS the ceremony").toEqual([
-      "(product)/login/LoginScreen.tsx",
+      "(product)/login/use-sign-in-door.ts",
     ]);
 
     // ONE mechanism, in one module: the counter, the comparison and the spend live here and

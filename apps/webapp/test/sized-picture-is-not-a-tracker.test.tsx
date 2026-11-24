@@ -11,10 +11,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { COPY, MessageBody } from "../app/components/MessageBody";
-import type { BlockNotice } from "../app/components/BlockNotice";
-import { DEFERRED_SRC_ATTR } from "../app/components/proxied-images";
+import { COPY, MessageBody } from "../../../packages/letter-body/src/MessageBody";
+import type { BlockNotice } from "../../../packages/letter-body/src/BlockNotice";
+import { DEFERRED_SRC_ATTR } from "../../../packages/letter-body/src/proxied-images";
 import { useRemoteImages } from "../app/shell/remote-images";
+import { WEB_IMAGES } from "../app/(product)/mailbox/image-wire";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = React.createElement;
@@ -62,8 +63,9 @@ interface Opts { mode: "auto" | "manual"; loadPixels?: boolean; withNotice?: boo
 
 /** The pane's four lines over the real consent hook, as `remote-images.test.tsx` mounts them. */
 function Harness({ messageId, html, mode, loadPixels = false, withNotice = false }: Opts & { messageId: string; html: string }) {
-  const chrome = useRemoteImages({ onFailed: () => {}, mode, loadPixels });
+  const chrome = useRemoteImages({ onFailed: () => {}, mode, loadPixels, wire: WEB_IMAGES });
   return h(MessageBody, {
+    owner: null,
     text: "plain",
     html,
     remoteLoaded: (chrome?.auto ?? false) || (chrome?.consented(messageId) ?? false),

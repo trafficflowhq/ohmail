@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -20,7 +21,8 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
-const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap");
+const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
+const { KeymapProvider } = await import("../../../test/support/keymap-provider");
 
 let roots: Root[] = [];
 let foreign: Array<() => void> = [];
@@ -68,7 +70,7 @@ afterEach(async () => {
 
 /** The shipped shell, rendered the way the App Router renders it: React's root IS `document`. */
 async function shellOnDocument(): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const root = createRoot(document as unknown as Element);
   roots.push(root);
@@ -82,16 +84,18 @@ async function shellOnDocument(): Promise<void> {
           now: new Date("2026-08-02T09:00:00.000Z"),
           children: h(ThemeProvider, {
             storageKey: null,
-            children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+            children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
           }),
         }))),
     );
   });
   for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
+  await waitFor(() => within(document.body).queryByRole("main") !== null, "the mail frame never opened");
 }
 
 async function waitFor(cond: () => boolean, what: string): Promise<void> {
-  for (let i = 0; i < 40; i += 1) {
+  const until = Date.now() + 2_000;
+  while (Date.now() < until) {
     if (cond()) return;
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   }
@@ -119,14 +123,17 @@ async function typeInto(input: HTMLInputElement, value: string): Promise<void> {
   });
 }
 
-const compose = (): Element | null => document.querySelector(".view-compose");
-const suggestions = (): number => document.querySelectorAll(".view-compose .rcp-opt").length;
+const compose = () => within(document.body).queryByRole("region", { name: "New message" });
+const suggestions = () => compose() ? within(compose()!).queryAllByRole("option").length : 0;
+const toField = () => within(compose()!).getByRole<HTMLInputElement>("combobox", { name: "To" });
+const editor = () => within(compose()!).queryByRole("textbox", { name: messages.write.text });
+const linkCard = () => within(document.body).queryByRole("dialog", { name: "Link" });
 
 /** Open Compose, type into To until the address suggestions show, and hand back the field. */
 async function suggestionsOpen(): Promise<HTMLInputElement> {
   await press(document, "c");
   await waitFor(() => compose() != null, "`c` did not open Compose");
-  const to = document.querySelector<HTMLInputElement>("#compose-to")!;
+  const to = toField();
   for (const prefix of ["a", "e", "m", "s"]) {
     await typeInto(to, prefix);
     if (suggestions() > 0) return to;
@@ -140,7 +147,7 @@ async function openBody(): Promise<void> {
   await press(document, "c");
   await waitFor(() => compose() != null, "`c` did not open Compose");
   await waitFor(
-    () => document.querySelector(".compose-editor [contenteditable=true]") != null,
+    () => editor() != null,
     "the editor never mounted",
   );
 }
@@ -156,12 +163,12 @@ describe("Escape in the address suggestions closes the suggestions, not the mess
     expect(suggestions(), "Escape left the address suggestions open").toBe(0);
     expect(compose(), "one Escape in the suggestions closed the whole compose view").not.toBeNull();
 
-    await press(document.querySelector("#compose-to")!, "Escape");
+    await press(toField(), "Escape");
     await waitFor(() => compose() == null, "the second Escape did not close Compose");
 
     await press(document, "c");
     await waitFor(() => compose() != null, "`c` did not reopen Compose");
-    expect(document.querySelector<HTMLInputElement>("#compose-to")!.value, "closing lost the draft")
+    expect(toField().value, "closing lost the draft")
       .toBe(typed);
   });
 
@@ -169,23 +176,27 @@ describe("Escape in the address suggestions closes the suggestions, not the mess
     // The same field shape one row down: LinkPopover prevents and stops Escape and nothing else.
     await shellOnDocument();
     await openBody();
-    const link = document.querySelector<HTMLButtonElement>(".compose-editor .rte-bar button[aria-haspopup='dialog']")!;
+    const letter = within(compose()!);
+    if (!letter.queryByRole("button", { name: messages.write.marks.link })) {
+      await act(async () => { letter.getByRole("button", { name: messages.write.marks.show }).click(); });
+    }
+    const link = letter.getByRole("button", { name: messages.write.marks.link });
     await act(async () => { link.click(); });
-    await waitFor(() => document.querySelector(".rte-linkpop input") != null, "Link did not open the popover");
+    await waitFor(() => linkCard() != null, "Link did not open the popover");
 
-    await press(document.querySelector(".rte-linkpop input")!, "Escape");
+    await press(within(linkCard()!).getByRole("textbox", { name: "Address" }), "Escape");
     await settle();
-    expect(document.querySelector(".rte-linkpop"), "Escape left the link popover open").toBeNull();
+    expect(linkCard(), "Escape left the link popover open").toBeNull();
     expect(compose(), "Escape in the link popover closed the whole compose view").not.toBeNull();
   });
 
   it("⌘K in the message body is the editor's: the link popover opens and the palette does not", async () => {
     await shellOnDocument();
     await openBody();
-    await press(document.querySelector(".compose-editor [contenteditable=true]")!, "k", { metaKey: true });
+    await press(editor()!, "k", { metaKey: true });
     await settle();
-    expect(document.querySelector(".palette"), "⌘K in the body also opened the command palette").toBeNull();
-    expect(document.querySelector(".rte-linkpop"), "⌘K in the body did not open the link popover").not.toBeNull();
+    expect(within(document.body).queryByRole("dialog", { name: "Command palette" }), "⌘K in the body also opened the command palette").toBeNull();
+    expect(linkCard(), "⌘K in the body did not open the link popover").not.toBeNull();
   });
 });
 
@@ -245,7 +256,7 @@ describe("the keymap leaves alone a key a field has handled", () => {
  */
 describe("⌘↵ in the message body stays Send's", () => {
   it("the editor claims neither spelling, the binding runs, and no line break is written", async () => {
-    const { RichEditor } = await import("../app/shell/RichEditor");
+    const { MailRichEditor } = await import("@ohmail/app/mail");
     const ran: string[] = [];
     let html = "";
     function Body() {
@@ -254,7 +265,7 @@ describe("⌘↵ in the message body stays Send's", () => {
       ], "view");
       const [v, setV] = React.useState({ text: "hi", html: "<p>hi</p>" });
       html = v.html ?? "";
-      return h(RichEditor, { value: v, onChange: setV, ariaLabel: "Message" });
+      return h(MailRichEditor, { value: v, onChange: setV, label: "Message", placeholder: "", editable: true, focusAtMount: false, onHandle: () => {} });
     }
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -265,8 +276,8 @@ describe("⌘↵ in the message body stays Send's", () => {
         locale: "en", messages, timeZone: "UTC", children: h(KeymapProvider, null, h(Body)),
       }));
     });
-    await waitFor(() => host.querySelector(".rte-surface") != null, "the editor never mounted");
-    const surface = host.querySelector<HTMLElement>(".rte-surface")!;
+    await waitFor(() => within(host).queryByRole("textbox", { name: "Message" }) != null, "the editor never mounted");
+    const surface = within(host).getByRole("textbox", { name: "Message" });
     const ctrl = await press(surface, "Enter", { ctrlKey: true });
     const meta = await press(surface, "Enter", { metaKey: true });
     expect(ran, "⌘↵ in the message body no longer reached Send").toEqual(["send", "send"]);

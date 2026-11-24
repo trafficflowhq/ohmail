@@ -1,0 +1,198 @@
+{
+  "component": "Page",
+  "state": "refused",
+  "look": "ohmarchy-dark-desktop",
+  "place": "window",
+  "target": [360, 240, 720, 420],
+  "clip": [360, 240, 720, 420],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "28px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "normal",
+      "letterSpacing": "-0.28px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(26, 27, 38)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(26, 27, 38)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "12px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "28px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "29.68px",
+      "letterSpacing": "-0.28px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "borderBottom": "1px dotted rgb(169, 177, 214)", "placeholder": "rgb(141, 150, 188)" },
+    { "ink": "stroke rgb(169, 177, 214) 1.6px square miter 4; shapes 3 93b4b80b8950" },
+    { "boxShadow": "color(srgb 0.101961 0.105882 0.14902 / 0.5) 0px 0px 0px 1px inset" },
+    { "backgroundColor": "rgb(122, 162, 247)" }
+  ],
+  "nodes": [
+    {
+      "role": "banner",
+      "name": "",
+      "box": [360, 240, 720, 64],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "32px",
+        "paddingBottom": "0px",
+        "paddingLeft": "32px",
+        "borderColor": "rgb(169, 177, 214)"
+      }
+    },
+    {
+      "role": "textbox",
+      "name": "Password",
+      "box": [392, 349.7, 117.9, 38],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "28px",
+        "fontWeight": "700",
+        "lineHeight": "30.8px",
+        "letterSpacing": "-0.28px",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "1.12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "1.12px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "state": ["shows its hint"],
+      "text": [{ "said": "type it", "type": 0, "shown": true }],
+      "surfaces": [{ "box": [392, 349.7, 117.9, 38], "paint": 0 }]
+    },
+    {
+      "role": "alert",
+      "name": "",
+      "box": [392, 399.7, 494, 36.4],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "600",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        {
+          "said": "This link has expired or was already used. Sign in with your email address and password and we send you a new one.",
+          "type": 1
+        }
+      ],
+      "surfaces": [{ "box": [392, 401.7, 18, 18], "paint": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Sign in ↵",
+      "box": [392, 502.2, 112.6, 46],
+      "drawn": {
+        "color": "rgb(26, 27, 38)",
+        "backgroundColor": "rgb(192, 202, 245)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "13px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "16px",
+        "paddingBottom": "0px",
+        "paddingLeft": "16px",
+        "borderColor": "rgb(26, 27, 38)"
+      },
+      "text": [
+        { "said": "Sign in", "type": 2 },
+        { "said": "↵", "type": 3 }
+      ],
+      "surfaces": [{ "box": [470.6, 516.2, 18, 18], "paint": 2 }]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "Confirm my email address with password", "type": 4 },
+      { "said": "It is the password you chose when you signed up.", "type": 1 }
+    ],
+    "surfaces": [{ "box": [512.1, 365.9, 11.8, 11.8], "paint": 3 }]
+  }
+}

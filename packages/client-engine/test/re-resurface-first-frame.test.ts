@@ -1,19 +1,15 @@
+import type { EngineMessage, EngineMutation, MessageStateDTO, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   HttpAdapter,
   OhmailEngine,
   ohboxView,
   triagePiles,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type MessageStateDTO,
-  type MutationOutcome,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * RE-RESURFACE IS INSTANT AND IT STAYS — "resurface tomorrow" on a row that is resurfaced NOW.

@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
+import type { EngineDraft } from "@ohmail/wire";
 import { describe, expect, it, vi } from "vitest";
-import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import {
   copyGoes, createLive, dropCopy, handleOf, landingOf, twins, type CreateClaim, type EditorNow,
-} from "../app/shell/draft-creates";
-import { accountSigOf } from "../app/shell/reply-autosave";
+} from "@ohmail/app-logic/writing/draft-creates";
+import { accountSigOf } from "@ohmail/app-logic/writing/reply-autosave";
 
 /**
  * WHAT A LANDED CREATE IS — the one table both editors decide by (`draft-creates.ts`), and the door's
@@ -80,9 +81,30 @@ describe("createLive and dropCopy", () => {
   });
   it("a copy is deleted, never the row the send went from (S(2))", () => {
     const e = engineWith({});
-    dropCopy(e, "m1", "r2", "r1");
-    dropCopy(e, "m1", "r1", "r1");
+    dropCopy(e, "m1", "r2", "r1", null);
+    dropCopy(e, "m1", "r1", "r1", null);
     expect(e.mutate.mock.calls).toEqual([[{ kind: "draft_discard", draftId: "r2" }]]);
+  });
+  it("never deletes a row its own scope's send record names, whatever another scope or the storage owner holds", async () => {
+    const { claimSendLock } = await import("@ohmail/app-logic/writing/send-lock");
+    const { setStorageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
+    const A = "mailbox-aaaa1111";
+    const B = "mailbox-bbbb2222";
+    window.localStorage.clear();
+    try {
+      setStorageOwner(B);
+      claimSendLock({
+        v: 1, lane: "m1", key: "idem-a", at: Date.now(), draftId: "r-named", subject: "draft:r-named", session: "s-a", fp: "fp-a",
+      }, () => false, A);
+      const e = engineWith({});
+      dropCopy(e, "m1", "r-named", null, A);
+      expect(e.mutate.mock.calls, "a row its own send record names was deleted").toEqual([]);
+      dropCopy(e, "m1", "r-named", null, B);
+      expect(e.mutate.mock.calls, "another scope's record held a copy back").toEqual([[{ kind: "draft_discard", draftId: "r-named" }]]);
+    } finally {
+      setStorageOwner(null);
+      window.localStorage.clear();
+    }
   });
 });
 

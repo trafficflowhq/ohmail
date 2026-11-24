@@ -2,7 +2,7 @@ import {
   liveBody, type AttachmentAdapter, type AttachmentSink, type DownloadAllInput, type OpenAdapter,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer, answerBuilt, jsonResponse } from "../responses.js";
 import { makeOpenAdapter } from "../attachments-adapter.js";
 import { liveBodyReader } from "../live-body-door.js";
 import { mailServerRefusal } from "../mail-server-refusal.js";
@@ -123,11 +123,12 @@ export const attachmentRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/messages/:id/attachments",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const items = await attachments(deps).listForMessage(serviceContext(deps, req), params.id!);
-      return jsonResponse({ items });
+      return answer<"GET /messages/:id/attachments">()({ items });
     },
   },
   {
@@ -143,6 +144,7 @@ export const attachmentRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/attachments/:id",
+    wire: true,
     relay: true,
     // `connection`: it opens IMAP against the user's own server and streams the bytes
     // back. All three byte routes in this file are `raw`, and `raw` used to mean OUTSIDE the
@@ -155,7 +157,7 @@ export const attachmentRoutes: Route[] = [
         const { contentType, filename, body } = await attachments(deps).fetchBytes(
           serviceContext(deps, req), params.id!, { openAdapter: makeOpenAdapter(deps) },
         );
-        return new Response(toBody(body), {
+        return answerBuilt<"GET /attachments/:id">(new Response(toBody(body), {
           status: 200,
           headers: {
             "Content-Type": contentType,
@@ -170,7 +172,7 @@ export const attachmentRoutes: Route[] = [
             // Keyed on the session as /img is: the next account on this browser never gets these bytes.
             "Vary": "Cookie",
           },
-        });
+        }));
       } catch (err) {
         // What the person's mail server did is its typed 424; everything else is the envelope's.
         throw mailServerRefusal(err) ?? err;
@@ -180,6 +182,7 @@ export const attachmentRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/messages/:id/attachments/download-all",
+    wire: true,
     relay: true,
     cost: "connection",
     options: { raw: true, middleware: BYTE_ROUTE_MIDDLEWARE },   // a zip assembled synchronously from IMAP
@@ -188,7 +191,7 @@ export const attachmentRoutes: Route[] = [
         const { zip, filename } = await attachments(deps).downloadAll(
           serviceContext(deps, req), { messageId: params.id! }, { openAdapter: namedOpener(makeOpenAdapter(deps)) },
         );
-        return new Response(toBody(zip), {
+        return answerBuilt<"POST /messages/:id/attachments/download-all">(new Response(toBody(zip), {
           status: 200,
           headers: {
             "Content-Type": "application/zip",
@@ -200,7 +203,7 @@ export const attachmentRoutes: Route[] = [
             // `nosniff` is the belt to that braces.
             "X-Content-Type-Options": "nosniff",
           },
-        });
+        }));
       } catch (err) {
         // A refused open or part is an `_errors.txt` line inside the archive (`namedOpener`), so
         // what reaches here is mostly ours; the same arm keeps the three doors one reading.

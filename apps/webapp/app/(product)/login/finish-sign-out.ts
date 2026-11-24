@@ -1,6 +1,7 @@
 import { signOutTrouble, type SignOutTrouble } from "../../sign-out-trouble";
-import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
-import { readOwnerMarker } from "../../shell/owner-cookie";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "@ohmail/app-logic/session/confirm-schedule";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
+import { readSessionFamily } from "../../signed-out-signal";
 import { SETTLE_DEADLINE_MS } from "../../session-refresh";
 
 /**
@@ -21,6 +22,7 @@ export type FinishOutcome = "confirmed" | "refused" | "stopped" | "moved" | "can
 export interface Finish {
   outcome: FinishOutcome;
   said: SignOutTrouble | null;
+  cleanup?: Promise<SignOutTrouble | null>;
 }
 
 /** The jar still says this browser's sign-out is unconfirmed: the one state the ladder may end. */
@@ -39,13 +41,14 @@ export async function finishPendingSignOut({ isCancelled, attempts = CONFIRM_ATT
    */
   mayEnd?: () => boolean;
 }): Promise<Finish> {
+  const { readPendingSignOut, signOut } = await import("../../sign-out");
+  const pending = readPendingSignOut();
+  const family = readSessionFamily();
+  const stillOwns = () => mayEnd() && readSessionFamily() === family;
   for (let n = 1; ; n += 1) {
     if (isCancelled()) return { outcome: "cancelled", said: null };
-    // Loaded here, not with the page: the wipe and the engine behind it are not the form's to carry.
-    const { signOut } = await import("../../sign-out");
-    if (isCancelled()) return { outcome: "cancelled", said: null };
-    if (!mayEnd()) return { outcome: "moved", said: null };
-    const out = signOut(undefined, { mayProceed: mayEnd });
+    if (!stillOwns()) return { outcome: "moved", said: null };
+    const out = signOut(undefined, { mayProceed: stillOwns, pending });
     attemptOut = out;
     let result;
     try {
@@ -56,7 +59,11 @@ export async function finishPendingSignOut({ isCancelled, attempts = CONFIRM_ATT
     if (result === null) return { outcome: "moved", said: null };
     const said = signOutTrouble(result);
     if (said === null) return { outcome: "confirmed", said: null };
-    if (result.serverRefused === null) return { outcome: "stopped", said };
+    if (result.serverRefused === null) {
+      return said.key === "signOutCleanupPending" && result.cacheCleanup
+        ? { outcome: "stopped", said, cleanup: result.cacheCleanup.settled.then(() => signOutTrouble(result)) }
+        : { outcome: "stopped", said };
+    }
     if (n >= attempts) return { outcome: "refused", said };
     await new Promise<void>((resolve) => { setTimeout(resolve, nextConfirmDelay(n, null)); });
   }

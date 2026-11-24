@@ -1,13 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
   type MutationStatus,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { existsSync, readFileSync } from "node:fs";
@@ -25,7 +22,7 @@ import {
   senderScreening,
   worstStatus,
   type ScreeningPlan,
-} from "../app/shell/sender-screening";
+} from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * CHANGING A SENDER'S SCREENING FROM ANYWHERE — what goes on the WIRE.
@@ -1165,20 +1162,20 @@ describe("autoUnsubscribeDoor — what this build says, and what it lets you cha
   });
 
   it("the shell reads BOTH halves from this one rule, so they cannot drift apart again", () => {
-    /* From the repo root, which is where this suite runs; the existence check refuses a wrong
-       cwd by name rather than letting an unreadable file pass for an empty one. */
-    const at = join(process.cwd(), "apps/webapp/app/shell/AppShell.tsx");
-    expect(existsSync(at), `the shell is not at ${at} — this census read nothing`).toBe(true);
-    const shell = withoutComments(readFileSync(at, "utf8"));
-    expect(shell).toContain("autoUnsubscribeDoor({");
-    expect(shell, "the door is not told whether any mailbox's provider can confirm a sender").toContain(
-      "confirms: autoUnsubscribeConfirms(facts),",
-    );
-    expect(shell, "the disclosure is a second expression again").toContain(
-      "const autoUnsubscribeDiscloses = autoUnsub.discloses;",
-    );
-    expect(shell, "the switch is gated on something other than the rule").toContain(
-      "autoUnsubscribeSection={!autoUnsub.control ? undefined : (",
-    );
+    const read = (path: string): string => {
+      const at = join(process.cwd(), path);
+      expect(existsSync(at), `the shell owner is not at ${at} — this census read nothing`).toBe(true);
+      return withoutComments(readFileSync(at, "utf8"));
+    };
+    const screener = read("packages/app-logic/src/screener/live.ts");
+    const pane = read("apps/webapp/app/(product)/mailbox/WebScreenerPane.tsx");
+    const settings = read("packages/app/src/settings/browser/ScreenerSettings.tsx");
+    expect(screener).toContain("const { discloses } = autoUnsubscribeDoor({");
+    expect(screener).toContain("confirms: autoUnsubscribeConfirms(facts),");
+    expect(screener).toContain("autoUnsubscribe: discloses,");
+    expect(settings, "the switch must read the same rule as the disclosure").toContain("autoUnsubscribeDoor({");
+    expect(settings, "the switch must be gated by the control answer").toMatch(/return from && control\s*\?/);
+    expect(pane, "the mounted pane uses that control").toContain("const unsubscribe = useUnsubscribeSetting();");
+    expect(pane).toMatch(/\bunsubscribe,\s*review:/);
   });
 });

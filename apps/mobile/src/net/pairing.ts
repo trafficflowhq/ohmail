@@ -8,27 +8,37 @@
  * measured before the burn ({@link resolveApiBase}, `net/server-base.ts`);
  * {@link resolveAccountId} takes the server's word — a door naming no account is refused.
  */
-import { clientHeaders, isSessionRefusal, originNeedsPin, type OhmailEngine, type ScheduleFilesAnswer, type SqlMirrorStore } from "@ohmail/client-engine";
+import {
+  clientHeaders, isSessionRefusal, mirrorDbName, originNeedsPin, pairLink, type OhmailEngine, type ScheduleFilesAnswer,
+  type SqlMirrorStore,
+} from "@ohmail/client-engine";
 import {
   FORWARD_PARTS_HELLO_MS,
+  IDENTITY_PROBE_DEADLINE_MS,
   bootEngine,
   forgetMirror,
+  heldWhileOffline,
   helloFeatures,
+  identityProbe,
   localEngineTransport,
+  mirrorExists,
   mirrorOwnerKey,
   normalizeOrigin,
   LOCAL_ENGINE_ORIGIN,
   type HelloFeatures,
   type IdentityVerdict,
+  type LocalEngineDoor,
   type MobileEngineDeps,
 } from "../engine/boot";
 import {
   holdStandaloneDoor, releaseStandaloneLaunch, takeStandaloneLaunch, type SettingsKeptHere,
 } from "../engine/organizer-session";
 import type { ReopenOutcome, StandaloneEngine } from "../engine/standalone-door";
+import { payShellWipe, type ShellStores } from "../shell/take-back";
+import { oldCopyDoor, type OldCopyDoor } from "../shell/old-copy";
 import { accountRows } from "../state/account-rows";
 import { ServerProfileStore, type PendingSignOut, type ServerProfile } from "../state/servers";
-import type { BearerManagerRN, FetchLike, RefreshVault, SessionDeath, SignOutOutcome } from "./bearer";
+import { CREDENTIAL_CHECK, type BearerManagerRN, type FetchLike, type RefreshVault, type SessionDeath, type SignOutOutcome } from "./bearer";
 import { bearers as processBearers, type BearerRegistry } from "./bearer-registry";
 import { deathRefusal } from "./session-death";
 import { withAccessLock } from "./access-lock";
@@ -45,6 +55,7 @@ import { Copy } from "../copy";
 import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { dropWakeRow, type UnifiedPushDistributor } from "./push.js";
 import { resolveApiBase } from "./server-base.js";
+import type { HelloAnswer as WireHelloAnswer, Untrusted } from "@ohmail/wire";
 
 import { apiBaseOf } from "./request-base";
 /** The hosted service — the managed picker card negotiates against this and nothing else. */
@@ -138,10 +149,7 @@ export async function negotiate(fetchImpl: FetchLike, origin: string): Promise<N
     return { kind: "unreachable", detail: faultDetail(err) };
   }
   if (!res.ok) return { kind: "unreachable", detail: refuse("helloStatus", res.status) };
-  let body: {
-    product?: unknown; flavor?: unknown; apiVersion?: unknown; needsSetup?: unknown;
-    features?: { pairing?: unknown };
-  };
+  let body: Untrusted<WireHelloAnswer>;
   try {
     body = (await res.json()) as typeof body;
   } catch {
@@ -189,7 +197,7 @@ export function nextStep(hello: HelloAnswer): PickerStep {
  * Re-exported here rather than imported at every call site so that the screens keep one import,
  * and so this module's own header keeps documenting the token discipline it enforces.
  */
-export { parsePairLink, shortPin, type PairLink } from "@ohmail/client-engine";
+export { pairLink, parsePairLink, shortPin, type PairLink } from "@ohmail/client-engine";
 
 /* ── the picker's origin handoff ────────────────────────────────────────────────────────────── */
 
@@ -245,16 +253,28 @@ export async function resolveAccountId(
   } catch {
     /* fall through to the rows — a dead route and a dead network read the same here */
   }
-  const fromEntity = (entity: unknown): string | null => {
+  const id = await resolveAccountFromRows(fetchImpl, base, authHeaders);
+  return id === null ? null : { accountId: id, via: "rows" };
+}
+
+async function resolveAccountFromRows(
+  fetchImpl: FetchLike,
+  base: string,
+  authHeaders: () => Record<string, string>,
+  expected?: string,
+): Promise<string | null> {
+  const named = (res: Response, entity: unknown) => {
     const id = (entity as { accountId?: unknown } | undefined)?.accountId;
-    return typeof id === "string" && id !== "" ? id : null;
+    const header = expected === undefined ? null : res.headers.get("x-ohmail-account");
+    if (header !== null && header !== expected) return header;
+    return typeof id === "string" && id !== "" ? id : header;
   };
   try {
     const res = await fetchImpl(`${base}/sync/snapshot?limit=1`, { headers: authHeaders() });
     if (res.ok) {
       const body = (await res.json()) as { changes?: Array<{ entity?: unknown }> };
-      const id = fromEntity(body.changes?.[0]?.entity);
-      if (id !== null) return { accountId: id, via: "rows" };
+      const id = named(res, body.changes?.[0]?.entity);
+      if (id !== null) return id;
     }
   } catch {
     /* snapshot unavailable — the delta read below is the last word */
@@ -263,8 +283,7 @@ export async function resolveAccountId(
     const res = await fetchImpl(`${base}/sync?since=0&limit=1&types=message`, { headers: authHeaders() });
     if (res.ok) {
       const body = (await res.json()) as { changes?: { creates?: Array<{ entity?: unknown }> } };
-      const id = fromEntity(body.changes?.creates?.[0]?.entity);
-      if (id !== null) return { accountId: id, via: "rows" };
+      return named(res, body.changes?.creates?.[0]?.entity);
     }
   } catch {
     /* nothing left to ask */
@@ -498,6 +517,17 @@ export interface PairingEnv {
      */
     standDownAway: () => Promise<void>;
   };
+  /**
+   * THE SHELL'S STORES OF A SCOPE: its keeper and the web view's copy (`shell/take-back.ts`). They share the
+   * mirror's fate: every wipe of a mirror below pays them too, before the debt is cleared. A port for
+   * `distributor`'s reason (the shell's native module); absent in a build that shows mail in its own screens.
+   */
+  shell?: ShellStores;
+  calendar?: {
+    open?(id: string): Promise<void>;
+    revoke(id: string): Promise<boolean>;
+    close?(): Promise<boolean>;
+  };
   /** The slot registry (`bearer-registry.ts`). Absent: the process's own — tests pass one. */
   bearers?: BearerRegistry;
   /**
@@ -512,6 +542,14 @@ export type PairOutcome =
   | { kind: "paired"; session: ConnectedSession }
   | { kind: "refused"; reason: Refusal };
 
+/**
+ * A session for the shell's web view: the transport opened, no engine booted on this side and the
+ * old mirror never opened. What {@link connectShellById} and {@link pairForShell} answer.
+ */
+export type ShellOutcome =
+  | { kind: "shell"; session: ShellSession }
+  | { kind: "refused"; reason: Refusal; needsRepair?: boolean; died?: SessionDeath; removesCopy?: boolean };
+
 export type ConnectOutcome =
   | { kind: "connected"; session: ConnectedSession }
   /**
@@ -522,7 +560,7 @@ export type ConnectOutcome =
   | { kind: "refused"; reason: Refusal; needsRepair?: boolean; died?: SessionDeath; removesCopy?: boolean };
 
 /** A connect answered by a death of the slot's manager: said by the one function; re-paired unless it takes the copy. */
-function diedOutcome(died: SessionDeath, removesCopy: boolean): ConnectOutcome {
+function diedOutcome(died: SessionDeath, removesCopy: boolean): Exclude<ConnectOutcome, { kind: "connected" }> {
   return { kind: "refused", reason: deathRefusal(died), died, removesCopy, needsRepair: !removesCopy };
 }
 
@@ -803,10 +841,16 @@ async function endMintedPair(
  * It takes an {@link PairAdmission} rather than an origin, which is what makes the confirmation
  * structural: there is no way to reach this function from a scanned string alone.
  */
-export async function pairWithServer(
+async function pairWithServer(
   env: PairingEnv,
-  input: { admission: PairAdmission; token: string },
-): Promise<PairOutcome> {
+  /**
+   * `handoff`: the code is the sibling app's single-use handoff, spent with the verifier of the challenge this app
+   * made for it (`grant: "app-handoff"`); the phone's kind is always declared and never retried without.
+   */
+  input: { admission: PairAdmission; token: string; handoff?: { verifier: string } },
+  /** Which surface the session is for: the screens' boots the engine here, the shell's never does. */
+  to: "screens" | "shell",
+): Promise<PairOutcome | ShellOutcome> {
   const fetchImpl = pairingFetch(env);
   const { origin, pin, apiBase } = input.admission;
   const negotiatedFlavor = input.admission.flavor;
@@ -817,7 +861,7 @@ export async function pairWithServer(
    * `profiles.add` the row owns the key and this stops being used: a boot that fails must not
    * un-pin a pairing the keystore now holds.
    */
-  const refusedRedeem = (reason: Refusal): PairOutcome => {
+  const refusedRedeem = (reason: Refusal): { kind: "refused"; reason: Refusal } => {
     discardAdmission(input.admission);
     return { kind: "refused", reason };
   };
@@ -863,7 +907,9 @@ export async function pairWithServer(
     fetchImpl(`${origin}/pair/redeem`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify(input.handoff ? {
+        grant: "app-handoff", token, verifier: input.handoff.verifier, kind: env.deviceKind,
+      } : {
         grant: "device-pair",
         token,
         ...(declare && env.deviceKind ? { kind: env.deviceKind } : {}),
@@ -887,6 +933,7 @@ export async function pairWithServer(
     redeemed = await redeem(true);
     answer = await parse(redeemed);
     const kindRefused =
+      input.handoff === undefined &&
       env.deviceKind !== undefined &&
       redeemed.status === 400 &&
       answer.error?.code === "validation_failed" &&
@@ -937,6 +984,7 @@ export async function pairWithServer(
   if ((await env.profiles.pendingWipes()).some((w) => w.owner === ownerKey)) {
     try {
       await forgetMirror(env.engineDeps, ownerKey);
+      if (env.shell) await payShellWipe(env.shell, ownerKey);
       // The CLEAR is inside the refusal too, and its read-back is what makes that matter: a
       // debt that survives being cleared would be collected by a later launch against the
       // mirror this pairing is about to create, deleting the mailbox the person just
@@ -991,9 +1039,83 @@ export async function pairWithServer(
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
     ...(env.clientRelease ? { clientRelease: env.clientRelease } : {}),
   });
+  /* THE SHELL BOOTS NO ENGINE HERE: its page builds the one client engine, and the old mirror stays shut. */
+  if (to === "shell") return shellOf(await openTransport(env, profile), env.engineDeps);
   const connected = await buildSession(env, profile);
   if (connected.kind === "refused") return { kind: "refused", reason: connected.reason };
   return { kind: "paired", session: connected.session };
+}
+
+/** The screens' way in: the ceremony, then the session over the engine this layer boots. */
+function pairForScreens(env: PairingEnv, input: { admission: PairAdmission; token: string }): Promise<PairOutcome> {
+  return pairWithServer(env, input, "screens") as Promise<PairOutcome>;
+}
+export { pairForScreens as pairWithServer };
+
+/**
+ * THE SHELL'S TWO WAYS IN. The same ceremony and the same refusals as the screens' ({@link
+ * openTransport} is the one place every session is opened), and then no engine: the shell's page
+ * builds the one client engine, so a second one here would be two clients of one queue, and the old
+ * mirror stays shut until it is handed across.
+ */
+export function pairForShell(env: PairingEnv, input: { admission: PairAdmission; token: string }): Promise<ShellOutcome> {
+  return pairWithServer(env, input, "shell") as Promise<ShellOutcome>;
+}
+
+/**
+ * THE SIBLING APP'S HANDOFF, SPENT: the same ceremony as a scanned code's (the admission a probe made of the link's
+ * origin and pin, the same refusals, the same storing of the pairing), redeemed as the handoff's grant with the
+ * verifier of this app's own challenge. Only the switch's receiving step calls it, with a verifier it holds.
+ */
+export function pairByHandoff(
+  env: PairingEnv, input: { admission: PairAdmission; token: string; verifier: string }, to: "screens" | "shell",
+): Promise<PairOutcome | ShellOutcome> {
+  return pairWithServer(env, { admission: input.admission, token: input.token, handoff: { verifier: input.verifier } }, to);
+}
+
+/**
+ * THE PAIRINGS THIS PHONE HOLDS LIVE: each paired row whose credential stands, and this phone's own mailbox. An app
+ * holding any of them takes no handoff; their digests are what its switch provider answers the sibling from.
+ */
+export async function livePairings(env: Pick<PairingEnv, "profiles">): Promise<ServerProfile[]> {
+  return (await env.profiles.list()).filter((p) => p.origin === LOCAL_ENGINE_ORIGIN || p.refreshToken !== null);
+}
+
+/**
+ * THE SENDER'S HALF OF A HANDOFF, for a session on a paired door only (this phone's own mailbox mints nothing): one
+ * rotation of its refresh token that also asks for a code bound to the sibling's challenge, answered as the pairing
+ * link the code rides in (this pairing's origin and pin, the code in the fragment), or null where no code came.
+ */
+export function handoffMinter(
+  session: { readonly profile: Pick<ServerProfile, "origin" | "pin">; readonly bearer: BearerManagerRN | null; readonly standalone: boolean },
+  target: "ohmail" | "ohcal",
+): ((challenge: string) => Promise<string | null>) | undefined {
+  const { bearer } = session;
+  if (session.standalone || bearer === null) return undefined;
+  return async (challenge) => {
+    const code = await bearer.renewForHandoff({ challenge, target });
+    return code === null ? null : pairLink(session.profile.origin, code.token, session.profile.pin);
+  };
+}
+
+export async function connectShellById(env: PairingEnv, id: string): Promise<ShellOutcome> {
+  const profile = (await env.profiles.list()).find((p) => p.id === id);
+  if (profile === undefined) return { kind: "refused", reason: refuse("notPairedHere") };
+  return shellOf(await openTransport(env, profile), env.engineDeps);
+}
+
+function shellOf(opened: OpenedTransport | Exclude<ConnectOutcome, { kind: "connected" }>, deps: MobileEngineDeps): ShellOutcome {
+  return opened.kind === "paired" || opened.kind === "local" ? { kind: "shell", session: shellSessionOf(opened, deps) } : opened;
+}
+
+/** The profile's old mirror as the shell hands it across: its door, over the engine's own probe and removal. */
+function oldMirrorOf(deps: MobileEngineDeps, ownerKey: string): OldCopyDoor {
+  return oldCopyDoor({
+    ownerKey,
+    exists: () => mirrorExists(deps, ownerKey),
+    open: async () => deps.openExecutor(mirrorDbName(ownerKey)),
+    forget: () => forgetMirror(deps, ownerKey),
+  });
 }
 
 /**
@@ -1141,6 +1263,11 @@ export async function forgetProfile(
     }
   }
 
+  // The wipe remains owed until native revokes the pairing and confirms cleanup.
+  if (env.calendar && !await env.calendar.revoke(profileId).catch(() => false)) {
+    return { kind: "partial", reason: refuse("calendarCopyRemains") };
+  }
+
   // The server half is awaited and its answer shapes the result: the logout both revokes the
   // session and (hosted) takes the device's wake registration down, and reporting a forget over a
   // logout that never landed would leave both alive unsaid. A server out of reach is OWED the
@@ -1240,6 +1367,8 @@ export async function forgetProfile(
   try {
     await (opts.closed ?? Promise.resolve());
     await forgetMirror(env.engineDeps, ownerKey);
+    // The shell's keeper and the view's copy go with the mirror, read back, before the debt is cleared.
+    if (env.shell) await payShellWipe(env.shell, ownerKey);
     // INSIDE the try, because its read-back can refuse. A debt that survives being cleared is
     // collected by a later launch against whatever mirror that owner key names THEN — which,
     // after a re-pair, is the mailbox the person just re-authorized. Reporting a completed
@@ -1280,6 +1409,10 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
   const rows = await env.profiles.list();
   for (const owed of await env.profiles.pendingWipes()) {
     try {
+      if (owed.id !== "" && env.calendar && !await env.calendar.revoke(owed.id)) {
+        stillOwed.push(owed.owner);
+        continue;
+      }
       // THE SERVER HALF FIRST, while the credential to do it with still exists. A debt whose
       // profile row survives is a forget that died before its logout, and this is the only
       // moment anything can still spend that token — after the removal below there is nothing
@@ -1291,6 +1424,7 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
       // passes, so a debt whose credential half landed before the kill costs one no-op.
       if (owed.id !== "") await env.profiles.remove(owed.id);
       await forgetMirror(env.engineDeps, owed.owner);
+      if (env.shell) await payShellWipe(env.shell, owed.owner);
       // Its read-back can refuse, and a debt that survives being cleared stays owed rather than
       // being reported paid — the next launch tries again.
       await env.profiles.clearPendingWipe(owed.owner);
@@ -1516,6 +1650,129 @@ export async function connectProfileById(env: PairingEnv, id: string): Promise<C
 }
 
 /**
+ * A profile's transport, opened and not yet booted: everything a session is built from before an
+ * engine exists. The paired door hands over its manager, the transport every authenticated request
+ * rides and the measured base; the standalone door hands over the engine's own door.
+ */
+export type OpenedTransport =
+  | {
+    kind: "paired";
+    profile: ServerProfile;
+    bearer: BearerManagerRN;
+    fetch: FetchLike;
+    apiBase: string | null;
+  }
+  | { kind: "local"; profile: ServerProfile; door: LocalEngineDoor };
+
+/**
+ * THE SHELL'S SESSION: a profile's transport opened and no engine booted on this side. The shell's
+ * page builds the session's one client engine; this side keeps what a web view must never hold: the
+ * credential and its rotation, the pin, the base, and on a phone that organizes its own mailbox the
+ * engine's door. No old screen can reach one: the connection layer holds it in its own state.
+ */
+export interface ShellSession {
+  readonly profile: ServerProfile;
+  /** The rotating credential on a paired door; null on this phone's own mailbox. */
+  readonly bearer: BearerManagerRN | null;
+  /** Every request this session makes, stamped here: the manager's transport, or the engine's door. */
+  readonly fetch: FetchLike;
+  /** A request the page named, by its root-relative path: composed against this session's base. */
+  send(pathAndQuery: string, init: RequestInit): Promise<Response>;
+  readonly ownerKey: string;
+  readonly standalone: boolean;
+  /** Verify the current credential's account over native's transport. */
+  verifyIdentity(): Promise<IdentityVerdict>;
+  /** The account this session may serve to the page. Null until positively bound. */
+  boundAccount(): string | null;
+  /** Ends synchronously when native leaves this session. */
+  readonly lifetime: AbortSignal;
+  /** Retire the page's binding, including any probe still in flight. */
+  leave(): void;
+  /** The screens' old copy of this mailbox, handed to the page once (`shell/old-copy.ts`); null with no engine deps. */
+  readonly oldCopy: OldCopyDoor | null;
+}
+
+export function shellSessionOf(
+  opened: OpenedTransport,
+  deps: MobileEngineDeps | null = null,
+  deadlineMs = IDENTITY_PROBE_DEADLINE_MS,
+): ShellSession {
+  const { profile } = opened;
+  const { accountId } = profile;
+  const lifetime = new AbortController();
+  const leave = () => lifetime.abort();
+  if (opened.kind === "local") {
+    // A send pressed with no network waits in the page's outbox for it (`engine/send-waits.ts`).
+    const fetch = heldWhileOffline(localEngineTransport(opened.door).fetch, networkNow) as FetchLike;
+    const ownerKey = mirrorOwnerKey(LOCAL_ENGINE_ORIGIN, profile.accountId);
+    return {
+      profile,
+      bearer: null,
+      fetch,
+      send: (pathAndQuery, init) => fetch(`${LOCAL_ENGINE_ORIGIN}${pathAndQuery}`, init),
+      ownerKey,
+      oldCopy: deps === null ? null : oldMirrorOf(deps, ownerKey),
+      standalone: true,
+      // The engine in this app minted the bearer and serves one account: there is nothing to ask.
+      verifyIdentity: async () => ({ kind: "unverified" }),
+      boundAccount: () => lifetime.signal.aborted ? null : accountId,
+      lifetime: lifetime.signal,
+      leave,
+    };
+  }
+  const { bearer, fetch } = opened;
+  const base = apiBaseOf(profile.origin, opened.apiBase);
+  const ownerKey = mirrorOwnerKey(profile.origin, profile.accountId);
+  let verified: number | null = null;
+  let checking: Promise<IdentityVerdict> | null = null;
+  const authorized = (generation: number | null) =>
+    !lifetime.signal.aborted && generation !== null && generation === verified;
+  function verifyIdentity(): Promise<IdentityVerdict> {
+    if (lifetime.signal.aborted) return Promise.resolve({ kind: "unverified" });
+    if (checking !== null) return checking;
+    let stamped: number | null = null;
+    const probe: FetchLike = (url, init) => fetch(url, {
+      ...(init as RequestInit), credentials: "omit", signal: lifetime.signal,
+      [CREDENTIAL_CHECK]: (generation: number | null) => {
+        stamped = generation;
+        return !lifetime.signal.aborted;
+      },
+    });
+    const authHeaders = () => bearer.headers();
+    const desktopAccount = profile.flavor === "desktop-host"
+      ? () => resolveAccountFromRows(probe, base, authHeaders, accountId)
+      : undefined;
+    checking = identityProbe(probe, profile.origin, authHeaders, accountId, deadlineMs, desktopAccount)
+      .then((identity): IdentityVerdict => {
+        if (lifetime.signal.aborted || stamped === null || stamped !== bearer.credentialGeneration()) {
+          return { kind: "unverified" };
+        }
+        if (identity.kind === "mismatch") {
+          leave();
+          return { kind: "mismatch", reason: refuse("bootAccountMismatch", identity.serverSays, accountId) };
+        }
+        verified = identity.kind === "verified" ? stamped : null;
+        return { kind: identity.kind };
+      })
+      .finally(() => { checking = null; });
+    return checking;
+  }
+  return {
+    profile,
+    bearer,
+    fetch,
+    send: (pathAndQuery, init) => fetch(`${base}${pathAndQuery}`, { ...init, [CREDENTIAL_CHECK]: authorized }),
+    ownerKey,
+    oldCopy: deps === null ? null : oldMirrorOf(deps, ownerKey),
+    standalone: false,
+    verifyIdentity,
+    boundAccount: () => authorized(bearer.credentialGeneration()) ? accountId : null,
+    lifetime: lifetime.signal,
+    leave,
+  };
+}
+
+/**
  * The engine composition, fed through the manager's two seams instead of a hand-typed static
  * header — the same shape the desktop's host client uses. The manager is the slot's (the
  * registry's): a pairing's redeem put its pair there, a cold launch builds one with no access
@@ -1525,6 +1782,60 @@ async function buildSession(
   env: PairingEnv,
   profile: ServerProfile,
 ): Promise<ConnectOutcome> {
+  const opened = await openTransport(env, profile);
+  if (opened.kind === "local") return buildLocalSession(env, opened.profile, opened.door);
+  if (opened.kind !== "paired") return opened;
+  const { bearer, apiBase } = opened;
+  const paired = opened.fetch;
+  const boot = await bootEngine(env.engineDeps, {
+    origin: profile.origin,
+    // WHERE THIS SERVER'S `/sync` FAMILY ANSWERS — measured at pairing time and stored on the
+    // profile, so no launch pays for a probe and the boot still touches no wire. Absent on every
+    // row written before it existed, which `bootEngine` reads as the origin: exactly what those
+    // rows have always used, and right for the two doors that serve their API at their root.
+    //
+    // THE LOCAL, NOT `profile.apiBase`: the self-host repair above may have just measured one for a
+    // row that had none, and reading the held copy would store the base and then boot without it —
+    // a repair that runs, persists, and changes nothing until the launch after.
+    apiBase,
+    accountId: profile.accountId,
+    auth: { headers: () => bearer.headers(), fetch: paired },
+    /* Cloud's request body carries 3 MiB; a send past it stages there, and only there. */
+    stageAttachments: profile.flavor === "managed",
+  });
+  if (boot.kind === "refused") return { kind: "refused", reason: boot.reason };
+  // The boot makes NO request, but the manager is the slot's, so another holder's last request
+  // (a torn-down tree's) can end it while the boot runs. That death still reaches the session:
+  // `onSessionDead` tells a subscriber that arrives after the death once, on a microtask, so
+  // `adopt`'s listener tears down to the same one-gesture sentence either way. A revoked cold
+  // profile boots ready over its own cached mirror and dies on its first wire touch, which the
+  // connection layer starts only after it subscribes. `pairing.test.ts` pins that ordering.
+  return {
+    kind: "connected",
+    session: {
+      profile,
+      bearer,
+      /* THE MANAGER'S OWN TRANSPORT — the same function the adapter above rides, so the app's reads
+         and the drain's pages carry one credential and one rotation, and one wall. */
+      fetch: paired,
+      engine: boot.engine,
+      store: boot.store,
+      ownerKey: mirrorOwnerKey(profile.origin, profile.accountId),
+      verifyIdentity: boot.verifyIdentity,
+      standalone: profile.origin === LOCAL_ENGINE_ORIGIN,
+    },
+  };
+}
+
+/**
+ * Everything {@link buildSession} and {@link buildLocalSession} do before `bootEngine`: the
+ * refusals, the pin, the base, the manager and the door. A session without the Hermes engine (the
+ * shell's) is built from this alone.
+ */
+export async function openTransport(
+  env: PairingEnv,
+  profile: ServerProfile,
+): Promise<OpenedTransport | Exclude<ConnectOutcome, { kind: "connected" }>> {
   /**
    * A profile the person asked to forget is not bootable. A forget whose
    * credential removal was refused leaves the row and the debt — correctly,
@@ -1574,7 +1885,7 @@ async function buildSession(
    * mailbox must not have it re-opened by the next launch — the same
    * resurrection the queue prevents one door over.
    */
-  if (profile.origin === LOCAL_ENGINE_ORIGIN) return buildLocalSession(env, profile);
+  if (profile.origin === LOCAL_ENGINE_ORIGIN) return openLocalDoor(env, profile);
   /**
    * The pin is re-installed on every launch, here, before any wire touch.
    * The native registry is process-local and empty at launch, so a cold
@@ -1645,44 +1956,7 @@ async function buildSession(
    * `access-lock.ts` states, held by construction rather than by a check.
    */
   const paired = withUpdateAnswer(withAccessLock(bearer.fetch), profile.origin);
-  const boot = await bootEngine(env.engineDeps, {
-    origin: profile.origin,
-    // WHERE THIS SERVER'S `/sync` FAMILY ANSWERS — measured at pairing time and stored on the
-    // profile, so no launch pays for a probe and the boot still touches no wire. Absent on every
-    // row written before it existed, which `bootEngine` reads as the origin: exactly what those
-    // rows have always used, and right for the two doors that serve their API at their root.
-    //
-    // THE LOCAL, NOT `profile.apiBase`: the self-host repair above may have just measured one for a
-    // row that had none, and reading the held copy would store the base and then boot without it —
-    // a repair that runs, persists, and changes nothing until the launch after.
-    apiBase,
-    accountId: profile.accountId,
-    auth: { headers: () => bearer.headers(), fetch: paired },
-    /* Cloud's request body carries 3 MiB; a send past it stages there, and only there. */
-    stageAttachments: profile.flavor === "managed",
-  });
-  if (boot.kind === "refused") return { kind: "refused", reason: boot.reason };
-  // The boot makes NO request, but the manager is the slot's, so another holder's last request
-  // (a torn-down tree's) can end it while the boot runs. That death still reaches the session:
-  // `onSessionDead` tells a subscriber that arrives after the death once, on a microtask, so
-  // `adopt`'s listener tears down to the same one-gesture sentence either way. A revoked cold
-  // profile boots ready over its own cached mirror and dies on its first wire touch, which the
-  // connection layer starts only after it subscribes. `pairing.test.ts` pins that ordering.
-  return {
-    kind: "connected",
-    session: {
-      profile,
-      bearer,
-      /* THE MANAGER'S OWN TRANSPORT — the same function the adapter above rides, so the app's reads
-         and the drain's pages carry one credential and one rotation, and one wall. */
-      fetch: paired,
-      engine: boot.engine,
-      store: boot.store,
-      ownerKey: mirrorOwnerKey(profile.origin, profile.accountId),
-      verifyIdentity: boot.verifyIdentity,
-      standalone: profile.origin === LOCAL_ENGINE_ORIGIN,
-    },
-  };
+  return { kind: "paired", profile, bearer, fetch: paired, apiBase };
 }
 
 /**
@@ -1694,7 +1968,38 @@ async function buildSession(
  * can leave a row naming an account this store no longer serves, and opening
  * a mirror under that name would be the second copy, quietly.
  */
-async function buildLocalSession(env: PairingEnv, profile: ServerProfile): Promise<ConnectOutcome> {
+async function buildLocalSession(env: PairingEnv, profile: ServerProfile, door: LocalEngineDoor): Promise<ConnectOutcome> {
+  const boot = await bootEngine(env.engineDeps, {
+    origin: LOCAL_ENGINE_ORIGIN,
+    accountId: profile.accountId,
+    localEngine: door,
+    // A send pressed with no network waits in the outbox for it (`engine/send-waits.ts`).
+    network: networkNow,
+  });
+  if (boot.kind === "refused") return { kind: "refused", reason: boot.reason };
+  return {
+    kind: "connected",
+    session: {
+      profile,
+      /* NO MANAGER, and that is the state rather than a gap: the engine mints its own bearer per
+         launch, there is no family to rotate and nothing can refuse it. The two readers that want a
+         manager check for it. */
+      bearer: null,
+      fetch: localEngineTransport(door).fetch,
+      engine: boot.engine,
+      store: boot.store,
+      ownerKey: mirrorOwnerKey(LOCAL_ENGINE_ORIGIN, profile.accountId),
+      verifyIdentity: boot.verifyIdentity,
+      standalone: profile.origin === LOCAL_ENGINE_ORIGIN,
+    },
+  };
+}
+
+/** The part of {@link buildLocalSession} before `bootEngine`: the engine's own door, opened or found. */
+async function openLocalDoor(
+  env: PairingEnv,
+  profile: ServerProfile,
+): Promise<OpenedTransport | Exclude<ConnectOutcome, { kind: "connected" }>> {
   const port = env.standalone;
   if (port === undefined) return { kind: "refused", reason: refuse("standaloneNoEngine") };
   let door = port.door();
@@ -1732,30 +2037,7 @@ async function buildLocalSession(env: PairingEnv, profile: ServerProfile): Promi
   if (says !== profile.accountId.trim()) {
     return { kind: "refused", reason: refuse("standaloneOtherMailbox") };
   }
-  const boot = await bootEngine(env.engineDeps, {
-    origin: LOCAL_ENGINE_ORIGIN,
-    accountId: profile.accountId,
-    localEngine: door,
-    // A send pressed with no network waits in the outbox for it (`engine/send-waits.ts`).
-    network: networkNow,
-  });
-  if (boot.kind === "refused") return { kind: "refused", reason: boot.reason };
-  return {
-    kind: "connected",
-    session: {
-      profile,
-      /* NO MANAGER, and that is the state rather than a gap: the engine mints its own bearer per
-         launch, there is no family to rotate and nothing can refuse it. The two readers that want a
-         manager check for it. */
-      bearer: null,
-      fetch: localEngineTransport(door).fetch,
-      engine: boot.engine,
-      store: boot.store,
-      ownerKey: mirrorOwnerKey(LOCAL_ENGINE_ORIGIN, profile.accountId),
-      verifyIdentity: boot.verifyIdentity,
-      standalone: profile.origin === LOCAL_ENGINE_ORIGIN,
-    },
-  };
+  return { kind: "local", profile, door };
 }
 
 /**

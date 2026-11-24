@@ -17,12 +17,14 @@
  */
 
 import { useMemo } from "react";
+import type { DistinctCalendarEvent } from "@ohmail/client-engine";
 import {
   formatIcsWhen, icsDateGlyph, icsKicker, icsPeople, icsRecurrence, icsWeekdayName,
   type IcsEventPreview, type IcsTime,
 } from "@trafficflow/core/ics";
 import "./ics-event-card.css";
 import { liveCopy, activeFormatLocale, activeFormatZone } from "../shell/locale";
+import { ViewBoundary } from "./ViewBoundary";
 
 /**
  * THE ENGLISH SENTENCES — the fallback for the `icsEvent` namespace and the parity oracle for
@@ -137,6 +139,20 @@ const GLYPH_REPEAT = (
 
 export interface IcsEventCardProps {
   event: IcsEventPreview;
+}
+
+/** The file door hands each distinct event once. One malformed card cannot take down the letter. */
+export function IcsEventCards({ events }: { readonly events: readonly DistinctCalendarEvent[] }) {
+  if (events.length === 0) return null;
+  return (
+    <div className="msg-events">
+      {events.map(({ partId, event }) => (
+        <ViewBoundary key={partId} fallback={null}>
+          <IcsEventCard event={event} />
+        </ViewBoundary>
+      ))}
+    </div>
+  );
 }
 
 export function IcsEventCard({ event }: IcsEventCardProps) {

@@ -435,8 +435,16 @@ describe("the options census — the pipeline each pairing route actually runs",
   it("redeem is anonymous + public + unauthenticated; mint and revoke are step-up ceremonies; the list is a read", () => {
     const byKey = new Map(pairRoutes.map((r) => [key(r), r]));
     expect([...byKey.keys()].sort()).toEqual(
-      ["DELETE /pair/:id", "GET /pair", "POST /pair", "POST /pair/redeem", "POST /pair/state"],
+      ["DELETE /pair/:id", "GET /pair", "POST /pair", "POST /pair/handoff", "POST /pair/redeem", "POST /pair/state"],
     );
+    // A phone app's handoff: the native rotation (no session, the refresh token in the body is the credential, as
+    // `/auth/refresh`'s), then the code, so no step-up; a busy pool answers it fast and says a replay is safe.
+    const handoff = byKey.get("POST /pair/handoff")!;
+    expect(handoff.cost).toBe("ceremony");
+    expect(handoff.relay).toBe(false);
+    // The native rotation looks up its credential before the account is known.
+    expect({ ...handoff.options, middleware: handoff.options?.middleware?.length })
+      .toEqual({ public: true, credentialSubject: true, credentialLookup: true, replaySafe: true, middleware: 1 });
     // The state read by a token's hash: no session, no burn, a ceremony like the revoke.
     const state = byKey.get("POST /pair/state")!;
     expect(state.cost).toBe("ceremony");
@@ -487,10 +495,10 @@ describe("the options census — the pipeline each pairing route actually runs",
   });
 
   it("the mount census is hello.test.ts's; this is the tripwire copy nearest the module", () => {
-    expect(selfHostRoutes.filter((r) => r.pattern.startsWith("/pair"))).toHaveLength(5);
+    expect(selfHostRoutes.filter((r) => r.pattern.startsWith("/pair"))).toHaveLength(6);
     // The hosted table carries the ceremony whole since the managed device-pairing mount
     // (watched red here at `[]` before this line moved); the local table never does.
-    expect(apiRoutes.filter((r) => r.pattern.startsWith("/pair"))).toHaveLength(5);
+    expect(apiRoutes.filter((r) => r.pattern.startsWith("/pair"))).toHaveLength(6);
     expect(localRoutes.filter((r) => r.pattern.startsWith("/pair"))).toEqual([]);
   });
 });

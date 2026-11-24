@@ -1,3 +1,4 @@
+/** @vitest-environment jsdom */
 /**
  * THE FIRST FRAME IS THE PERSON'S FACE AND SCHEME.
  *
@@ -17,7 +18,7 @@
  */
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const at = (p: string): string => resolve(__dirname, p);
 const read = (p: string): string => readFileSync(at(p), "utf8");
@@ -144,4 +145,43 @@ describe("the mapping law and React are not in the paint-blocking path", () => {
     const feed = importClosure(at("../src/omarchy.ts"));
     expect([...feed.files].some((f) => /omarchy\/map\.ts$/.test(f))).toBe(true);
   });
+});
+
+/* THE FRAME'S THREE STAMPS, WRITTEN OUT. The window's stamp may import no package, so it carries its own copy of
+   `@ohmail/app/frame/boot`; run as the head runs it, it says what the frame will at each window, either side of 700 too. */
+vi.mock("../src/text-zoom.js", async () => {
+  const real = await vi.importActual<typeof import("../src/text-zoom.js")>("../src/text-zoom.js");
+  return { ...real, applyDesktopTextSize: async () => undefined };
+});
+vi.mock("../src/omarchy-paint.js", async () => {
+  const real = await vi.importActual<typeof import("../src/omarchy-paint.js")>("../src/omarchy-paint.js");
+  return { ...real, paintCachedOmarchyPalette: () => undefined };
+});
+
+describe("the window's stamp says the frame's scheme, device and pointer", () => {
+  const WINDOWS = [
+    { width: 390, coarse: true, device: "phone" }, { width: 669, coarse: true, device: "phone" },
+    { width: 699, coarse: false, device: "phone" }, { width: 700, coarse: false, device: "fold" },
+    { width: 719, coarse: true, device: "fold" },
+    { width: 841, coarse: true, device: "fold" }, { width: 1440, coarse: false, device: "desktop" },
+  ] as const;
+  for (const w of WINDOWS) {
+    for (const dark of [false, true]) {
+      it(`at ${w.width} wide, ${dark ? "dark" : "light"}`, async () => {
+        const root = document.documentElement;
+        for (const n of ["data-scheme", "data-device", "data-touch", "data-theme"]) root.removeAttribute(n);
+        Object.defineProperty(window, "innerWidth", { value: w.width, configurable: true });
+        window.matchMedia = ((q: string) => ({ matches: q === "(pointer: coarse)" ? w.coarse : q === "(prefers-color-scheme: dark)" ? dark : false })) as never;
+        const { stampFrameAttributes } = await import("../../../packages/app/src/frame/boot-stamp.js");
+        stampFrameAttributes(document, window);
+        const packaged = ["data-scheme", "data-device", "data-touch"].map((n) => root.getAttribute(n));
+        for (const n of ["data-scheme", "data-device", "data-touch"]) root.removeAttribute(n);
+        vi.resetModules();
+        await import("../src/boot-stamp.js");
+        const own = ["data-scheme", "data-device", "data-touch"].map((n) => root.getAttribute(n));
+        expect(own).toEqual(packaged);
+        expect(own).toEqual([dark ? "dark" : "light", w.device, w.coarse ? "1" : "0"]);
+      });
+    }
+  }
 });

@@ -1,3 +1,5 @@
+import { accountOfMessage } from "@trafficflow/db";
+import { bindDb } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -5,7 +7,9 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   mailboxes, messages, folderState, rules, contacts, organizerRequests, insertOrganizerRequest,
   accountSettings, awayResponders, changeLog, TRAVELLING_SIGNATURE_HTML_MAX_BYTES, ruleCreatePayload, type RuleKey,
+  accountPass, readPassProgress, updatePassProgress, mailboxFolders, folderOps, messageInstances,
 } from "@trafficflow/db";
+import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   formatRequest, formatAck, acksIn, parseRequestEnvelope, deriveRequestKey, decodeRequestPayload,
   isMalformedRequest,
@@ -19,7 +23,7 @@ import {
   applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests,
   readerOutcomeFor, hasRequestOrganizerIo, hasRequestReaderIo,
   REQUEST_DRAIN_MAX_PER_CYCLE, REQUEST_STALE_AFTER_MS, REQUEST_STALE_MUST_NOT_EXCEED_MS,
-} from "../src/request-drain.js";
+} from "@ohmail/organizer/request-drain";
 
 /** The drain refuses a runtime with no install, so every fixture states one. */
 const TEST_INSTALL = "test-install";
@@ -146,7 +150,7 @@ async function seedHeldMessage(db: TestDb, mailboxId: string, from: string): Pro
     subject: "s", fromAddress: from, unread: true,
   }).returning({ id: messages.id });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
@@ -687,13 +691,15 @@ describe("applyMetaRequests — what is LEFT STANDING rather than refused", () =
     expect((await post()).applied).toBe(1);
     const [first] = await db.select().from(accountSettings).where(eq(accountSettings.accountId, ACCT));
     expect(first!.ohboxPolicy).toBe("people_only");
-    expect(first!.ohboxTidyRequestedAt, "the transition into people_only armed nothing").not.toBeNull();
+    const tidy = accountPass("ohbox_tidy", ACCT);
+    expect((await readPassProgress(db, tidy)).requestedAt, "the transition into people_only armed nothing").not.toBeNull();
 
     // A RE-SAVE that leaves the posture where it is must not re-arm.
-    await db.update(accountSettings).set({ ohboxTidyRequestedAt: null }).where(eq(accountSettings.accountId, ACCT));
+    await updatePassProgress(db, tidy, { requestedAt: null });
     expect((await post()).applied).toBe(1);
     const [again] = await db.select().from(accountSettings).where(eq(accountSettings.accountId, ACCT));
-    expect(again!.ohboxTidyRequestedAt, "a re-save re-ran the backlog — the arming is not on the transition")
+    expect(again!.ohboxPolicy).toBe("people_only");
+    expect((await readPassProgress(db, tidy)).requestedAt, "a re-save re-ran the backlog — the arming is not on the transition")
       .toBeNull();
   });
 
@@ -2501,7 +2507,7 @@ describe("the press instant travels in the payload, the record keeps its own", (
     }).where(eq(mailboxes.id, mailboxId));
     const id = await seedHeldMessage(db, mailboxId, "person@example.com");
     const floor = new Date(NOW.getTime() - 25 * HOUR);
-    const ctx = { db, accountId: ACCT, userId: null, now: () => NOW, requestId: "r", pressFloor: floor, pressAged: true };
+    const ctx = { db: bindDb(db, { account: ACCT }), accountId: ACCT, userId: null, now: () => NOW, requestId: "r", pressFloor: floor, pressAged: true };
     const res = await messageService.move(ctx as never, id, { folder: "ohmail/Receipts" });
     expect((res as { pending?: boolean }).pending).toBe(true);
     const [row] = await db.select().from(organizerRequests).where(eq(organizerRequests.accountId, ACCT));
@@ -2535,3 +2541,237 @@ describe("the press instant travels in the payload, the record keeps its own", (
     }
   });
 });
+
+/**
+ * `message.file` — A READER'S MOVE INTO ONE OF THE PERSON'S OWN FOLDERS. The organizer looks the
+ * name up in ITS OWN list of the mailbox's folders, in the apply's transaction, before any write;
+ * what it writes is its own row's spelling. A folder it does not list, or one a folder command
+ * stands on, is `no_such_folder`; a name no reader's door would send is `invalid_payload`.
+ */
+describe("message.file — the organizer's own list decides where a reader's move may go", () => {
+  function fileRecord(o: { mailboxId: string; dedupKey: string; payload?: Record<string, unknown>; folder?: string; pressedAt?: Date }): string {
+    return formatRequest({
+      requestId: randomUUID(), kind: "message.file", mailboxId: o.mailboxId, installId: "reader-install",
+      organizerKind: "local", decidedAt: NOW, key: KEY,
+      payload: o.payload ?? {
+        dedupKey: o.dedupKey, folder: o.folder, ...(o.pressedAt ? { pressedAt: o.pressedAt.toISOString() } : {}),
+      },
+    });
+  }
+  async function drained(db: TestDb, mailboxId: string, raw: string) {
+    const m = fakeMeta();
+    await m.reader.append(raw);
+    const result = await applyMetaRequests(db, { mailboxId, accountId: ACCT, installId: TEST_INSTALL, adapter: organizerAdapter(m), requestKey: KEY }, NOW, noopLog);
+    const acks = acksIn([...m.store.entries()].map(([ref, raw]) => ({ ref, raw })), KEY);
+    return { result, ack: acks[0] ?? null, left: m.store.size };
+  }
+  async function letter(db: TestDb) {
+    const mailboxId = await seedMailbox(db);
+    await db.update(mailboxes).set({ sentFolder: "Sent", trashFolder: "Trash", junkFolder: "Junk" }).where(eq(mailboxes.id, mailboxId));
+    const messageId = await seedHeldMessage(db, mailboxId, "person@example.com");
+    const [row] = await db.select({ dedupKey: messages.dedupKey }).from(messages).where(eq(messages.id, messageId));
+    const list = async (folder: string) =>
+      (await db.insert(mailboxFolders).values({ mailboxId, accountId: ACCT, folder }).returning({ id: mailboxFolders.id }))[0]!.id;
+    const placed = async () => (await db.select().from(folderState).where(eq(folderState.messageId, messageId)))[0]!;
+    return { mailboxId, messageId, dedupKey: row!.dedupKey, list, placed };
+  }
+
+  it("a folder this mailbox lists: desired written as its row spells it, observed kept, one move, applied ack", async () => {
+    const db = await makeTestDb();
+    const w = await letter(db);
+    await w.list("Clients/Acme");
+    const { result, ack, left } = await drained(db, w.mailboxId, fileRecord({ mailboxId: w.mailboxId, dedupKey: w.dedupKey, folder: "Clients/Acme" }));
+    expect(result).toEqual({ applied: 1, refused: 0, deferred: 0, standing: 0 });
+    expect([ack?.outcome, left]).toEqual(["applied", 1]);
+    const fs = await w.placed();
+    expect([fs.desiredFolder, fs.observedFolder, fs.reconcileStatus]).toEqual(["Clients/Acme", "ohmail/Screener", "pending"]);
+    const moves = await db.select().from(changeLog).where(and(eq(changeLog.entityId, w.messageId), eq(changeLog.op, "move")));
+    expect(moves.map((c) => c.meta)).toEqual([{ from: "ohmail/Screener", to: "Clients/Acme" }]);
+  });
+
+  it("a folder this mailbox does not list, spelt otherwise, or under a command is no_such_folder, and nothing moves", async () => {
+    const db = await makeTestDb();
+    const w = await letter(db);
+    await w.list("Clients/Acme");
+    const busy = await w.list("Clients");
+    await db.insert(folderOps).values({ accountId: ACCT, mailboxId: w.mailboxId, folderId: busy, op: "rename", toFolder: "Customers" });
+    for (const folder of ["Renamed/Away", "clients/acme", "Clients/Acme/", "Clients"]) {
+      const { result, ack } = await drained(db, w.mailboxId, fileRecord({ mailboxId: w.mailboxId, dedupKey: w.dedupKey, folder }));
+      expect([folder, result.refused, ack?.outcome, ack?.reason]).toEqual([folder, 1, "refused", "no_such_folder"]);
+    }
+    // The command on `Clients` stands over `Clients/Acme` too.
+    const under = await drained(db, w.mailboxId, fileRecord({ mailboxId: w.mailboxId, dedupKey: w.dedupKey, folder: "Clients/Acme" }));
+    expect(under.ack?.reason).toBe("no_such_folder");
+    expect((await w.placed()).desiredFolder).toBe("ohmail/Screener");
+  });
+
+  it("a name no reader's door sends is invalid_payload: a reserved place listed here, a word beside it, a broken name", async () => {
+    const db = await makeTestDb();
+    const w = await letter(db);
+    for (const f of ["INBOX", "Sent", "Trash", "Trash/Old", "Junk", "ohmail/_meta", "ohmail/News"]) await w.list(f);
+    const payloads: Array<Record<string, unknown>> = [
+      ...["INBOX", "Sent", "Trash", "Trash/Old", "Junk", "ohmail/_meta", "ohmail/News"].map((folder) => ({ dedupKey: w.dedupKey, folder })),
+      { dedupKey: w.dedupKey, folder: "Clients", destination: "inbox" },
+      { dedupKey: w.dedupKey, folder: "a\r\nb" },
+      { dedupKey: w.dedupKey, folder: "" },
+    ];
+    for (const payload of payloads) {
+      const { result, ack } = await drained(db, w.mailboxId, fileRecord({ mailboxId: w.mailboxId, dedupKey: w.dedupKey, payload }));
+      expect([JSON.stringify(payload), result.refused, ack?.reason]).toEqual([JSON.stringify(payload), 1, "invalid_payload"]);
+    }
+    expect((await w.placed()).desiredFolder).toBe("ohmail/Screener");
+  });
+
+  it("a letter this organizer does not hold is no_such_message; a day-old press behind a newer placement is superseded", async () => {
+    const HOUR = 3_600_000;
+    const db = await makeTestDb();
+    const w = await letter(db);
+    await w.list("Clients");
+    const gone = await drained(db, w.mailboxId, fileRecord({ mailboxId: w.mailboxId, dedupKey: "mid:never-synced-here", folder: "Clients" }));
+    expect(gone.ack?.reason).toBe("no_such_message");
+    await db.update(folderState).set({ decidedAt: new Date(NOW.getTime() - 24 * HOUR) }).where(eq(folderState.messageId, w.messageId));
+    const late = await drained(db, w.mailboxId, fileRecord({
+      mailboxId: w.mailboxId, dedupKey: w.dedupKey, folder: "Clients", pressedAt: new Date(NOW.getTime() - 25 * HOUR),
+    }));
+    expect([late.result.refused, late.ack?.reason, (await w.placed()).desiredFolder]).toEqual([1, "superseded", "ohmail/Screener"]);
+  });
+
+  it("a reused id naming another folder is refused conflict, and the first folder stands", async () => {
+    const db = await makeTestDb();
+    const w = await letter(db);
+    await w.list("Clients/Acme");
+    await w.list("Clients/Other");
+    const requestId = randomUUID();
+    const signed = (folder: string) => formatRequest({
+      requestId, kind: "message.file", mailboxId: w.mailboxId, installId: "reader-install",
+      organizerKind: "local", decidedAt: NOW, key: KEY, payload: { dedupKey: w.dedupKey, folder },
+    });
+    expect((await drained(db, w.mailboxId, signed("Clients/Acme"))).ack?.outcome).toBe("applied");
+    const second = await drained(db, w.mailboxId, signed("Clients/Other"));
+    expect([second.ack?.outcome, second.ack?.reason]).toEqual(["refused", "conflict"]);
+    expect((await w.placed()).desiredFolder).toBe("Clients/Acme");
+  });
+
+  it("a record whose kind is relabelled after signing does not verify: removed, never answered, nothing moved", async () => {
+    const db = await makeTestDb();
+    const w = await letter(db);
+    await w.list("Clients/Acme");
+    const place = moveRecord({ mailboxId: w.mailboxId, key: KEY, dedupKey: w.dedupKey, destination: "reads" });
+    const relabelled = place.replace("X-Ohmail-Request-Kind: message.move", "X-Ohmail-Request-Kind: message.file");
+    expect(relabelled).not.toBe(place);
+    const { result, ack, left } = await drained(db, w.mailboxId, relabelled);
+    expect([result.refused, ack, left]).toEqual([1, null, 0]);
+    expect((await w.placed()).desiredFolder).toBe("ohmail/Screener");
+  });
+
+  it("no line of the real logger carries the folder's name, applied, refused or standing", async () => {
+    const { createLogger } = await import("@trafficflow/core");
+    const db = await makeTestDb();
+    const w = await letter(db);
+    const names = ["Kunde Brünnhilde Ω-7731", "anna.secret@x.example"];
+    for (const n of names) await w.list(n);
+    const lines: string[] = [];
+    const logger = createLogger({ service: "worker", level: "debug", sink: (l) => lines.push(l) });
+    const m = fakeMeta();
+    for (const folder of [...names, "Nicht/Da Ω-7731", "INBOX"]) {
+      await m.reader.append(fileRecord({ mailboxId: w.mailboxId, dedupKey: w.dedupKey, folder }));
+    }
+    await m.reader.append(formatRequest({
+      requestId: randomUUID(), kind: "message.fileX" as "message.file", mailboxId: w.mailboxId, installId: "reader-install",
+      organizerKind: "local", decidedAt: NOW, key: KEY, payload: { dedupKey: w.dedupKey, folder: names[0] },
+    }));
+    const result = await applyMetaRequests(db, { mailboxId: w.mailboxId, accountId: ACCT, installId: TEST_INSTALL, adapter: organizerAdapter(m), requestKey: KEY }, NOW,
+      (event, detail) => logger.info(event, { mailboxId: w.mailboxId, accountId: ACCT, ...detail }));
+    expect(result.applied + result.refused + result.standing).toBe(5);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const needle of ["Brünnhilde", "7731", "anna.secret", "Nicht/Da"]) {
+      expect(lines.filter((l) => l.includes(needle)), needle).toEqual([]);
+    }
+  });
+
+  /* AFTER THE MOVE WAS TAKEN: the folder commands' own code carries a pending move along. A rename
+     re-spells the desire, so the letter lands under the new name; a delete retires it, and the
+     letter stays where it is, alive. */
+  async function inInbox(db: TestDb, mailboxId: string) {
+    const id = randomUUID();
+    await db.insert(mailboxFolders).values({ mailboxId, accountId: ACCT, folder: "INBOX", uidvalidity: 1n });
+    await db.insert(messages).values({
+      id, accountId: ACCT, mailboxId, bodyHash: randomUUID(), dedupKey: `mid:${id}`, subject: "s",
+      fromAddress: "person@example.com", nativeLocator: { folder: "INBOX", ref: "1:4" },
+    });
+    await db.insert(messageInstances).values({ accountId: ACCT, mailboxId, messageId: id, folder: "INBOX", uidvalidity: 1n, uid: 4, isPrimary: true });
+    return { id, dedupKey: `mid:${id}` };
+  }
+
+  it("a folder renamed after the move was taken: the letter is still headed there, under its new name", async () => {
+    const db = await makeTestDb();
+    const mailboxId = await seedMailbox(db);
+    const m = await inInbox(db, mailboxId);
+    const [clients] = await db.insert(mailboxFolders).values({ mailboxId, accountId: ACCT, folder: "Clients" }).returning();
+    await db.insert(mailboxFolders).values({ mailboxId, accountId: ACCT, folder: "Clients/Acme" });
+    expect((await drained(db, mailboxId, fileRecord({ mailboxId, dedupKey: m.dedupKey, folder: "Clients/Acme" }))).ack?.outcome).toBe("applied");
+    const [op] = await db.insert(folderOps).values({
+      accountId: ACCT, mailboxId, folderId: clients!.id, op: "rename", toFolder: "Customers",
+    }).returning();
+    await makeDrizzleRepo(db as never).transaction((r) =>
+      r.applyFolderRename({ id: op!.id, accountId: ACCT, mailboxId, folder: "Clients", toFolder: "Customers" }));
+    const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, m.id));
+    expect([fs!.desiredFolder, fs!.observedFolder, fs!.reconcileStatus]).toEqual(["Customers/Acme", "INBOX", "pending"]);
+  });
+
+  it("a folder deleted after the move was taken: the move is retired and the letter stays where it is, alive", async () => {
+    const db = await makeTestDb();
+    const mailboxId = await seedMailbox(db);
+    const m = await inInbox(db, mailboxId);
+    await db.insert(mailboxFolders).values({ mailboxId, accountId: ACCT, folder: "Old" });
+    expect((await drained(db, mailboxId, fileRecord({ mailboxId, dedupKey: m.dedupKey, folder: "Old" }))).ack?.outcome).toBe("applied");
+    await makeDrizzleRepo(db as never).transaction((r) => r.tombstoneFolderMessages(ACCT, mailboxId, "Old", 200));
+    expect(await db.select().from(folderState).where(eq(folderState.messageId, m.id))).toHaveLength(0);
+    const [row] = await db.select({ deletedAt: messages.deletedAt, loc: messages.nativeLocator }).from(messages).where(eq(messages.id, m.id));
+    expect([row!.deletedAt, (row!.loc as { folder: string }).folder]).toEqual([null, "INBOX"]);
+  });
+});
+
+/**
+ * A KIND IS TEXT A SIGNED RECORD CHOSE. Only a holder of the mailbox's password can sign one, and a
+ * kind spelt like a property every object has must miss the applier table like any other kind this
+ * build lacks: it stands, and the records behind it are still applied, every cycle.
+ */
+describe("a signed record whose kind names an object's own property stands like any unknown kind", () => {
+  it("__proto__, constructor, hasOwnProperty, valueOf, and one dated a year ahead: standing; the next record applies", async () => {
+    const db = await makeTestDb();
+    const mailboxId = await seedMailbox(db);
+    await seedHeldMessage(db, mailboxId, "person@example.com");
+    const m = fakeMeta();
+    for (const kind of ["__proto__", "constructor", "hasOwnProperty", "valueOf"]) {
+      await m.reader.append(decideRecord({ mailboxId, key: KEY, kind }));
+    }
+    await m.reader.append(decideRecord({ mailboxId, key: KEY, kind: "toString", decidedAt: new Date(NOW.getTime() + 365 * 86_400_000) }));
+    await m.reader.append(decideRecord({ mailboxId, key: KEY }));
+    const lines: Array<Record<string, unknown>> = [];
+    const log = (event: string, fields: Record<string, unknown>): void => { if (event === "organizer_request_standing") lines.push(fields); };
+    const result = await applyMetaRequests(db, { mailboxId, accountId: ACCT, installId: TEST_INSTALL, adapter: organizerAdapter(m), requestKey: KEY }, NOW, log as never);
+    expect(result).toEqual({ applied: 1, refused: 0, deferred: 0, standing: 5 });
+    expect(await ruleCount(db)).toBe(1);
+    // The standing line names a kind this codebase does not define by a fixed word, never the record's text.
+    expect(lines.map((l) => l.kind)).toEqual(["other", "other", "other", "other", "other"]);
+  });
+
+  it("every kind this build admits has an applier: none of them stands, each answers its record", async () => {
+    const { REQUEST_KINDS } = await import("@trafficflow/core/adapters/organizer-lease");
+    const db = await makeTestDb();
+    const mailboxId = await seedMailbox(db);
+    const m = fakeMeta();
+    for (const kind of REQUEST_KINDS) await m.reader.append(ruleRecordOf(mailboxId, kind));
+    const result = await applyMetaRequests(db, { mailboxId, accountId: ACCT, installId: TEST_INSTALL, adapter: organizerAdapter(m), requestKey: KEY }, NOW, noopLog);
+    expect([result.standing, result.applied + result.refused]).toEqual([0, REQUEST_KINDS.length]);
+  });
+});
+
+/** A signed record of `kind` whose payload no applier takes: it is answered `invalid_payload` by a kind that has one. */
+function ruleRecordOf(mailboxId: string, kind: string): string {
+  return formatRequest({
+    requestId: randomUUID(), kind: kind as "screener.decide", mailboxId, installId: "reader-install",
+    organizerKind: "local", decidedAt: NOW, payload: { nothing: true }, key: KEY,
+  });
+}

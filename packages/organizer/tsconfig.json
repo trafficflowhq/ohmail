@@ -1,0 +1,11 @@
+{
+  "extends": "../../tools/tsconfig.base.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": "src" },
+  "include": ["src"],
+  "references": [
+    { "path": "../core" },
+    { "path": "../db" },
+    { "path": "../cal-core" },
+    { "path": "../cal-providers" }
+  ]
+}

@@ -11,6 +11,7 @@ import {
   ensureSetupTokenInvariant, mintFirstRunSetupToken, printSetupToken,
   SETUP_TOKEN_LOCK_KEY, SETUP_TOKEN_LABEL,
 } from "../src/setup-token.js";
+import { API_CLOCK_LOCK_KEY } from "../src/clock-lock.js";
 
 /**
  * THE FIRST-BOOT MINT RACE, on real Postgres — the server slice's acceptance "two concurrent boots
@@ -125,9 +126,11 @@ describe.skipIf(!PG_UP)("the first-run setup token mint", () => {
 
   it("the raw token appears ONCE, in the print block, and never in a log-shaped line", () => {
     const lines: string[] = [];
-    const minted = { id: "x", token: "RAW-TOKEN-VALUE", grant: "invite" as const, label: SETUP_TOKEN_LABEL, expiresAt: new Date() };
+    // A stand-in of the real shape, 43 base64url characters, put together here so it reads as no literal token.
+    const token = ["k3TqZ8mWv1RbX5n-c7LpD0HsJf2GaE9uQ4oViN6x", "rA"].join("_");
+    const minted = { id: "x", token, grant: "invite" as const, label: SETUP_TOKEN_LABEL, expiresAt: new Date() };
     printSetupToken(minted, (l) => lines.push(l));
-    expect(lines.filter((l) => l.includes("RAW-TOKEN-VALUE"))).toHaveLength(1);
+    expect(lines.filter((l) => l.includes(token))).toHaveLength(1);
   });
 
   it("the advisory-lock key collides with neither the migrator's nor the leader band", () => {
@@ -137,5 +140,9 @@ describe.skipIf(!PG_UP)("the first-run setup token mint", () => {
     const LEADER_BAND_START = 4207270001n;
     expect(SETUP_TOKEN_LOCK_KEY - LEADER_BAND_START).toBeGreaterThan(1000n);
     expect(SETUP_TOKEN_LOCK_KEY > MIGRATION_LOCK_KEY).toBe(true);
+    // The API clocks' key sits between the leader band and the migrator's, clear of all three.
+    expect(API_CLOCK_LOCK_KEY - LEADER_BAND_START).toBeGreaterThan(1000n);
+    expect(MIGRATION_LOCK_KEY - API_CLOCK_LOCK_KEY).toBeGreaterThanOrEqual(1000n);
+    expect(SETUP_TOKEN_LOCK_KEY - API_CLOCK_LOCK_KEY).toBeGreaterThan(1000n);
   });
 });

@@ -111,14 +111,14 @@ async function tick(ms: number): Promise<void> {
 async function loadSplash(owner = "acct_A"): Promise<void> {
   page += 1;
   vi.resetModules();
-  const { ResumeScreen } = await import("../app/(product)/resume/ResumeScreen.js");
+  const { ResumeRoute } = await import("../app/(product)/resume/ResumeRoute.js");
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
   roots.push(root);
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", children: h(ResumeScreen, { initialOwner: owner }),
+      locale: "en", messages, timeZone: "UTC", children: h(ResumeRoute, { initialOwner: owner }),
     }));
   });
   await flush();
@@ -132,7 +132,7 @@ async function reload(): Promise<void> {
 }
 
 beforeEach(async () => {
-  (await import("../app/shell/session-truth.js")).resetSessionTruthForTests();
+  (await import("@ohmail/app-logic/session/session-truth")).resetSessionTruthForTests();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.setSystemTime(new Date("2026-10-06T08:00:00.000Z"));
   vi.spyOn(Math, "random").mockReturnValue(0);

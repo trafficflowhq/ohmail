@@ -1,0 +1,129 @@
+{
+  "component": "RadioLines",
+  "state": "two",
+  "look": "ohmarchy-dark-fold",
+  "place": "block",
+  "target": [351, 80, 348, 115.75],
+  "clip": [351, 80, 348, 116],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "fold",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 719,
+    "height": 781,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 719, "clientWidth": 719, "scrollHeight": 781 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "15.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "before.boxShadow": "rgb(169, 177, 214) 0px 0px 0px 4.5px inset" },
+    { "before.boxShadow": "rgb(107, 112, 144) 0px 0px 0px 1.5px inset" }
+  ],
+  "nodes": [
+    {
+      "role": "radiogroup",
+      "name": "Whose mail",
+      "box": [0, 0, 348, 115.8],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "4px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      }
+    },
+    {
+      "role": "menuitem",
+      "name": "This address 2 messages",
+      "box": [0, 0, 348, 46.8],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "state": ["checked"],
+      "text": [
+        { "said": "This address", "type": 0 },
+        { "said": "2 messages", "type": 1 }
+      ],
+      "surfaces": [{ "box": [0, 0, 348, 46.8], "paint": 0, "parts": { "before": [14, 14] } }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Everyone at terracotta-milano.example 2 messages · 1 sender",
+      "box": [0, 46.8, 348, 65],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "Everyone at terracotta-milano.example", "type": 0 },
+        { "said": "2 messages · 1 sender", "type": 1 }
+      ],
+      "surfaces": [{ "box": [0, 46.8, 348, 65], "paint": 1, "parts": { "before": [14, 14] } }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

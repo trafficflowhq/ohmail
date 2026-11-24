@@ -40,7 +40,7 @@ function registerBody(email: string, inviteCode?: string): string {
 
 const post = (deps: ApiDeps, email: string, code?: string, ip: string = IP): Promise<Response> =>
   H(req("POST", "/auth/register", {
-    headers: { "x-vercel-forwarded-for": ip },
+    headers: { "x-forwarded-for": ip },
     body: registerBody(email, code),
   }), deps);
 
@@ -212,16 +212,14 @@ describe("the limiter refuses cleanly at the HTTP layer", () => {
   });
 
   it("a SPOOFED x-forwarded-for cannot mint a fresh bucket", async () => {
-    // `clientIp` trusts `x-vercel-forwarded-for` (the edge overwrites it) and otherwise the
-    // LAST hop of `x-forwarded-for`. A caller prepending their own first hop must not get a
-    // new allowance — that is the bypass `clientIp` was hardened against, and with the gate
-    // open it is the difference between a limit and a decoration.
+    // The host appends the client's address to the forwarding chain. An earlier hop
+    // must leave that client's signup allowance intact.
     const { deps } = await makeDeps(undefined, {
       publicSignup: true, maxPublicRegistrationsPerWindow: 1,
     });
     const spoofed = (email: string, claim: string): Promise<Response> =>
       H(req("POST", "/auth/register", {
-        headers: { "x-vercel-forwarded-for": IP, "x-forwarded-for": claim },
+        headers: { "x-forwarded-for": `${claim}, ${IP}` },
         body: registerBody(email),
       }), deps);
 

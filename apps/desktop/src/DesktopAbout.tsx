@@ -10,24 +10,25 @@
  */
 
 import { useState } from "react";
-import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
+import { Button } from "@ohmail/ui/base";
+import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { MIRROR_ENTITY_TYPES } from "@ohmail/client-engine";
 
 import { bridgeAvailable, type EngineStatus } from "./bridge-fetch.js";
-import { BUILD_LABEL } from "./build-id.js";
+import { BUILD_LABEL, BUILD_SHA } from "./build-id.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { isDesktopHost, isManagedDoor, pairedHostOf } from "./doors.js";
-import { selfUpdates } from "./distribution.js";
+import { isPreview, selfUpdates } from "./distribution.js";
 import { DesktopUpdate } from "./DesktopUpdate.js";
 
 /* WHAT THIS INSTALL DOES WITH THE MAILBOX BELOW — "organizes" or "reads". One rule, two
    panes and one confirmation bullet; see `install-role.ts` for the measured defect and
    why the predicate is the shared one. `useMailboxFacts` is the NON-throwing accessor,
    so a pane mounted without the provider keeps the sentence it always had. */
-import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
-import { readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
+import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
+import { readerHolder, screenerMode } from "@ohmail/app-logic/mail-state/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
-import { useEngineOrNull } from "../../webapp/app/shell/engine";
+import { useEngineOrNull } from "@ohmail/app-logic/engine/context";
 import { writeDesktopDiagnostics } from "./local-diagnostics.js";
 import { selfChecksThisSession } from "./local-self-check.js";
 
@@ -55,19 +56,18 @@ export function DiagnosticFileRow() {
     }
   };
   return (
-    <SettingsRow
+    <SettingLine
       label={DOOR_COPY.diagnosticLabel}
       description={
         said.k === "written"
           ? DOOR_COPY.diagnosticWritten(said.path)
           : said.k === "failed" ? DOOR_COPY.diagnosticFailed : DOOR_COPY.diagnosticWhy
       }
-      control={
-        <Button onClick={() => void press()} disabled={said.k === "busy"}>
-          {said.k === "busy" ? DOOR_COPY.diagnosticWriting : DOOR_COPY.diagnosticAction}
-        </Button>
-      }
-    />
+    >
+      <Button kind="quiet" size="s" onPress={() => void press()} disabled={said.k === "busy"}>
+        {said.k === "busy" ? DOOR_COPY.diagnosticWriting : DOOR_COPY.diagnosticAction}
+      </Button>
+    </SettingLine>
   );
 }
 
@@ -89,83 +89,86 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
   const host = pairedHostOf(status);
   const paired = isDesktopHost(status) && host !== null;
   return (
-    <SettingsSection>
-      <SettingsRow
-        label={DOOR_COPY.aboutAppLabel}
-        description={DOOR_COPY.aboutAppWhy}
-        value={BUILD_LABEL}
-      />
-      <SettingsRow
-        label={DOOR_COPY.aboutPublisher}
-        description={DOOR_COPY.aboutPublisherWhy}
-        value="TrafficFlow GmbH"
-      />
-      <SettingsRow
-        label={DOOR_COPY.aboutLicence}
-        description={DOOR_COPY.aboutLicenceWhy}
-        value="AGPL-3.0"
-      />
+    <>
+      <SettingsSheet>
+        <SettingLine
+          label={DOOR_COPY.aboutAppLabel}
+          description={DOOR_COPY.aboutAppWhy}
+          value={BUILD_LABEL}
+        />
+        {/* A nightly preview says so under the build it is, with the whole commit: the mark on
+            every screen carries the short one. A released build has no such row. */}
+        {isPreview() ? (
+          <SettingLine
+            label={DOOR_COPY.aboutPreviewLabel}
+            description={DOOR_COPY.aboutPreviewWhy}
+            value={BUILD_SHA || DOOR_COPY.aboutPreviewUnstamped}
+          />
+        ) : null}
+        <SettingLine
+          label={DOOR_COPY.aboutPublisher}
+          description={DOOR_COPY.aboutPublisherWhy}
+          value="TrafficFlow GmbH"
+        />
+        <SettingLine
+          label={DOOR_COPY.aboutLicence}
+          description={DOOR_COPY.aboutLicenceWhy}
+          value="AGPL-3.0"
+        />
 
-      {/* THE APP'S OWN UPDATE, directly under the version it is about. It used to live only in
-          the menu bar, which is not drawn on every desktop this app runs on
-          (`src-tauri/src/frame.rs`) — so on those it was an affordance nobody could reach.
-          `DesktopUpdate` is a subhead and one row and owns no layout: whoever restyles Settings
-          next can move the element without rewiring anything, and it renders nothing at all
-          where the shell answers nothing. Absent outright on the Mac App Store build, which the
-          store updates: there the updater plugin is not compiled in either, so the shell would
-          answer nothing anyway — the flag is the reason a reader can see, and the belt. */}
+      </SettingsSheet>
       {selfUpdates() ? <DesktopUpdate /> : null}
+      <SettingsSheet title={DOOR_COPY.aboutInstallHead} sign="desktop">
 
-      <SettingsSubhead>{DOOR_COPY.aboutInstallHead}</SettingsSubhead>
+        <SettingLine
+          label={DOOR_COPY.mailboxLabel}
+          description={mailboxRowWhy(readOnly, paired ? host : null)}
+          value={status.address ?? "—"}
+        />
+        <SettingLine
+          label={DOOR_COPY.aboutOpenedThrough}
+          description={
+            paired
+              /* "Nothing about your mail is sent to us" IS THE CONTROL for the privacy invariant on
+                 this door, and it is stated on the pane rather than only in a test: a paired
+                 install's engine dials one origin — the one on the pairing link — and never the
+                 hosted service. If that stops being true this sentence is the first false thing
+                 here, which is why it is said where somebody looks for it. */
+              ? DOOR_COPY.aboutDoorHostWhy(host, machineWord())
+              : status.mode === "cloud"
+                ? managed ? DOOR_COPY.aboutDoorCloudWhy : DOOR_COPY.aboutDoorServerWhy
+                : status.mode === "local"
+                  ? DOOR_COPY.aboutDoorLocalWhy
+                  : DOOR_COPY.doorNoneWhy
+          }
+          value={
+            paired
+              ? DOOR_COPY.aboutDoorHostValue
+              : status.mode ? (door[status.mode] ?? status.mode) : DOOR_COPY.doorNotChosen
+          }
+        />
 
-      <SettingsRow
-        label={DOOR_COPY.mailboxLabel}
-        description={mailboxRowWhy(readOnly, paired ? host : null)}
-        value={status.address ?? "—"}
-      />
-      <SettingsRow
-        label={DOOR_COPY.aboutOpenedThrough}
-        description={
-          paired
-            /* "Nothing about your mail is sent to us" IS THE CONTROL for the privacy invariant on
-               this door, and it is stated on the pane rather than only in a test: a paired
-               install's engine dials one origin — the one on the pairing link — and never the
-               hosted service. If that stops being true this sentence is the first false thing
-               here, which is why it is said where somebody looks for it. */
-            ? DOOR_COPY.aboutDoorHostWhy(host, machineWord())
-            : status.mode === "cloud"
-              ? managed ? DOOR_COPY.aboutDoorCloudWhy : DOOR_COPY.aboutDoorServerWhy
-              : status.mode === "local"
-                ? DOOR_COPY.aboutDoorLocalWhy
-                : DOOR_COPY.doorNoneWhy
-        }
-        value={
-          paired
-            ? DOOR_COPY.aboutDoorHostValue
-            : status.mode ? (door[status.mode] ?? status.mode) : DOOR_COPY.doorNotChosen
-        }
-      />
+        <DiagnosticFileRow />
 
-      <DiagnosticFileRow />
-
-      {/* THE CLAIM THE WHOLE PRODUCT RESTS ON, said where somebody looks for it. It is true on
-          both doors and it is the reason leaving is cheap: the copy on this machine can be
-          deleted without losing anything, because it was never the master. */}
-      <SettingsNote>{DOOR_COPY.aboutMailNote}</SettingsNote>
-      {/* THE SUBPROCESSOR LIST IS ABOUT THE HOSTED SERVICE, so it is named on the door that uses
-          one and not on the other. On the local door this computer opens the mail server itself
-          and nothing about the mail reaches us — so there is no company in that path for the list
-          to describe, and pointing at it offers to explain a policy that does not govern the
-          install being read. The same argument `AboutSection` makes for a self-host build. Privacy
-          and the source stay on both doors: the first governs the app itself, the second is what
-          lets anyone check either claim. */}
-      <SettingsNote>
-        {/* THE SUBPROCESSOR LIST GOES WITH THE HOSTED DOOR AND NOT WITH THIS ONE, on exactly the
-            argument the local door already makes: there is no company in a paired install's mail
-            path for that list to describe, so pointing at it would offer to explain a policy that
-            does not govern the install being read. */}
-        {status.mode === "cloud" && !paired && managed ? DOOR_COPY.aboutLinksCloud : DOOR_COPY.aboutLinksLocal}
-      </SettingsNote>
-    </SettingsSection>
+        {/* THE CLAIM THE WHOLE PRODUCT RESTS ON, said where somebody looks for it. It is true on
+            both doors and it is the reason leaving is cheap: the copy on this machine can be
+            deleted without losing anything, because it was never the master. */}
+        <SettingNote>{DOOR_COPY.aboutMailNote}</SettingNote>
+        {/* THE SUBPROCESSOR LIST IS ABOUT THE HOSTED SERVICE, so it is named on the door that uses
+            one and not on the other. On the local door this computer opens the mail server itself
+            and nothing about the mail reaches us — so there is no company in that path for the list
+            to describe, and pointing at it offers to explain a policy that does not govern the
+            install being read. The same argument `AboutSection` makes for a self-host build. Privacy
+            and the source stay on both doors: the first governs the app itself, the second is what
+            lets anyone check either claim. */}
+        <SettingNote>
+          {/* THE SUBPROCESSOR LIST GOES WITH THE HOSTED DOOR AND NOT WITH THIS ONE, on exactly the
+              argument the local door already makes: there is no company in a paired install's mail
+              path for that list to describe, so pointing at it would offer to explain a policy that
+              does not govern the install being read. */}
+          {status.mode === "cloud" && !paired && managed ? DOOR_COPY.aboutLinksCloud : DOOR_COPY.aboutLinksLocal}
+        </SettingNote>
+      </SettingsSheet>
+    </>
   );
 }

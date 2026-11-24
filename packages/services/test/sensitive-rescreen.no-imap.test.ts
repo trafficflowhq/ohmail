@@ -18,7 +18,7 @@ import type { Db } from "../src/context.js";
 /**
  * INVARIANT 3, AS A TEST THAT CAN FAIL: **the re-screen pass never opens IMAP.**
  *
- * The IMAP mailbox is the master (the "Organize-in-place" invariant, CLAUDE.md). Re-routing means writing
+ * The IMAP mailbox is the master (the "Organize-in-place" invariant, AGENTS.md). Re-routing means writing
  * `folder_state.desired_folder` and letting the always-on worker apply it — the one code path
  * that already knows how to do a move crash-safely. A pass that dialled a mail server to file
  * hundreds of messages would be a second organizer racing the reconciler, and it would do it from a
@@ -84,9 +84,9 @@ describe("the re-screen pass opens no IMAP connection", () => {
         subject: "Your verification code", fromAddress: `s${i}@stranger.test`,
         sensitivityCategory: "otp", nativeLocator: { folder: "INBOX", ref: `1:${i}` },
       }).returning();
-      await tx.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+      await tx.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
       await tx.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       ids.push(m!.id);

@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 import { maskSource } from "./_mask.js";
 
 /**
@@ -38,8 +38,6 @@ import { maskSource } from "./_mask.js";
  * were filed.
  */
 
-const SRC = new URL("../src/engine.ts", import.meta.url);
-
 /** Every call that can WRITE to the user's mailbox, by the name it is made under. */
 const WRITE_SURFACES = [
   "ensureFolders(",            // creates somebody's ohmail/* tree
@@ -51,7 +49,7 @@ const WRITE_SURFACES = [
 ] as const;
 
 function source(): string {
-  return readFileSync(SRC, "utf8");
+  return readEngineAsOneText();
 }
 
 /**

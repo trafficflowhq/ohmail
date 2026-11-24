@@ -1,0 +1,40 @@
+/* What the arrows do in the zone that has the keys: one line, ruled off. Never on touch. */
+@layer oh {
+  .oh-hintline {
+    --oh-hintline-h: var(--h-m);
+    --oh-hintline-rule: 0 calc(var(--oh-hair) * -1) 0 var(--line-soft);
+    display: none;
+    flex: none;
+    align-items: center;
+    gap: var(--s4);
+    height: var(--oh-hintline-h);
+    padding: 0 var(--s4);
+    overflow: hidden;
+    box-shadow: var(--oh-hintline-rule);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    white-space: nowrap;
+  }
+  .oh-hintline[data-shown],
+  :root[data-face="ohmarchy"] .oh-hintline {
+    display: flex;
+  }
+  .oh-hintline-item {
+    --oh-hintline-gap: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--oh-hintline-gap);
+  }
+  .oh-hintline .oh-key {
+    display: inline-flex;
+  }
+  :root[data-face="ohmarchy"] .oh-hintline {
+    --oh-hintline-h: 34px;
+    padding: 0 var(--s3);
+    color: var(--ink3);
+  }
+  :root[data-touch="1"] .oh-hintline,
+  :root[data-touch="1"] .oh-hintline[data-shown] {
+    display: none;
+  }
+}

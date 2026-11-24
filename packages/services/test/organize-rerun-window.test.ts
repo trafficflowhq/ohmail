@@ -1,3 +1,4 @@
+import { dbFor } from "@trafficflow/services";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { accountSettings, accounts, changeLog, mailboxes, type Tx } from "@trafficflow/db";
@@ -61,7 +62,7 @@ async function organizing(dials: { dormancyDays: number | null; scope: string })
   // (nothing is being claimed), and a policy that could refuse would end the test early.
   const svc = makeMailboxService({ allowance: async () => { /* permitted */ } });
   const ctx: ServiceContext = {
-    db: pglite as unknown as ServiceContext["db"],
+    db: dbFor(pglite, accountId),
     accountId, userId: null, now: () => NOW, requestId: "r",
   };
   const settings = async () =>
@@ -183,7 +184,7 @@ describe("organizeHere over an account with no settings record", () => {
     }
     const svc = makeMailboxService({ allowance: async () => { /* permitted */ } });
     const ctx: ServiceContext = {
-      db: pglite as unknown as ServiceContext["db"],
+      db: dbFor(pglite, accountId),
       accountId, userId: null, now: () => NOW, requestId: "r",
     };
     const settings = async () =>

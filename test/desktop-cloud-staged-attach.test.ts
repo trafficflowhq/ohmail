@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
 /// <reference path="../apps/desktop/src/build-flags.d.ts" />
+import type { ComposeAttachment, EngineMutation } from "@ohmail/wire";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ComposeAttachment, EngineMutation } from "@ohmail/client-engine";
 import { composeAttachCap, COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "@ohmail/client-engine";
 import { createEngineAdapter, type EngineStatus } from "../apps/desktop/src/bridge-fetch.js";
 import { CLOUD_URL } from "../apps/desktop/src/doors.js";

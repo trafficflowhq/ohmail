@@ -99,7 +99,7 @@ describe("the gate and the pending sign-out", () => {
     const mw = readFileSync(`${HERE}../middleware.ts`, "utf8");
     expect(mw, "the gate is never told about the pending sign-out")
       .toMatch(/const signOutPending = cookieFromStore\(request\.cookies, OWNER_COOKIE\) === OWNER_SIGNED_OUT;/);
-    expect(mw).toMatch(/resolveSurface\(\{[\s\S]*?signOutPending,[\s\S]*?\}\)/);
+    expect(mw).toMatch(/resolveFirstPage\(\{[\s\S]*?signOutPending,[\s\S]*?\}\)/);
   });
 
   it("…and answers `sign-out` with a 307 to the sign-in page, private and no-store, on both builds", () => {
@@ -246,6 +246,15 @@ describe("the front door sends a pending sign-out to the sign-in page", () => {
     const to = res.headers.get("location") ?? res.headers.get("x-middleware-rewrite") ?? "https://ohmail.app/";
     expect({ status: res.status, to: new URL(to).pathname }, "the next visit resumed the session the person signed out of")
       .toEqual({ status: 307, to: "/login" });
+  });
+
+  it("keeps the wake entry through the mailbox rewrite even without a current access cookie", async () => {
+    const { res, asked } = await front(MANAGED, "tf_resume=1; tf_owner=acct_A", "/?wake=1");
+    const destination = new URL(res.headers.get("x-middleware-rewrite")!);
+    expect(destination.pathname).toBe("/mailbox");
+    expect(destination.searchParams.get("wake")).toBe("1");
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(asked).toEqual([]);
   });
 
   it("THE CONTROL — the same jar naming an account is the splash: a rewrite, never a redirect", async () => {

@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 /**
  * EVERY SURFACE THAT SHOWS A MESSAGE'S CONTENT SHOWS ITS FILES (FIX-025). A body mount — the web
  * viewer, its text sink, the stream card, and on the phone the frame or a row's `.body` drawn as
- * a JSX child — must share its NEAREST enclosing function with the one strip (`MessageFiles` on
+ * a JSX child — must share its NEAREST enclosing function with the one strip (`LetterFiles`, today's `MessageFiles`, on
  * web and desktop, `AttachmentTiles` on the phone), so a member drawn in a `.map` callback needs
  * its own. Anything else is named below with the reason it shows no files. Out of scope: rows and
  * the phone's Trash card, which draw a stored preview and never a body.
@@ -23,11 +23,21 @@ interface Door {
   bodyMember: boolean;
   strip: string;
 }
+/*
+ * The web, the desktop and the paired page draw a letter through the new shell's parts (`packages/app/src`: the
+ * reader's letter, the Screener's held letter) and the web's own folders that a route reaches. Today's shell and views
+ * (`apps/webapp/app`'s two folders of them) are drawn by no host's entry since the switch and are not walked: a body
+ * there is a body nobody sees. The strip is the reader's (`LetterFiles`); a part that takes its body from the parts
+ * a host hands (`const Body = parts.body`) is a body mount as well.
+ */
 const WEB: Door = {
-  roots: ["apps/webapp/app", "apps/desktop/src"],
+  roots: [
+    "apps/webapp/app/(product)", "apps/webapp/app/components", "apps/webapp/app/letter-body",
+    "packages/app/src", "packages/letter-body/src", "apps/desktop/src", "apps/paired-page/src",
+  ],
   tags: new Set(["MessageBody", "MessageBodyView", "BodyText", "StreamCard"]),
   bodyMember: false,
-  strip: "MessageFiles",
+  strip: "LetterFiles",
 };
 const PHONE: Door = {
   roots: ["apps/mobile/src", "apps/mobile/app"],
@@ -39,9 +49,11 @@ const PHONE: Door = {
 
 /** `file#Component` → why that mount shows no files. */
 const NO_FILES: Record<string, string> = {
-  "apps/webapp/app/components/MessageBody.tsx#MessageBody": "the viewer itself; every host that mounts it is held here",
-  "apps/webapp/app/views/TrashView.tsx#TrashLiveRead": "the live Trash window: an un-mirrored row read as text, with no list route",
+  "packages/letter-body/src/MessageBody.tsx#MessageBody": "the viewer itself; every host that mounts it is held here",
+  "packages/app/src/reader/entry.tsx#PreviewBody": "the collapsed stream preview only; an expanded card goes through OpenCard to Letter and its strip",
+  "packages/app/src/reader/body/LetterBody.tsx#LetterBody": "the body the hosts hand the reader; the letter that draws it draws the strip",
   "apps/mobile/src/ui/MailBodyFrame.tsx#MailBodyFrame": "the reader's frame; its host, MessageReader, draws the tiles",
+  "apps/mobile/src/ui/MessageActions.tsx#ComposeSheet": "a bounded reply-history excerpt for composing; original files stay with the original message",
   "apps/mobile/src/ui/DraftReader.tsx#DraftReader": "the person's own unsent draft; its files are the composer's",
   "apps/mobile/src/ui/AccountWall.tsx#AccountWall": "not a message: `plan.body` is the account wall's own sentence",
 };
@@ -70,21 +82,40 @@ function containsTag(n: ts.Node, tag: string): boolean {
   return found;
 }
 
-interface Mount { at: string; key: string; what: string; withStrip: boolean }
+interface Mount { at: string; key: string; what: string; withStrip: boolean; noticeOnly: boolean }
+
+const HEADER_NOTICE = "packages/app/src/reader/entry.tsx#PreviewHead";
+
+function headerNoticeOnly(node: ts.Node, owner: string, handed: boolean): boolean {
+  if (owner !== HEADER_NOTICE || !handed || !ts.isJsxSelfClosingElement(node) || node.tagName.getText() !== "Body") return false;
+  const attributes = node.attributes.properties;
+  return !attributes.some(ts.isJsxSpreadAttribute) &&
+    attributes.some((attribute) => ts.isJsxAttribute(attribute) &&
+      attribute.name.getText() === "noticeOnly" && attribute.initializer === undefined);
+}
 
 /** Every body mount in one source, with whether its nearest function also draws the strip. */
 function bodyMounts(src: string, rel: string, door: Door): Mount[] {
   const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const out: Mount[] = [];
-  const record = (n: ts.Node, what: string): void => {
+  const record = (n: ts.Node, what: string, handed = false): void => {
     let fn: ts.Node = sf;
     for (let p: ts.Node | undefined = n.parent; p; p = p.parent) if (isFn(p)) { fn = p; break; }
     const line = sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
-    out.push({ at: `${rel}:${line}`, key: `${rel}#${componentOf(n)}`, what, withStrip: containsTag(fn, door.strip) });
+    const key = `${rel}#${componentOf(n)}`;
+    out.push({ at: `${rel}:${line}`, key, what, withStrip: containsTag(fn, door.strip), noticeOnly: headerNoticeOnly(n, key, handed) });
   };
+  /* A component taken from a parts record's body (`const Body = parts.body`) draws the body it was handed. */
+  const handed = new Set<string>();
+  const handedBodies = (n: ts.Node): void => {
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer
+      && ts.isPropertyAccessExpression(n.initializer) && n.initializer.name.text === "body") handed.add(n.name.text);
+    ts.forEachChild(n, handedBodies);
+  };
+  handedBodies(sf);
   const visit = (n: ts.Node): void => {
     const tag = tagOf(n);
-    if (tag !== null && door.tags.has(tag)) record(n, `<${tag}>`);
+    if (tag !== null && (door.tags.has(tag) || handed.has(tag))) record(n, `<${tag}>`, handed.has(tag));
     if (door.bodyMember && ts.isJsxExpression(n) && n.expression && (ts.isJsxElement(n.parent) || ts.isJsxFragment(n.parent))) {
       const scan = (e: ts.Node): void => {
         if (ts.isPropertyAccessExpression(e) && e.name.text === "body" && ts.isIdentifier(e.expression)) {
@@ -114,7 +145,7 @@ function census(door: Door): { files: number; mounts: Mount[] } {
   return { files: files.length, mounts };
 }
 const refused = (mounts: Mount[]) =>
-  mounts.filter((m) => !m.withStrip && NO_FILES[m.key] === undefined).map((m) => `${m.at} ${m.what}`);
+  mounts.filter((m) => !m.withStrip && !m.noticeOnly && NO_FILES[m.key] === undefined).map((m) => `${m.at} ${m.what}`);
 const hosts = (mounts: Mount[]) => [...new Set(mounts.map((m) => m.key))].sort();
 
 describe("web and desktop: every body mount draws MessageFiles, or is named", () => {
@@ -122,13 +153,14 @@ describe("web and desktop: every body mount draws MessageFiles, or is named", ()
 
   it("the walk read both roots and found the known hosts (the positive control)", () => {
     expect(files, "the walk read nothing").toBeGreaterThan(100);
+    expect(mounts.filter((mount) => mount.noticeOnly).map((mount) => mount.key)).toEqual([HEADER_NOTICE]);
     expect(hosts(mounts)).toEqual([
-      "apps/webapp/app/components/MessageBody.tsx#MessageBody",
-      "apps/webapp/app/shell/MessageCard.tsx#MessageCard",
-      "apps/webapp/app/shell/MessagePane.tsx#MessagePane",
-      "apps/webapp/app/shell/StreamCardMemo.tsx#StreamCardMemoInner",
-      "apps/webapp/app/views/ScreenerView.tsx#HeldMail",
-      "apps/webapp/app/views/TrashView.tsx#TrashLiveRead",
+      "packages/app/src/reader/Letter.tsx#Letter",
+      "packages/app/src/reader/body/LetterBody.tsx#LetterBody",
+      "packages/app/src/reader/entry.tsx#PreviewBody",
+      HEADER_NOTICE,
+      "packages/app/src/screener/held/HeldLetter.tsx#HeldLetterContent",
+      "packages/letter-body/src/MessageBody.tsx#MessageBody",
     ]);
   });
 
@@ -137,7 +169,7 @@ describe("web and desktop: every body mount draws MessageFiles, or is named", ()
   });
 
   it("every named exception is still a real mount", () => {
-    const named = Object.keys(NO_FILES).filter((k) => k.startsWith("apps/webapp/") || k.startsWith("apps/desktop/"));
+    const named = Object.keys(NO_FILES).filter((k) => !k.startsWith("apps/mobile/"));
     expect(named.filter((k) => !hosts(mounts).includes(k)), "an exception names a mount that is gone").toEqual([]);
   });
 });
@@ -152,6 +184,7 @@ describe("the phone: every body mount draws AttachmentTiles, or is named", () =>
       "apps/mobile/src/ui/AccountWall.tsx#AccountWall",
       "apps/mobile/src/ui/DraftReader.tsx#DraftReader",
       "apps/mobile/src/ui/MailBodyFrame.tsx#MailBodyFrame",
+      "apps/mobile/src/ui/MessageActions.tsx#ComposeSheet",
       "apps/mobile/src/ui/MessageReader.tsx#MessageReader",
       "apps/mobile/src/ui/SenderDetail.tsx#SenderDetail",
     ]);
@@ -172,12 +205,27 @@ describe("the census refuses a planted renderer and admits the ordinary host (dr
 
   it("web: a body without the strip is refused; with it, admitted", () => {
     expect(planted("export function Planted() { return <MessageBody text='x' />; }", WEB)).toEqual(["apps/x/Planted.tsx:1 <MessageBody>"]);
-    expect(planted("export function Planted() { return <><MessageBody text='x' /><MessageFiles messageId='m' /></>; }", WEB)).toEqual([]);
+    expect(planted("export function Planted() { return <><MessageBody text='x' /><LetterFiles messageId='m' /></>; }", WEB)).toEqual([]);
   });
 
   it("web: a strip OUTSIDE the callback that draws the body does not cover it", () => {
-    const src = "export function Planted({ ms }) { return <div>{ms.map((m) => <BodyText text={m.t} />)}<MessageFiles messageId='a' /></div>; }";
+    const src = "export function Planted({ ms }) { return <div>{ms.map((m) => <BodyText text={m.t} />)}<LetterFiles messageId='a' /></div>; }";
     expect(planted(src, WEB)).toEqual(["apps/x/Planted.tsx:1 <BodyText>"]);
+  });
+
+  it("web: a body the parts hand (const Body = parts.body) is a mount: refused without the strip, admitted with it", () => {
+    expect(planted("export function Planted({ parts }) { const Body = parts.body; return <Body text='x' />; }", WEB)).toEqual(["apps/x/Planted.tsx:1 <Body>"]);
+    expect(planted("export function Planted({ parts }) { const Body = parts.body; return <><Body text='x' /><LetterFiles messageId='m' /></>; }", WEB)).toEqual([]);
+
+    // Only an unconditional notice-only mount of the reader body is exempt.
+    expect(planted("function Planted({ parts }) { const Body = parts.body; return <Body noticeOnly />; }", WEB)).toEqual(["apps/x/Planted.tsx:1 <Body>"]);
+    expect(planted("function Planted({ parts, override }) { const Body = parts.body; return <Body noticeOnly {...override} />; }", WEB)).toEqual(["apps/x/Planted.tsx:1 <Body>"]);
+    const header = "packages/app/src/reader/entry.tsx";
+    expect(refused(bodyMounts("const PreviewHead = ({ parts }) => { const Body = parts.body; return <Body noticeOnly />; };", header, WEB))).toEqual([]);
+    expect(refused(bodyMounts("const PreviewHead = ({ parts, override }) => { const Body = parts.body; return <Body noticeOnly {...override} />; };", header, WEB))).toEqual([`${header}:1 <Body>`]);
+    expect(planted("function Planted() { return <MessageBody noticeOnly />; }", WEB)).toEqual(["apps/x/Planted.tsx:1 <MessageBody>"]);
+    expect(planted("function Planted({ parts }) { const Body = parts.body; return <Body noticeOnly={false} />; }", WEB)).toEqual(["apps/x/Planted.tsx:1 <Body>"]);
+    expect(planted("function Planted({ parts, hide }) { const Body = parts.body; return <Body noticeOnly={hide} />; }", WEB)).toEqual(["apps/x/Planted.tsx:1 <Body>"]);
   });
 
   it("phone: a row's body drawn as a child is refused without the tiles, admitted with them", () => {

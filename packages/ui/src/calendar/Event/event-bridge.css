@@ -1,0 +1,78 @@
+/* The bridge takes the open event's fill and joins the two rings along its sides. */
+@layer oh {
+  .oh-bridge {
+    --oh-bridge-tint: var(--oh-cal-open, var(--oh-cal-open-plain));
+    --oh-bridge-edge: var(--oh-cal-mark, var(--ink));
+    --oh-bridge-grow: scale(1, 0);
+    --oh-bridge-seen: var(--o-pop);
+    --oh-bridge-z: 7;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: var(--oh-bridge-z);
+    overflow: visible;
+    pointer-events: none;
+    /* It grows out of the event's edge while the card arrives, and leaves with the card at once. */
+    animation: oh-bridge-in var(--d-pop) var(--e-pop) both;
+  }
+  .oh-bridge[data-side="t"],
+  .oh-bridge[data-side="b"] {
+    --oh-bridge-grow: scale(0, 1);
+  }
+  @keyframes oh-bridge-in {
+    from {
+      transform: var(--oh-bridge-grow);
+      opacity: var(--oh-bridge-seen);
+    }
+  }
+  .oh-bridge[data-still] {
+    animation: none;
+  }
+  /* With motion reduced it does not grow: it is there as the card is, over the same short time. */
+  :root[data-rm="1"] .oh-bridge:not([data-still]) {
+    --oh-bridge-grow: none;
+    --oh-bridge-seen: 0;
+    animation-duration: var(--d-reduced);
+    animation-timing-function: var(--e-std);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .oh-bridge:not([data-still]) {
+      --oh-bridge-grow: none;
+      --oh-bridge-seen: 0;
+      animation-duration: var(--d-reduced) !important;
+      animation-timing-function: var(--e-std);
+    }
+  }
+  .oh-bridge-skin-event {
+    stop-color: var(--oh-bridge-tint);
+  }
+  .oh-bridge-skin-sheet {
+    stop-color: var(--sheet);
+  }
+  .oh-bridge-edge-start {
+    stop-color: var(--oh-bridge-edge);
+  }
+  .oh-bridge-edge-end {
+    stop-color: var(--hot);
+  }
+  .oh-bridge-edge {
+    fill: none;
+    stroke: var(--oh-bridge-edge);
+    stroke-width: var(--oh-cal-open-line);
+    stroke-linecap: butt;
+    stroke-linejoin: round;
+  }
+  :root[data-face="ohmarchy"] .oh-bridge-edge {
+    stroke: var(--oh-bridge-gradient);
+  }
+  /* One face keeps the sides straight, as it keeps square corners. */
+  .oh-bridge-form[data-form="straight"] {
+    display: none;
+  }
+  :root[data-face="ohmarchy"] .oh-bridge-form[data-form="liquid"] {
+    display: none;
+  }
+  :root[data-face="ohmarchy"] .oh-bridge-form[data-form="straight"] {
+    display: inline;
+  }
+}

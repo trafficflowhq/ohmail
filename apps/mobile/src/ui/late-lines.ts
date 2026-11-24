@@ -57,7 +57,7 @@ export interface LateStripSaid {
 
 /** The strip: said while any row's fetching is behind, with the day form from 24 hours on. */
 export function lateStripSaid(
-  rows: readonly PhoneMailbox[], now: number, zone: string, locale: string, who: LateWho | null,
+  rows: readonly PhoneMailbox[], now: number, zone: string, locale: string, who: LateWho | null, compact = false,
 ): LateStripSaid | null {
   if (who === null) return null;
   const behind = rows.filter((m) => m.fetching?.behind === true);
@@ -66,7 +66,10 @@ export function lateStripSaid(
   const said = since === null ? null : setTimeLabel(since, new Date(now), zone, locale);
   // Whole days, rounded down.
   const days = since === null ? 0 : Math.max(0, Math.floor((now - Date.parse(since)) / DAY_MS));
-  return { title: days >= 1 ? Copy.lateTitleDays(days) : Copy.lateTitle, line: lineSaid(who, said, days) };
+  const line = compact && said !== null
+    ? (who === "cloud" ? Copy.latePhoneCloud(said) : Copy.latePhoneServer(said))
+    : lineSaid(who, said, days);
+  return { title: days >= 1 ? Copy.lateTitleDays(days) : Copy.lateTitle, line };
 }
 
 /** One mailbox's note in Settings, or `null` where its row says nothing. */

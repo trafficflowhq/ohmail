@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 const { mailboxes, profileImport, ApiError } = await import("../app/api-client");
-import { OWNER_COOKIE } from "../app/shell/owner-cookie";
+import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
 
 /**
  * THE ERASE DOOR ON THE WIRE — the real client, a stubbed `fetch`. The pane's test mocks the

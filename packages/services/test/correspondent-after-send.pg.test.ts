@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect, carryDialect } from "@trafficflow/db/dialect";
+import { carryDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { accounts, contacts, drafts, mailboxFolders, mailboxes } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -23,12 +22,12 @@ import { SendService, type ServiceContext } from "../src/index.js";
  * In-Reply-To — admitted by the correspondent's reply arm, held before it. Addresses `.invalid`.
  */
 const PG_UP = await realPgAvailable();
-const sql = postgres(PG_TEST_URL, { max: 6, onnotice: () => {} });
-const db = brandDialect(drizzle(sql, { schema }), "pg");
+const owned = makeOwnedDb(PG_TEST_URL);
+const db = owned.db;
 const svc = new SendService();
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sql.end({ timeout: 5 }); });
+afterAll(async () => { await owned.close(); });
 
 /** SMTP, then an APPEND it can report — the Sent copy the send projects into the mirror. */
 function appendingAdapter(): OpenSendAdapter {
@@ -55,13 +54,13 @@ async function sentTo(address: string): Promise<{ accountId: string; mailboxId: 
     accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@own.invalid`, status: "connected",
   }).returning();
   // A mailbox the sync has already walked has its Sent folder on record.
-  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 1n });
+  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 7n, uidnext: 1n });
   const [d] = await db.insert(drafts).values({
     accountId, mailboxId: mb!.id, subject: "the north elevation", body: "Thursday?",
     to: [{ name: null, address }], status: "draft",
   }).returning();
   const ctx: ServiceContext = {
-    db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => new Date(), requestId: "r",
+    db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: "r",
   };
   let minted = "";
   const res = await svc.send(ctx, d!.id, `after-send-${randomUUID()}`, {

@@ -1,0 +1,5 @@
+{
+  "//": "This package's tsconfig.json includes `src` only and `tsc -b` follows references, so nothing in the workspace ever compiled `test/*` - vitest transpiles without checking, and a type error here runs green for ever. This is the program that reads it, and it needs no override beyond test/tsconfig.test-dirs-base.json (which carries the root vitest alias table, so the tests are checked against the SOURCE the suite runs and not against a built dist). Run it through the ratchet, never bare: `node --import tsx scripts/typecheck-test-dirs.mjs`.",
+  "extends": "../../test/tsconfig.test-dirs-base.json",
+  "include": ["test"]
+}

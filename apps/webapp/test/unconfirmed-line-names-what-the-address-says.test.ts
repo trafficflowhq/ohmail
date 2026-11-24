@@ -1,15 +1,16 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTranslator } from "next-intl";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import { messages } from "@trafficflow/db";
 import {
-  HttpAdapter, MemoryMirrorStore, OhmailEngine, screenerSegments, type EngineMessage, type FetchLike,
+  HttpAdapter, MemoryMirrorStore, OhmailEngine, screenerSegments, type FetchLike,
 } from "@ohmail/client-engine";
 import { FIXED_NOW, makeDeps, seedMailbox, seedScreenerHeld, seedSession } from "../../../packages/api/test/helpers.js";
-import en from "../messages/en.json";
-import de from "../messages/de.json";
-import { senderCheckFact, senderCheckSentence } from "../app/shell/sender-check.js";
+import en from "../../../packages/app/messages/screener.en.json";
+import de from "../../../packages/app/messages/screener.de.json";
+import { NO_RUN, senderCheckSentence, suggestionWords } from "@ohmail/app-logic/screener";
 
 /**
  * THE "DID NOT CONFIRM" LINE NAMES WHAT THE ADDRESS SAYS — from the real route, through the mirror,
@@ -21,7 +22,7 @@ import { senderCheckFact, senderCheckSentence } from "../app/shell/sender-check.
  */
 
 const app = createApp(apiRoutes);
-type Words = (key: string, values?: Record<string, string>) => string;
+type Words = (key: string, values?: Record<string, string | number>) => string;
 const EN = createTranslator({ locale: "en", messages: en as never, namespace: "screener" }) as unknown as Words;
 const DE = createTranslator({ locale: "de", messages: de as never, namespace: "screener" }) as unknown as Words;
 
@@ -53,13 +54,19 @@ async function mirrorOf(letters: ReadonlyArray<{ from: string; verdict: string |
     adapter: new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl }), store, now: () => FIXED_NOW,
   });
   await engine.start();
+  const waiting = screenerSegments(engine.read(), FIXED_NOW).waiting;
   const line = (from: string, t: Words): string | null => {
-    const m = store.get<EngineMessage>("message", ids.get(from)!);
-    expect(m, `${from} reached the mirror`).toBeDefined();
-    const f = senderCheckFact(m!);
-    return f === null ? null : senderCheckSentence(t, f);
+    const message = store.get<EngineMessage>("message", ids.get(from)!);
+    expect(message, `${from} reached the mirror`).toBeDefined();
+    const sender = waiting.find((row) => row.from.address === from);
+    if (!sender) {
+      expect(message!.senderCheck ?? null).toBeNull();
+      return null;
+    }
+    expect(suggestionWords(sender, NO_RUN).lines).toEqual([]);
+    return sender.checked?.reason === "unverified" ? senderCheckSentence(t, sender.checked) : null;
   };
-  return { engine, line };
+  return { waiting, line };
 }
 
 describe("the unconfirmed line on the web names what the address says", () => {
@@ -78,8 +85,7 @@ describe("the unconfirmed line on the web names what the address says", () => {
     expect(w.line("info@zas.admin.ch", EN)).toBeNull();
 
     // The Screener's rows off the same mirror carry the same name, and a confirmed office none.
-    const waiting = screenerSegments(w.engine.read(), FIXED_NOW).waiting;
-    const checked = (from: string) => waiting.find((r) => r.from.address === from)?.checked;
+    const checked = (from: string) => w.waiting.find((r) => r.from.address === from)?.checked;
     expect(checked("info@bag.admin.ch")).toMatchObject({ reason: "unverified", brand: "admin.ch" });
     expect(checked("poststelle@bsi.bund.de")).toMatchObject({ reason: "unverified", brand: "bund.de" });
     expect(checked("info@zas.admin.ch")).toBeUndefined();

@@ -1,0 +1,65 @@
+{
+  "component": "Doorbell",
+  "state": "rest",
+  "look": "ohmarchy-light-desktop",
+  "place": "cell",
+  "target": [24, 24, 26, 26],
+  "clip": [24, 24, 26, 26],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(32, 94, 166)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "-0.13px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [{ "boxShadow": "rgb(32, 94, 166) 0px 0px 0px 1px inset" }],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "6 waiting, Screener",
+      "box": [0, 0, 26, 26],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "color(srgb 0.895059 0.913882 0.906353)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "700",
+        "lineHeight": "13px",
+        "letterSpacing": "-0.13px",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "4px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "6", "type": 0 }],
+      "surfaces": [{ "box": [0, 0, 26, 26], "paint": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

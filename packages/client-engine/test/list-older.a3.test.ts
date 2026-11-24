@@ -1,18 +1,16 @@
+import type { EngineMessage, MutationOutcome, OhmailView } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   HttpAdapter,
   MutationRejectedError,
   OhmailEngine,
   SERVER_VIEW_OF,
   type EngineAdapter,
-  type EngineMessage,
   type ListOlderFn,
-  type MutationOutcome,
-  type OhmailView,
   type ServerMessageView,
   type SyncResponse,
 } from "../src/index.js";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * ═══ READING PAST THE END OF THE WINDOW ═══════════════════════════════════════════════

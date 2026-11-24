@@ -1,6 +1,6 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tools/tsconfig.base.json",
   "compilerOptions": { "outDir": "dist", "rootDir": "src", "lib": ["ES2022", "DOM"] },
   "include": ["src"],
-  "references": [{ "path": "../fixtures" }, { "path": "../core" }]
+  "references": [{ "path": "../wire" }, { "path": "../core" }]
 }

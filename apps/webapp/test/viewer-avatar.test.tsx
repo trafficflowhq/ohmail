@@ -1,18 +1,11 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { setActiveFormatZone } from "../app/shell/locale";
-
 /**
  * THE SENDER'S CIRCLE IS ON EVERY VIEWER PANEL, AND IT IS THE LIST'S CIRCLE.
  *
  * The list and the open message describe the same person, so they must wear the same face:
  * the small initials circle, derived the one way everything derives it — the display name's
  * first letter (the address's where there is no name), and a hue that is a pure function of
- * the ADDRESS (`avatarHue`, `format.ts`). The viewer redesign put a `MessageHeader` on every
+ * the ADDRESS (`avatarHue`, the kit's `hue.ts`). The viewer redesign put a `MessageHeader` on every
  * per-message panel; before it, the reading pane had NO circle at all, which is how a thread
  * could show its people in the list and then drop them the moment it was opened. These guards
  * hold the repaired state:
@@ -26,16 +19,21 @@ import { setActiveFormatZone } from "../app/shell/locale";
  *     exists to catch, because each half looks completely normal on its own.
  *   · The derivation is DETERMINISTIC: same input, same output, no per-render or per-session
  *     free variable. (The hue table itself is pinned in `shell-screening-bulk.test.ts`.)
+ *
+ * Over the new reader's letters (each head the kit's `MessageHead`, its circle the kit's `Avatar`)
+ * and, for the list half, the kit's `Row` handed the people the Ohbox's group hands it
+ * (`peopleOf` over `senderName`, as `packages/app/src/ohbox/OhboxGroup.tsx` and its seat do). A
+ * face is its letter and its hue's colour (`--oh-hue-bg`), read off the circle the head draws.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const NOW = new Date("2026-08-02T12:00:00.000Z");
+import type { EngineMessage } from "@ohmail/wire";
+import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render } from "@testing-library/react";
+import { Avatar, avatarHue, hueStyle } from "@ohmail/ui/base";
+import { Row } from "@ohmail/ui/mail";
+import { senderName } from "@ohmail/app-logic/text/format";
+import { peopleOf } from "../../../packages/app/src/ohbox/row-words.js";
+import { mountReader } from "../../../packages/app/test/reader/support/mail.js";
 
 /** Two voices, deliberately unalike: a named sender, and a bare address with no display name —
  * the fallback derivation (first letter of the LOCAL PART) is part of what is under guard. */
@@ -47,7 +45,7 @@ function msg(
   from: { name: string | null; address: string },
   date: string,
   threadId: string | null,
-): Record<string, unknown> {
+): EngineMessage {
   return {
     id,
     accountId: "a",
@@ -69,185 +67,87 @@ function msg(
     labels: [],
     remoteContent: "none",
     updatedAt: date,
-  };
+  } as unknown as EngineMessage;
 }
 
 const A = msg("a", ANDI, "2026-07-30T09:00:00.000Z", "t1");
 const G = msg("g", BARE, "2026-07-31T09:00:00.000Z", "t1");
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-let conversation: Array<Record<string, unknown>> = [];
+afterEach(() => cleanup());
 
-async function unmount(): Promise<void> {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-}
-
-/** The production seam, exactly as `conversation.test.ts` mounts it: the pane through the chrome. */
-async function mountPane(open: Record<string, unknown>): Promise<void> {
-  await unmount();
-  const { MessagePane } = await import("../app/shell/MessagePane.js");
-  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-
-  host = document.createElement("div");
-  host.className = "read-col";
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(MessageChromeProvider as never, {
-          value: {
-            ownAddresses: [],
-            replyTo: null,
-            replyBody: { text: "", html: "" },
-            onReplyBody: () => {},
-            closeReply: () => {},
-            sendReply: () => {},
-            replySendState: () => ({ phase: "idle" }),
-            openSenderMenu: () => {},
-            conversationOf: () => conversation,
-            bodyOf: (m: Record<string, unknown>) => ({
-              text: m.snippet as string,
-              state: "snippet",
-              html: null,
-              loadedRemoteContent: false,
-              unsubscribe: "no_header",
-              unsubscribeUrl: null,
-            }),
-            hydrateBody: () => {},
-            hydrateThread: () => {},
-          },
-          children: h(MessagePane as never, {
-            message: open,
-            tags: [],
-            now: NOW,
-            onAction: () => {},
-            onAddTag: () => {},
-            onAttachment: () => {},
-          } as never),
-        } as never),
-      }),
-    );
-  });
-}
-
-/** A rendered circle, reduced to the two derived facts under guard. */
 interface Face { letter: string; hue: string }
-const faceOf = (el: Element | null): Face => {
-  expect(el, "expected an .av circle here").not.toBeNull();
-  return {
-    letter: (el as HTMLElement).textContent ?? "",
-    hue: (el as HTMLElement).style.getPropertyValue("--av-h"),
-  };
-};
-/** The circle a viewer panel's header wears. */
-const headerFace = (convId: string): Face =>
-  faceOf(host!.querySelector(`[data-conv-id="${convId}"] .msg-sender .av`));
-
-beforeEach(() => {
-  vi.useFakeTimers();
-  setActiveFormatZone("UTC");
-  conversation = [];
-});
-
-afterEach(async () => {
-  await unmount();
-  setActiveFormatZone(null);
-  vi.useRealTimers();
-});
+/** The circle: the one hidden element carrying a person's hue, its letter and its colour. */
+function faceOf(el: Element | null): Face {
+  expect(el, "no sender circle").not.toBeNull();
+  const style = (el as HTMLElement).style;
+  return { letter: (el!.firstChild?.textContent ?? "").trim(), hue: style.getPropertyValue("--oh-hue-bg") };
+}
+const circleIn = (scope: Element | null): Element | null =>
+  scope?.querySelector('[aria-hidden="true"][style*="--oh-hue-bg"]') ?? null;
+/** The circle in the head of the letter `id` of the open conversation. */
+function headerFace(id: string): Face {
+  return faceOf(circleIn(document.querySelector(`[data-conv-id="${id}"]`)));
+}
+const hueOf = (address: string): string => String(hueStyle(avatarHue(address))["--oh-hue-bg" as never]);
 
 describe("every viewer panel header wears its sender's circle", () => {
   it("a conversation: the focused panel and each sibling carry their OWN sender's face", async () => {
-    // Mutation that must go red: remove the <Avatar> from `MessageHeader` (MessageCard.tsx) —
-    // every face below is missing. The header is ONE component worn by both panel kinds, so
-    // one mutation point covers the focused message and the siblings alike.
-    conversation = [A, G];
-    await mountPane(A);
+    // Mutation that must go red: remove the <Avatar> from the kit's `MessageHead` — every face
+    // below is missing. The head is ONE component worn by every letter of the column, so one
+    // mutation point covers the opened letter and the siblings alike.
+    mountReader({ letters: [A, G], open: "a" });
 
-    const { avatarHue, initialsOf, senderName } = await import("../app/shell/format.js");
     const andi = headerFace("a");
     expect(andi.letter).toBe("A");
-    expect(andi.letter).toBe(initialsOf(senderName(A as never)));
-    expect(andi.hue).toBe(String(avatarHue(ANDI.address)));
+    expect(andi.letter).toBe([...senderName(A)][0]!.toUpperCase());
+    expect(andi.hue).toBe(hueOf(ANDI.address));
 
     // The no-name sender: the letter falls back to the address's local part — and the hue is
     // keyed on the ADDRESS either way, so a person is one colour with or without a name.
     const mila = headerFace("g");
     expect(mila.letter).toBe("M");
-    expect(mila.letter).toBe(initialsOf(senderName(G as never)));
-    expect(mila.hue).toBe(String(avatarHue(BARE.address)));
+    expect(mila.letter).toBe([...senderName(G)][0]!.toUpperCase());
+    expect(mila.hue).toBe(hueOf(BARE.address));
   });
 
   it("a single message keeps the same circle in its one header", async () => {
-    conversation = [];
-    await mountPane(msg("solo", ANDI, "2026-07-30T09:00:00.000Z", null));
-    const { avatarHue } = await import("../app/shell/format.js");
-    const face = faceOf(host!.querySelector(".msg .msg-sender .av"));
+    mountReader({ letters: [msg("solo", ANDI, "2026-07-30T09:00:00.000Z", null)], open: "solo" });
+    const face = headerFace("solo");
     expect(face.letter).toBe("A");
-    expect(face.hue).toBe(String(avatarHue(ANDI.address)));
+    expect(face.hue).toBe(hueOf(ANDI.address));
   });
 });
 
 describe("the list and the viewer derive one identity per address", () => {
   it("a MessageRow's lead and strip faces carry the SAME letter and hue as the viewer's headers", async () => {
     // The viewer half.
-    conversation = [A, G];
-    await mountPane(A);
+    mountReader({ letters: [A, G], open: "a" });
     const viewer = { a: headerFace("a"), g: headerFace("g") };
 
-    // The list half: a row drawn with the shell's own derivation for the same people — the
-    // lead via `avatarOf`, the strip via the `initialsOf`/`avatarHue` pair `participantsOf`
-    // binds (`AppShell.tsx`). DOM-to-DOM, so a viewer that re-derived either fact its own way
-    // (hue off the display name, initial off something else) splits the two and goes red.
-    const { MessageRow } = await import("@ohmail/ui");
-    const { avatarOf, avatarHue, initialsOf } = await import("../app/shell/format.js");
-    const participants = [ANDI, BARE].map((p) => ({
-      initials: initialsOf(p.name || p.address),
-      hue: avatarHue(p.address),
-    }));
-    const rowHost = document.createElement("div");
-    document.body.appendChild(rowHost);
-    const rowRoot = createRoot(rowHost);
-    await act(async () => {
-      rowRoot.render(
-        h(MessageRow as never, {
-          id: "row-a",
-          from: "Andi Berger",
-          subject: "subj",
-          ...avatarOf(A as never),
-          participants,
-          threadCount: 2,
-        } as never),
-      );
-    });
-
-    const lead = faceOf(rowHost.querySelector(".row > .av"));
-    const strip = [...rowHost.querySelectorAll(".thread-circles .av")].map(faceOf);
-    expect(strip).toHaveLength(2);
+    // The list half: a row drawn with the Ohbox's own derivation for the same people — the
+    // group's people via `peopleOf` over `senderName`, as `OhboxGroup.tsx` hands the kit's Row.
+    // DOM-to-DOM, so a viewer that re-derived either fact its own way (hue off the display
+    // name, initial off something else) splits the two and goes red.
+    const { people } = peopleOf([{ letter: A, you: false }, { letter: G, you: false }], senderName, "you", "en");
+    const row = render(<Row who="Andi Berger" people={people} subject="subj" />);
+    const faces = [...row.container.querySelectorAll('[aria-hidden="true"][style*="--oh-hue-bg"]')].map(faceOf);
+    expect(faces).toHaveLength(2);
 
     // One person, one face, both surfaces: letter AND hue agree exactly.
-    expect(lead).toEqual(viewer.a);
-    expect(strip[0]).toEqual(viewer.a);
-    expect(strip[1]).toEqual(viewer.g);
-
-    await act(async () => { rowRoot.unmount(); });
-    rowHost.remove();
+    expect(faces[0]).toEqual(viewer.a);
+    expect(faces[1]).toEqual(viewer.g);
   });
 
   it("the derivation is deterministic — same input, same output, every time", async () => {
-    const { avatarHue, initialsOf } = await import("../app/shell/format.js");
     // A per-render or per-session free variable (a random seed, a Date.now() salt) breaks
     // repeated calls apart; a pure function cannot.
     for (const address of [ANDI.address, BARE.address, "someone@else.example"]) {
       expect(avatarHue(address)).toBe(avatarHue(address));
     }
-    expect(initialsOf("Andi Berger")).toBe("A");
-    expect(initialsOf("mila@trafficflow.example")).toBe("M");
-    expect(initialsOf(" andi@bergerweb.example")).toBe("A");
+    const letterOf = (name: string): string =>
+      (render(<Avatar name={name} address="x@y.example" />).container.firstElementChild?.firstChild?.textContent ?? "");
+    expect(letterOf("Andi Berger")).toBe("A");
+    expect(letterOf("mila@trafficflow.example")).toBe("M");
+    expect(letterOf(" andi@bergerweb.example")).toBe("A");
   });
 });

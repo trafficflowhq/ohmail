@@ -1,11 +1,10 @@
 /** @vitest-environment jsdom */
+import type { MessageBodyWire, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type MessageBodyWire,
-  type MutationOutcome,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
@@ -18,7 +17,7 @@ import {
   type SyncGate,
   type SyncIdentity,
   type WakeStreamLike,
-} from "../app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * A STREAM IS LIVE WHEN IT DELIVERS, NOT WHEN IT OPENS. A compressing or buffering hop sends the

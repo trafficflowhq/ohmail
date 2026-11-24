@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { accountSettings, type Tx } from "@trafficflow/db";
+import { accountPass, accountSettings, onPass, passProgress, writePassProgress, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   getScreeningPreference, setScreeningPreference, requestOhboxTidy, resolveOhboxPolicy,
@@ -55,9 +55,9 @@ describe("screening-preference reader/writer", () => {
     screeningBaselineAt: null, dormancyDays: null, screeningScope: "window",
   } as const;
 
-  it("an account with no row reads as both-NULL and auto-apply OFF — never an error", async () => {
+  it("an account with no row reads as both-NULL — never an error", async () => {
     expect(await getScreeningPreference(ctx)).toEqual({
-      ohboxPolicy: null, ohboxBar: null, screenerAutoApply: false, impersonationFiling: true, ...NO_ROW_CUTLINE,
+      ohboxPolicy: null, ohboxBar: null, impersonationFiling: true, ...NO_ROW_CUTLINE,
     });
   });
 
@@ -74,7 +74,7 @@ describe("screening-preference reader/writer", () => {
     const after = await setScreeningPreference(ctx, { ohboxPolicy: "people_only" });
     expect(after.ohboxPolicy).toBe("people_only");
     expect(await getScreeningPreference(ctx)).toEqual({
-      ohboxPolicy: "people_only", ohboxBar: null, screenerAutoApply: false, impersonationFiling: true, ...UNSET_CUTLINE,
+      ohboxPolicy: "people_only", ohboxBar: null, impersonationFiling: true, ...UNSET_CUTLINE,
     });
     expect(resolveOhboxPolicy((await getScreeningPreference(ctx)).ohboxPolicy)).toBe("people_only");
   });
@@ -83,7 +83,7 @@ describe("screening-preference reader/writer", () => {
     await setScreeningPreference(ctx, { ohboxPolicy: "people_only" });
     await setScreeningPreference(ctx, { ohboxBar: "keep it relevant" });
     expect(await getScreeningPreference(ctx)).toEqual({
-      ohboxPolicy: "people_only", ohboxBar: "keep it relevant", screenerAutoApply: false, impersonationFiling: true,
+      ohboxPolicy: "people_only", ohboxBar: "keep it relevant", impersonationFiling: true,
       ...UNSET_CUTLINE,
     });
   });
@@ -92,35 +92,17 @@ describe("screening-preference reader/writer", () => {
     await setScreeningPreference(ctx, { ohboxPolicy: "people_only", ohboxBar: "custom" });
     await setScreeningPreference(ctx, { ohboxPolicy: null, ohboxBar: null });
     expect(await getScreeningPreference(ctx)).toEqual({
-      ohboxPolicy: null, ohboxBar: null, screenerAutoApply: false, impersonationFiling: true, ...UNSET_CUTLINE,
+      ohboxPolicy: null, ohboxBar: null, impersonationFiling: true, ...UNSET_CUTLINE,
     });
   });
 
-  // ── SCREENER AUTO-APPLY — the opt-in, default OFF, round-trips as a boolean (mail 0046) ──────
-  //
-  // Mutation-watch (a) at the settings layer: a fresh account reads OFF. Flip the read to default ON
-  // (e.g. `!= null` → `== null`) and the first assertion here goes red.
+  // (The Screener auto-apply switch stood here until mail 0202 dropped its column: the pass it
+  // switched was retired, and the preference neither stores nor answers it.)
 
-  it("auto-apply defaults OFF, turns on and off, and never touches the other axes", async () => {
-    // Default OFF for an account that has never touched it (also proven by the no-row test above).
-    expect((await getScreeningPreference(ctx)).screenerAutoApply).toBe(false);
-
-    // Turn it ON — and it does NOT disturb the posture or the bar.
-    const on = await setScreeningPreference(ctx, { screenerAutoApply: true });
-    // The WRITER's result carries the same shape (`ScreeningPreferenceResult extends
-    // ScreeningPreference`), so turning the flag on states the three cutline columns too.
-    expect(on).toEqual({
-      ohboxPolicy: null, ohboxBar: null, screenerAutoApply: true, impersonationFiling: true, ...UNSET_CUTLINE,
-    });
-
-    // Set the posture WITHOUT naming auto-apply — the ON flag survives (one axis at a time).
-    await setScreeningPreference(ctx, { ohboxPolicy: "people_only" });
-    expect((await getScreeningPreference(ctx)).screenerAutoApply).toBe(true);
-
-    // Turn it OFF again — complete, no unwind needed.
-    const off = await setScreeningPreference(ctx, { screenerAutoApply: false });
-    expect(off.screenerAutoApply).toBe(false);
-    expect(off.ohboxPolicy).toBe("people_only");
+  it("answers no auto-apply switch, and stores none when an older caller sends one", async () => {
+    expect("screenerAutoApply" in (await getScreeningPreference(ctx))).toBe(false);
+    const after = await setScreeningPreference(ctx, { ohboxPolicy: "people_only", screenerAutoApply: true } as never);
+    expect(after).toEqual({ ohboxPolicy: "people_only", ohboxBar: null, impersonationFiling: true, ...UNSET_CUTLINE });
   });
 
   // ── FILING A HELD IMPERSONATION TO SPAM — default ON, turned off and on as a boolean (mail 0184) ──
@@ -129,7 +111,7 @@ describe("screening-preference reader/writer", () => {
     expect((await getScreeningPreference(ctx)).impersonationFiling).toBe(true);
     const off = await setScreeningPreference(ctx, { impersonationFiling: false });
     expect(off).toEqual({
-      ohboxPolicy: null, ohboxBar: null, screenerAutoApply: false, impersonationFiling: false, ...UNSET_CUTLINE,
+      ohboxPolicy: null, ohboxBar: null, impersonationFiling: false, ...UNSET_CUTLINE,
     });
     const [row] = await (ctx.db as unknown as Tx).select({ at: accountSettings.impersonationFilingOffAt }).from(accountSettings)
       .where(eq(accountSettings.accountId, ctx.accountId));
@@ -138,11 +120,6 @@ describe("screening-preference reader/writer", () => {
     expect((await getScreeningPreference(ctx)).impersonationFiling, "another axis left it off").toBe(false);
     expect((await setScreeningPreference(ctx, { impersonationFiling: true })).impersonationFiling).toBe(true);
     await expect(setScreeningPreference(ctx, { impersonationFiling: "no" as never }))
-      .rejects.toMatchObject({ constructor: ServiceError, httpStatus: 400 });
-  });
-
-  it("refuses a non-boolean auto-apply with a 400 (strict, no coercion)", async () => {
-    await expect(setScreeningPreference(ctx, { screenerAutoApply: "yes" as never }))
       .rejects.toMatchObject({ constructor: ServiceError, httpStatus: 400 });
   });
 
@@ -169,14 +146,12 @@ describe("screening-preference reader/writer", () => {
   // ── THE BACKLOG TIDY IS ARMED BY THE FLIP, AND ONLY BY THE FLIP (mail 0043) ──────────────────
   //
   // Risk 1 from the architecture ruling: the worker pass is owed work only when a services-side
-  // write stamps `ohbox_tidy_requested_at`. If the flip does not stamp it, the pass ships and never
+  // write stamps the tidy's request mark. If the flip does not stamp it, the pass ships and never
   // runs. These are the LIVE check that it does.
 
   const tidyMarker = async () => {
-    const [row] = await ctx.db.select({
-      requestedAt: accountSettings.ohboxTidyRequestedAt,
-      cursor: accountSettings.ohboxTidyCursor,
-    }).from(accountSettings).where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
+    const [row] = await ctx.db.select({ requestedAt: passProgress.requestedAt, cursor: passProgress.cursor })
+      .from(passProgress).where(onPass("ohbox_tidy", ctx.accountId)).limit(1);
     return row;
   };
 
@@ -192,8 +167,7 @@ describe("screening-preference reader/writer", () => {
     await setScreeningPreference(ctx, { ohboxPolicy: "people_only" });
     // Simulate a run in flight: a cursor mid-backlog.
     const midCursor = randomUUID();
-    await ctx.db.update(accountSettings).set({ ohboxTidyCursor: midCursor })
-      .where(eq(accountSettings.accountId, ctx.accountId));
+    await writePassProgress(ctx.db, accountPass("ohbox_tidy", ctx.accountId), { cursor: midCursor });
 
     // A bar edit (still people_only, no transition) must leave the cursor alone — re-arming it would
     // restart a run in flight from the top.

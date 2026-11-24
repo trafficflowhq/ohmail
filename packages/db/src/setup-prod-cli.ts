@@ -1,8 +1,8 @@
 import { pathToFileURL } from "node:url";
-import {
-  assertSessionUrl, setupProdDatabase, PROD_DB_HOST_ENV,
-} from "./setup-prod.js";
+import { setupProdDatabase } from "./setup-prod.js";
+import { printSetupReport, setupTargetOf, storeKindOf } from "./setup-prod-command.js";
 import { dataApiPolicyFromEnv } from "./supabase-lockdown-core.js";
+import { NOTHING_OPENS } from "./transition/index.js";
 
 /**
  * The `pnpm db:setup:prod` entry point, kept in a module NOTHING re-exports. The guard at the
@@ -25,17 +25,22 @@ import { dataApiPolicyFromEnv } from "./supabase-lockdown-core.js";
  * this file's own `FAILED:` line. `.then`, NOT top-level `await`: this file reaches two Next
  * builds. `pathToFileURL`, not `file://${argv}` — a checkout under a SPACE exits 0 silently.
  */
-async function runCli(): Promise<number> {
+/*
+ * THIS PROGRAM HOLDS NO KEY RING: the envelope is `packages/core`'s, which this package does not
+ * reach. The move to 2.0 opens every sealed value of the store, so from here a store with nothing
+ * sealed moves, and one that holds a sealed value is rolled back whole and says which place. A
+ * host that holds the ring uses `npm run db:setup:server -- --store cloud|server` instead.
+ */
+/*
+ * `--lock`: where the runtime logins exist, make the lock (row security on every locked table and
+ * the listed policies). Without it a database whose lock already stands is kept as listed, and one
+ * without a lock is left without one. A server without the logins is never locked.
+ */
+async function runCli(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   try {
-    const url = assertSessionUrl(process.env.DATABASE_URL_SESSION);
-    const expectedHost = process.env[PROD_DB_HOST_ENV]?.trim();
-    if (!expectedHost) {
-      console.error(
-        `[db:setup:prod] FAILED: ${PROD_DB_HOST_ENV} is required — set it to the endpoint hostname you ` +
-          `intend to provision (it is compared to DATABASE_URL_SESSION before anything is written)`,
-      );
-      return 1;
-    }
+    const store = storeKindOf(argv);
+    const lock = argv.includes("--lock");
+    const { url, expectedHost } = setupTargetOf(process.env);
     const report = await setupProdDatabase(url, {
       log: (m) => console.log(`[db:setup:prod] ${m}`),
       expectedHost,
@@ -47,26 +52,10 @@ async function runCli(): Promise<number> {
       // used to be the whole story here, and a green census is not a verdict about a public
       // key reading tables over HTTP.
       dataApi: dataApiPolicyFromEnv(process.env),
+      ...(store ? { transition: { kind: store, openSealed: NOTHING_OPENS } } : {}),
+      ...(lock ? { lock: "apply" as const } : {}),
     });
-    console.log(JSON.stringify(report, null, 2));
-    console.log(
-      // PER JOURNAL, not just the total: `28/28` would be printed identically by a database
-      // whose two halves were 21/21 + 7/7 and by one that somehow held 28 rows in one table.
-      // The pinned per-journal counts are the whole point of the pinning fix, so the line an
-      // operator reads states them.
-      `[db:setup:prod] OK — ${report.journals.map((j) => `${j.name} ${j.applied}/${j.expected}`).join(", ")} ` +
-        `(${report.migrationsApplied}/${report.migrationsExpected} total), ` +
-        `pg_trgm ${report.pgTrgmVersion}, applied this run: ` +
-        `${report.appliedThisRun.length === 0 ? "none (idempotent no-op)" : report.appliedThisRun.join(", ")}` +
-        // The endpoint verdict on the same line an operator reads as the sign-off. A run that
-        // got here with a Supabase-shaped host DID probe (an unverifiable policy would have
-        // thrown), so this states which endpoint answered nothing and over how many relations.
-        `${report.supabaseDataApi
-          ? `; data API ${report.supabaseDataApi.endpoint} refused all ` +
-            `${report.supabaseDataApi.probed} probed relations` +
-            `${report.supabaseDataApi.endpointClosed ? " (endpoint closed this run)" : ""}`
-          : ""}`,
-    );
+    printSetupReport(report);
     return 0;
   } catch (err: unknown) {
     console.error(`[db:setup:prod] FAILED: ${err instanceof Error ? err.message : String(err)}`);

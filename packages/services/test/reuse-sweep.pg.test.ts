@@ -1,16 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, asc, eq, desc, sql } from "drizzle-orm";
 import { generateSync } from "otplib";
-import { refreshTokens, sessions } from "@trafficflow/db";
-import { authEvents, schema } from "@trafficflow/db/cloud";
+import { bindDb, refreshTokens, sessions } from "@trafficflow/db";
+import { authEvents, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  AuthService, makeTestAuthDeps,
+  AuthService, dbFor, makeTestAuthDeps,
   type ServiceContext,
 } from "@trafficflow/services";
 
@@ -40,11 +37,14 @@ import {
  */
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
+// A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
 const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => new Date(),
+  db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+  accountId: "", userId: null, now: () => new Date(),
   requestId: "reuse-sweep-pg", ip: "10.9.9.10", ...over,
 });
 
@@ -91,10 +91,10 @@ const pastGrace = (): ServiceContext =>
 describe.skipIf(!PG_UP)("the reuse sweep's transaction on real Postgres", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    client = postgres(PG_TEST_URL, { max: 5 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); });
 
   it("the ordinary sweep commits revocation and record TOGETHER — one row, family dead", async () => {
     const svc = new AuthService(makeTestAuthDeps());

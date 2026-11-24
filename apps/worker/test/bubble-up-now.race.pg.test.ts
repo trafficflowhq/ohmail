@@ -1,16 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect, carryDialect } from "@trafficflow/db/dialect";
+import { carryDialect } from "@trafficflow/db/dialect";
 import { and, asc, eq } from "drizzle-orm";
 import { changeLog, mailboxes, messages, messageStates, type Tx } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
-import { triageService } from "@trafficflow/services";
+import { triageService, dbFor } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { bubbleUpPass } from "../src/bubble-up-cron.js";
-import { dbUrlFor, refuseDriftedSharedDb } from "./_workerdb.js";
+import { dbUrlFor, refuseDriftedSharedDb } from "../../../packages/organizer/test/_workerdb.js";
 
 /**
  * "RESURFACE NOW" AGAINST THE WORKER'S BUBBLE-UP PASS, ON REAL POSTGRES.
@@ -51,13 +50,13 @@ const AFTER_FUTURE = new Date("2026-08-14T09:00:01.000Z");
 
 // TWO PHYSICAL CONNECTIONS, and that is the point of the file. One client-side pool would
 // serialize the two writers before Postgres ever saw them.
-const clientW = postgres(URL, { max: 5 });   // the worker's
-const clientU = postgres(URL, { max: 5 });   // the person's
-const dbW = brandDialect(drizzle(clientW, { schema }), "pg");
-const dbU = brandDialect(drizzle(clientU, { schema }), "pg");
+const clientW = makeOwnedDb(URL);   // the worker's
+const clientU = makeOwnedDb(URL);   // the person's
+const dbW = clientW.db;
+const dbU = clientU.db;
 
 function ctx(accountId: string, now: Date = NOW): ServiceContext {
-  return { db: dbU as unknown as ServiceContext["db"], accountId, userId: null, now: () => now, requestId: "resurface-now" };
+  return { db: dbFor(dbU, accountId), accountId, userId: null, now: () => now, requestId: "resurface-now" };
 }
 
 /** A mailbox for `accountId` — messages need one, nothing here reads it. */
@@ -110,8 +109,8 @@ describe("resurface now ⇄ the bubble-up pass (real Postgres)", () => {
   // one that reaches the shared database without going through it, which is why it says so here.
   beforeAll(async () => { await refuseDriftedSharedDb(URL); await runMigrations(URL); }, 60000);
   afterAll(async () => {
-    await clientW.end({ timeout: 5 });
-    await clientU.end({ timeout: 5 });
+    await clientW.close();
+    await clientU.close();
   });
 
   it("'Now' on a SCHEDULED row spends the schedule — a later pass flips nothing", async () => {

@@ -11,7 +11,8 @@ import de from "../messages/de.json";
 type Catalog = Record<string, Record<string, string>>;
 const VENDOR = /anthropic|claude|openai|gpt|ollama|opencode|llama/i;
 const SELFHOST: Array<[string, string]> = [
-  ["onboarding", "aiYesSelfhostWhy"], ["onboarding", "providerSelfhostOn"], ["onboarding", "providerSelfhostOff"],
+  ["onboarding", "aiSends"], ["onboarding", "aiServerTag"], ["onboarding", "aiRulesOnly"],
+  ["onboarding", "aiSay"], ["onboarding", "aiOff"],
   ["data", "selfAi"], ["pricing", "selfStatusNote"],
 ];
 

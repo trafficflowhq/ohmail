@@ -1,4 +1,4 @@
-import type { EngineMutation } from "./types.js";
+import type { EngineMutation } from "@ohmail/wire";
 import type { StorageDoor } from "./durable.js";
 import {
   armRoutingIntent,

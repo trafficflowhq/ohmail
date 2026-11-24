@@ -3,11 +3,12 @@
  * reads class names, statuses and closed codes and never a message; the engine hands the record
  * to an adapter that has the capability and does nothing at all for one that has not.
  */
+import type { MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   CursorExpiredError, MemoryMirrorStore, MutationRejectedError, OhmailEngine, SnapshotCursorRefusedError,
   WINDOW_SYNC_FAILURE_REASONS, classifyWindowSyncFailure,
-  type EngineAdapter, type MutationOutcome, type SyncResponse, type WindowSyncFailure,
+  type EngineAdapter, type SyncResponse, type WindowSyncFailure,
 } from "../src/index.js";
 
 describe("classifyWindowSyncFailure", () => {

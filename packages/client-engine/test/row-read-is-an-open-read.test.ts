@@ -1,16 +1,14 @@
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { getFixtures, type MessageFixture } from "@ohmail/fixtures";
+import { getFixtures, type MessageFixture } from "@ohmail/testing";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   MutationRejectedError,
   OhmailEngine,
   ohboxView,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * A ROW READ BY ITS OWN VERB IS A READ IN OHMAIL (owner 2026-10-21: "should be at the top when it was

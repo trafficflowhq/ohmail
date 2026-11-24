@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
+import { barVerb, letterShown, lettersShown, menuItem, reportSays } from "./ohbox/_finders.js";
 
 /**
  * A MOVE ON OUR OWN LETTER WRITES NO RULE ABOUT OUR OWN ADDRESS, through the shipped
@@ -68,13 +69,13 @@ const click = async (el: Element): Promise<void> => {
 };
 /** The row holding `id`: its own, or the folded conversation it is a member of. */
 const row = (host: HTMLElement, id: string): HTMLElement => {
-  const r = host.querySelector<HTMLElement>(`.row[data-id="${id}"]`)
-    ?? [...host.querySelectorAll<HTMLElement>(".row[data-ids]")].find((x) => (x.dataset.ids ?? "").split(" ").includes(id));
+  const r = host.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${id}"]`)
+    ?? [...host.querySelectorAll<HTMLElement>(":is(.row, [role=option])[data-ids]")].find((x) => (x.dataset.ids ?? "").split(" ").includes(id));
   if (!r) throw new Error(`no row ${id}`);
   return r;
 };
-const toasts = (): string[] =>
-  [...document.querySelectorAll("[class*=toast]")].map((n) => (n.textContent ?? "").trim()).filter(Boolean);
+/** What the press answered: the frame's report at a seated place (today's shell said it in its toast). */
+const toasts = (): string[] => [reportSays()].filter(Boolean);
 
 /** Every write the shell sent, as `METHOD path body`. */
 function writes(): string[] {
@@ -84,15 +85,18 @@ function writes(): string[] {
     const method = (init?.method ?? r?.method ?? "GET").toUpperCase();
     if (method === "GET") return [];
     const url = new URL(String(r?.url ?? input), "https://h.invalid");
+    // The account refresh is separate from the complete set of mutations made by Move.
+    if (url.pathname === "/auth/refresh") return [];
     return [`${method} ${url.pathname} ${typeof init?.body === "string" ? init.body : ""}`];
   });
 }
 
-/** Press the bar's Move, then the place, on what is open. */
+/** Press Move on the focused action panel and pick a destination. */
 async function pressMove(host: HTMLElement, place: string): Promise<void> {
-  await click(host.querySelector(".abar-move")!);
-  const target = [...host.querySelectorAll<HTMLButtonElement>(".abar-panel button")]
-    .find((b) => (b.textContent ?? "").includes(`→ ${place}`));
+  const move = barVerb(host, "Move");
+  if (!move) throw new Error("no Move action on the reader bar");
+  await click(move);
+  const target = menuItem(place);
   if (!target) throw new Error(`no move target ${place}`);
   await click(target);
 }
@@ -102,8 +106,14 @@ async function moveTo(host: HTMLElement, id: string, place: string): Promise<voi
   await pressMove(host, place);
 }
 const windowCloses = async (): Promise<void> => { for (let i = 0; i < 30; i++) await tick(1000); };
-const focusedPanel = (host: HTMLElement): string | null =>
-  host.querySelector<HTMLElement>(".read-col article.pm[aria-current]")?.dataset.convId ?? null;
+/**
+ * The focused panel: the letter of the open conversation the address names (`#/ohbox/m/<id>`), as
+ * `conversation-bar-acts-on-the-opened-panel` reads the ringed panel at the seated Ohbox; a single letter rings none.
+ */
+const focusedPanel = (host: HTMLElement): string | null => {
+  const id = /^#\/ohbox\/m\/([^/?]+)/.exec(window.location.hash)?.[1] ?? null;
+  return lettersShown(host).length > 1 && id !== null && letterShown(host, id) !== null ? id : null;
+};
 
 beforeEach(() => {
   installShellEnv();
@@ -208,7 +218,8 @@ describe("Move on our own letter", () => {
     await settle();
     expect(engine.openRowHeld(), "the premise: the answer ended the hold").toBeNull();
     expect(row(host, "g_b").dataset.id, "the premise: the answered row stands for the letter").toBe("g_b");
-    expect(focusedPanel(host)).toBe("g_b");
+    expect(window.location.hash).toBe("#/ohbox/t/g_b");
+    expect(letterShown(host, "g_b")).not.toBeNull();
     await pressMove(host, "News");
     await windowCloses();
     const w = writes();
@@ -223,8 +234,11 @@ describe("Move on our own letter", () => {
       row(host, "c_fwd").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));
     });
     await settle();
-    await click(host.querySelector(".abar-move")!);
-    const target = [...host.querySelectorAll<HTMLButtonElement>(".abar-panel button")].find((b) => (b.textContent ?? "").includes("→ News"));
+    /* The selection's Move, by its name on the bar's foot, and the place by its name in the Move question (studio
+       `core.js` `moveMenu` lists the places by name, where the old bar wrote "→ News"). */
+    const move = [...host.querySelectorAll<HTMLButtonElement>(".ob-foot button")].find((b) => (b.textContent ?? "").trim().startsWith("Move"));
+    await click(move!);
+    const target = [...document.querySelectorAll<HTMLElement>(":is([role=menu], [role=dialog]) [role=menuitem]")].find((b) => (b.textContent ?? "").trim() === "News");
     await click(target!);
     await windowCloses();
     const w = writes();

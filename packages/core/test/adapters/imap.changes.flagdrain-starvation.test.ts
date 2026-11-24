@@ -131,7 +131,7 @@ function cursorFor(folders: Record<string, FakeFolder>): ImapCursor {
   return cursor;
 }
 
-/** Carry a returned cursor into the next cycle, exactly as `apps/worker/src/sync.ts` persists it. */
+/** Carry a returned cursor into the next cycle, exactly as `packages/organizer/src/sync.ts` persists it. */
 function thread(cursor: ImapCursor, next: ImapCursor): void {
   for (const [folder, c] of Object.entries(next.folders)) {
     const prev = cursor.folders[folder];

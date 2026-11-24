@@ -491,7 +491,7 @@ function requestBaseCensus(): string[] {
 
 const NOTICE: ServiceNotice = {
   channelName: EN.stateOrganizing,
-  body: EN.notifBody("held@example.test"),
+  body: EN.notifBody,
   stopLabel: EN.notifStop,
   stopFailedBody: EN.notifStopFailed,
 };

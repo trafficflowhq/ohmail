@@ -7,6 +7,9 @@
  * to open a cancelled row into, so the screen says where the message goes instead
  * (`Copy.scheduledEditNote`).
  */
+import { useTheme } from "../src/theme";
+import { MailAvatar } from "../src/ui/MailAvatar";
+import { MailAppearance } from "../src/theme/mail";
 import { useState } from "react";
 import { View } from "react-native";
 import { Copy } from "../src/copy";
@@ -28,11 +31,13 @@ export default function ScheduledScreen({ inPane = false }: { inPane?: boolean }
   useLocale();
   return (
     <SurfaceBoundary surface="scheduled">
-      <Gated>
-        <YieldToMore paneKey={inPane ? null : "scheduled"}>
-          <ScheduledBody inPane={inPane} />
-        </YieldToMore>
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <YieldToMore paneKey={inPane ? null : "scheduled"}>
+            <ScheduledBody inPane={inPane} />
+          </YieldToMore>
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }
@@ -105,7 +110,7 @@ function ScheduledBody({ inPane }: { inPane: boolean }) {
   );
 }
 
-function ScheduledRow({ row }: { row: WorldScheduled }) {
+export function ScheduledRow({ row }: { row: WorldScheduled }) {
   const w = useWorld();
   /**
    * The cancel is DISABLED while its own dispatch is in flight, never hidden: a second press
@@ -114,14 +119,23 @@ function ScheduledRow({ row }: { row: WorldScheduled }) {
    * again once the claim window has resolved one way or the other.
    */
   const [asking, setAsking] = useState(false);
+  const theme = useTheme();
 
   return (
     <View style={{ paddingHorizontal: 18, paddingVertical: 12, gap: 4 }}>
-      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
+      {theme.mail ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <MailAvatar person={{ name: row.to, address: row.to }} />
+          <Txt variant="rowSenderSeen" numberOfLines={1} style={{ flex: 1 }}>
+            {row.to === "" ? Copy.scheduledNoRecipient : Copy.draftToPerson(row.to)}
+          </Txt>
+        </View>
+      ) : null}
+      <View style={{ flexDirection: theme.mail ? "column" : "row", alignItems: "baseline", gap: theme.mail ? 4 : 10 }}>
         <Txt variant="rowSender" style={{ flexShrink: 1 }} numberOfLines={1}>
           {row.subject}
         </Txt>
-        <View style={{ flex: 1 }} />
+        {theme.mail ? null : <View style={{ flex: 1 }} />}
         {/* The APPOINTMENT is the stamp — `Sends Fri 18:00`; a row whose `sendAt` the mirror
             does not carry says the time is unknown; and a row whose send already FAILED has no
             appointment left to name, so it says that instead of a time it does not have. */}
@@ -129,16 +143,16 @@ function ScheduledRow({ row }: { row: WorldScheduled }) {
           variant="caption"
           tone={row.cancellable ? "accent" : "ink3"}
           tabular
-          numberOfLines={1}
+          numberOfLines={theme.mail ? undefined : 1}
         >
           {!row.cancellable ? Copy.scheduledNotSent
             : row.when === null ? Copy.scheduledWhenUnknown
               : Copy.scheduledWhen(row.when)}
         </Txt>
       </View>
-      <Txt variant="caption" tone="ink3" numberOfLines={1}>
+      {theme.mail ? null : <Txt variant="caption" tone="ink3" numberOfLines={1}>
         {row.to === "" ? Copy.scheduledNoRecipient : row.to}
-      </Txt>
+      </Txt>}
       {row.preview !== "" ? (
         <Txt variant="caption" tone="ink2" numberOfLines={2}>
           {row.preview}

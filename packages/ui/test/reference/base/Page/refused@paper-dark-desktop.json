@@ -1,0 +1,181 @@
+{
+  "component": "Page",
+  "state": "refused",
+  "look": "paper-dark-desktop",
+  "place": "window",
+  "target": [0, 0, 1440, 900],
+  "clip": [0, 0, 1440, 900],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "44px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "normal",
+      "letterSpacing": "-0.968px",
+      "fontVariationSettings": "\"opsz\" 48",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "44px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "46.64px",
+      "letterSpacing": "-0.968px",
+      "fontVariationSettings": "\"opsz\" 48",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "borderBottom": "3px dotted rgb(246, 241, 233)", "placeholder": "rgb(184, 175, 163)" },
+    { "ink": "stroke rgb(246, 241, 233) 1.8px round round; shapes 3 93b4b80b8950" },
+    { "backgroundColor": "rgb(255, 106, 61)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "banner",
+      "name": "",
+      "box": [0, 0, 1440, 64],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "160px",
+        "paddingBottom": "0px",
+        "paddingLeft": "160px",
+        "borderColor": "rgb(246, 241, 233)"
+      }
+    },
+    {
+      "role": "textbox",
+      "name": "Password",
+      "box": [466.2, 310.6, 129.7, 56],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "44px",
+        "fontWeight": "800",
+        "lineHeight": "48.4px",
+        "letterSpacing": "-0.968px",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "1.76px",
+        "paddingBottom": "0px",
+        "paddingLeft": "1.76px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "state": ["shows its hint"],
+      "text": [{ "said": "type it", "type": 0, "shown": true }],
+      "surfaces": [{ "box": [466.2, 310.6, 129.7, 56], "paint": 0 }]
+    },
+    {
+      "role": "alert",
+      "name": "",
+      "box": [160, 378.6, 608, 44.8],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [
+        {
+          "said": "This link has expired or was already used. Sign in with your email address and password and we send you a new one.",
+          "type": 1
+        }
+      ],
+      "surfaces": [{ "box": [160, 380.6, 18, 18], "paint": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Sign in",
+      "box": [160, 493.8, 111.6, 56],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(246, 241, 233)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "32px",
+        "paddingBottom": "0px",
+        "paddingLeft": "32px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Sign in", "type": 2 }]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "Confirm my email address with password", "type": 3 },
+      { "said": "It is the password you chose when you signed up.", "type": 1 }
+    ],
+    "surfaces": [{ "box": [599.4, 336.7, 15, 15], "paint": 2 }]
+  }
+}

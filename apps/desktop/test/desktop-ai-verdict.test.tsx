@@ -35,7 +35,7 @@ import de from "../../webapp/messages/de.json";
  *
  * ── HOW TO WATCH IT FAIL ────────────────────────────────────────────────────────────────────
  *
- *  · In `AiProviderForm.tsx`, move the `<SettingsVerdict>` above the `<SettingsChoice>` → the
+ *  · In `AiProviderForm.tsx`, move the `verdict note` above the provider selector → the
  *    document-order case goes red. Restore it and it goes green. Run.
  *  · Delete any one arm of `verdictOf`'s inner switch → that outcome's case goes red, and the
  *    `bad`/`off` state assertion catches the arms that fall through to a neighbour. Run for
@@ -437,7 +437,7 @@ describe("the model form's test action reports to the person who pressed it", ()
     await act(async () => { button!.click(); });
     await act(async () => { await Promise.resolve(); });
 
-    const verdict = el.querySelector(".set-verdict");
+    const verdict = el.querySelector("#ai-verdict");
     expect(verdict, "pressing the test produced no verdict block anywhere").toBeTruthy();
 
     const rel = button!.compareDocumentPosition(verdict!);
@@ -450,20 +450,20 @@ describe("the model form's test action reports to the person who pressed it", ()
 
   it("is a live region, so the outcome reaches somebody not watching the pixels", async () => {
     const el = await mount(statusOf({ provider: "ollama", reason: "unverified" }));
-    const verdict = el.querySelector(".set-verdict");
+    const verdict = el.querySelector("#ai-verdict");
     expect(verdict?.getAttribute("role")).toBe("status");
     expect(verdict?.getAttribute("aria-live")).toBe("polite");
   });
 
   /**
-   * AND BOTH LINES REACH THE SCREEN — which nothing asserted until the mutation pass asked.
+   * AND BOTH PARTS REACH THE SCREEN — which nothing asserted until the mutation pass asked.
    *
-   * Deleting the `hint` line from `SettingsVerdict` left every case in this file GREEN: `verdictOf`
+   * Deleting the `hint` from the verdict note left every case in this file GREEN: `verdictOf`
    * is pure, so its return value can carry a field the composite never draws, and the pure tests
    * cannot tell. That is the built-and-unreachable shape exactly. This one mounts the state and
    * reads the rendered text, so the seam between the derivation and the composite is covered.
    */
-  it("renders the engine's sentence and the instruction as two separate lines", async () => {
+  it("renders the engine's exact sentence followed by the instruction", async () => {
     const said = 'the model server is running and does not have "llama3.2"';
     const el = await mount(
       statusOf({
@@ -472,17 +472,16 @@ describe("the model form's test action reports to the person who pressed it", ()
         probe: probe({ reason: "model_absent", detail: said, models: ["mistral", "qwen2.5"] }),
       }),
     );
-    const verdict = el.querySelector(".set-verdict")!;
-    const lines = [...verdict.querySelectorAll("p")].map((p) => p.textContent ?? "");
-    expect(lines, "the two sentences were not rendered as two blocks").toHaveLength(2);
-    expect(lines[0]).toBe(said);
-    expect(lines[1]).toBe("Pick one of the 2 models below.");
-    expect(verdict.querySelector(".set-verdict-hint")?.textContent).toBe(lines[1]);
+    const verdict = el.querySelector("#ai-verdict")!;
+    const note = verdict.querySelector(".oh-settingnote-copy");
+    expect(note?.textContent).toBe(
+      `${en.aiProvider.verdictModelAbsent} ${said} Pick one of the 2 models below.`,
+    );
   });
 
   it("shows no verdict at all when nothing is chosen — there is no answer to report", async () => {
     const el = await mount(statusOf({ provider: null }));
-    expect(el.querySelector(".set-verdict")).toBeNull();
+    expect(el.querySelector("#ai-verdict")).toBeNull();
   });
 });
 
@@ -505,8 +504,8 @@ describe("the model form's test action reports to the person who pressed it", ()
  */
 describe("the destination sentence is the engine's, and absent when the engine stated none", () => {
   const summaryRow = (el: HTMLElement): HTMLElement => {
-    const row = [...el.querySelectorAll<HTMLElement>(".set-row")].find(
-      (r) => r.querySelector("b")?.textContent === en.aiProvider.summaryLabel,
+    const row = [...el.querySelectorAll<HTMLElement>('[role="group"][aria-labelledby]')].find(
+      (r) => r.ownerDocument.getElementById(r.getAttribute("aria-labelledby")!)?.textContent === en.aiProvider.summaryLabel,
     );
     expect(row, "the AI summary row is not on this form").toBeTruthy();
     return row!;
@@ -553,7 +552,7 @@ describe("the destination sentence is the engine's, and absent when the engine s
       .toBeNull();
     expect(described(row)).toBeNull();
     // Not by the row being gone — it still names the pane and still carries its one word.
-    expect(row.querySelector("b")?.textContent).toBe(en.aiProvider.summaryLabel);
+    expect(row.ownerDocument.getElementById(row.getAttribute("aria-labelledby")!)?.textContent).toBe(en.aiProvider.summaryLabel);
     // And nothing anywhere on the form says content stays here, which is the whole defect.
     expect(el.textContent ?? "").not.toContain("Nothing leaves this computer");
     // The option's own line still names the address, as this window's claim about a value it

@@ -1,0 +1,14 @@
+.away-piles-hint .gloss-t:focus-visible {
+  border-radius: var(--r-pill);
+  outline: var(--oh-focus) solid var(--focus);
+}
+.away-piles-hint .gloss-pop {
+  z-index: var(--oh-layer-over);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-row);
+  background: var(--sheet);
+  box-shadow: var(--float);
+  font-size: var(--t-meta);
+  font-weight: var(--w-text);
+  animation: oh-overlay-in var(--d-pop) var(--e-pop);
+}

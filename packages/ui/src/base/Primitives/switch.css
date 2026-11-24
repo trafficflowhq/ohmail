@@ -1,0 +1,70 @@
+/* On or off, at once. On is ink. */
+@layer oh {
+  .oh-switch {
+    --oh-switch-w: 44px;
+    --oh-switch-h: 26px;
+    --oh-switch-knob: 18px;
+    --oh-switch-inset: 4px;
+    --oh-switch-line: 1.5px;
+    --oh-switch-ring: inset 0 0 0 var(--oh-switch-line) var(--ctl-ring);
+    --oh-switch-knob-ring: 0 0 0 var(--oh-switch-line) var(--ctl-ring);
+    position: relative;
+    flex: none;
+    width: var(--oh-switch-w);
+    height: var(--oh-switch-h);
+    border-radius: var(--r-pill);
+    background: var(--off);
+    box-shadow: var(--oh-switch-ring);
+    transition:
+      background-color var(--d-fade) var(--e-std),
+      box-shadow var(--d-fade) var(--e-std);
+  }
+  .oh-switch-knob {
+    position: absolute;
+    top: var(--oh-switch-inset);
+    left: var(--oh-switch-inset);
+    width: var(--oh-switch-knob);
+    height: var(--oh-switch-knob);
+    border-radius: var(--dot-r);
+    background: var(--sheet);
+    box-shadow: var(--oh-switch-knob-ring);
+    transition: transform var(--d-knob) var(--e-knob);
+  }
+  .oh-switch:is([aria-checked="true"], [data-on]) {
+    --oh-switch-ring: none;
+    --oh-switch-knob-ring: none;
+    background: var(--solid);
+  }
+  .oh-switch:is([aria-checked="true"], [data-on]) .oh-switch-knob {
+    background: var(--on-solid);
+    transform: translateX(var(--oh-switch-knob));
+  }
+  /* A finger's room: the smallest control's height. */
+  :root[data-touch="1"] .oh-switch::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: 0;
+    left: 0;
+    height: var(--h-s);
+    transform: translateY(-50%);
+  }
+
+  .oh-switch-line {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s3);
+    font-weight: var(--w-mid);
+  }
+  :root[data-touch="1"] .oh-switch-line {
+    min-height: var(--h-s);
+  }
+
+  :root[data-face="ohmarchy"] .oh-switch {
+    --oh-switch-ring: var(--oh-ring-ctl);
+    --oh-switch-knob-ring: var(--oh-ring-ctl);
+  }
+  :root[data-face="ohmarchy"] .oh-switch:is([aria-checked="true"], [data-on]) {
+    --oh-switch-knob-ring: none;
+  }
+}

@@ -15,17 +15,15 @@ import type { NativeLocator } from "../src/types.js";
 const locator: NativeLocator = { folder: "INBOX", ref: "1:42" };
 
 /** A part delivered as `chunks`, counting how many were actually pulled. */
-function fakeAdapter(chunks: Buffer[]) {
+async function fakeAdapter(chunks: Buffer[]) {
   const state = { pulled: 0, released: 0 };
   const content = (async function* () {
     for (const c of chunks) { state.pulled += 1; yield c; }
   })();
-  const adapter = new ImapAdapter({
-    host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" },
-  });
-  // Stand in for the connected imapflow client: what `fetchPart` uses.
-  (adapter as unknown as { delimiter: string }).delimiter = "/"; // what connect() learns on a flat server
-  (adapter as unknown as { client: unknown }).client = {
+  // Stand in for the connected imapflow client: what `fetchPart` uses. Its LIST names no folder,
+  // so `connect()` learns the flat server's `/`.
+  const client = {
+    list: async () => [],
     getMailboxLock: async () => ({ release: () => { state.released += 1; } }),
     // The SELECTED mailbox, as every real server reports it: `[UIDVALIDITY n]` is required on a
     // successful SELECT, and the epoch guard refuses a locator-addressed command when it is
@@ -35,6 +33,10 @@ function fakeAdapter(chunks: Buffer[]) {
     // The post-read witness (`streamPart`): the UID is still there, so the read was not cut.
     fetchOne: async () => ({ uid: 42 }),
   };
+  const adapter = new ImapAdapter({
+    host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" },
+  }, { client });
+  await adapter.connect();
   return { adapter, state };
 }
 
@@ -42,7 +44,7 @@ describe("fetchPart byte ceiling", () => {
   it("aborts MID-STREAM rather than buffering the whole oversized part", async () => {
     // Equal chunks against a ceiling between two and three of them ⇒ the third chunk crosses it.
     const chunks = Array.from({ length: 10 }, () => Buffer.alloc(100, 7));
-    const { adapter, state } = fakeAdapter(chunks);
+    const { adapter, state } = await fakeAdapter(chunks);
 
     const err = await adapter.fetchPart(locator, "2", { maxBytes: 250 }).catch((e: unknown) => e);
 
@@ -58,7 +60,7 @@ describe("fetchPart byte ceiling", () => {
 
   it("lets a part exactly AT the ceiling through", async () => {
     const chunks = [Buffer.alloc(100, 1), Buffer.alloc(100, 2)];
-    const { adapter, state } = fakeAdapter(chunks);
+    const { adapter, state } = await fakeAdapter(chunks);
 
     const out = await adapter.fetchPart(locator, "2", { maxBytes: 200 });
 
@@ -69,7 +71,7 @@ describe("fetchPart byte ceiling", () => {
 
   it("is UNBOUNDED when no ceiling is given — download-all must keep its connection usable", async () => {
     const chunks = Array.from({ length: 50 }, () => Buffer.alloc(1000, 3));
-    const { adapter, state } = fakeAdapter(chunks);
+    const { adapter, state } = await fakeAdapter(chunks);
 
     const out = await adapter.fetchPart(locator, "2");
 

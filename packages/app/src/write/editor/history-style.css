@@ -1,0 +1,15 @@
+.write-history-block {
+  margin: var(--s2) 0 0;
+  padding: 0;
+}
+
+.write-history-folded .write-history-block {
+  display: none;
+}
+
+.write-history-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 var(--s4) var(--s2);
+}

@@ -9,18 +9,16 @@
  * own English constant — which keeps a bare component render in a unit test deterministic without a provider.
  */
 import { createTranslator } from "next-intl";
-import { durableSet } from "./durable";
+import { durableSet } from "@ohmail/app-logic/storage/durable";
+import { fillOver, type Messages } from "@ohmail/app/text/fill";
+import { LOCALES, isAppLocale, normalizeLocale, type AppLocale } from "@ohmail/app-logic/text/locale";
+import { liveCopyOver } from "@ohmail/app-logic/text/live-copy";
+import { setFormatWords } from "@ohmail/app-logic/text";
+import { setBodyWords } from "@ohmail/letter-body/words";
 
-/**
- * THE CLOSED SET, and it is closed in four places that must agree: here, the CHECK on
- * `account_settings.locale` (mail 0053), the wire validation in `PATCH /consent/settings`, and
- * the selector in Settings → General. `test/locale-catalog.test.ts` holds this array against the
- * catalogue files that exist on disk, so adding a member without adding `messages/<locale>.json`
- * fails rather than rendering raw keys.
- */
-export const LOCALES = ["en", "de"] as const;
-
-export type AppLocale = (typeof LOCALES)[number];
+/* The closed set and its two readers are behaviour's (`@ohmail/app-logic/text/locale`); every importer of this file
+   keeps taking them here. */
+export { LOCALES, isAppLocale, normalizeLocale, type AppLocale };
 
 /**
  * ENGLISH IS THE FALLBACK, not merely the default — the distinction matters at two different
@@ -50,25 +48,6 @@ export const LOCALE_COOKIE = "ohmail.locale";
 
 /** A year. Long enough that a returning reader is not reset to English, short enough to expire. */
 const LOCALE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
-
-export function isAppLocale(value: unknown): value is AppLocale {
-  return typeof value === "string" && (LOCALES as readonly string[]).includes(value);
-}
-
-/**
- * Reduce anything to a member of {@link LOCALES}, or `null` for "this says nothing". The primary
- * subtag only: `de-CH`, `de-DE` and `de` are one catalogue here, and a Swiss reader asking for
- * `de-CH` must not fall through to English on a tag mismatch; case is folded because
- * `Accept-Language` and a hand-set cookie arrive in either. `null` rather than `DEFAULT_LOCALE` is
- * the whole point of the return type: a caller must distinguish "nobody has said" (keep looking at
- * the next source) from "they said English" — the account read in `consent-state.ts` depends on
- * exactly that difference.
- */
-export function normalizeLocale(value: string | null | undefined): AppLocale | null {
-  if (typeof value !== "string") return null;
-  const primary = value.trim().toLowerCase().split(/[-_]/)[0] ?? "";
-  return isAppLocale(primary) ? primary : null;
-}
 
 /** The local preference, or `null` when storage is blocked or nothing has been stored. */
 export function readStoredLocale(): AppLocale | null {
@@ -163,6 +142,8 @@ export function setActiveCatalog(locale: AppLocale, messages: Catalog | null): v
   activeLocale = locale;
   activeCatalog = messages;
   translators = new Map();
+  setBodyWords({ locale, translatorOf: activeTranslator });
+  setFormatWords(FORMAT_WORDS);
 }
 
 /** The locale the register is holding — what `format.ts` passes to `Intl`. */
@@ -220,44 +201,17 @@ export function activeFormatZone(): string {
  */
 export function setActiveFormatZone(zone: string | null): void {
   activeZone = zone;
+  setFormatWords(FORMAT_WORDS);
 }
 
 /**
- * THE FALLBACK MERGE — declared HERE rather than beside the loader, because both hosts need it and only one of them
- * has the loader. Both `apps/webapp/i18n` and `apps/webapp/app/shell` are published (this paragraph once claimed the
- * i18n directory was denied; `scripts/publish-desktop.mjs` maps it, and the claim was stale, not the mapping). The
- * rule lives HERE because both hosts need it and only one of them has the loader: putting it in the shared half keeps
- * ONE definition of "a key German is missing renders the English sentence" instead of two that can drift — and
- * drifting here does not produce a worse sentence, it produces `screener.toastFiled` on somebody's screen, which is
- * the intl library's default fallback for an absent key and the single failure this whole slice is built to prevent.
- */
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * `over` wins wherever it holds a LEAF; `base` supplies everything else, at every depth. DEEP, because the catalogue
- * nests (`screener.empty.waiting.title`, `settings.channel.people.label`). A shallow spread would take German's whole
- * `screener` object and drop every English leaf under it that German had not filled — the same failure one level down
- * and much harder to see. An EMPTY STRING counts as absent. A placeholder somebody left unfilled must not blank a
- * sentence: the English one is a worse translation and a better product than nothing at all.
+ * THE FALLBACK MERGE moved to the text reader (`fillOver` of `@ohmail/app/text`); this name and its loose types stay
+ * for the callers that already hold it.
  */
 export function fillFrom(
   base: Record<string, unknown>, over: Record<string, unknown>,
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...base };
-  for (const key of Object.keys(over)) {
-    const overValue = over[key];
-    const baseValue = out[key];
-    if (isPlainObject(overValue) && isPlainObject(baseValue)) {
-      out[key] = fillFrom(baseValue, overValue);
-      continue;
-    }
-    if (overValue === "" || overValue === undefined || overValue === null) continue;
-    out[key] = overValue;
-  }
-  return out;
+  return fillOver(base as Messages, over as Messages);
 }
 
 /**
@@ -290,6 +244,12 @@ export function activeTranslator(namespace: string): NamespaceTranslator | null 
 }
 
 /**
+ * What the rows' words (`@ohmail/app-logic/text`, `format.ts`) are formatted with: this register's own three readers,
+ * handed whenever the catalogue or the zone is set, so those words read exactly what this module holds.
+ */
+const FORMAT_WORDS = { locale: activeFormatLocale, zone: activeFormatZone, translatorOf: activeTranslator };
+
+/**
  * Turn a table of English sentences into a live view of one catalogue namespace. The three reading-pane components
  * each hold their copy as one object read from forty-odd places, including module-level helpers that are not
  * components (`Tile`, `ListState`, `renderContent`). This returns an object of the SAME SHAPE whose string members
@@ -315,30 +275,5 @@ export function liveCopy<T extends Record<string, unknown>>(
   english: T,
   params: Partial<Record<keyof T, readonly string[]>> = {},
 ): T {
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(english)) {
-    const fallback = english[key];
-    if (typeof fallback === "function") {
-      const names = params[key as keyof T] ?? [];
-      out[key] = (...values: unknown[]): string => {
-        const t = activeTranslator(namespace);
-        if (t === null) return (fallback as (...a: unknown[]) => string)(...values);
-        const named: Record<string, unknown> = {};
-        names.forEach((name, i) => { named[name] = values[i]; });
-        const formatted = t(key, named);
-        return formatted === "" ? (fallback as (...a: unknown[]) => string)(...values) : formatted;
-      };
-      continue;
-    }
-    Object.defineProperty(out, key, {
-      enumerable: true,
-      get(): unknown {
-        const t = activeTranslator(namespace);
-        if (t === null) return fallback;
-        const formatted = t(key);
-        return formatted === "" ? fallback : formatted;
-      },
-    });
-  }
-  return out as T;
+  return liveCopyOver(() => activeTranslator(namespace), english, params);
 }

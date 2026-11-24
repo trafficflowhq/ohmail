@@ -1,18 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, sql } from "drizzle-orm";
-import { accounts, users, sessions, devices, pairingTokens } from "@trafficflow/db";
-import { invites, schema } from "@trafficflow/db/cloud";
+import { accounts, bindDb, users, sessions, devices, pairingTokens } from "@trafficflow/db";
+import { invites, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   mintPairingToken, consumePairingToken, redeemInviteGrant, redeemDevicePair,
-  revokePairingToken, listPairingTokens,
+  revokePairingToken, listPairingTokens, mintAppHandoff, redeemAppHandoff, generateToken,
   PAIRING_LIVE_TOKENS_MAX, PAIRING_TTL_BOUNDS,
-  makeAuthService, makeTestAuthDeps, hashToken, MailService, SpyMailer, throttleKeysFor,
+  makeAuthService, makeTestAuthDeps, hashToken, dbFor, MailService, SpyMailer, throttleKeysFor,
   type ServiceContext, type PairedDeviceSessionMinter,
 } from "@trafficflow/services";
 
@@ -53,12 +51,14 @@ const PG_UP = await realPgAvailable();
 const FIXED_NOW = new Date("2026-08-17T12:00:00.000Z");
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 /** A ServiceContext over the shared pool — each `.transaction()` call checks out its OWN
- *  connection, which is what makes `Promise.all` here a real race rather than a queue. */
+ *  connection, which is what makes `Promise.all` here a real race rather than a queue. It names
+ *  no account, so its handle is bound to nothing. */
 const ctxFor = (userId: string | null, now: Date = FIXED_NOW): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"],
+  db: bindDb(db, { account: null }),
   accountId: "",
   userId,
   sessionId: null,
@@ -94,13 +94,13 @@ describe.skipIf(!PG_UP)("on real Postgres — a pairing token is spent exactly o
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    // A POOL with headroom over the fan-out, deliberately: `max: 1` would serialise the
-    // transactions and reintroduce the exact blind spot this file exists to remove.
-    client = postgres(PG_TEST_URL, { max: FANOUT + 4 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    // A POOL, deliberately (the factory's, of several connections): one connection would serialise
+    // the transactions and reintroduce the exact blind spot this file exists to remove.
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
     auth = makeAuthService(makeTestAuthDeps());
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); });
 
   it("TWELVE simultaneous device-pair redeems of one token: ONE session, ONE device, eleven refusals", async () => {
     const { userId } = await seedUser();
@@ -431,4 +431,127 @@ describe.skipIf(!PG_UP)("on real Postgres — a pairing token is spent exactly o
       ["consumedAt", "createdAt", "expiresAt", "grant", "id", "label", "revokedAt", "status"],
     );
   }, 30_000);
+});
+
+describe.skipIf(!PG_UP)("on real Postgres — a phone app's handoff is spent once and dies with its parent", () => {
+  const FANOUT = 12;
+  let auth: ReturnType<typeof makeAuthService>;
+
+  beforeAll(async () => {
+    await runMigrations(PG_TEST_URL);
+    client = postgres(PG_TEST_URL, { max: FANOUT + 4 });
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
+    auth = makeAuthService(makeTestAuthDeps());
+  }, 60_000);
+  afterAll(async () => { await owned?.close(); await client?.end({ timeout: 5 }); });
+
+  /** A phone paired by a QR code, and a handoff code it minted for a receiver's verifier. */
+  async function phoneWithCode() {
+    const { userId } = await seedUser();
+    const qr = await mintPairingToken(ctxFor(userId), { grant: "device-pair", label: "Pixel" });
+    const { tokens } = await redeemDevicePair(ctxFor(null), auth, { token: qr.token, kind: "mobile-android" });
+    const [phone] = await db.select().from(sessions).where(eq(sessions.userId, userId));
+    const verifier = generateToken();
+    const code = await mintAppHandoff(ctxFor(null), auth, { renewed: tokens.refreshToken, challenge: hashToken(verifier), target: "ohcal" });
+    return { userId, tokens, phoneDevice: phone!.deviceId!, verifier, code };
+  }
+
+  const liveChildren = async (parentDevice: string) =>
+    (await db.select({ id: sessions.id }).from(sessions).innerJoin(devices, eq(devices.id, sessions.deviceId))
+      .where(sql`${devices.handedOffFrom} = ${parentDevice} AND ${sessions.revokedAt} IS NULL`)).length;
+
+  it("TWELVE simultaneous redeems of one handoff code: one session, eleven refusals", async () => {
+    const { userId, verifier, code, phoneDevice } = await phoneWithCode();
+    const { fire, results } = volley(FANOUT, () =>
+      redeemAppHandoff(ctxFor(null), auth, { token: code.token, verifier, kind: "mobile-ios" }));
+    fire();
+    const settled = await results;
+    expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    for (const r of settled.filter((x) => x.status === "rejected")) expect(errCode(r)).toBe("pairing_invalid");
+    expect(await db.select().from(sessions).where(eq(sessions.userId, userId))).toHaveLength(2);
+    expect(await liveChildren(phoneDevice)).toBe(1);
+  }, 30_000);
+
+  it("a redeem racing the parent's reuse sweep, either one first, leaves no live child of a swept parent", async () => {
+    for (let round = 0; round < 6; round += 1) {
+      const { tokens, verifier, code, phoneDevice } = await phoneWithCode();
+      // Spend the phone's token once; presenting it again is the theft the sweep answers.
+      await auth.refresh(ctxFor(null), { refreshToken: tokens.refreshToken }, { surface: "native" });
+      const shots = [
+        () => redeemAppHandoff(ctxFor(null), auth, { token: code.token, verifier, kind: "mobile-ios" }),
+        () => auth.refresh(ctxFor(null), { refreshToken: tokens.refreshToken }, { surface: "native" }),
+      ];
+      const { fire, results } = volley(2, (i) => shots[(i + round) % 2]!());
+      fire();
+      await results;
+      expect(await liveChildren(phoneDevice), `round ${round}`).toBe(0);
+    }
+  }, 60_000);
+
+  /** The code's row, read by its hash. */
+  const codeRow = async (token: string) =>
+    (await db.select().from(pairingTokens).where(eq(pairingTokens.tokenHash, hashToken(token))))[0]!;
+
+  it("the sweep first, then the redeem: the swept parent's code is refused, burns nothing and makes no child", async () => {
+    const { tokens, verifier, code, phoneDevice } = await phoneWithCode();
+    await auth.refresh(ctxFor(null), { refreshToken: tokens.refreshToken }, { surface: "native" });
+    // The spent token presented again: the theft the sweep answers, before the code is presented.
+    await expect(auth.refresh(ctxFor(null), { refreshToken: tokens.refreshToken }, { surface: "native" }))
+      .rejects.toMatchObject({ code: "refresh_revoked" });
+    await expect(redeemAppHandoff(ctxFor(null), auth, { token: code.token, verifier, kind: "mobile-ios" }))
+      .rejects.toMatchObject({ code: "pairing_invalid" });
+    expect(await liveChildren(phoneDevice)).toBe(0);
+    expect((await codeRow(code.token)).consumedAt, "the burn rolled back with the refusal").toBeNull();
+  }, 30_000);
+
+  it("a redeem that meets the parent's revoke in flight waits for it, then is refused, burns nothing and makes no child", async () => {
+    const { verifier, code, phoneDevice } = await phoneWithCode();
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    let locked!: () => void;
+    const lockedNow = new Promise<void>((r) => { locked = r; });
+    const blocker = client.begin(async (tx) => {
+      await tx`update sessions set revoked_at = now() where device_id = ${phoneDevice} and revoked_at is null`;
+      locked();
+      await held;
+    });
+    await lockedNow;
+    const redeeming = redeemAppHandoff(ctxFor(null), auth, { token: code.token, verifier, kind: "mobile-ios" })
+      .then(() => "made", (e: unknown) => (e as { code?: string }).code ?? "threw");
+    let waiting = 0;
+    for (let i = 0; i < 250 && waiting === 0; i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+      const rows = await client`select count(*)::int as n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`;
+      waiting = rows[0]!.n as number;
+    }
+    expect(waiting, "the redeem was waiting on the parent's row when the revoke committed").toBeGreaterThan(0);
+    release();
+    await blocker;
+    expect(await redeeming).toBe("pairing_invalid");
+    expect(await liveChildren(phoneDevice)).toBe(0);
+    expect((await codeRow(code.token)).consumedAt, "the burn rolled back with the refusal").toBeNull();
+  }, 30_000);
+
+  it("a mint racing the phone's take-back leaves no live code of a revoked phone", async () => {
+    for (let round = 0; round < 6; round += 1) {
+      const { userId, accountId } = await seedUser();
+      const qr = await mintPairingToken(ctxFor(userId), { grant: "device-pair", label: "Pixel" });
+      const { tokens } = await redeemDevicePair(ctxFor(null), auth, { token: qr.token, kind: "mobile-android" });
+      const [phone] = await db.select().from(sessions).where(eq(sessions.userId, userId));
+      const owner = { ...ctxFor(userId), accountId, db: dbFor(db, accountId) };
+      const shots = [
+        () => mintAppHandoff(ctxFor(null), auth, { renewed: tokens.refreshToken, challenge: hashToken(generateToken()), target: "ohcal" }),
+        () => auth.revokeDevice(owner, phone!.deviceId!, { requireStepUp: false }),
+      ];
+      const { fire, results } = volley(2, (i) => shots[(i + round) % 2]!());
+      fire();
+      await results;
+      const live = await db.select().from(pairingTokens).where(sql`${pairingTokens.grant} = 'app-handoff'
+        AND ${pairingTokens.createdByUserId} = ${userId} AND ${pairingTokens.consumedAt} IS NULL AND ${pairingTokens.revokedAt} IS NULL`);
+      expect(live, `round ${round}`).toEqual([]);
+      // The take-back landed: the phone's session is gone whichever ran first.
+      expect((await db.select().from(sessions).where(eq(sessions.id, phone!.id)))[0]!.revokedAt, `round ${round}`).not.toBeNull();
+    }
+  }, 60_000);
 });

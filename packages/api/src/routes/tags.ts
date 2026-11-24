@@ -1,6 +1,6 @@
-import type { TagBody } from "@trafficflow/services/mail";
+import type { RequestOf } from "@ohmail/wire";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer, answerBuilt, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { tags, readBody } from "./shared.js";
 
@@ -27,60 +27,64 @@ export const tagsRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/tags",
+    wire: true,
     relay: true,
     cost: "work",
     // Keyed: a retry whose answer was lost replays the creation instead of meeting the name rule.
     options: { idempotent: true },
     handler: async (req, deps) => {
-      const body = await readBody<TagBody>(req);
+      const body = await readBody<RequestOf<"POST /tags">>(req);
       const { dto, seq } = await tags(deps).create(serviceContext(deps, req), body, {
         idempotency: deps.idempotency ?? null,
       });
-      return jsonResponse(dto, { status: 201, seq });
+      return answer<"POST /tags">()(dto, { status: 201, seq });
     },
   },
   {
     method: "PATCH",
     pattern: "/tags/:id",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
-      const body = await readBody<TagBody>(req);
+      const body = await readBody<RequestOf<"PATCH /tags/:id">>(req);
       const { dto, seq } = await tags(deps).update(serviceContext(deps, req), params.id!, body);
-      return jsonResponse(dto, { seq });
+      return answer<"PATCH /tags/:id">()(dto, { seq });
     },
   },
   {
     method: "DELETE",
     pattern: "/tags/:id",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
       const { seq } = await tags(deps).remove(serviceContext(deps, req), params.id!);
-      return new Response(null, {
+      return answerBuilt<"DELETE /tags/:id">(new Response(null, {
         status: 204,
         headers: seq === null ? {} : { "X-Sync-Seq": String(seq) },
-      });
+      }));
     },
   },
   {
     method: "POST",
     pattern: "/messages/:id/tags",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "guarded",
     options: { pressAge: true },
     handler: async (req, deps, params) => {
-      const body = await readBody<{ tagId: string; assigned: boolean; name?: string }>(req);
+      const body = await readBody<RequestOf<"POST /messages/:id/tags">>(req);
       const { labels, tagId, seq } = await tags(deps).assign(
         serviceContext(deps, req), params.id!, body?.tagId, body?.assigned, body?.name,
       );
       // `tagId` is echoed because it is not always the one that was asked for: in the
       // tag-or-create path an existing name wins, and the caller needs to know which tag its
       // message actually carries.
-      return jsonResponse({ labels, tagId }, { seq });
+      return answer<"POST /messages/:id/tags">()({ labels, tagId }, { seq });
     },
   },
 ];

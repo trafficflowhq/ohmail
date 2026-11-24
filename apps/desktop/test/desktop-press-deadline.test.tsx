@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -107,7 +108,7 @@ describe("a press against a wedged-but-alive engine", () => {
            (`desktop-mailboxes.test.ts`) carries for the same providers. */
         h(NextIntlClientProvider,
           { locale: "en", messages: en as never, timeZone: "Europe/Zurich" } as never,
-          h(ThemeProvider, null as never, h(ToastHost, null, h(DesktopDevices)))),
+          h(ThemeProvider, null as never, h(ToastHost, null, h(WithReport, { view: DesktopDevices })))),
       );
     });
     await act(async () => {

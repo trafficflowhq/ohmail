@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { accountSettings, accounts, mailboxes, mailboxCredentials, UNMETERED_ACCESS, type AccessVerdict } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { StaticKeyProvider } from "@trafficflow/core";
@@ -47,12 +46,12 @@ import { makeMailboxService, ServiceError, type ServiceContext } from "@trafficf
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
+const ownedA = makeOwnedDb(PG_TEST_URL);
+const ownedB = makeOwnedDb(PG_TEST_URL);
 /** A third session, for the one case that needs a lock HELD while the other two race — see it. */
 const sqlC = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-08-05T12:00:00.000Z");
 const sleep = (ms: number): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });
@@ -81,7 +80,7 @@ const svc = makeMailboxService({
 });
 
 const ctxOn = (db: typeof dbA, accountId: string): ServiceContext =>
-  ({ db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: fixturePassword("mailbox-takeover") };
 /** Always "ok": every case here is about the row, and a probe that could refuse would decide it first. */
@@ -106,7 +105,7 @@ const RACING_BUDGET_MS = RACING_PAIRS * PAIR_BUDGET_MS;
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
 afterAll(async () => {
-  await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); await sqlC.end({ timeout: 5 });
+  await ownedA.close(); await ownedB.close(); await sqlC.end({ timeout: 5 });
 });
 
 /**
@@ -491,6 +490,30 @@ describe.skipIf(!PG_UP)("MailboxService.takeover — the explicit action that en
     expect(await svc.release(ctxOn(dbA, acc), id)).toEqual({ outcome: "not_organizing" });
     const [m] = await dbA.select().from(mailboxes).where(eq(mailboxes.id, id));
     expect(m!.releaseRequestedAt, "a no-op wrote a request anyway").toBeNull();
+  });
+
+  it("this install's own claim, left standing under a reader row, is still given up; another install's is not", async () => {
+    const here = makeMailboxService({ keyProvider: KP, accessOf: async () => UNMETERED_ACCESS, installId: "this-install", signatureChecks: false });
+    const acc = await account();
+    const heldBy = async (installId: string): Promise<string> => {
+      const id = await mailbox(acc);
+      await standDown(id, "organized_elsewhere:cloud");
+      await dbA.update(mailboxes).set({ organizedByInstallId: installId }).where(eq(mailboxes.id, id));
+      return id;
+    };
+    const requested = async (id: string): Promise<boolean> =>
+      (await dbA.select().from(mailboxes).where(eq(mailboxes.id, id)))[0]!.releaseRequestedAt !== null;
+
+    const ours = await heldBy("this-install");
+    expect(await here.release(ctxOn(dbA, acc), ours)).toEqual({ outcome: "requested" });
+    expect(await requested(ours), "the claim this install holds was left in the mailbox").toBe(true);
+
+    // The same kind of holder under another id is somebody else's claim: nothing to give up here.
+    const theirs = await heldBy("another-install");
+    expect(await here.release(ctxOn(dbA, acc), theirs)).toEqual({ outcome: "not_organizing" });
+    expect(await requested(theirs)).toBe(false);
+    // And a service that does not know its own id gives up nobody's.
+    expect(await svc.release(ctxOn(dbA, acc), ours)).toEqual({ outcome: "not_organizing" });
   });
 
   it("a REMOVED mailbox is refused rather than revived", async () => {

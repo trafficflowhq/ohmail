@@ -22,8 +22,8 @@
  *     register just flipped needsSetup false, and the person mid-enrollment must land back in
  *     the wizard, not be told somebody else got there first.
  *
- * The real `SetupScreen`, the real `api-client`, only `fetch` and the router stubbed — the
- * login suite's exact harness.
+ * The real route (`SetupRoute`: the setup page over its ceremony), the real `api-client`, only `fetch` and the
+ * router stubbed — the login suite's exact harness. Blanks are found by the names their labels give them.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -106,13 +106,13 @@ afterEach(async () => {
 });
 
 async function mountSetup(): Promise<HTMLElement> {
-  const { SetupScreen } = await import("../app/(product)/setup/SetupScreen.js");
+  const { SetupRoute } = await import("../app/(product)/setup/SetupRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(SetupScreen) }),
+      h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(SetupRoute) }),
     );
     await Promise.resolve();
   });
@@ -120,6 +120,13 @@ async function mountSetup(): Promise<HTMLElement> {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
   return host;
 }
+
+/** A blank, by the name its label gives it. */
+function blank(c: HTMLElement, name: string): HTMLInputElement | null {
+  const label = [...c.querySelectorAll("label")].find((l) => l.textContent === name);
+  return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+}
+const W = messages.setup;
 
 async function type(input: HTMLInputElement, value: string): Promise<void> {
   await act(async () => {
@@ -130,10 +137,10 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
 }
 
 async function fillAndSubmit(container: HTMLElement): Promise<void> {
-  await type(container.querySelector<HTMLInputElement>("#setup-token")!, "first-run-setup-boot-fixture-token");
-  await type(container.querySelector<HTMLInputElement>("#setup-email")!, "operator@family.example");
-  await type(container.querySelector<HTMLInputElement>("#setup-name")!, "Pat Operator");
-  await type(container.querySelector<HTMLInputElement>("#setup-pw")!, "correct horse battery staple");
+  await type(blank(container, W.tokenLabel)!, "first-run-setup-boot-fixture-token");
+  await type(blank(container, W.emailLabel)!, "operator@family.example");
+  await type(blank(container, W.nameLabel)!, "Pat Operator");
+  await type(blank(container, W.passwordLabel)!, "correct horse battery staple");
   await act(async () => {
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await Promise.resolve();
@@ -144,8 +151,8 @@ async function fillAndSubmit(container: HTMLElement): Promise<void> {
 describe("the gate — the form exists exactly while /hello says needsSetup:true", () => {
   it("a fresh server renders the ceremony: token, email, name, password", async () => {
     const c = await mountSetup();
-    expect(c.textContent).toContain("Set up your ohmail server");
-    expect(c.querySelector("#setup-token"), "the token field is the ceremony").not.toBeNull();
+    expect(c.textContent).toContain("This server’s setup token is");
+    expect(blank(c, W.tokenLabel), "the token field is the ceremony").not.toBeNull();
     // WHERE the token comes from, said plainly on the page — the operator's one real question.
     expect(c.textContent).toContain("docker compose logs api");
     // THE GATE'S FETCH IS BOUNDED. A blackholed proxy that accepts the connection and never
@@ -158,10 +165,22 @@ describe("the gate — the form exists exactly while /hello says needsSetup:true
   it("a server WITH accounts never shows the form — needsSetup:false renders 'already set up'", async () => {
     answers["/api/hello"] = HELLO_SETTLED;
     const c = await mountSetup();
-    expect(c.querySelector("#setup-token"), "a token form on an established server advertises a credential the server revokes").toBeNull();
-    expect(c.textContent).toContain("Already set up");
-    // The exit is sign-in, not a dead end.
-    expect(c.querySelector('a[href="/login"]')).not.toBeNull();
+    expect(blank(c, W.tokenLabel), "a token form on an established server advertises a credential the server revokes").toBeNull();
+    expect(c.textContent).toContain(messages.setup.settledTitle.replace(/\.$/, ""));
+    // The exit is sign-in, not a dead end: the press leaves for the sign-in page as a document.
+    const real = window.location;
+    let went: string | null = null;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { get href() { return document.URL; }, assign: (url: string) => { went = url; } },
+    });
+    try {
+      const signIn = [...c.querySelectorAll("button")].find((b) => b.textContent === W.signIn);
+      await act(async () => { signIn!.click(); });
+      expect(went).toBe("/login");
+    } finally {
+      Object.defineProperty(window, "location", { configurable: true, value: real });
+    }
   });
 
   it("needsSetup:false with a LIVE session routes to /join — the mid-enrollment reload", async () => {
@@ -183,8 +202,8 @@ describe("the gate — the form exists exactly while /hello says needsSetup:true
   it("an unreachable server renders the retry card, never the form", async () => {
     answers["/api/hello"] = coded(503, "hello_unavailable", "this host could not determine its setup state");
     const c = await mountSetup();
-    expect(c.querySelector("#setup-token")).toBeNull();
-    expect(c.textContent).toContain("Can't reach the server");
+    expect(blank(c, W.tokenLabel)).toBeNull();
+    expect(c.textContent).toContain(messages.setup.unreachableTitle);
   });
 });
 
@@ -241,7 +260,7 @@ describe("the ceremony — one submit drives redeem, then register with the mint
     expect(alert!.textContent).toContain("server log");
     // No register attempt rode behind the failed redeem, and the form survives for a retry.
     expect(calls.some((r) => r.url.includes("/auth/register"))).toBe(false);
-    expect(c.querySelector("#setup-token")).not.toBeNull();
+    expect(blank(c, W.tokenLabel)).not.toBeNull();
   });
 
   it("a register refusal AFTER a successful redeem keeps the minted code — the retry must not re-burn the token", async () => {
@@ -266,7 +285,7 @@ describe("the ceremony — one submit drives redeem, then register with the mint
         scope: "enrollment",
       },
     };
-    await type(c.querySelector<HTMLInputElement>("#setup-pw")!, "a much longer correct password");
+    await type(blank(c, W.passwordLabel)!, "a much longer correct password");
     await act(async () => {
       c.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await Promise.resolve();

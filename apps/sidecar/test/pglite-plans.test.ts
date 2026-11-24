@@ -8,6 +8,7 @@ import {
 } from "../src/pglite-plans.js";
 import { currentStoreLane, inStoreLane } from "../src/store-lanes.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 /**
  * THE INGEST'S STATEMENTS ARE PLANNED ONCE A LIFE, NOT ONCE AN EXECUTION.
@@ -37,7 +38,7 @@ async function sizings(work: () => Promise<void>): Promise<number> {
 }
 
 /** The PGlite client under a handle's drizzle wrapper (typed on the driver, not on `LocalDb`). */
-const clientOf = (h: OpenLocalDb): PGlite => (h.db as unknown as { $client: PGlite }).$client;
+const clientOf = (h: OpenLocalDb): PGlite => pgliteOf(h.db);
 
 async function probeStore(prefix: string): Promise<OpenLocalDb> {
   const dir = await freshDataDir(prefix);

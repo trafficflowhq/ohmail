@@ -1,9 +1,9 @@
+import type { MailboxDTO, MessageDTO, SnapshotResponse, SyncChange, SyncResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { mailboxes, messageBodies, messages } from "@trafficflow/db/mail";
 import { materializeMessages, messageService } from "@trafficflow/services/mail";
-import type { MailboxDTO, MessageDTO, SnapshotResponse, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { normalizeMime } from "@trafficflow/core/mail";
 import { owaInvitationStub } from "@ohmail/client-engine";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
@@ -147,7 +147,7 @@ describe("a standalone desktop store", () => {
       const id = randomUUID();
       await db.insert(messages).values({ id, accountId: world.accountId, mailboxId, bodyHash: "h", dedupKey: id, subject: msg.subject, fromAddress: msg.from.address, date: at, createdAt: at, updatedAt: at });
       // Spread, as `drizzle-repo` does: the store refuses the parser's null-prototype map.
-      await db.insert(messageBodies).values({ messageId: id, text: msg.textBody, headers: { ...msg.headers } });
+      await db.insert(messageBodies).values({ messageId: id, accountId: world.accountId, text: msg.textBody, headers: { ...msg.headers } });
       const got = (await materializeMessages(db, world.accountId, [id])).get(id);
       expect(got?.invitationWithoutEvent).toBe(withClass);
       const body = await messageService.getBody({ db, accountId: world.accountId } as never, id);

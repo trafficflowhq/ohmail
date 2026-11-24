@@ -2,13 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { StreamShell, type StreamHandle, type StreamLeaveState } from "../app/shell/StreamShell";
+import type { StreamScroll, StreamRange } from "@ohmail/app-logic/streams";
+import { StreamScrollFixture } from "./stream-scroll-fixture";
+import { within } from "@testing-library/react";
 
 /**
  * THE LEAVE-COMMIT'S TRACKING UNDER A SLIDING WINDOW — `newestSeenId` must survive its card's
  * unmount.
  *
- * `StreamShell.measure()` keeps "the newest card ever displayed" by comparing positions in the
+ * `The scroll model` keeps "the newest card ever displayed" by comparing positions in the
  * MOUNTED card order. That was sound while the stream was a prefix (a displayed card stayed in
  * the DOM forever); under the sliding window the tracked card UNMOUNTS as the reader scrolls
  * on, its index lookup fails, and the tracker silently replaced it with whatever is at the top
@@ -89,32 +91,28 @@ describe("newestSeenId under the sliding window", () => {
     host: HTMLElement;
     render: (w: [number, number]) => Promise<void>;
     scroll: (px: number) => Promise<void>;
-    leave: () => Promise<StreamLeaveState>;
+    leave: () => Promise<StreamRange>;
   }> {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
     roots.push(root);
-    const ref = React.createRef<StreamHandle>();
-    let leaveState: StreamLeaveState | null = null;
+    const ref = React.createRef<StreamScroll>();
     const paint = (w: [number, number]) =>
       act(() => {
         root.render(
-          <StreamShell
+          <StreamScrollFixture
             ref={ref}
-            ariaLabel="stream"
             onCurrentChange={() => {}}
-            onSeen={() => {}}
-            onLeave={(s) => { leaveState = s; }}
             pileIndexOf={pileIndexOf}
             contentKey={`${w[0]}:${w[1]}`}
           >
             {cards(w[0], w[1])}
-          </StreamShell>,
+          </StreamScrollFixture>,
         );
       });
     await paint(window);
-    const scroller = host.querySelector(".stream") as HTMLElement;
+    const scroller = within(host).getByRole("region", { name: "stream" });
     const geo = armGeometry(scroller);
     return {
       host,
@@ -127,8 +125,9 @@ describe("newestSeenId under the sliding window", () => {
         });
       },
       leave: async () => {
+        const range = ref.current!.range();
         await act(() => { roots.pop()!.unmount(); });
-        return leaveState!;
+        return range;
       },
     };
   }

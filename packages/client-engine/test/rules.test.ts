@@ -1,7 +1,12 @@
+import type {
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  MutationOutcome,
+  RuleEntity as RuleDTO,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   HttpAdapter,
   MutationRejectedError,
   OhmailEngine,
@@ -9,13 +14,9 @@ import {
   rulesList,
   storedRuleDestination,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type MutationOutcome,
-  type RuleDTO,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 

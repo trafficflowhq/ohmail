@@ -1,13 +1,13 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   encodeSeqCursor,
-  FixturesAdapter,
   HttpAdapter,
   OhmailEngine,
-  type EngineMessage,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { createEngine } from "../app/shell/engine-config.js";
-import { createSyncGate, transportOf } from "../app/shell/sync-scheduler.js";
+import { createSyncGate, transportOf } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * ═══ THE COLD START GOES THROUGH `GET /sync/snapshot` ON THE PATH THE PRODUCT BUILDS ═══════
@@ -128,7 +128,8 @@ describe("a cold live mirror asks for the snapshot, not for the log from seq zer
     // FIRST, not merely present: the whole value of the route is that the log replay never
     // happens. A snapshot issued after a `since=0` page would be a second bootstrap, not a
     // cheaper one.
-    expect(calls[0], `the first request was ${calls[0]} — the gate dropped \`snapshot\``)
+    // The route, whatever kinds the engine names on it.
+    expect(calls[0]?.split("?")[0], `the first request was ${calls[0]} — the gate dropped \`snapshot\``)
       .toBe("GET /api/sync/snapshot");
     expect(calls.join("\n")).not.toContain("since=0");
   });
@@ -194,7 +195,7 @@ describe("a cold live mirror asks for the snapshot, not for the log from seq zer
     const afterThe410 = calls.slice(before);
     expect(snapshots, "the 410 did not re-snapshot").toBe(2);
     expect(
-      afterThe410.some((c) => c === "GET /api/sync/snapshot"),
+      afterThe410.some((c) => c.split("?")[0] === "GET /api/sync/snapshot"),
       `after the 410 the client issued ${afterThe410.join(", ")}`,
     ).toBe(true);
     // The assertion that fails when the forward is deleted: `since=0` is the fallback path, and

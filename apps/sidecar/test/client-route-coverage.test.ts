@@ -3,8 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { localRoutes, matchRoute } from "@trafficflow/api/local";
+import { relayVerdict } from "@trafficflow/api/relay-allowlist";
 import { matchReadRoute } from "../src/cloud-read.js";
 import { SUGGEST_ROUTES } from "../../desktop/src/cloud-suggest.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * EVERY ROUTE THE DESKTOP CLIENT CALLS, AGAINST THE TWO SURFACES THE SIDECAR SERVES.
@@ -38,42 +40,35 @@ interface Call {
 }
 
 /**
- * Every `this.request(...)` in the wire client, as a method and a route pattern.
+ * Every `this.call(...)` in the wire client, as a method and a route pattern.
  *
- * The path argument comes in three shapes — a plain string, a template, and a ternary between two
- * of those — so the parse takes EVERY path-shaped literal in the argument region rather than
- * assuming the first token is the whole answer. A template's `${…}` spans are exactly the
- * parameters, so replacing each with a placeholder segment turns the call site into the pattern a
- * router would match it against; the query string is cut, because routing does not see one.
+ * A call names its route as the wire does, `"METHOD /pattern"`, in one literal that is the call's
+ * first argument, so the read is that literal. Each `:param` becomes the placeholder segment a
+ * router would match the call against. A ternary between two routes is two calls, each with its
+ * own name.
  *
- * The count is checked against the number of call sites by the caller. A parse that quietly
- * skipped a shape it did not recognise is the failure this whole file would be blind to: the one
- * route this test most needs to see is written as a ternary, and a first version of the regex
- * missed exactly that one and reported full coverage.
+ * `named` is counted beside `sites` and the caller holds the two equal. A parse that quietly
+ * skipped a shape it did not recognise is the failure this whole file would be blind to: an
+ * earlier version of the read missed exactly the one route this test most needs to see and
+ * reported full coverage.
  */
-function clientCalls(): { calls: Call[]; sites: number } {
+function clientCalls(): { calls: Call[]; sites: number; named: number } {
   const src = fs.readFileSync(ADAPTER, "utf8");
-  const marker = "this.request(";
+  const marker = "this.call(";
   const calls: Call[] = [];
   let sites = 0;
   for (let at = src.indexOf(marker); at >= 0; at = src.indexOf(marker, at + 1)) {
     sites++;
-    const rest = src.slice(at + marker.length);
-    /* The argument region ends at the options object or at the call's own close, whichever comes
-       first. No interpolation in this file contains either sequence. */
-    const ends = [rest.indexOf(");"), rest.indexOf(", {")].filter((i) => i >= 0);
-    const region = rest.slice(0, Math.min(...ends));
-    const method = /"(GET|POST|PUT|PATCH|DELETE)"/.exec(region)?.[1];
-    if (!method) continue;
-    for (const m of region.matchAll(/`(\/[^`]*)`|"(\/[^"]*)"/g)) {
-      const raw = m[1] ?? m[2]!;
-      calls.push({ method, pattern: raw.replace(/\$\{[^}]*\}/g, "x").split("?")[0]! });
-    }
+    const name = /^\s*"(GET|POST|PUT|PATCH|DELETE) (\/[^"]*)"/.exec(src.slice(at + marker.length));
+    if (!name) continue;
+    calls.push({ method: name[1]!, pattern: name[2]!.replace(/:[A-Za-z_][A-Za-z0-9_]*/g, "x") });
   }
-  // Dedup: several mutations address the same route, and a ternary names one twice.
+  const named = calls.length;
+  // Dedup: several mutations address the same route.
   const seen = new Set<string>();
   return {
     sites,
+    named,
     calls: calls.filter((c) => {
       const key = `${c.method} ${c.pattern}`;
       if (seen.has(key)) return false;
@@ -163,6 +158,7 @@ const FORWARDED_IN_CLOUD_MODE = [
      row is the server's — and it is bounded by the debounce rather than by the keystrokes. */
   "PUT /drafts/x",
   "DELETE /drafts/x",
+  "DELETE /drafts/x/conditional",
   /* THE SECOND READ ON THIS LIST, and it is here rather than in `cloud-read.ts` because the
      hosted row is the master for a draft's text: the mirror's copy is whatever the last page
      carried, which is exactly the thing this read exists to go around. Its answer names no
@@ -223,6 +219,39 @@ const FORWARDED_IN_CLOUD_MODE = [
   /* THE HOSTED DOOR'S UPLOAD TICKET — relayed, and its answer rewritten so the signed grant stays
      in this process (`cloud-staged-upload.ts`); see {@link STAGING_HOSTED_DOOR_ONLY}. */
   "POST /attachments/staging",
+  /* WHAT WAITS ON THE ORGANIZER — a read of the hosted account's own ledger of requests, which
+     the mirror does not hold; the relay's allowlist names it. Nothing new is forwarded: the
+     client spelled this path through a constant until it took the wire's name for it, and the
+     read of this file could not see a constant. */
+  "GET /organizer-requests",
+  /* Calendar settings are account preferences held by the hosted calendar service. The setup
+     UI reads and saves them only when the server offers Calendar for the confirmed account.
+     The save changes the server's settings, which the mirror cannot apply. */
+  "GET /calendar/settings",
+  "PATCH /calendar/settings",
+  /* THE CALENDAR'S THREE WRITES (record, send again, let go). Each changes the hosted account's
+     calendar, and this copy drains nothing of its own: the write is the account's server's,
+     relayed with the press's key on every attempt (`relay-allowlist.ts` names all three). */
+  "POST /calendar/writes",
+  "POST /calendar/writes/x/retry",
+  "DELETE /calendar/writes/x",
+  "POST /calendar/proposals",
+  /* THE CALENDAR'S CONNECT DOOR, all six. A phone and a desktop on a hosted account connect a
+     calendar in the app, as they add a mailbox: what is typed is sealed on the account's server,
+     so each of these is forwarded there and answered from there (`relay-allowlist.ts` names all
+     six). `GET /calendar/connect` IS A READ THAT JOINED THE LIST ON PURPOSE: the ways a server
+     offers are no record this copy holds, and while the account's calendar is off the feed sends
+     no calendar record, so the connections it answers are the only list a pane can remove from. */
+  "GET /calendar/connect",
+  "POST /calendar/connections",
+  "DELETE /calendar/connections/x",
+  "POST /calendar/connections/x/check",
+  "POST /calendar/connections/x/sign-in",
+  "PATCH /calendar/calendars/x",
+  "PATCH /calendar/suggestions/x",
+  /* THE PLACE FIELD'S QUESTION. The geocoder is the account's server's, set by its operator; this
+     copy holds none and answers none, so the question is relayed whole and its answer returned. */
+  "POST /calendar/places/suggest",
 ];
 
 /**
@@ -285,15 +314,12 @@ const ADAPTER_SRC = fs.readFileSync(ADAPTER, "utf8");
 const BRIDGE = path.resolve(HERE, "../../desktop/src/bridge-fetch.ts");
 const SEND_SURFACE = path.resolve(HERE, "../../desktop/src/desktop-send-surface.ts");
 const GATE = path.resolve(HERE, "../../desktop/src/DesktopGate.tsx");
-const APP_SHELL = path.resolve(HERE, "../../webapp/app/shell/AppShell.tsx");
-/* THE RAIL MOVED OUT OF THE SHELL (ARCH-022). `FoldersRailGroup` and the `consent.foldersEnabled`
-   spread that gates it went to `shell-keys.tsx` with the rest of the rail; this link is about the
-   MOUNT, not about which file holds it, so the reading is the pair of files and the refusal names
-   the one that carried it. A file that is absent refuses — an unreadable half is not a zero. */
-const RAIL_MOUNTS = ["../../webapp/app/shell/shell-keys.tsx", "../../webapp/app/shell/AppShell.tsx"]
-  .map((rel) => path.resolve(HERE, rel));
-const CONSENT_STATE = path.resolve(HERE, "../../webapp/app/shell/consent-state.ts");
-const FOLDER_VERBS = path.resolve(HERE, "../../webapp/app/shell/folder-verbs.ts");
+const MAIL_PLACES = path.resolve(HERE, "../../../packages/app/src/mail/places.ts");
+const FOLDER_PLACE = path.resolve(HERE, "../../../packages/app/src/folder/place.ts");
+const FOLDER_RAIL = path.resolve(HERE, "../../../packages/app/src/folder/RailSeat.tsx");
+const FOLDER_LOGIC = path.resolve(HERE, "../../../packages/app-logic/src/folder/");
+const FOLDER_LIVE = path.join(FOLDER_LOGIC, "live.ts");
+const CONSENT_STATE = path.resolve(HERE, "../../../packages/app-logic/src/consent/consent-state.ts");
 /** The standalone route table's own source — link four is about how it is COMPOSED. */
 const LOCAL_TABLE_SRC = path.resolve(HERE, "../../../packages/api/src/routes/local.ts");
 
@@ -302,12 +328,10 @@ const LOCAL_TABLE_SRC = path.resolve(HERE, "../../../packages/api/src/routes/loc
  *
  * Returns the exempt set only while every link holds, and the empty set otherwise.
  *
- *  1. **The verbs have ONE composing module.** Every `kind: "folder_…"` mutation in the client
- *     surfaces this window renders (`apps/webapp/app`, `apps/desktop/src`) is composed in
- *     `folder-verbs.ts` — a second composer would be a path this chain says nothing about.
- *  2. **Their one mount is gated on the flag.** `AppShell` renders `<FoldersRailGroup>` exactly
- *     once, inside the rail group spread on `consent.foldersEnabled` — a flag-off rail is
- *     byte-identical to the pre-feature rail, folders verbs included.
+ *  1. **The verbs have one composing module.** Every folder mutation the client composes
+ *     belongs to one module in the Folder model.
+ *  2. **The rail mount is gated on consent.** The mounted Folder place registers one Folder
+ *     rail body, which only renders when the live Folder feed says folders are enabled.
  *  3. **The flag RESTS false.** `consent-state.ts`'s resting block says `foldersEnabled: false`,
  *     so a door that never answers the consent read never leaves it.
  *  4. **The standalone engine cannot answer that read.** `GET /consent` does not match
@@ -318,7 +342,7 @@ const LOCAL_TABLE_SRC = path.resolve(HERE, "../../../packages/api/src/routes/loc
  *
  *  5. **A departed wire cannot leave the flag behind.** The desktop's door chooser is an
  *     overlay OVER the mounted shell (review round 2's counterexample to round 1's unmount
- *     ruling: `DesktopGate` renders `DoorChooser` beside `AppShell`, and `engine_configure`
+ *     ruling: `DesktopGate` renders `DoorChooser` beside the desktop frame, and `engine_configure`
  *     runs before `onEntered`), so a hosted session with folders ON can switch doors without
  *     the shell ever unmounting. The consent hook therefore RESETS to its resting values the
  *     moment the transport is gone — measured here as the reset line in the hook's own source,
@@ -328,6 +352,9 @@ function standaloneDoorNeverAsks(): { exempt: Set<string>; holds: Record<string,
   const composers = new Set<string>();
   for (const root of [
     path.resolve(HERE, "../../webapp/app"),
+    path.resolve(HERE, "../../../packages/app/src"),
+    path.resolve(HERE, "../../../packages/app-logic/src"),
+    path.resolve(HERE, "../../../packages/letter-body/src"),
     path.resolve(HERE, "../../desktop/src"),
   ]) {
     for (const file of fs.readdirSync(root, { recursive: true, withFileTypes: true })) {
@@ -336,17 +363,18 @@ function standaloneDoorNeverAsks(): { exempt: Set<string>; holds: Record<string,
       if (fs.readFileSync(p, "utf8").includes('kind: "folder_')) composers.add(p);
     }
   }
-  const shell = fs.readFileSync(APP_SHELL, "utf8");
-  const railMounts = RAIL_MOUNTS.map((p) => fs.readFileSync(p, "utf8"));
-  const railMount = railMounts.filter((src) => src.includes("<FoldersRailGroup"));
+  const places = fs.readFileSync(MAIL_PLACES, "utf8");
+  const folder = fs.readFileSync(FOLDER_PLACE, "utf8");
+  const rail = fs.readFileSync(FOLDER_RAIL, "utf8");
+  const live = fs.readFileSync(FOLDER_LIVE, "utf8");
   const holds = {
-    "folder-verbs.ts is the ONLY module composing folder_* mutations":
-      composers.size === 1 && composers.has(FOLDER_VERBS),
-    "the shell mounts FoldersRailGroup exactly once, in one file, inside the consent.foldersEnabled spread":
-      railMount.length === 1 &&
-      railMount[0]!.split("<FoldersRailGroup").length === 2 &&
-      railMount[0]!.indexOf("...(consent.foldersEnabled") >= 0 &&
-      railMount[0]!.indexOf("...(consent.foldersEnabled") < railMount[0]!.indexOf("<FoldersRailGroup"),
+    "one Folder model module composes all folder mutations":
+      composers.size === 1 && [...composers].every((file) => file.startsWith(FOLDER_LOGIC + path.sep)),
+    "one mounted Folder rail is gated by the Folder feed's consent":
+      /\bfolder:\s*folderPlace,/.test(places) &&
+      folder.split('railGroup: { group: "folders", Body: FolderRailSeat }').length === 2 &&
+      /const live = useFolderRailLive\(\);[\s\S]*?if \(live === null\) return null;[\s\S]*?<FolderRail\b/.test(rail) &&
+      /function useFolderRailLive\(\)[\s\S]*?const \{ foldersEnabled, known \} = useConsent\(\);[\s\S]*?foldersEnabled \? \{ folders, messages, ready \} : null/.test(live),
     "the flag's resting value is false":
       /foldersEnabled: false,/.test(fs.readFileSync(CONSENT_STATE, "utf8")),
     /* LINK FOUR, RESTATED — and the restatement is the fix rather than a relaxation.
@@ -413,9 +441,54 @@ function stagingIsHostedOnly(): { exempt: Set<string>; holds: Record<string, boo
   return { exempt: new Set(all ? STAGING_HOSTED_DOOR_ONLY : []), holds };
 }
 
+/**
+ * THE CALENDAR'S WRITES, ITS CONNECT DOOR, AND THE PLACE FIELD'S QUESTION, ARE THE HOSTED DOOR'S ONLY —
+ * required entries in {@link FORWARDED_IN_CLOUD_MODE}, exempt from the LOCAL-serving census alone.
+ *
+ * The standalone engine holds no calendar: its route table composes no calendar route, its own
+ * `/sync` serves no calendar record, and the calendar's routes are mounted in one place, the
+ * server's program, where a calendar service exists. A window on the standalone door is shown no
+ * event to press on, so a mounted write would be a handler for a request nothing there can make.
+ * The connect door's six are the same: a server that keeps a calendar seals a sign-in and its
+ * worker tries it, and the standalone engine has neither.
+ * {@link calendarIsHostedOnly} reads those three facts again and hands back NOTHING when one
+ * stops holding: a standalone build that grows a calendar mounts the routes then, on purpose.
+ */
+const CALENDAR_HOSTED_DOOR_ONLY = [
+  "GET /calendar/settings",
+  "PATCH /calendar/settings",
+  "POST /calendar/writes",
+  "POST /calendar/writes/x/retry",
+  "DELETE /calendar/writes/x",
+  "POST /calendar/proposals",
+  "GET /calendar/connect",
+  "POST /calendar/connections",
+  "DELETE /calendar/connections/x",
+  "POST /calendar/connections/x/check",
+  "POST /calendar/connections/x/sign-in",
+  "PATCH /calendar/calendars/x",
+  "PATCH /calendar/suggestions/x",
+  "POST /calendar/places/suggest",
+] as const;
+
+function calendarIsHostedOnly(): { exempt: Set<string>; holds: Record<string, boolean> } {
+  const table = fs.readFileSync(LOCAL_TABLE_SRC, "utf8");
+  const standalone = readEngineAsOneText();
+  const program = fs.readFileSync(path.resolve(HERE, "../../server/src/program.ts"), "utf8");
+  const holds = {
+    "the standalone table composes no calendar route": !table.toLowerCase().includes("calendar"),
+    "the standalone engine serves no calendar record": !standalone.toLowerCase().includes("calendar"),
+    "the calendar's routes are mounted by the server's program, only beside its calendar service":
+      program.includes("services.calendar !== undefined ? [...cfg.chosen.routes, ...calendarRoutes, ...calendarNoticeRoutes] : cfg.chosen.routes"),
+  };
+  const all = Object.values(holds).every(Boolean);
+  return { exempt: new Set(all ? CALENDAR_HOSTED_DOOR_ONLY : []), holds };
+}
+
 describe("the client's route list against the local engine", () => {
-  const { calls: allCalls, sites } = clientCalls();
+  const { calls: allCalls, sites, named: namedSites } = clientCalls();
   const { exempt: stagingOnly } = stagingIsHostedOnly();
+  const { exempt: calendarOnly } = calendarIsHostedOnly();
   const calls = allCalls;
   const named = allCalls.map((c) => `${c.method} ${c.pattern}`);
 
@@ -423,6 +496,7 @@ describe("the client's route list against the local engine", () => {
     // The harness bites only if it read something, and only if it read ALL of it. A call site the
     // parse cannot see is a route this file silently stops covering.
     expect(sites).toBeGreaterThanOrEqual(20);
+    expect(namedSites, "a call site whose route this read could not name").toBe(sites);
     const parsed = new Set(calls.map((c) => c.method));
     expect(parsed.size).toBeGreaterThan(1);
     expect(named).toContain("GET /sync");
@@ -466,6 +540,7 @@ describe("the client's route list against the local engine", () => {
     const missing = calls
       .filter((c) => !hostedOnly.has(`${c.method} ${c.pattern}`))
       .filter((c) => !stagingOnly.has(`${c.method} ${c.pattern}`))
+      .filter((c) => !calendarOnly.has(`${c.method} ${c.pattern}`))
       .filter((c) => !matchRoute(localRoutes, c.method, c.pattern).matched);
     expect(missing.map((c) => `${c.method} ${c.pattern}`)).toEqual([]);
   });
@@ -482,14 +557,32 @@ describe("the client's route list against the local engine", () => {
   });
 
   it("the standalone-exempt verbs ARE composed by the client and DO forward on the hosted door", () => {
-    // Two positive assertions so the list cannot outlive its subject: each verb is one the wire
-    // client really composes (not a ghost), and each stays a REQUIRED forward in the cloud
-    // census — this exemption narrows the LOCAL census only, never the hosted one.
+    // Each verb must be composed by the client, named in the exact Cloud census, and
+    // accepted by the relay. The standalone table must still leave it unmounted.
     for (const name of STANDALONE_DOOR_NEVER_ASKS) {
       expect(named, `${name} is exempted but the wire client never composes it`).toContain(name);
       expect(FORWARDED_IN_CLOUD_MODE, `${name} must stay a forwarded route`).toContain(name);
       const [method, pattern] = name.split(" ") as [string, string];
       expect(matchRoute(localRoutes, method, pattern).matched).toBe(false);
+      expect(relayVerdict(method, pattern), `${name} must forward to the hosted organizer`).toBe("forward");
+    }
+  });
+
+  it("the calendar exemption is EARNED, and its writes and its connect door are composed, forwarded and not served here", () => {
+    // Fact by fact, so a failure names which one stopped being true; then the two directions that
+    // keep the list from outliving its subject, as for the staging and the folder verbs above.
+    const { holds, exempt } = calendarIsHostedOnly();
+    for (const [fact, ok] of Object.entries(holds)) {
+      expect(ok, `no longer true: ${fact} — the calendar exemption is not licensed`).toBe(true);
+    }
+    expect([...exempt]).toEqual([...CALENDAR_HOSTED_DOOR_ONLY]);
+    for (const name of CALENDAR_HOSTED_DOOR_ONLY) {
+      expect(named, `${name} is exempted but the wire client never composes it`).toContain(name);
+      expect(FORWARDED_IN_CLOUD_MODE, `${name} must stay a forwarded route`).toContain(name);
+      const [method, pattern] = name.split(" ") as [string, string];
+      expect(matchRoute(localRoutes, method, pattern).matched).toBe(false);
+      // Forwarded is a promise the relay keeps: asked the verdict the proxy itself asks.
+      expect(relayVerdict(method, pattern), `${name} is listed as forwarded and the relay refuses it`).toBe("forward");
     }
   });
 

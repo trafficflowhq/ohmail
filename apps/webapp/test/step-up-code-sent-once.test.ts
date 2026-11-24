@@ -43,7 +43,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   globalThis.fetch = originalFetch;
-  const truth = await import("../app/shell/session-truth.js");
+  const truth = await import("@ohmail/app-logic/session/session-truth");
   truth.resetSessionTruthForTests();
 });
 
@@ -78,7 +78,7 @@ describe("a refused second factor is an answer, not a lapsed session", () => {
 
   it("the engine's door, which reads the same rule, sends a factor once too", async () => {
     await import("../app/api-client.js");
-    const { sessionFetch } = await import("../app/shell/session-truth.js");
+    const { sessionFetch } = await import("@ohmail/app-logic/session/session-truth");
     const res = await sessionFetch("/api/auth/step-up/totp", { method: "POST", body: JSON.stringify({ code: "000000" }) });
     expect(res.status).toBe(401);
     expect(posts("/api/auth/step-up/totp")).toBe(1);
@@ -89,7 +89,7 @@ describe("a refused second factor is an answer, not a lapsed session", () => {
     const { api, ApiError } = await import("../app/api-client.js");
     const err = await api("/auth/confirm-by-code", { method: "POST", body: { code: "000000" } }).then(() => null, (e: unknown) => e);
     expect((err as InstanceType<typeof ApiError>).code).toBe("credential_refused");
-    const { sessionFetch } = await import("../app/shell/session-truth.js");
+    const { sessionFetch } = await import("@ohmail/app-logic/session/session-truth");
     const res = await sessionFetch("/api/auth/confirm-by-code", { method: "POST", body: JSON.stringify({ code: "000000" }) });
     expect(res.status).toBe(401);
     expect(posts("/api/auth/confirm-by-code"), "a credential verdict was sent again after a refresh").toBe(2);

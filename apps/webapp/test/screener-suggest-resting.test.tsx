@@ -1,99 +1,27 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import {
-  OhmailEngine, MemoryMirrorStore,
-  type EngineMessage, type Folder, type SyncChange,
-} from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
+import type { EngineMessage, Folder } from "@ohmail/wire";
+import { fireEvent, within } from "@testing-library/react";
+import { quotedResponse } from "../../../test/support/screener-quote";
 import messages from "../messages/en.json";
-import type { SuggestBatchControl } from "../app/shell/screener-suggest";
-import { settleFirstPaint } from "./_first-paint.js";
-
-/**
- * THE AI SURFACE MUST NOT DISAPPEAR WHEN IT HAS FINISHED ITS WORK.
- *
- * Reported from a live account: a Screener of waiting senders, every one of them with a bought suggestion,
- * and no AI anything in the Screener. Not a broken control, not an error — nothing. The buy
- * control's first line was `if (control.available === 0) return null`, and `available` is the
- * count of senders with NO answer yet, so working the queue to completion deleted the feature
- * from the view. "There is nothing left to buy" and "this build has no AI" rendered identically.
- *
- * The two claims below are what replaces that hide, and each was watched go RED against the
- * mutation named in its comment:
- *
- *  1. A ZERO BUY LIST RESTS. The surface stays, states how many senders have an answer, and keeps
- *     the one action still available — asking again — beside it. It renders nothing only when
- *     there is also nothing to re-ask, which is an empty gate the list already speaks for.
- *  2. THE RE-ASK IS THE SAME PURCHASE. It enters the existing machinery — a server dry run, a
- *     confirm carrying the server's own count, one idempotency key per chunk — over the senders
- *     that HAVE an answer. It is not a second flow, and it may not spend before a price lands.
- *
- * The chips and the apply banner are asserted alongside, because the report was about the whole
- * strip: a fix that restored the suggest control by displacing its neighbours would be no fix.
- */
-
-// See `sync-liveness-shell.test.ts` for why React is published as a global.
-(globalThis as unknown as { React: unknown }).React = React;
-// BEFORE any import of `api-client`: `API_BASE` is read once at module load.
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null,
-    addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {},
-    dispatchEvent() { return false; },
-  })) as never;
-
-const NOW = new Date("2026-08-02T12:00:00.000Z");
-let seq = 0;
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
+import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
+import {
+  ACCOUNT, act, installConfirmEnv, ISO, mountCloudShell, refresh204, rememberOwner, scriptRefresh,
+  scriptSession, scriptSync, sessionFull, teardownConfirmEnv, tick,
+} from "./fixtures/cloud-confirm-shell";
 
 function held(id: string, from: string, hour: number, folder: Folder = "ohmail/Screener"): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
+    id, accountId: ACCOUNT, mailboxId: "mb", threadId: null, messageIdHeader: null,
     subject: `Subject ${id}`, from: { name: null, address: from }, to: [], cc: [],
-    date: `2026-08-02T${String(hour).padStart(2, "0")}:00:00.000Z`,
+    date: `2026-09-04T${String(hour).padStart(2, "0")}:00:00.000Z`,
     folder, snippet: `snippet ${id}`, unread: true,
     hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none",
-    updatedAt: "2026-08-02T09:00:00.000Z",
+    updatedAt: "2026-09-04T09:00:00.000Z",
   };
-}
-
-async function engineWith(mail: EngineMessage[]): Promise<OhmailEngine> {
-  const store = new MemoryMirrorStore();
-  await store.load();
-  await store.applyChanges(
-    mail.map((m): SyncChange => ({
-      type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m,
-    })),
-  );
-  return new OhmailEngine({
-    store,
-    now: () => NOW,
-    adapter: {
-      sync: async () => ({
-        changes: { creates: [], updates: [], moves: [], deletes: [] },
-        cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
-      }),
-      mutate: async () => ({ changes: [], seq: null }),
-      withdrawSend: async () => ({ outcome: "unsupported" as const }),
-      fetchBody: async () => ({
-        text: "body", html: null, loadedRemoteContent: false,
-        unsubscribe: "no_header", unsubscribeUrl: null,
-      }),
-    },
-  });
 }
 
 // ── the wire, recorded ────────────────────────────────────────────────────────────────────
@@ -106,9 +34,7 @@ interface Recorded {
 }
 
 let calls: Recorded[] = [];
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-let realFetch: typeof fetch;
+let host: HTMLElement | null = null;
 
 const json = (v: unknown, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
@@ -121,300 +47,186 @@ let suggestReply: (body: { senders: string[]; dryRun?: boolean }) => Response;
 const dryRuns = () => calls.filter((c) => c.path.startsWith("/screener/suggest") && c.body?.dryRun === true);
 const purchases = () => calls.filter((c) => c.path.startsWith("/screener/suggest") && c.body?.dryRun !== true);
 
-function installFetch(): void {
+function installFetch(autoSuggest: boolean): void {
+  const shellFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : String(input);
+    if (url.startsWith("/api/consent")) return json({
+      seedConfirmedAt: ISO, foldersEnabledAt: ISO, dormancyDays: 60, autoSuggestAt: autoSuggest ? ISO : null,
+      counts: { decidedSenders: 0, activeUndecidedSenders: 0, dormantUndecidedSenders: 0 },
+    });
+    if (url.startsWith("/api/mailboxes")) return json({ items: [{
+      id: "mb", address: "owner@example.invalid", status: "active", lastSyncAt: ISO,
+      organizerRole: "organizer", organizeConsentedAt: ISO, createdAt: ISO,
+    }] });
+    if (!/^\/api\/screener(?:\?|$|\/suggest$)/.test(url)) return shellFetch(input, init);
     const path = url.replace(/^\/api/, "");
     const raw = typeof init?.body === "string" ? (JSON.parse(init.body) as Recorded["body"]) : null;
-    const headers = (init?.headers ?? {}) as Record<string, string>;
+    const headers = new Headers(init?.headers);
     calls.push({
       method: init?.method ?? "GET",
       path,
       body: raw,
-      idempotencyKey: headers["Idempotency-Key"] ?? null,
+      idempotencyKey: headers.get("Idempotency-Key"),
     });
     if (path.startsWith("/screener/suggest")) {
-      return suggestReply(raw as { senders: string[]; dryRun?: boolean });
+      const body = raw as { senders: string[]; dryRun?: boolean };
+      const response = suggestReply(body);
+      return body.dryRun ? quotedResponse(response, body.senders, (sender) =>
+        SEVENTY_FOUR.find((letter) => letter.from.address === sender)!.id) : response;
     }
-    if (path.startsWith("/screener")) return listReply();
-    return json({});
+    return listReply();
   }) as typeof fetch;
 }
 
-async function flush(): Promise<void> {
-  for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
-}
-
-/** Press the button whose visible text is exactly `label`. */
-async function press(label: string): Promise<void> {
-  const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === label);
-  if (!btn) {
-    throw new Error(
-      `no button labelled "${label}" — on screen: ${[...document.querySelectorAll("button")]
-        .map((b) => JSON.stringify(b.textContent?.trim()))
-        .join(", ")}`,
-    );
-  }
-  await act(async () => { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await flush();
-}
-
-/**
- * Press the re-ask CONFIRM, whichever number it is currently quoting.
- *
- * Prefix-matched for the reason `screener-suggest.test.tsx` gives about its own confirm: the
- * count is a fact under test elsewhere, and restating it here would make a pricing change fail
- * as "the button vanished".
- */
-async function pressConfirmAgain(): Promise<void> {
-  const btn = [...document.querySelectorAll("button")].find((b) =>
-    b.textContent?.trim().startsWith("Suggest again for "));
-  if (!btn) {
-    throw new Error(
-      `no re-ask confirm — on screen: ${[...document.querySelectorAll("button")]
-        .map((b) => JSON.stringify(b.textContent?.trim()))
-        .join(", ")}`,
-    );
-  }
-  await act(async () => { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await flush();
-}
-
 const text = () => host?.textContent ?? "";
+const buttons = () => within(host!);
+const exactNames = (letters: EngineMessage[]) => letters.map((letter) => letter.from.address);
+
+async function press(name: string | RegExp): Promise<void> {
+  const button = within(document.body).getByRole("button", { name });
+  await act(async () => { fireEvent.click(button); });
+  await tick(0);
+}
+
+async function againItem() {
+  await press(messages.screener.place.listMenu);
+  return within(document.body).getByRole("menuitem", { name: "Suggest again…" });
+}
+
+async function pressAgain() {
+  const item = await againItem();
+  await act(async () => { fireEvent.click(item); });
+  await tick(0);
+}
+
+const pressConfirmAgain = () => press(/^Suggest again for /);
 
 beforeEach(() => {
+  resetSessionTruthForTests();
+  installConfirmEnv();
+  resetStorageOwnerForTest();
+  scriptRefresh(refresh204);
+  scriptSession(() => sessionFull());
+  rememberOwner();
+  window.localStorage.clear();
+  vi.stubGlobal("innerWidth", 1280);
   calls = [];
-  realFetch = globalThis.fetch;
-  listReply = () => json({ items: [], nextCursor: null, suggestable: { senders: [], credits: 0, maxPerRequest: 50 } });
+  listReply = () => answers([]);
   suggestReply = () => json({ dryRun: true, requested: 0, quoted: 0, quotedCredits: 0, charged: 0, suggestions: [], skipped: [] });
-  installFetch();
 });
-
 afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
+  window.history.replaceState(null, "", "/");
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  resetStorageOwnerForTest();
+  await teardownConfirmEnv();
+  vi.unstubAllGlobals();
   host = null;
-  globalThis.fetch = realFetch;
 });
 
-// ══ 1. THE RESTING STATE ═══════════════════════════════════════════════════════════════════
+const waiting = (count: number) => Array.from({ length: count }, (_, i) =>
+  held(`m${String(i).padStart(2, "0")}`, `s${i}@ex.example`, 11 - i % 10));
+const TWELVE = waiting(12);
+const SEVENTY_FOUR = waiting(74);
 
-/**
- * A control at rest, hand-built.
- *
- * Hand-built rather than driven through the hook because what is under test in this half is the
- * VIEW's decision about what to draw at each of the two zeroes. The hook's own behaviour is the
- * second half of this file, over the real endpoint.
- */
-function restingControl(over: Partial<SuggestBatchControl> = {}): SuggestBatchControl {
-  return {
-    available: 0,
-    resuggestable: 74,
-    unanswered: 0,
-    mode: "new",
-    pool: 0,
-    sizes: [],
-    size: 0,
-    phase: "closed",
-    quote: null,
-    notice: null,
-    progress: null,
-    open: () => {},
-    openAgain: () => {},
-    choose: () => {},
-    confirm: () => {},
-    cancel: () => {},
-    ...over,
-  };
-}
-
-async function mountView(props: Record<string, unknown>): Promise<HTMLElement> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
-  const engine = await engineWith([
-    held("m1", "one@example.test", 9),
-    held("m2", "two@example.test", 10),
-    held("m3", "three@example.test", 11),
-  ]);
-
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never);
-    return h(ScreenerView, {
-      owed: false,
-      state,
-      segment: "waiting", settled: true,
-      selection: { waiting: null, screened: null, spam: null },
-      onSelect: () => {}, hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-      ...props,
-    } as never);
-  }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: h(KeymapProvider, { children: h(Probe) }),
-        }),
-      }),
-    );
-  });
-  await flush();
-  await settleFirstPaint();
-  return host;
-}
-
-describe("a Screener with nothing left to buy still shows the AI surface", () => {
-  it("states how many senders have an answer, instead of vanishing", async () => {
-    // The reported state exactly: no unsuggested senders, 74 answered ones.
-    // RED against `if (control.available === 0) return null` — the whole strip renders, the
-    // chips and the apply banner render, and the AI surface is simply not in the tree.
-    const el = await mountView({ suggest: restingControl() });
-    const rest = el.querySelector(".scn-sg-rest");
-    expect(rest, "the suggest surface vanished on a fully-suggested queue").not.toBeNull();
-    expect(el.textContent).toContain("All 74 senders have a suggestion.");
-    // A FACT, NOT A CONTROL. The sentence must not be pressable — a person who clicks the thing
-    // telling them the work is done is looking for an action that does not exist.
-    expect(el.querySelector(".scn-sg-all")?.tagName).toBe("SPAN");
-    // And the buy control is NOT drawn beside it: there is nothing to buy, and an enabled
-    // "Suggest…" over an empty list is the inert button this view refuses everywhere else.
-    expect([...el.querySelectorAll("button")].map((b) => b.textContent?.trim()))
-      .not.toContain("Suggest…");
-  });
-
-  it("offers the re-ask beside it — the one action still true", async () => {
-    const el = await mountView({ suggest: restingControl() });
-    // RED if `openAgain` is not offered at rest: the honest state would then be a dead end,
-    // which is the half of the report that asked for a way back in.
-    expect([...el.querySelectorAll("button")].map((b) => b.textContent?.trim()))
-      .toContain("Suggest again…");
-  });
-
-  it("renders NOTHING when there is also nothing to ask about again", async () => {
-    // An empty gate. The list beside this already says "No one's waiting."; "All 0 senders have
-    // a suggestion." would be a second, worse way to say it — and a false one.
-    const el = await mountView({ suggest: restingControl({ resuggestable: 0 }) });
-    expect(el.querySelector(".scn-sg-rest")).toBeNull();
-    expect(el.querySelector(".scn-suggest")).toBeNull();
-    expect(el.textContent).not.toContain("have a suggestion.");
-  });
-
-  it("still opens the ordinary buy control while the queue is mixed", async () => {
-    // The resting state is the ZERO arm and must not have replaced the ordinary one.
-    const el = await mountView({ suggest: restingControl({ available: 5, pool: 5 }) });
-    const labels = [...el.querySelectorAll("button")].map((b) => b.textContent?.trim());
-    expect(labels).toContain("Suggest…");
-    expect(labels).toContain("Suggest again…");
-    expect(el.textContent).not.toContain("have a suggestion.");
-  });
-
-  it("labels the ladder's largest size off the set it is bound to, not off the buy list", async () => {
-    // `pool`, not `available`. Read off the buy list a re-ask ladder over 74 would print a bare
-    // "74" at its top — the one size that means "everything" left unnamed.
-    const el = await mountView({
-      suggest: restingControl({
-        mode: "again", pool: 74, sizes: [10, 25, 50, 74], size: 74,
-        phase: "ready", quote: { senders: 3, credits: 3 },
-      }),
-    });
-    expect(el.textContent).toContain("all 74");
-    // And the wording is the re-ask's throughout, not the purchase's.
-    expect(el.textContent).toContain("Suggest again for the first");
-    expect(el.textContent).toContain("Suggest again for 3 senders");
-  });
-});
-
-// ══ 2. THE RE-ASK IS THE SAME PURCHASE ═════════════════════════════════════════════════════
-
-/** Twelve senders, all of whom will arrive already answered for. */
-const TWELVE = Array.from({ length: 12 }, (_, i) =>
-  held(`m${String(i).padStart(2, "0")}`, `s${i}@ex.example`, 23 - i));
-
-/**
- * `GET /screener` answering with a suggestion for EVERY sender — the reported account's state.
- *
- * Two different decisions on purpose: a unanimous queue renders no filter chips (they need two
- * groups), and the chips are one of the things asserted to survive.
- */
-const allAnswered = () =>
-  json({
-    items: TWELVE.map((m, i) => ({
-      id: m.id, messageId: m.id, sender: { name: null, address: m.from.address },
-      subject: m.subject, snippet: m.snippet, receivedAt: m.date,
-      aiSuggestion: {
+function answers(letters: EngineMessage[], answered = letters.length) {
+  return json({
+    items: letters.map((letter, i) => ({
+      id: letter.id, messageId: letter.id, sender: { name: null, address: letter.from.address },
+      subject: letter.subject, snippet: letter.snippet, receivedAt: letter.date,
+      aiSuggestion: i < answered ? {
         decision: i % 2 === 0 ? "yes" : "no",
         confidence: 0.8,
         rationale: `because ${i}`,
-      },
+      } : null,
     })),
     nextCursor: null,
     suggestable: { senders: [], credits: 0, maxPerRequest: 50 },
   });
-
-interface Live {
-  unsuggested: () => string[];
-  suggested: () => string[];
-  control: () => SuggestBatchControl;
 }
+const allAnswered = () => answers(TWELVE);
 
-/** Mount the REAL view over the REAL hooks — nothing faked but the server. */
-async function mountLive(): Promise<Live> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
-  const engine = await engineWith(TWELVE);
-
-  let live: { unsuggestedSenders: string[]; suggestedSenders: string[] } | null = null;
-  let control: SuggestBatchControl | null = null;
-
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const suggestions = useScreenerSuggestions({ active: true, toast: (() => {}) as never });
-    const state = useScreenerState(engine, v, (() => {}) as never, suggestions.suggestions);
-    live = state;
-    // Bound exactly as `AppShell` binds it — both halves of the queue.
-    control = suggestions.forSenders(state.unsuggestedSenders, state.suggestedSenders);
-    return h(ScreenerView, {
-      owed: false,
-      state,
-      suggest: control,
-      segment: "waiting", settled: true,
-      selection: { waiting: null, screened: null, spam: null },
-      onSelect: () => {}, hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    } as never);
-  }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+async function mountLive(letters = TWELVE, autoSuggest = false): Promise<void> {
+  installFetch(autoSuggest);
+  scriptSync(() => json({
+    changes: {
+      creates: letters.map((entity, i) => ({
+        type: "message", op: "create", id: entity.id, seq: i + 1, updatedAt: ISO, entity,
+      })),
+      updates: [], moves: [], deletes: [],
+    },
+    cursor: "c1", hasMore: false, serverTime: ISO,
+  }));
+  window.location.hash = "#/ohbox";
+  host = await mountCloudShell();
+  await tick(2500);
   await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: h(KeymapProvider, { children: h(Probe) }),
-        }),
-      }),
-    );
+    window.location.hash = "#/screener";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
-  await flush();
-  return {
-    unsuggested: () => live!.unsuggestedSenders,
-    suggested: () => live!.suggestedSenders,
-    control: () => control!,
-  };
+  await act(async () => { await vi.dynamicImportSettled(); });
+  await tick(2500);
 }
+
+describe("a Screener with nothing left to buy still shows the AI surface", () => {
+  it("states how many senders have an answer, instead of vanishing", async () => {
+    listReply = () => answers(SEVENTY_FOUR);
+    await mountLive(SEVENTY_FOUR);
+    expect(text()).not.toContain("All 74 senders have a suggestion.");
+    expect(buttons().queryByRole("button", { name: "Suggest…" })).toBeNull();
+    expect((await againItem()).textContent).toContain("74");
+  });
+
+  it("offers the re-ask beside it — the one action still true", async () => {
+    listReply = allAnswered;
+    await mountLive();
+    expect(buttons().queryByRole("button", { name: "Suggest again…" })).toBeNull();
+    expect(await againItem()).toBeTruthy();
+  });
+
+  it("renders NOTHING when there is also nothing to ask about again", async () => {
+    await mountLive([]);
+    expect(buttons().queryByRole("button", { name: /^Suggest/ })).toBeNull();
+    expect(text()).not.toContain("have a suggestion.");
+  });
+
+  it("still opens the ordinary buy control while the queue is mixed", async () => {
+    listReply = () => answers(TWELVE, 7);
+    await mountLive();
+    expect(buttons().getByRole("button", { name: "Suggest…" })).toBeTruthy();
+    expect(text()).not.toContain("have a suggestion.");
+    await press("Suggest…");
+    const buy = within(document.body).getByRole("dialog", { name: messages.screener.suggest.aria });
+    expect(within(buy).getByRole("button", { name: "Suggest again…" })).toBeTruthy();
+    await press("Suggest again…");
+    expect(within(document.body).getByRole("dialog", { name: messages.screener.suggest.ariaAgain })).toBeTruthy();
+    expect(purchases()).toHaveLength(0);
+  });
+
+  it("labels the ladder's largest size off the set it is bound to, not off the buy list", async () => {
+    listReply = () => answers(SEVENTY_FOUR);
+    const newlyQuoted = exactNames(SEVENTY_FOUR.slice(0, 3));
+    suggestReply = (body) => {
+      const quoted = body.senders.length === 10 ? 0 : body.senders.filter((sender) => newlyQuoted.includes(sender)).length;
+      return json({
+        dryRun: true, requested: body.senders.length, quoted, quotedCredits: quoted,
+        charged: 0, suggestions: [], skipped: [],
+      });
+    };
+    await mountLive(SEVENTY_FOUR);
+    await pressAgain();
+    expect(document.body.textContent).toContain("All 74");
+    expect(within(document.body).getByRole("dialog", { name: messages.screener.suggest.ariaAgain })).toBeTruthy();
+    expect(document.body.textContent).toContain("Suggest again for 3 senders");
+    await press("10");
+    const menu = within(document.body).getByRole("dialog", { name: messages.screener.suggest.ariaAgain });
+    expect(within(menu).getByRole("status").textContent).toBe("No senders in this selection need a new suggestion.");
+    expect(within(menu).queryByRole("button", { name: /^Suggest again for / })).toBeNull();
+    await act(() => within(menu).getByRole("button", { name: "All 74" }).click());
+    expect(within(menu).getByRole("button", { name: "Suggest again for 3 senders" })).toBeTruthy();
+    expect(purchases()).toHaveLength(0);
+  });
+});
 
 describe("re-asking enters the EXISTING quote → confirm → purchase flow", () => {
   it("prices the ALREADY-ANSWERED senders on the server before anything is pressable", async () => {
@@ -425,20 +237,20 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
         // The reported shape: one sender has new mail since the answer was bought, eleven do not.
         quoted: 1, quotedCredits: 1, charged: 0, suggestions: [], skipped: [],
       });
-    const live = await mountLive();
-    // The state the report describes: nothing to buy, everything re-askable.
-    expect(live.unsuggested()).toEqual([]);
-    expect(live.suggested()).toHaveLength(12);
+    await mountLive();
+    expect(buttons().queryByRole("button", { name: "Suggest…" })).toBeNull();
+    expect(buttons().getByRole("button", { name: /^Apply 12$/ })).toBeTruthy();
 
-    await press("Suggest again…");
+    await pressAgain();
     // A DRY RUN FIRST, over the senders that HAVE an answer — never the (empty) buy list.
     // RED if `confirm`/`price` slice `addresses`: the posted set is empty and no price arrives.
     expect(dryRuns()).toHaveLength(1);
-    expect(dryRuns()[0]!.body?.senders).toEqual(live.suggested());
+    expect(dryRuns()[0]!.body?.senders).toHaveLength(12);
+    expect(new Set(dryRuns()[0]!.body?.senders)).toEqual(new Set(exactNames(TWELVE)));
     // And nothing was bought to learn the price.
     expect(purchases()).toHaveLength(0);
     // The SERVER's figure, on the confirm — one sender, not the twelve that were asked about.
-    expect(text()).toContain("Suggest again for 1 sender");
+    expect(within(document.body).getByRole("button", { name: "Suggest again for 1 sender" })).toBeTruthy();
   });
 
   it("rests beside the filter chips and the apply banner, not in place of them", async () => {
@@ -446,10 +258,13 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
     await mountLive();
     // The report was about the whole strip, not one control. A "fix" that restored the suggest
     // surface by displacing its neighbours would be no fix, and this is what watches for it.
-    expect(host!.querySelector(".scn-sg-rest"), "the suggest surface is not on screen").not.toBeNull();
-    expect(host!.querySelector(".scn-chips"), "the filter chips went with it").not.toBeNull();
-    expect(text()).toMatch(/Apply \d+ —/);
-    expect(text()).toContain("All 12 senders have a suggestion.");
+    const tools = within(buttons().getByRole("group", { name: messages.screener.bulkAria }));
+    const filter = tools.getByRole("button", { name: /^All/ });
+    expect(filter.getAttribute("aria-haspopup")).toBe("menu");
+    expect(tools.getByRole("button", { name: /^Apply \d+$/ })).toBeTruthy();
+    expect(tools.queryByRole("button", { name: "Suggest again…" })).toBeNull();
+    expect(text()).not.toContain("All 12 senders have a suggestion.");
+    expect((await againItem()).textContent).toContain("12");
   });
 
   it("buys the same set on confirm, with an idempotency key", async () => {
@@ -463,12 +278,13 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
           : [{ sender: body.senders[0], messageId: "m00", decision: "no", destination: "ohmail/Screened", confidence: 0.9, rationale: "re-asked" }],
         skipped: [],
       });
-    const live = await mountLive();
-    await press("Suggest again…");
+    await mountLive();
+    await pressAgain();
     await pressConfirmAgain();
 
     expect(purchases()).toHaveLength(1);
-    expect(purchases()[0]!.body?.senders).toEqual(live.suggested());
+    expect(purchases()[0]!.body?.senders).toEqual(dryRuns()[0]!.body?.senders);
+    expect(new Set(purchases()[0]!.body?.senders)).toEqual(new Set(exactNames(TWELVE)));
     // ONE KEY PER CHUNK — the existing spend rule, reached because this is the existing flow.
     // RED if the re-ask ever grows a path of its own that posts without one: a lost response
     // would then be retried as a second purchase.
@@ -487,12 +303,10 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
         quoted: 0, quotedCredits: 0, charged: 0, suggestions: [], skipped: [],
       });
     await mountLive();
-    await press("Suggest again…");
-    expect(text()).toContain("Every one of these already has an answer for their latest mail.");
-    // And the confirm is not pressable over a set the server priced at nothing.
-    const confirm = [...document.querySelectorAll("button")].find((b) =>
-      b.textContent?.trim().startsWith("Suggest again for "));
-    expect(confirm?.hasAttribute("disabled")).toBe(true);
+    await pressAgain();
+    const menu = within(document.body).getByRole("dialog", { name: messages.screener.suggest.ariaAgain });
+    expect(within(menu).getByRole("status").textContent).toBe("No senders need a new suggestion.");
+    expect(within(menu).queryByRole("button", { name: /^Suggest again for / })).toBeNull();
     expect(purchases()).toHaveLength(0);
   });
 
@@ -503,27 +317,9 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
         dryRun: body.dryRun === true, requested: body.senders.length,
         quoted: 0, quotedCredits: 0, charged: 0, suggestions: [], skipped: [],
       });
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
-    const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-    const engine = await engineWith(TWELVE);
-    function Probe(): null {
-      const [v, setV] = React.useState(0);
-      React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-      // OPTED IN. The path that spends with no press at all.
-      const s = useScreenerSuggestions({ active: true, autoSuggest: true, toast: (() => {}) as never });
-      const st = useScreenerState(engine, v, (() => {}) as never, s.suggestions);
-      s.forSenders(st.unsuggestedSenders, st.suggestedSenders);
-      return null;
-    }
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe),
-      }));
-    });
-    await flush();
+    await mountLive(TWELVE, true);
+    expect(calls.some((call) => call.method === "GET" && !call.path.includes("live=1"))).toBe(true);
+    expect(buttons().getByRole("button", { name: /^Apply 12$/ })).toBeTruthy();
     // RED if `io.current.queue` is widened to include the re-ask list. The automatic batch's
     // licence is a figure quoted when the setting was turned on, over senders with no answer;
     // there are none, so it must buy nothing at all rather than spend on twelve unpressed.

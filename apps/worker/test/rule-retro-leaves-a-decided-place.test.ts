@@ -7,8 +7,8 @@ import {
   accounts, applyRuleRequest, approvals, changeLog, drafts, folderState, mailboxes, messageStates, messages, rules, threads,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
-import { MessageService, RulesService, type ServiceContext } from "@trafficflow/services";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { MessageService, RulesService, type ServiceContext, dbFor } from "@trafficflow/services";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 import {
   REFILE_FIXTURE, REFILE_FROM, REFILE_MOVES, REFILE_TO,
 } from "../../../test/support/retro-candidates.js";
@@ -43,7 +43,7 @@ async function world() {
       subject: "the north elevation", fromAddress: STRANGER, nativeLocator: { folder, ref: "1:1" },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
       reconcileStatus: "reconciled", conflict: false, decidedAt,
     });
     return m!.id;
@@ -113,7 +113,7 @@ describe("the refile walk moves the rule's pile and nothing else", () => {
       const decidedAt = r.decided === "before" ? new Date(PRESS.getTime() - 60_000)
         : r.decided === "after" ? new Date(PRESS.getTime() + 1000) : null;
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: r.folder, observedFolder: r.folder,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: r.folder, observedFolder: r.folder,
         lastSetBy: r.serverOnly === "external" ? "external" : "us", reconcileStatus: "reconciled", conflict: false, decidedAt,
       });
       if (r.triage) await db.insert(messageStates).values({ accountId, messageId: m!.id, state: r.triage });
@@ -185,7 +185,7 @@ describe("with a mailbox only read here, a later Change re-files from where the 
         subject: "the hostpoint invoice", fromAddress: STRANGER, nativeLocator: { folder: NEWS, ref: "1:1" },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: NEWS, observedFolder: NEWS, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: NEWS, observedFolder: NEWS, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       return m!.id;
     };
@@ -230,7 +230,7 @@ describe("the letter a sender decision was made on follows the next decision", (
       accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@ohmail.test`,
     }).returning();
     let now = new Date("2026-10-26T10:48:00Z");
-    const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => now, requestId: "press" };
+    const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => now, requestId: "press" };
     const ids: string[] = [];
     for (let i = 0; i < n; i++) {
       const dedup = `mid:${randomUUID()}`;
@@ -239,7 +239,7 @@ describe("the letter a sender decision was made on follows the next decision", (
         subject: `Review pantry thistle ${875 + i}`, fromAddress: PIA, nativeLocator: { folder: OHBOX, ref: `1:${i + 1}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX, lastSetBy: "us",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX, lastSetBy: "us",
         reconcileStatus: "reconciled", conflict: false, decidedAt: decided.get(i) ?? null,
       });
       ids.push(m!.id);

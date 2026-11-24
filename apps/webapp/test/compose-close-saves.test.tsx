@@ -1,6 +1,8 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
+import { queryByRole } from "@testing-library/dom";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
@@ -8,32 +10,14 @@ import {
   MutationRejectedError,
   OhmailEngine,
   mutationEffects,
-  type EngineMutation,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 
-/**
- * ═══ CLOSING THE COMPOSER SAVES WHAT IS IN IT ════════════════════════════════════════════
- *
- * Measured on the deployed managed web at 0.19.6: type into Compose, press Escape inside the
- * two-second debounce, and the message is gone from the account — while the composer's own foot
- * says "Saved to your drafts after a moment". Escape ran `go("ohbox")`, the route change turned
- * the autosave hook inactive, and its effect cleanup cleared the armed timer. A five-second wait
- * before the same Escape saved. One sentence, two outcomes, and nothing on screen to tell them
- * apart.
- *
- * The rule: closing the composer FLUSHES first. Escape and the close control await the write and
- * refuse to leave when it is refused; every other way out — the rail, a `g` jump, the browser's
- * Back, the shell unmounting — takes the hook's belt, which runs the same write.
- *
- * Driven through the shipped shell over a real engine: the claim spans a key binding, a callback
- * in a file thousands of lines long, one hook and one sentence, and each of those compiles alone.
- * The transport is the one thing stubbed, `cursorless-first-press.test.tsx`'s precedent.
- */
+/** Escape must save pending words before leaving, including inside the debounce window. Discard follows the explicit discard path. Read both the form's status and the persisted draft across navigation. */
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -120,8 +104,12 @@ function engineOver(store: MirrorStore): OhmailEngine {
 let container: HTMLElement;
 
 async function mountCompose(extra: Record<string, unknown> = {}): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+  /* The window's width, as the new frame's plan reads it (made whole by the older tests' sorting, share write-1). */
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
+  Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 768 });
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
   const store = new MemoryMirrorStore();
   await store.load();
   container = document.createElement("div");
@@ -147,7 +135,7 @@ async function mountCompose(extra: Record<string, unknown> = {}): Promise<void> 
   });
   for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
   await goHash("#/compose");
-  await waitFor(() => container.querySelector(".view-compose") !== null, "the compose view");
+  await waitFor(() => container.querySelector(LETTER) !== null, "the compose view");
 }
 
 async function goHash(hash: string): Promise<void> {
@@ -160,11 +148,16 @@ async function goHash(hash: string): Promise<void> {
 
 const q = <T extends Element>(sel: string): T | null => container.querySelector<T>(sel);
 
+/* Write's letter by role and name (share write-1: before, today's `.view-compose`, `#compose-to`, `#compose-subject`). */
+const LETTER = '[role="region"][aria-label="New message"]';
+const TO = `${LETTER} [role="combobox"][aria-label="To"]`;
+const SUBJECT = `${LETTER} input[aria-label="Subject"], ${LETTER} textarea[aria-label="Subject"]`;
+
 /** Type the way React sees it — the native setter, then an input event. */
 async function typeInto(sel: string, value: string): Promise<void> {
-  const input = q<HTMLInputElement>(sel)!;
+  const input = q<HTMLInputElement | HTMLTextAreaElement>(sel)!;
   const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype, "value",
+    input instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype, "value",
   )!.set!;
   await act(async () => {
     setter.call(input, value);
@@ -172,9 +165,10 @@ async function typeInto(sel: string, value: string): Promise<void> {
   });
 }
 
+/** Escape, pressed where the keys are (share write-1: before, always on `document`). */
 const escape = async (): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(
+    (document.activeElement ?? document).dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
   });
@@ -194,6 +188,9 @@ async function waitFor(p: () => boolean, what: string, timeout = 3000): Promise<
 const settle = async (): Promise<void> => {
   await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
 };
+
+/** The lines the letter says (each a status; share write-1: before, today's `.send-note`). */
+const letterNotes = (): HTMLElement[] => [...container.querySelectorAll<HTMLElement>(`${LETTER} [role="status"]`)];
 
 const drafts = (): EngineMutation[] => sent.filter((m) => m.kind === "draft_save");
 const subjectsSaved = (): string[] =>
@@ -252,8 +249,8 @@ describe("the two-arm probe the review ran on the deployed build", () => {
    */
   it("saves the message when Escape comes before the pause is over", async () => {
     await mountCompose();
-    await typeInto("#compose-to", "sam@example.invalid");
-    await typeInto("#compose-subject", "Friday");
+    await typeInto(TO, "sam@example.invalid");
+    await typeInto(SUBJECT, "Friday");
     expect(drafts(), "the debounce did not hold — this arm measures nothing").toHaveLength(0);
 
     await escape();
@@ -272,8 +269,8 @@ describe("the two-arm probe the review ran on the deployed build", () => {
    */
   it("saves once, not twice, when Escape comes after the pause", async () => {
     await mountCompose();
-    await typeInto("#compose-to", "sam@example.invalid");
-    await typeInto("#compose-subject", "Friday");
+    await typeInto(TO, "sam@example.invalid");
+    await typeInto(SUBJECT, "Friday");
     await waitFor(() => drafts().length === 1, "the pause's own save", AUTOSAVE_DELAY_MS + 2000);
 
     await escape();
@@ -299,10 +296,13 @@ describe("the two-arm probe the review ran on the deployed build", () => {
 });
 
 describe("words typed in To alone are typed words", () => {
-  /** The To entries on screen: settled chips plus the input's tail (leaving the field makes a chip). */
+  /** The To entries on screen: settled people plus the input's tail (leaving the field makes a person). Write's line
+   *  draws each person as a press "Remove <address>" (share write-1: before, today's `.rcp-chip-addr`). */
   const toEntries = (): string => {
-    const field = q<HTMLInputElement>("#compose-to")!;
-    const chips = [...field.closest(".rcp")!.querySelectorAll(".rcp-chip-addr")].map((n) => n.textContent ?? "");
+    const field = q<HTMLInputElement>(TO)!;
+    const line = field.closest('[role="group"]') ?? q(LETTER)!;
+    const chips = [...line.querySelectorAll<HTMLButtonElement>("button")]
+      .map((b) => /^Remove (.+@.+)$/.exec(b.getAttribute("aria-label") ?? "")?.[1] ?? "").filter(Boolean);
     return [...chips, field.value].filter(Boolean).join(", ");
   };
   const toSaved = (): string[][] => drafts()
@@ -310,7 +310,7 @@ describe("words typed in To alone are typed words", () => {
 
   it("Escape keeps a draft for an address typed in To and nothing else", async () => {
     await mountCompose();
-    await typeInto("#compose-to", "sam@example.invalid");
+    await typeInto(TO, "sam@example.invalid");
     await escape();
     expect(toSaved(), "Escape threw away the address typed in To").toEqual([["sam@example.invalid"]]);
     expect(window.location.hash).toBe("#/ohbox");
@@ -318,22 +318,23 @@ describe("words typed in To alone are typed words", () => {
 
   it("the pause keeps it too", async () => {
     await mountCompose();
-    await typeInto("#compose-to", "sam@example.invalid");
+    await typeInto(TO, "sam@example.invalid");
     await waitFor(() => drafts().length === 1, "the pause's own save", AUTOSAVE_DELAY_MS + 2000);
     expect(toSaved()).toEqual([["sam@example.invalid"]]);
   });
 
   it("opening the draft from Drafts keeps a half-typed recipient on screen", async () => {
     await mountCompose();
-    await typeInto("#compose-subject", "Friday");
-    await typeInto("#compose-to", "sam@exa");
+    await typeInto(SUBJECT, "Friday");
+    await typeInto(TO, "sam@exa");
     await escape();
     expect(subjectsSaved()).toEqual(["Friday"]);
     await goHash("#/drafts");
-    await waitFor(() => q(".draft-row .draft-open") !== null, "the draft in Drafts");
-    await act(async () => { q<HTMLElement>(".draft-row .draft-open")!.click(); });
+    const draft = () => queryByRole(document.body, "option", { name: /Friday/ });
+    await waitFor(() => draft() !== null, "the draft in Drafts");
+    await act(async () => { draft()!.click(); });
     await settle();
-    await waitFor(() => q("#compose-to") !== null, "the composer");
+    await waitFor(() => q(TO) !== null, "the composer");
     expect(toEntries(), "reopening the draft deleted the half-typed recipient").toBe("sam@exa");
   });
 
@@ -342,7 +343,7 @@ describe("words typed in To alone are typed words", () => {
       mailtoDraft: { to: ["sam@example.invalid"], cc: [], bcc: [], subject: "", body: "" },
       onMailtoDraftSeeded: () => {},
     });
-    await waitFor(() => q("#compose-to") !== null && toEntries() === "sam@example.invalid", "the link's recipient");
+    await waitFor(() => q(TO) !== null && toEntries() === "sam@example.invalid", "the link's recipient");
     await escape();
     await settle();
     expect(drafts(), "a link's prefilled recipient became a Drafts row").toHaveLength(0);
@@ -362,8 +363,8 @@ describe("a refused write keeps the composer", () => {
    */
   it("stays open with a sentence when the save is refused", async () => {
     await mountCompose();
-    await typeInto("#compose-to", "sam@example.invalid");
-    await typeInto("#compose-subject", "Friday");
+    await typeInto(TO, "sam@example.invalid");
+    await typeInto(SUBJECT, "Friday");
     refuseDraftSave = true;
 
     await escape();
@@ -371,9 +372,9 @@ describe("a refused write keeps the composer", () => {
 
     expect(window.location.hash, "the composer closed over a draft the server refused")
       .toBe("#/compose");
-    expect(q(".view-compose"), "the compose view is gone although the save was refused")
+    expect(q(LETTER), "the compose view is gone although the save was refused")
       .not.toBeNull();
-    const notes = [...container.querySelectorAll(".send-note")].map((n) => n.textContent ?? "");
+    const notes = letterNotes().map((n) => n.textContent ?? "");
     expect(
       notes.some((n) => n.includes("couldn't be saved")),
       `the refusal was swallowed — the notes on screen were ${JSON.stringify(notes)}`,
@@ -389,18 +390,18 @@ describe("a refused write keeps the composer", () => {
    */
   it("drops the sentence on the next edit", async () => {
     await mountCompose();
-    await typeInto("#compose-to", "sam@example.invalid");
-    await typeInto("#compose-subject", "Friday");
+    await typeInto(TO, "sam@example.invalid");
+    await typeInto(SUBJECT, "Friday");
     refuseDraftSave = true;
     await escape();
     await settle();
-    expect([...container.querySelectorAll(".send-note")]
+    expect(letterNotes()
       .some((n) => (n.textContent ?? "").includes("couldn't be saved"))).toBe(true);
 
-    await typeInto("#compose-subject", "Friday lunch");
+    await typeInto(SUBJECT, "Friday lunch");
 
     expect(
-      [...container.querySelectorAll(".send-note")]
+      letterNotes()
         .some((n) => (n.textContent ?? "").includes("couldn't be saved")),
       "the refusal stood over text it was never about",
     ).toBe(false);
@@ -419,8 +420,8 @@ describe("the belt under every exit no door owns", () => {
    */
   it("saves when the route leaves the composer without a press", async () => {
     await mountCompose();
-    await typeInto("#compose-to", "sam@example.invalid");
-    await typeInto("#compose-subject", "Friday");
+    await typeInto(TO, "sam@example.invalid");
+    await typeInto(SUBJECT, "Friday");
     expect(drafts(), "the debounce did not hold — this arm measures nothing").toHaveLength(0);
 
     await goHash("#/ohbox");
@@ -440,14 +441,14 @@ describe("the belt under every exit no door owns", () => {
    */
   it("writes nothing when the exit was a discard", async () => {
     await mountCompose();
-    await typeInto("#compose-to", "sam@example.invalid");
-    await typeInto("#compose-subject", "Friday");
+    await typeInto(TO, "sam@example.invalid");
+    await typeInto(SUBJECT, "Friday");
 
-    await act(async () => { q<HTMLButtonElement>(".compose-foot .compose-cancel")!.click(); });
-    const confirm = [...container.querySelectorAll<HTMLButtonElement>(".compose-confirm button")]
-      .find((b) => b.textContent === "Discard message")!;
-    expect(confirm, "the discard question never opened — this arm measures nothing").toBeTruthy();
-    await act(async () => { confirm.click(); });
+    // Discard acts in one press from the letter's toolbar and offers Undo.
+    const discard = [...container.querySelectorAll<HTMLButtonElement>(`${LETTER} [role="toolbar"][aria-label="Send or discard"] button`)]
+      .find((b) => b.getAttribute("aria-label") === "Discard" || (b.textContent ?? "").trim() === "Discard")!;
+    expect(discard, "the letter has no Discard — this arm measures nothing").toBeTruthy();
+    await act(async () => { discard.click(); });
     await settle();
 
     expect(subjectsSaved(), "discarding the message wrote it to the account on the way out")

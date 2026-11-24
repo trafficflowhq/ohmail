@@ -191,7 +191,8 @@ describe("a store made before the marker existed", () => {
     ["its ledger rows, with no tables", { tables: false, ledger: true }],
   ] as const)("holding %s: never set aside, and the start fails by name", async (_what, keep) => {
     const dir = await preMarkerStore(keep);
-    const refused = await openLocalDb(dir).then(() => null, (err: unknown) => err);
+    // The way is named, as the desktop's own engine names it: a store with no ledger counts as 1.0's.
+    const refused = await openLocalDb(dir, { transition: { way: "copy" } }).then(() => null, (err: unknown) => err);
     expect(refused).toBeInstanceOf(LocalStoreOpenError);
     expect(refused).toMatchObject({ code: "42P01" });
     expect(setAside(dir)).toHaveLength(0);

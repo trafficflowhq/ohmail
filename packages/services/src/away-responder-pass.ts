@@ -7,10 +7,10 @@ import {
 import {
   awayEligibility, awayNormalizeAddress, awayTextHash, createLogger, isDeliveryReport,
   mintMessageId, replySubject,
-  type AwayAudience, type AwaySuppression, type Logger, type OpenSendAdapter, type SendAdapter,
+  type AwayAudience, type AwaySuppression, type Logger, type SendAdapter,
 } from "@trafficflow/core/mail";
 import { dialect } from "@trafficflow/db/dialect";
-import { bridgeTx, type Db } from "./context.js";
+import { bridgeTx, assertPassWalk, rosterAccountDb, passContext, type PassRoster, type BoundDb, type Db, type OpenPassSendAdapter, type UnboundDb } from "./context.js";
 
 /**
  * The away responder's pass — reply-only, throttled per person, on all three hosts. It moved out
@@ -92,6 +92,7 @@ const WEEK_MS = 7 * DAY_MS;
 const defaultLog = createLogger({ service: "away-responder" });
 
 export interface AwayResponderPassDeps {
+  roster?: PassRoster;
   /**
    * Stop before the next delivery — a predicate this pass consults between rows. A pass that has
    * begun is not entitled to finish: on the desktop the mailbox can change hands MID-PASS (the
@@ -105,7 +106,7 @@ export interface AwayResponderPassDeps {
   cancelled?: () => boolean;
 
   /** The send transport — `makeSendAdapter` on the hosted and self-hosted hosts, the local dial on the desktop. */
-  openSendAdapter: OpenSendAdapter;
+  openSendAdapter: OpenPassSendAdapter;
   /**
    * HAS THIS INSTALL BEEN TOLD IT STILL HOLDS THIS MAILBOX? — asked twice per candidate: before
    * the reservation, and again at the send boundary, after the fence re-read and before the dial.
@@ -257,8 +258,9 @@ interface Candidate {
  * stop the rest, and the caller's own catch is for the probe alone.
  */
 export async function runAwayResponderPass(
-  db: Db, deps: AwayResponderPassDeps,
+  walk: UnboundDb, deps: AwayResponderPassDeps,
 ): Promise<AwayResponderPassResult> {
+  assertPassWalk(walk);
   const log = deps.log ?? defaultLog;
   const now = deps.now ?? ((): Date => new Date());
   const batch = deps.batch ?? AWAY_BATCH;
@@ -275,9 +277,19 @@ export async function runAwayResponderPass(
   /* Both before the probe. The ORDER between these two is not load-bearing and was measured not to
      be: the sweep's WHERE does not read `enabled_at` and it clears the column anyway, so a heal
      that ran first leaves the same row. Expiry is first because it saves the heal that write. */
-  result.expired = await expireEndedResponders(db, now(), deps.mailboxIds, log);
-  await healMissingEnabledAt(db, now());
-  const live = await liveResponders(db, now(), deps.mailboxIds);
+  const live: LiveResponder[] = [];
+  if (deps.roster) {
+    for (const { accountId, id } of await deps.roster(AWAY_ACCOUNTS_PER_RUN)) {
+      const scoped = rosterAccountDb(walk, { accountId });
+      result.expired += await expireEndedResponders(scoped, now(), deps.mailboxIds, log, id);
+      await healMissingEnabledAt(scoped, now(), id);
+      live.push(...await liveResponders(scoped, now(), deps.mailboxIds, id));
+    }
+  } else {
+    result.expired = await expireEndedResponders(walk, now(), deps.mailboxIds, log);
+    await healMissingEnabledAt(walk, now());
+    live.push(...await liveResponders(walk, now(), deps.mailboxIds));
+  }
   /* THE ROTATION'S OTHER HALF — the accounts this invocation actually ENTERED, stamped once after
      the walk so the next tick starts behind them. Entered and not selected: the send budget can
      stop the walk on account five of fifty, and stamping the whole page would hand this defect
@@ -298,7 +310,7 @@ export async function runAwayResponderPass(
     result.accounts += 1;
     walked.push(responder.accountId);
     try {
-      await answerForAccount(db, deps, responder, result, budget, batch, now, log);
+      await answerForAccount(passContext(walk, responder.accountId, { userId: null, now, requestId: `away:${responder.accountId}` }).db, deps, responder, result, budget, batch, now, log);
     } catch (err) {
       // Per-account containment. A responder whose candidate read threw leaves NO ledger rows, so
       // the next run re-examines exactly the same window — nothing is spent and nobody is silenced.
@@ -309,7 +321,11 @@ export async function runAwayResponderPass(
       });
     }
   }
-  await markConsidered(db, walked, now());
+  if (deps.roster) {
+    for (const accountId of walked) await markConsidered(rosterAccountDb(walk, { accountId }), [accountId], now());
+  } else {
+    await markConsidered(walk, walked, now());
+  }
   return result;
 }
 
@@ -342,12 +358,13 @@ export async function runAwayResponderPass(
  * mailboxes exactly as the probe is.
  */
 async function expireEndedResponders(
-  db: Db, at: Date, mailboxIds: readonly string[] | undefined, log: Logger,
+  db: Db, at: Date, mailboxIds: readonly string[] | undefined, log: Logger, id?: string,
 ): Promise<number> {
   const rows = await bridgeTx(db).update(awayResponders)
     .set({ enabled: false, enabledAt: null, endsAt: null, updatedAt: at })
     .where(and(
       eq(awayResponders.enabled, true),
+      id === undefined ? undefined : eq(awayResponders.id, id),
       isNotNull(awayResponders.endsAt),
       sql`${awayResponders.endsAt} < ${dialect(db).ts(at)}`,
       ...(mailboxIds === undefined ? [] : [exists(
@@ -368,10 +385,10 @@ async function expireEndedResponders(
   return rows.length;
 }
 
-async function healMissingEnabledAt(db: Db, at: Date): Promise<void> {
+async function healMissingEnabledAt(db: Db, at: Date, id?: string): Promise<void> {
   await bridgeTx(db).update(awayResponders)
     .set({ enabledAt: at })
-    .where(and(eq(awayResponders.enabled, true), isNull(awayResponders.enabledAt)));
+    .where(and(eq(awayResponders.enabled, true), isNull(awayResponders.enabledAt), id === undefined ? undefined : eq(awayResponders.id, id)));
 }
 
 /**
@@ -392,7 +409,7 @@ async function markConsidered(db: Db, accountIds: readonly string[], at: Date): 
 }
 
 async function liveResponders(
-  db: Db, at: Date, mailboxIds: readonly string[] | undefined,
+  db: Db, at: Date, mailboxIds: readonly string[] | undefined, id?: string,
 ): Promise<LiveResponder[]> {
   const d = dialect(db);
   const rows = await bridgeTx(db).select({
@@ -406,6 +423,7 @@ async function liveResponders(
   }).from(awayResponders)
     .where(and(
       eq(awayResponders.enabled, true),
+      id === undefined ? undefined : eq(awayResponders.id, id),
       isNotNull(awayResponders.enabledAt),
       // IN-WINDOW, inclusive at both ends. An absent bound is OPEN at that end — what the column
       // means and what the API accepts — and never "now": reading an absent `startsAt` as the
@@ -478,7 +496,7 @@ async function liveResponders(
 
 /** One account: gate, read, group by mailbox, answer. */
 async function answerForAccount(
-  db: Db, deps: AwayResponderPassDeps, responder: LiveResponder,
+  db: BoundDb, deps: AwayResponderPassDeps, responder: LiveResponder,
   result: AwayResponderPassResult, budget: number, batch: number,
   now: () => Date, log: Logger,
 ): Promise<void> {
@@ -549,7 +567,7 @@ async function answerForAccount(
     const transport = async (): Promise<SendAdapter | null> => {
       if (held.adapter || openFailed) return held.adapter;
       try {
-        held.adapter = await deps.openSendAdapter(mailboxId);
+        held.adapter = await deps.openSendAdapter(mailboxId, db);
       } catch (err) {
         openFailed = true;
         log.warn("away_responder_no_send_path", {

@@ -17,7 +17,7 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO = join(HERE, "..", "..", "..");
 const ROOTS = [
   "packages/services/src", "packages/db/src", "packages/core/src",
-  "apps/worker/src", "apps/sidecar/src",
+  "apps/worker/src", "packages/organizer/src", "apps/sidecar/src",
 ];
 
 function sources(dir: string, into: string[] = []): string[] {
@@ -220,7 +220,7 @@ describe("a pile or a pin ends the open read — census", () => {
     expect(offenders).toEqual([]);
     // setState (every pile and the pin) and the bubble-up pass — a writer falling out is a red.
     expect(seen.sort()).toEqual([
-      'apps/worker/src/bubble-up-pass.ts :: "resurfaced"',
+      'packages/organizer/src/bubble-up-pass.ts :: "resurfaced"',
       "packages/services/src/triage-service.ts :: b.state",
     ]);
     // The named replica still writes the table, or its exemption is stale.

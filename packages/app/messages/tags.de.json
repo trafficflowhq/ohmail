@@ -1,0 +1,73 @@
+{
+  "tag": {
+    "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
+    "emptyTitle": "Noch nichts trägt diesen Tag.",
+    "emptyHint": "Drück <kbd>t</kbd> auf einer Nachricht, um ihn zu setzen.",
+    "toastTagged": "{name}",
+    "toastUntagged": "Tag entfernt",
+    "pickerPlaceholder": "Diese Nachricht taggen …",
+    "pickerNone": "Noch keine Tags.",
+    "pickerFoot": "↵ schaltet um",
+    "pickerAria": "Tag",
+    "pickerTitle": "Tag",
+    "pickerCreate": "„{name}“ anlegen",
+    "newPlaceholder": "Neuen Tag benennen…",
+    "newTaken": "Du hast schon einen Tag namens „{name}“.",
+    "toastCreated": "Tag „{name}“ angelegt.",
+    "toastRenamed": "Umbenannt in „{name}“.",
+    "toastDeleted": "Tag „{name}“ gelöscht.",
+    "notOnServer": "Tags speichert ohmail, nicht dein Postfach. Deine Ordner sind echte IMAP-Ordner und bleiben, wenn du gehst; Tags nicht: Wenn du deinen Account löschst, sind sie weg.",
+    "toastTaggedMany": "{count, plural, one {1 Nachricht} other {# Nachrichten}} mit „{name}“ getaggt.",
+    "toastUntaggedMany": "Tag „{name}“ von {count, plural, one {1 Nachricht} other {# Nachrichten}} entfernt.",
+    "manageAria": "Diesen Tag verwalten",
+    "rename": "Umbenennen",
+    "delete": "Löschen",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "renameAria": "Tag umbenennen",
+    "deleteAsk": "„{name}“ löschen?",
+    "deleteWhat": "{count, plural, =0 {Nichts trägt ihn. } one {Er hängt an 1 deiner Nachrichten. } other {Er hängt an # deiner Nachrichten. }}Die Nachrichten bleiben, wo sie sind."
+  },
+  "tags": {
+    "title": "Tags",
+    "loading": "Deine Tags werden geladen",
+    "gone": "Diesen Tag gibt es nicht mehr",
+    "empty": {
+      "none": "Nichts getaggt",
+      "tag": "Nichts getaggt"
+    },
+    "count": {
+      "tags": "{count, plural, one {1 Tag} other {# Tags}}",
+      "letters": "{count, plural, one {1 Nachricht} other {# Nachrichten}}"
+    },
+    "step": {
+      "up": "Neuer",
+      "down": "Älter"
+    },
+    "row": {
+      "unread": "ungelesen",
+      "read": "gelesen",
+      "file": "Hat einen Anhang"
+    },
+    "menu": {
+      "rename": "Umbenennen",
+      "delete": "Löschen"
+    },
+    "rename": {
+      "field": "Name",
+      "save": "Sichern",
+      "cancel": "Abbrechen",
+      "taken": "Du hast schon einen Tag namens {name}."
+    },
+    "delete": {
+      "title": "{name} löschen.",
+      "stay": "{count, plural, one {1 Nachricht trägt ihn und bleibt, wo sie ist.} other {# Nachrichten tragen ihn und bleiben, wo sie sind.}}",
+      "nothing": "Nichts trägt ihn.",
+      "confirm": "Löschen",
+      "cancel": "Abbrechen"
+    },
+    "list": {
+      "menu": "Liste"
+    }
+  }
+}

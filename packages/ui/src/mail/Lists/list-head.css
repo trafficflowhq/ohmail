@@ -1,0 +1,360 @@
+/* The head of a list: the place's name at the column's edge, the list's tools at the line's end. */
+@layer oh {
+  .oh-listhead {
+    --oh-listhead-lh: 1.2;
+    --oh-listhead-line: calc(var(--head) - var(--s2));
+    --oh-listhead-pad: var(--s2) var(--s3) 0 var(--flush);
+
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--s2);
+    min-height: var(--head);
+    padding: var(--oh-listhead-pad);
+  }
+
+  .oh-listhead-title {
+    font-size: var(--t-title);
+    line-height: var(--oh-listhead-lh);
+    white-space: nowrap;
+  }
+
+  /* The list's tools are quiet: the one loud thing among them brings its own colour. */
+  .oh-listhead-aside {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    min-height: var(--oh-listhead-line);
+    margin-left: auto;
+    color: var(--ink2);
+  }
+
+  /* A word that acts in the head stands closer to its neighbours than a button elsewhere. */
+  .oh-listhead-aside > .oh-button[data-kind="quiet"][data-size="s"]:not([data-bare]) {
+    --oh-button-pad: 0 var(--s2);
+  }
+
+  /* A place's own sections: beside the name with a pointer, a size smaller than a track elsewhere. The name
+     then keeps a place's first line, whether they stand on it or, in a list dragged narrow, under it. */
+  .oh-listhead[data-sections] {
+    --oh-listhead-name: calc(var(--head) - var(--s2));
+    --oh-listhead-seg-h: 28px;
+    --oh-listhead-seg-side: 10px;
+    --oh-listhead-seg-count: 5px;
+  }
+
+  .oh-listhead[data-sections] > .oh-listhead-title {
+    line-height: var(--oh-listhead-name);
+  }
+
+  .oh-listhead-sections {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    min-height: var(--oh-listhead-line);
+    margin-left: auto;
+  }
+
+  .oh-listhead-sections + .oh-listhead-aside {
+    margin-left: 0;
+  }
+
+  /* In a list narrower than its sections each keeps to its share and is cut there, never past the head. */
+  .oh-listhead-sections > .oh-seg {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .oh-listhead-sections .oh-seg[data-fit="tighter"] .oh-seg-item {
+    flex: 0 1 auto;
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+  }
+
+  .oh-listhead-sections .oh-seg .oh-count {
+    margin-left: var(--oh-listhead-seg-count);
+  }
+
+  :root[data-touch="0"] .oh-listhead-sections .oh-seg-item {
+    --oh-seg-item-pad: 0 var(--oh-listhead-seg-side);
+
+    height: var(--oh-listhead-seg-h);
+    font-size: var(--t-meta);
+  }
+
+  /* Under a finger a list is too narrow for the name and its sections on one line: they are the head's
+     second line, whole, each as wide as its share of the list. */
+  :root[data-touch="1"] .oh-listhead[data-sections] {
+    --oh-listhead-seg-count: var(--s1);
+  }
+
+  :root[data-touch="1"] .oh-listhead-sections {
+    flex: 1 0 100%;
+    order: 1;
+    min-height: 0;
+    margin-left: 0;
+    padding-bottom: var(--s2);
+  }
+
+  :root[data-touch="1"] .oh-listhead[data-sections] > .oh-listhead-below {
+    order: 2;
+  }
+
+  :root[data-touch="1"] .oh-listhead-sections > .oh-seg {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+
+  :root[data-touch="1"] .oh-listhead-sections .oh-seg-item {
+    --oh-seg-item-pad: 0 var(--s2);
+
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* The unfolded phone's list is half a phone wide: there the sections are set a size smaller, and so are
+     those that are still wider than their line at the closest stand, which then keep to their own share. */
+  :root[data-device="fold"] .oh-listhead-sections .oh-seg-item,
+  :root[data-touch="1"] .oh-listhead-sections .oh-seg[data-fit="tighter"] .oh-seg-item {
+    --oh-seg-item-pad: 0 var(--s2);
+
+    font-size: var(--t-meta);
+  }
+
+  /* A line of segments under the name (a place's piles, a person's directions) stands closer than a track
+     elsewhere; on the unfolded phone a size smaller. */
+  .oh-listhead-below .oh-seg-item {
+    --oh-listhead-pile-side: 10px;
+    --oh-seg-item-pad: 0 var(--oh-listhead-pile-side);
+  }
+
+  :root[data-device="fold"] .oh-listhead-below .oh-seg-item {
+    --oh-listhead-pile-side: 6px;
+
+    font-size: var(--t-meta);
+  }
+
+  .oh-listhead-below {
+    flex-basis: 100%;
+    min-width: 0;
+    max-width: 100%;
+    padding: var(--s1) 0 var(--s2);
+  }
+
+  /* What stands under the name on a line of its own never widens the head. A line of segments wider than its
+     list scrolls sideways inside the line, out to the head's edge, and fades at each end that hides more. */
+  .oh-listhead-run {
+    --oh-listhead-less: 0px;
+    --oh-listhead-more: 0px;
+    --oh-listhead-reach: calc(var(--s3) * -1);
+
+    display: flex;
+    contain: inline-size;
+    overflow: auto hidden;
+    margin-right: var(--oh-listhead-reach);
+    padding-right: var(--s3);
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+
+  .oh-listhead-run::-webkit-scrollbar {
+    display: none;
+  }
+
+  .oh-listhead-run > * {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .oh-listhead-run > .oh-seg {
+    flex: none;
+  }
+
+  .oh-listhead-run[data-less] {
+    --oh-listhead-less: var(--s6);
+  }
+
+  .oh-listhead-run[data-more] {
+    --oh-listhead-more: var(--s6);
+  }
+
+  .oh-listhead-run[data-less],
+  .oh-listhead-run[data-more] {
+    mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      var(--ink) var(--oh-listhead-less),
+      var(--ink) calc(100% - var(--oh-listhead-more)),
+      transparent 100%
+    );
+  }
+
+  /* How many the list holds: small and steady beside the tools, whole on its line. */
+  .oh-listhead-count {
+    padding: 0 var(--s1);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* A quiet line under the name: a person's address. It breaks inside the head before it leaves it. */
+  .oh-listhead-meta {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    overflow-wrap: anywhere;
+  }
+
+  .oh-listhead-meta:not(:last-child) {
+    margin-bottom: var(--s2);
+  }
+
+  /* A place inside a tree: its name is content and breaks onto a second line before it is cut. */
+  .oh-listhead[data-way] > .oh-listhead-title {
+    --oh-listhead-descent: 0.08em;
+
+    flex: 1 1 0;
+    min-width: 0;
+    display: -webkit-box;
+    overflow: hidden;
+    padding-bottom: var(--oh-listhead-descent);
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .oh-listhead[data-way] > .oh-listhead-aside {
+    align-self: flex-start;
+    margin-left: var(--s2);
+  }
+
+  /* The way to it: small, one line, each part a step. */
+  .oh-listhead-way {
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    min-width: 0;
+    max-width: 100%;
+    margin-bottom: var(--s2);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    white-space: nowrap;
+  }
+
+  .oh-listhead-step {
+    --oh-listhead-under: 0.16em;
+
+    flex: none;
+    order: 2;
+    border-radius: var(--r-sq);
+    font-weight: var(--w-text);
+  }
+
+  .oh-listhead-step[hidden] {
+    display: none;
+  }
+
+  .oh-listhead-step[data-first] {
+    order: 0;
+  }
+
+  .oh-listhead-step[data-more] {
+    order: 1;
+  }
+
+  .oh-listhead-step:not([data-first])::before {
+    content: "›";
+    display: inline-block;
+    margin: 0 var(--s1);
+    color: var(--ink3);
+    text-decoration: none;
+  }
+
+  .oh-control.oh-listhead-step:hover {
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: var(--oh-listhead-under);
+  }
+
+  :root[data-touch="1"] .oh-listhead-step {
+    --oh-listhead-reach: calc(var(--s2) * -1);
+
+    margin: var(--oh-listhead-reach) 0;
+    padding: var(--s2) 0;
+  }
+
+  :root[data-device="phone"] .oh-listhead {
+    --oh-listhead-line: calc(var(--head) - var(--s3) - var(--s1));
+    --oh-listhead-pad: var(--s3) var(--s3) var(--s1) var(--flush);
+  }
+
+  /* A second button in a list's head takes the sheet's soft tone. On a phone, where the list stands on the
+     ground, it and a segmented control stand on the soft tone, beside the name and under it. */
+  .oh-listhead {
+    --oh-soft: var(--soft-sheet);
+  }
+
+  :root[data-device="phone"] .oh-listhead-aside,
+  :root[data-device="phone"] .oh-listhead-sections,
+  :root[data-device="phone"] .oh-listhead-below {
+    --oh-soft: var(--soft);
+    --oh-seg-ground: var(--soft);
+  }
+
+  :root[data-device="phone"] .oh-listhead[data-sections] {
+    --oh-listhead-name: calc(var(--head) - var(--s3) - var(--s1));
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-listhead {
+    --oh-listhead-line: var(--head);
+    --oh-listhead-pad: 0 var(--s3) 0 var(--flush);
+  }
+
+  /* Stand-in: the sheet gives ohmarchy this edge in a window, and the tokens do not carry it yet. */
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-listhead {
+    --flush: 26px;
+  }
+
+  :root[data-face="ohmarchy"]
+    .oh-listhead-aside
+    > .oh-button[data-kind="quiet"][data-size="s"]:not([data-bare]) {
+    --oh-button-pad: 0 var(--s2);
+  }
+
+  :root[data-face="ohmarchy"][data-device="phone"] .oh-listhead {
+    --oh-listhead-lead: calc(var(--flush) + var(--s2));
+    --oh-listhead-pad: var(--s3) var(--s3) var(--s1) var(--oh-listhead-lead);
+  }
+
+  [data-heading-overlay]:has(> .oh-switcher-round) > .oh-listhead {
+    --heading-overlay-start: calc(var(--heading-switch-start) + var(--h-m) + var(--s4));
+    padding-inline-start: var(--heading-overlay-start);
+  }
+
+  /* Keep the count in its place when the host has no list commands. */
+  [data-heading-overlay] .oh-listhead-count:only-child {
+    --heading-count-end: calc(var(--h-m) + var(--s1));
+    margin-inline-end: var(--heading-count-end);
+  }
+}
+
+[data-filter-list] > .oh-listhead .oh-listhead-run {
+  --search-heading-run-left: calc(var(--s3) - var(--flush));
+  margin-left: var(--search-heading-run-left);
+}
+
+/* Keep the full tap target around the shorter painted filter. */
+:root[data-touch="1"] [data-filter-list] > .oh-listhead .oh-listhead-run {
+  padding-bottom: var(--s1);
+  --search-heading-run-bottom: calc(-1 * var(--s1));
+  margin-bottom: var(--search-heading-run-bottom);
+}
+
+:root[data-device="phone"] [data-filter-list] > .oh-listhead {
+  padding-bottom: var(--s2);
+}

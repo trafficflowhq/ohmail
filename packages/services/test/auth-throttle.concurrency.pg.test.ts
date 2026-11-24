@@ -1,16 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 // `sessions` lives on the MAIL half (the root barrel); only the auth tables below are Cloud.
-import { sessions } from "@trafficflow/db";
-import { schema, authThrottle, recoveryCodes } from "@trafficflow/db/cloud";
+import { bindDb, sessions } from "@trafficflow/db";
+import { authThrottle, closePooledDbs, makePooledDb, recoveryCodes } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  AuthService, makeTestAuthDeps, ServiceError,
+  AuthService, dbFor, makeTestAuthDeps, ServiceError,
   type AuthDeps, type ServiceContext,
   throttleKeysFor,
 } from "@trafficflow/services";
@@ -42,11 +39,13 @@ import { generateSync } from "otplib";
  */
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+let db: ReturnType<typeof makePooledDb>;
 
+// A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
 const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => new Date(),
+  db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+  accountId: "", userId: null, now: () => new Date(),
   requestId: "throttle-race-pg", ip: "10.7.7.7", ...over,
 });
 
@@ -54,10 +53,9 @@ describe.skipIf(!PG_UP)("auth races on real Postgres", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     // Enough connections that forty callers genuinely overlap rather than queueing behind one.
-    client = postgres(PG_TEST_URL, { max: 20 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    db = makePooledDb(PG_TEST_URL, { max: 20 });
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await closePooledDbs(); });
 
   /**
    * THE BOUND IS THE POLICY, NOT THE CONNECTION COUNT.

@@ -1,0 +1,36 @@
+/* A small (i) beside a word that needs saying once. Its card is a menu. */
+@layer oh {
+  .oh-infomark {
+    --oh-infomark-size: 24px;
+    position: relative;
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    align-self: center;
+    width: var(--oh-infomark-size);
+    height: var(--oh-infomark-size);
+    border-radius: var(--r-pill);
+    color: var(--ink2);
+    transition:
+      color var(--d-hover) var(--e-std),
+      background-color var(--d-hover) var(--e-std);
+  }
+  .oh-infomark:hover,
+  .oh-infomark[aria-expanded="true"] {
+    background: var(--hover);
+    color: var(--ink);
+  }
+  .oh-infomark:focus-visible {
+    border-radius: var(--r-pill);
+    outline-offset: var(--oh-hair);
+  }
+  :root[data-touch="1"] .oh-infomark::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: var(--h-s);
+    height: var(--h-s);
+    transform: translate(-50%, -50%);
+  }
+}

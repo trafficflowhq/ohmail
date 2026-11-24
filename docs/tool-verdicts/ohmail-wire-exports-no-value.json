@@ -1,0 +1,20 @@
+{
+  "id": "ohmail/wire-exports-no-value",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "wire exports a value",
+      "file": "packages/wire/src/planted/value.ts",
+      "line": 1,
+      "refused": "wire exports no value: only `type` and `interface` are exported"
+    }
+  ],
+  "green": [
+    {
+      "control": "wire exports types",
+      "file": "packages/wire/src/planted/types.ts"
+    }
+  ]
+}

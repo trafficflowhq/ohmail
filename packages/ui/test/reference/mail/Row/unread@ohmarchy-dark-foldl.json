@@ -1,0 +1,169 @@
+{
+  "component": "Row",
+  "state": "unread",
+  "look": "ohmarchy-dark-foldl",
+  "place": "cell",
+  "target": [24, 24, 420, 92],
+  "clip": [24, 24, 420, 92],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "foldl",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "oklch(0.84 0.075 250)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "14px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(138, 147, 185)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(138, 147, 185)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    {
+      "backgroundColor": "oklch(0.281406 0.036579 276.244)",
+      "boxShadow": "rgb(83, 87, 108) 0px 0px 0px 1px inset"
+    },
+    { "backgroundColor": "rgb(122, 162, 247)", "boxShadow": "rgb(26, 27, 38) 0px 0px 0px 2px" },
+    { "ink": "stroke rgb(141, 150, 188) 1.6px square miter 4; shapes 1 9f76e510b51d" },
+    { "backgroundColor": "rgb(26, 27, 38)", "boxShadow": "rgb(66, 66, 69) 0px 0px 0px 2px" }
+  ],
+  "nodes": [
+    {
+      "role": "list",
+      "name": "",
+      "box": [0, 0, 420, 92],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "4px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      }
+    },
+    {
+      "role": "button",
+      "name": "P Petra Wyss petra@makersfest.example 08:47 Your talk is on the programme “Wabi-sabi for web people” made the final programme: Saturday at 11:00 in the main hal…",
+      "box": [8, 0, 404, 88],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "4px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "P", "type": 0 },
+        { "said": "Petra Wyss", "type": 1 },
+        { "said": "petra@makersfest.example", "type": 2 },
+        { "said": "08:47", "type": 3 },
+        { "said": "Your talk is on the programme", "type": 1 },
+        {
+          "said": "“Wabi-sabi for web people” made the final programme: Saturday at 11:00 in the main hall. Speaker details attached, and there is a dinner on Friday.",
+          "type": 2
+        }
+      ],
+      "surfaces": [
+        { "box": [20, 14.8, 32, 32], "paint": 0 },
+        { "box": [16, 10.8, 8, 8], "paint": 1 }
+      ]
+    },
+    {
+      "role": "img",
+      "name": "Has an attachment",
+      "box": [342, 15.8, 16, 16],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "surfaces": [{ "box": [342, 15.8, 16, 16], "paint": 2 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [{ "box": [0, 0, 420, 92], "paint": 3 }] }
+}

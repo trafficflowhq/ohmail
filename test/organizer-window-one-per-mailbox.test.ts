@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
+import { readSource } from "../apps/worker/test/_start-function.js";
 
 /**
  * ═══ ONE STALENESS WINDOW PER MAILBOX, AND EVERY READER OF THAT MAILBOX USES IT ═══════════════
@@ -64,7 +64,7 @@ const READERS = [
 interface Call { file: string; line: number; forwards: boolean; shape: string }
 
 function peekCalls(rel: string): Call[] {
-  const text = readFileSync(join(ROOT, rel), "utf8");
+  const text = readSource(join(ROOT, rel));
   const src = ts.createSourceFile(rel, text, ts.ScriptTarget.ES2022, true);
   const out: Call[] = [];
   const visit = (node: ts.Node): void => {

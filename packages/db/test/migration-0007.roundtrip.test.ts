@@ -28,9 +28,9 @@ describe("migration 0007 round-trip", () => {
     }).returning();
 
     await db.insert(mailboxCredentials).values([
-      { mailboxId: mb!.id, transport: "imap", secretEnc: "enc-imap", keyVersion: 1,
+      { mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "enc-imap", keyVersion: 1,
         meta: { host: "imap.example", port: 993, secure: true, user: "mila" } },
-      { mailboxId: mb!.id, transport: "smtp", secretEnc: "enc-smtp", keyVersion: 1,
+      { mailboxId: mb!.id, accountId: mb!.accountId, transport: "smtp", secretEnc: "enc-smtp", keyVersion: 1,
         meta: { host: "smtp.example", port: 465, secure: true, user: "mila" } },
     ]);
 
@@ -50,17 +50,17 @@ describe("migration 0007 round-trip", () => {
       accountId: acct, provider: "imap", address: "dup@lichtgrat.example",
     }).returning();
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: "a", keyVersion: 1,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "a", keyVersion: 1,
     });
     await expect(
       db.insert(mailboxCredentials).values({
-        mailboxId: mb!.id, transport: "imap", secretEnc: "b", keyVersion: 1,
+        mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "b", keyVersion: 1,
       }),
     ).rejects.toThrow();
 
     // A second row with a DIFFERENT transport for the same mailbox is allowed.
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "smtp", secretEnc: "c", keyVersion: 1,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "smtp", secretEnc: "c", keyVersion: 1,
     });
     const rows = await db.select().from(mailboxCredentials)
       .where(and(eq(mailboxCredentials.mailboxId, mb!.id)));

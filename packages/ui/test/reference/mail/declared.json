@@ -1,0 +1,678 @@
+[
+  {
+    "key": "Dock/upright",
+    "since": "2026-11-14",
+    "reason": "the reference names a place without a count by its hint alone; the dock gives every place its name",
+    "nodes": [
+      { "role": "button", "name": "" },
+      { "role": "button", "name": "History" },
+      { "role": "button", "name": "Settings" }
+    ]
+  },
+  {
+    "key": "ListTail/rest",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole list, where the button that jumps back to the top stands over the last line; the line's own names, boxes and drawn values are the reference's"
+  },
+  {
+    "key": "SelectionBar/three@paper-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken over a list, and a row's circle shows behind the bar's first corner; the bar itself is equal"
+  },
+  {
+    "key": "SelectionBar/three",
+    "reason": "The bar's More opens a menu: it says whether that menu stands open (aria-expanded), as every control of the kit that opens one, which the reference's plain button does not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "BlankColumn/tile",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the test window cuts the last three pixel rows off the kit's picture; above them the tile, its ring and its label are equal"
+  },
+  {
+    "key": "ContactCard/card",
+    "since": "2026-11-14",
+    "reason": "the kit names the card for its person and gives each line of the choice its role; the reference leaves the card unnamed and calls the two lines menu items",
+    "nodes": [
+      { "role": "dialog", "name": "" },
+      { "role": "dialog", "name": "Giulia Ferrari" },
+      { "role": "menuitem", "name": "This address 2 messages" },
+      { "role": "menuitem", "name": "Everyone at terracotta-milano.example 2 messages · 1 sender" },
+      { "role": "radio", "name": "This address 2 messages" },
+      { "role": "radio", "name": "Everyone at terracotta-milano.example 2 messages · 1 sender" }
+    ]
+  },
+  {
+    "key": "MovePicker/folders",
+    "since": "2026-11-14",
+    "reason": "the kit names the menu; the reference leaves it unnamed",
+    "nodes": [
+      { "role": "menu", "name": "" },
+      { "role": "menu", "name": "Move" }
+    ]
+  },
+  {
+    "key": "FileNotArrived/set@paper-light-foldl",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@paper-dark-foldl",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-light-foldl",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-dark-foldl",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-light-fold",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-dark-fold",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-light-phone",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference stands in the reader's scrolled column, whose layer is set on whole pixels by itself, so the tiles' edges fall half a pixel lower there; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-dark-phone",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference stands in the reader's scrolled column, whose layer is set on whole pixels by itself, so the tiles' edges fall half a pixel lower there; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "Composer",
+    "reason": "The kit names the letter's sheet as a region and each line of people as a group; the reference leaves them unnamed. They are read as the reference's plain boxes, so the sheet, the lines' words and their fields stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-21",
+    "plain": [".oh-composer", ".oh-recipients-line"]
+  },
+  {
+    "key": "Composer",
+    "reason": "The text is the app's editor, handed in, so its own box stands inside the frame's padding where the reference's editor is the padded box itself.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "textbox", "name": "Message" }]
+  },
+  {
+    "key": "Composer/failed",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "in ohmarchy the column's own ring for the keys stands along the letter's edge; in paper 45 pixels of the not-sent line's words antialias differently over the editor's ground; the frame's names, boxes and drawn values are equal"
+  },
+  {
+    "key": "Recipients",
+    "reason": "The kit gives each line of people its group, named by the line; the reference leaves the lines unnamed. The lines are read as the reference's plain boxes, so their words and fields stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-21",
+    "plain": [".oh-recipients-line"]
+  },
+  {
+    "key": "SendStatus",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken inside the editor's box, whose edge (paper) or 1 px ring (ohmarchy) runs along the line; the line's names, boxes and drawn values are equal"
+  },
+  {
+    "key": "AttachRoom",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken under the letter's sheet, whose rounded bottom and ring stand over the line, and the full stop after the slot stands two pixels further on (base's dot keeps its own margin); names, boxes and drawn values are equal"
+  },
+  {
+    "key": "SettingsSheet/lines",
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
+  },
+  {
+    "key": "SettingsSheet/sign",
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
+  },
+  {
+    "key": "SettingsSheet/person",
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
+  },
+  {
+    "key": "SettingsSheet/aside",
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
+  },
+  {
+    "key": "SettingsSheet/aside-seg",
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-17",
+    "plain": [".oh-settingssheet-title"]
+  },
+  {
+    "key": "SettingsSheet/aside-seg",
+    "reason": "The plans are one choice: the kit says so with a group of radios named by what is chosen; the reference's radios stand on the sheet with no group around them. The group is read without its role and name, so each plan's name, state, box, drawing and picture still bind.",
+    "since": "2026-11-17",
+    "plain": [".oh-radiolines"]
+  },
+  {
+    "key": "SettingsSheet/aside-seg@paper-light-phone",
+    "question": "picture",
+    "reason": "The reference was cut from a whole screen: the screen's own floating verb (Subscribe to Plus) stands over the sheet's last line in its picture. It is the screen's, not the sheet's: the sheet's names, boxes and drawn values are the reference's, and the same sheet on a desktop is equal in its picture in both faces.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "SettingsSheet/slot",
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
+  },
+  {
+    "key": "SettingsSheet/detail",
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
+  },
+  {
+    "key": "ListTail",
+    "reason": "The tail's slot is the kit's Slot: it says whether its menu is open (aria-expanded), which the reference's plain button does not. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "FigureLine",
+    "reason": "The mark that says more is the kit's InfoMark: it says whether its card is open (aria-expanded), which the reference's plain button does not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "ActionPanel/held",
+    "reason": "The panel's More opens a menu: it says whether that menu stands open (aria-expanded), as every control of the kit that opens one, which the reference's plain button does not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "ActionPanel/decision",
+    "reason": "The panel's More opens a menu: it says whether that menu stands open (aria-expanded), as every control of the kit that opens one, which the reference's plain button does not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "GroupHeading/aside",
+    "reason": "The reference names the heading with the group's control inside it (\"Results 8 Best match\"). The kit keeps a control out of a heading's name: a screen reader hears the heading, then the control. The control's own box and drawing still bind.",
+    "since": "2026-11-17",
+    "nodes": [
+      { "role": "heading", "name": "Results 8 Best match" },
+      { "role": "heading", "name": "Results 8" }
+    ]
+  },
+  {
+    "key": "GroupHeading/aside",
+    "reason": "The group's control is the kit's Slot: it says whether its menu is open (aria-expanded), which the reference's plain button does not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "SettingActs/rest",
+    "reason": "The design's sheet draws the first act of the pairing sheet (Copy the link) as an element that is no button to a screen reader, and its acts in no group. The kit's first act is a button, and the row is a group: both are left out of the names; the second act's own box and drawing still bind.",
+    "since": "2026-11-17",
+    "nodes": [
+      { "role": "group", "name": "" },
+      { "role": "button", "name": "Copy the link" }
+    ]
+  },
+  {
+    "key": "ListHead/sections@paper-light-phone",
+    "reason": "On a phone the reference's head holds the frame's switcher before the name, which moves the name 60 to the right; the switcher is the frame's own part and no part of a list's head. The sections' own line on a phone (the head's second line, as wide as the list, each a finger high) is held by the kit's case in a real browser.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Composer/placeholder",
+    "question": "boxes",
+    "reason": "The words for a text not yet written are drawn beside the app's editor and never inside it: the editor is the app's own node, and what it holds is the letter. The reference draws them as the editor box's own generated content. The words, their place and their ink are the same.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ColumnHandle",
+    "reason": "The kit's handle is a separator that says its width (aria-valuenow), so a screen reader hears where the column stands; the reference's says no value.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "separator", "unstated": ["value 232"] }]
+  },
+  {
+    "key": "ListHead/meta@paper-light-desktop",
+    "question": "picture",
+    "reason": "The reference was cut from a whole list: the picture's last pixel row holds the top edge of the first row under the head, the one open in the reading column (390 pixels in the hot colour). It is the row's, not the head's: the head's names, boxes and drawn values are the reference's, and the same head in ohmarchy is equal in its picture too.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ListHead/meta@paper-light-phone",
+    "reason": "On a phone the reference's head holds the frame's switcher before the name, which moves the name 60 to the right; the switcher is the frame's own part and no part of a list's head. The line of segments under the name stands on the reference's box.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "TickList",
+    "reason": "A person's count is a picture named by its words (2 messages for 2×): the reference hangs the same name on a plain box, where a screen reader may never say it. The node, its name, its box and its drawing are the reference's; only its role is the kit's.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "img", "as": "generic" }]
+  },
+  {
+    "key": "TickList/rest@paper-light-desktop",
+    "question": "picture",
+    "reason": "The left arc of the field that finds a person differs by a hair (37 pixels that touch; three hundred-thousandths of the picture). The field's name, box and drawn values are the reference's, the same sheet in ohmarchy is equal in its picture, and so is the same sheet without its field.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Composer/placeholder",
+    "question": "picture",
+    "reason": "The draft control's word differs by a hair in one letter (43 pixels that touch; under two hundred-thousandths of the picture). Its name, box and drawn values are the reference's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ReadingHead/sentence",
+    "reason": "The place in the sentence and the one the decision is for are the kit's Slot: each says whether its menu is open (aria-expanded), which the reference's plain buttons do not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "Message/clip",
+    "question": "drawn",
+    "reason": "The cut text fades out through a mask. A mask reads only how opaque each stop is, and the kit's sheets write no colour of their own, so the mask's solid stop is the ink token where the reference writes black: the same fade over the same 44.2 px, drawn pixel for pixel alike. The value's text is the one drawn line that differs.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Message",
+    "reason": "The message's head carries the kit's way to its details, which says whether they are open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "MessageHead",
+    "reason": "The kit's buttons in the head say whether what they open is open (aria-expanded), and the time that shows the full date says it is pressed while it does; the reference's are plain buttons.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed", "pressed"] }]
+  },
+  {
+    "key": "FileTile",
+    "reason": "The message around the tiles carries the kit's way to its details, which says whether they are open (aria-expanded); the reference's is a plain button.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "BlockedImages",
+    "reason": "The kit's chip says whether its card is open (aria-expanded); the reference's is a plain button.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "Composer",
+    "reason": "The kit's From slot and its emoji button say whether their menu is open (aria-expanded); the reference's are plain buttons.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "ContactCard",
+    "reason": "The reference marks the chosen place both checked and pressed; a radio is only checked, which is what the kit says.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "radio", "unstated": ["pressed"] }]
+  },
+  {
+    "key": "Recipients",
+    "reason": "The From slot is the kit's Slot, which says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state. A refused person says it is invalid (aria-invalid), where the reference only colours it.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed", "invalid"] }]
+  },
+  {
+    "key": "AttachRoom",
+    "reason": "The quality slot is the kit's Slot, which says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "SettingsSheet",
+    "reason": "A line's slot is the kit's Slot, which says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state. A line that cannot be changed disables its switch, where the reference only dims it.",
+    "since": "2026-11-15",
+    "alike": [
+      { "role": "button", "unstated": ["collapsed"] },
+      { "role": "switch", "unstated": ["disabled"] }
+    ]
+  },
+  {
+    "key": "FolderShelf/open@ohmarchy-light-desktop",
+    "question": "drawn",
+    "reason": "This one reference reads the folders' rows at 13.0001px on an 18.2002px line; its dark twin reads 13px on 18.2px, as ohmarchy's --t-ui (13px) says and the part sets. Names and boxes bind; the picture is read on its own.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Composer/blank@ohmarchy-light-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "Composer/blank@ohmarchy-light-fold",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "Composer/blank@ohmarchy-light-foldl",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "Composer/blank@ohmarchy-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "Composer/blank@ohmarchy-dark-fold",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "Composer/blank@ohmarchy-dark-foldl",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "FolderShelf/open@paper-light-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "The places run past the rail's short window and its scroller fades them at its foot, staged as the sheet stands it. In the reference that scroller ends a few pixels below the shelf's cut, at the rail's foot, so the last row (Notes) fades a little less. Names, boxes and drawn values bind."
+  },
+  {
+    "key": "FolderShelf/open@paper-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "The places run past the rail's short window and its scroller fades them at its foot, staged as the sheet stands it. In the reference that scroller ends a few pixels below the shelf's cut, at the rail's foot, so the last row (Notes) fades a little less. Names, boxes and drawn values bind."
+  },
+  {
+    "key": "FolderShelf/open@ohmarchy-light-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "The places run past the rail's short window and its scroller fades them at its foot, staged as the sheet stands it. In the reference that scroller ends a few pixels below the shelf's cut, at the rail's foot, so the last row (Notes) fades a little less. Names, boxes and drawn values bind."
+  },
+  {
+    "key": "FolderShelf/open@ohmarchy-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "The places run past the rail's short window and its scroller fades them at its foot, staged as the sheet stands it. In the reference that scroller ends a few pixels below the shelf's cut, at the rail's foot, so the last row (Notes) fades a little less. Names, boxes and drawn values bind."
+  },
+  {
+    "key": "Row/entry",
+    "since": "2026-11-15",
+    "reason": "A section of Settings is named by its section alone, its value and detail are its description, and the open one says it is the current page: the settings ruling asks it, because the journeys find a section as a button named exactly by its key, current while open. The reference's row is named by all its words and says no state. Only that name and that state are left unread; the role, the words, the boxes, the drawing and the picture still bind.",
+    "alike": [{ "role": "button", "unnamed": true }]
+  },
+  {
+    "key": "Row/entry-open",
+    "since": "2026-11-15",
+    "reason": "A section of Settings is named by its section alone, its value and detail are its description, and the open one says it is the current page: the settings ruling asks it, because the journeys find a section as a button named exactly by its key, current while open. The reference's row is named by all its words and says no state. Only that name and that state are left unread; the role, the words, the boxes, the drawing and the picture still bind.",
+    "alike": [{ "role": "button", "unnamed": true, "unstated": ["current page"] }]
+  },
+  {
+    "key": "Row/entry-hot",
+    "since": "2026-11-15",
+    "reason": "A section of Settings is named by its section alone, its value and detail are its description, and the open one says it is the current page: the settings ruling asks it, because the journeys find a section as a button named exactly by its key, current while open. The reference's row is named by all its words and says no state. Only that name and that state are left unread; the role, the words, the boxes, the drawing and the picture still bind.",
+    "alike": [{ "role": "button", "unnamed": true }]
+  },
+  {
+    "key": "SettingsSheet/lines",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/wants",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/choice",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/sign",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/person",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/aside",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/slot",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/sub",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/lead",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/under",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/detail",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/area",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/area",
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
+  },
+  {
+    "key": "SettingsSheet/area",
+    "since": "2026-11-15",
+    "reason": "A setting written in words is named by the label the person reads over it (the kit's Field binds its label); the reference gives the bare field a shorter spoken name of its own (the settings ruling: the label over a bare field). Only that name is left unread; the field's box, words, drawing and picture still bind.",
+    "alike": [{ "role": "textbox", "unnamed": true }]
+  },
+  {
+    "key": "SettingsSheet/rules",
+    "since": "2026-11-15",
+    "reason": "A rule's sender opens their contact card from their circle, and the kit names that button by the person (the settings ruling); the reference's circle button holds only its letter and is named by it. These six nodes are left out of the names, boxes and drawn values; the picture still binds them.",
+    "nodes": [
+      { "role": "button", "name": "G" },
+      { "role": "button", "name": "S" },
+      { "role": "button", "name": "A" },
+      { "role": "button", "name": "Giulia Ferrari" },
+      { "role": "button", "name": "Skylark Notes" },
+      { "role": "button", "name": "Atelier Erdton" }
+    ]
+  },
+  {
+    "key": "SettingsSheet/tags",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/tags-rename",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/tags-taken",
+    "since": "2026-11-15",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/tags-taken",
+    "since": "2026-11-15",
+    "reason": "The kit marks a refused field invalid (aria-invalid), as its Field does, so a screen reader says the tag's refusal with its name's field; the reference's field carries only the line under the whole line.",
+    "alike": [{ "role": "textbox", "unstated": ["invalid"] }]
+  },
+  {
+    "key": "SettingsSheet/tags-taken@ohmarchy-light-desktop",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "The warning sign is the reference's own sign in the same box, with the same path, stroke and join. In the specimen's page the sheet stands 76 px down its pane, so the sign lies across the rasteriser's tile seam at 256 px, which sets its edge a few levels otherwise (39 pixels, two of them at its apex). The kit's sheet drawn at that place equals the reference pixel for pixel. The names, the boxes and the drawn values bind."
+  },
+  {
+    "key": "SettingsSheet/tags-taken@ohmarchy-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "The warning sign is the reference's own sign in the same box, with the same path, stroke and join. In the specimen's page the sheet stands 76 px down its pane, so the sign lies across the rasteriser's tile seam at 256 px, which sets its edge a few levels otherwise (39 pixels, two of them at its apex). The kit's sheet drawn at that place equals the reference pixel for pixel. The names, the boxes and the drawn values bind."
+  },
+  {
+    "key": "SettingsSheet/look",
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-16",
+    "plain": [".oh-settingssheet-title"]
+  },
+  {
+    "key": "SettingNote/warn",
+    "since": "2026-11-17",
+    "reason": "A note that warns is said when it appears: it is a status, as the account's panes asked of it. The reference prints the note as a plain paragraph. It is read without its role, so its words, its warning sign, its box and its drawing stand where the reference's stand and still bind.",
+    "plain": [".oh-settingnote"]
+  },
+  {
+    "key": "SettingsSheet/look",
+    "since": "2026-11-16",
+    "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",
+    "plain": [".oh-settingline"]
+  },
+  {
+    "key": "SettingsSheet/look@ohmarchy-light-desktop",
+    "since": "2026-11-16",
+    "reason": "On an ohmarchy page the specimen's own Paper tile is not pure: the page's ohmarchy rules reach into its nested picture, so its circles wear ohmarchy's tint (oklch(0.9468 0.0182 78) where Paper's open row draws white, and the second row's circle tinted as well), its unread dots are 8 at -4 where Paper draws 10 at -3, and the second row's time is the third ink where Paper's is the second (the look tiles' ruling, case 5; for the studio). The kit draws the pure Paper on every page. Drawn with those three taken from the specimen, this key is identical to the reference, pixel for pixel; so the Paper tile is left out of the names, boxes and drawn values here, and the picture is declared, every other node still binding.",
+    "nodes": [{ "role": "button", "name": "Ohbox G Giulia Ferrari 09:12 P Petra Wyss 08:47 oh" }]
+  },
+  {
+    "key": "SettingsSheet/look@ohmarchy-light-desktop",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "On an ohmarchy page the specimen's own Paper tile is not pure: the page's ohmarchy rules reach into its nested picture, so its circles wear ohmarchy's tint (oklch(0.9468 0.0182 78) where Paper's open row draws white, and the second row's circle tinted as well), its unread dots are 8 at -4 where Paper draws 10 at -3, and the second row's time is the third ink where Paper's is the second (the look tiles' ruling, case 5; for the studio). The kit draws the pure Paper on every page. Drawn with those three taken from the specimen, this key is identical to the reference, pixel for pixel; so the Paper tile is left out of the names, boxes and drawn values here, and the picture is declared, every other node still binding."
+  },
+  {
+    "key": "SettingsSheet/look@ohmarchy-dark-desktop",
+    "since": "2026-11-16",
+    "reason": "On an ohmarchy page the specimen's own Paper tile is not pure: the page's ohmarchy rules reach into its nested picture, so its circles wear ohmarchy's tint (oklch(0.9468 0.0182 78) where Paper's open row draws white, and the second row's circle tinted as well), its unread dots are 8 at -4 where Paper draws 10 at -3, and the second row's time is the third ink where Paper's is the second (the look tiles' ruling, case 5; for the studio). The kit draws the pure Paper on every page. Drawn with those three taken from the specimen, this key is identical to the reference, pixel for pixel; so the Paper tile is left out of the names, boxes and drawn values here, and the picture is declared, every other node still binding.",
+    "nodes": [{ "role": "button", "name": "Ohbox G Giulia Ferrari 09:12 P Petra Wyss 08:47 oh" }]
+  },
+  {
+    "key": "SettingsSheet/look@ohmarchy-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "On an ohmarchy page the specimen's own Paper tile is not pure: the page's ohmarchy rules reach into its nested picture, so its circles wear ohmarchy's tint (oklch(0.9468 0.0182 78) where Paper's open row draws white, and the second row's circle tinted as well), its unread dots are 8 at -4 where Paper draws 10 at -3, and the second row's time is the third ink where Paper's is the second (the look tiles' ruling, case 5; for the studio). The kit draws the pure Paper on every page. Drawn with those three taken from the specimen, this key is identical to the reference, pixel for pixel; so the Paper tile is left out of the names, boxes and drawn values here, and the picture is declared, every other node still binding."
+  },
+  {
+    "key": "SettingsSheet/look@ohmarchy-light-phone",
+    "since": "2026-11-16",
+    "reason": "On an ohmarchy page the specimen's own Paper tile is not pure: the page's ohmarchy rules reach into its nested picture, so its circles wear ohmarchy's tint (oklch(0.9468 0.0182 78) where Paper's open row draws white, and the second row's circle tinted as well), its unread dots are 8 at -4 where Paper draws 10 at -3, and the second row's time is the third ink where Paper's is the second (the look tiles' ruling, case 5; for the studio). The kit draws the pure Paper on every page. Drawn with those three taken from the specimen, this key is identical to the reference, pixel for pixel; so the Paper tile is left out of the names, boxes and drawn values here, and the picture is declared, every other node still binding.",
+    "nodes": [{ "role": "button", "name": "Ohbox G Giulia Ferrari 09:12 P Petra Wyss 08:47 oh" }]
+  },
+  {
+    "key": "SettingsSheet/look@ohmarchy-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "On an ohmarchy page the specimen's own Paper tile is not pure: the page's ohmarchy rules reach into its nested picture, so its circles wear ohmarchy's tint (oklch(0.9468 0.0182 78) where Paper's open row draws white, and the second row's circle tinted as well), its unread dots are 8 at -4 where Paper draws 10 at -3, and the second row's time is the third ink where Paper's is the second (the look tiles' ruling, case 5; for the studio). The kit draws the pure Paper on every page. Drawn with those three taken from the specimen, this key is identical to the reference, pixel for pixel; so the Paper tile is left out of the names, boxes and drawn values here, and the picture is declared, every other node still binding."
+  },
+  {
+    "key": "ListLine/busy",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "the reference was taken in a whole list scrolled to its end, where the button that jumps back to the top stands over the line's right end; the line's own names, boxes and drawn values are the reference's"
+  },
+  {
+    "key": "ListLine/warn",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "the reference was taken in a whole list scrolled to its end, where the button that jumps back to the top stands over the line's right end; the line's own names, boxes and drawn values are the reference's"
+  },
+  {
+    "key": "ListLine/act",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "the reference was taken in a whole list scrolled to its end, where the button that jumps back to the top stands over the line's right end; the line's own names, boxes and drawn values are the reference's"
+  },
+  {
+    "key": "ListLine/plain",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "the reference was taken in a whole list scrolled to its end, where the button that jumps back to the top stands over the line's right end; the line's own names, boxes and drawn values are the reference's"
+  },
+  {
+    "key": "Row/where",
+    "question": "drawn",
+    "reason": "A place's word is set to end in an ellipsis where a row is too narrow for it (a longer German word at the largest text size), so that the time after it never leaves the row; the reference's word is never cut and says nothing of an ellipsis. It is the one drawn value that differs. Names, boxes and the picture bind, and the picture is equal.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Row/waiting",
+    "question": "names",
+    "since": "2026-11-16",
+    "reason": "The row's name holds the address, which has left the line whole beside the label (the kit lets it leave by layout alone; the reference's script takes it out of the row). The control that chooses another place says whether its menu is open and carries its name alone, where the reference's holds unseen words. Every node's box and drawn values are read."
+  },
+  {
+    "key": "SettingsSheet/choice@paper-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "At the phone's scale a corner of the pressed segment differs by a hair (34 and 28 pixels that touch; under seven hundred-thousandths of the picture). The segments' names, boxes and drawn values are the reference's, and the same control compared alone is equal on this look: the sheet stands a fraction of a pixel off its reference in this subject, and an arc is drawn by that fraction."
+  },
+  {
+    "key": "SettingsSheet/look@paper-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "At the phone's scale a corner of the pressed segment differs by a hair (34 and 28 pixels that touch; under seven hundred-thousandths of the picture). The segments' names, boxes and drawn values are the reference's, and the same control compared alone is equal on this look: the sheet stands a fraction of a pixel off its reference in this subject, and an arc is drawn by that fraction."
+  }
+]

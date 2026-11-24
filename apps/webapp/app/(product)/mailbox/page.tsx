@@ -1,7 +1,11 @@
-import Link from "next/link";
+import { headers } from "next/headers";
+import { FIRST_PAGE_OWNER_HEADER } from "../../session-gate";
 import { getTranslations } from "next-intl/server";
 import { DEFAULT_LOCALE } from "../../shell/locale";
-import { CloudShell } from "./CloudShell";
+import { NoPageRoute } from "../NoPageRoute";
+import { SETTINGS_HANDOFF, settingsReference } from "../../settings-handoff";
+import { SettingsHandoffGate } from "./SettingsHandoffGate";
+import { CloudShell, WakeMailboxEntry } from "./CloudShell";
 import { isDemoBuild, isDemoRequested, type SearchParamsLike } from "../../demo-mode";
 
 /**
@@ -20,39 +24,26 @@ import { isDemoBuild, isDemoRequested, type SearchParamsLike } from "../../demo-
  */
 export default async function Page(props: { searchParams?: Promise<SearchParamsLike> }) {
   const searchParams = await props.searchParams;
+  if (searchParams && Object.hasOwn(searchParams, SETTINGS_HANDOFF)) {
+    return <SettingsHandoffGate key={String(searchParams[SETTINGS_HANDOFF])} reference={settingsReference(searchParams[SETTINGS_HANDOFF]) ?? ""} />;
+  }
+  const wakeEntry = searchParams !== undefined && Object.hasOwn(searchParams, "wake");
   const serverDemo = isDemoBuild(process.env) || isDemoRequested(searchParams);
   const apiConfigured = Boolean(process.env.NEXT_PUBLIC_API_BASE);
 
   // `CloudShell` is `AppShell` plus the one thing the shared shell may not import: how this
   // deployment asks the API whose mailbox it is holding. See its header — the account id
   // names the persistent mirror, and the shell refuses to render one without it.
-  if (serverDemo || apiConfigured) return <CloudShell demo={serverDemo} />;
+  // The edge's word for the first frame. Only the exact word `now` draws a remembered mailbox before the browser's own
+  // session check; absent, forged or unknown is `wait` (`middleware.ts` deletes any the client sent).
+  const request = await headers();
+  const edgeOwner = request.get(FIRST_PAGE_OWNER_HEADER);
+  const drawMail = request.get("x-ohmail-first-page") === "now" && edgeOwner !== null ? "now" : "wait";
+  if (wakeEntry && apiConfigured) return <WakeMailboxEntry />;
+  if (serverDemo || apiConfigured) return <CloudShell demo={serverDemo} drawMail={drawMail} edgeOwner={edgeOwner} />;
 
   /* English explicitly — the request config resolves `requestLocale` since the bilingual
      marketing slice, and no layout pins one for this route. Same string as before. */
   const t = await getTranslations({ locale: DEFAULT_LOCALE, namespace: "gate" });
-  return (
-    <div className="gate">
-      <div className="gate-card">
-        {/* oh | mail, split so `.gate-card .wordmark em` can carry accent-ink; the
-            rendered text is pinned by a suite. */}
-        <span className="wordmark">
-          <b>
-            <em>oh</em>mail
-          </b>
-        </span>
-        <h1>{t("lede")}</h1>
-        <p>{t("body")}</p>
-        <div className="gate-actions">
-          <Link className="btn primary" href="/?demo=1">
-            {t("openDemo")}
-          </Link>
-          <Link className="btn" href="/login">
-            {t("signIn")}
-          </Link>
-        </div>
-      </div>
-      <p className="gate-foot">{t("footer")}</p>
-    </div>
-  );
+  return <NoPageRoute at="noserver" words={{ title: t("lede"), body: t("body"), note: t("note"), demo: t("openDemo"), signIn: t("signIn") }} />;
 }

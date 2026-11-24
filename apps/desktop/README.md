@@ -122,7 +122,7 @@ find, which is the no-demo rule as bytes rather than as intent.
 default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
 img-src 'self' data: blob: attachment-preview: http://attachment-preview.localhost;
 font-src 'self'; connect-src ipc:; media-src 'none'; object-src 'none';
-frame-src 'none'; worker-src 'self'; base-uri 'none'; form-action 'none';
+frame-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none';
 frame-ancestors 'none'
 ```
 
@@ -140,13 +140,11 @@ the part into its staging folder and serves it by a random token
 channel, which carries raw bytes as a JSON array. It names no file and serves only
 files the shell staged there, to the main window, as one of four raster types.
 
-`worker-src 'self'` admits one worker, pdf.js's, which draws a PDF in the preview
-from a file of the bundle (`src/window-pdfjs.ts`). The window builds it and hands
-it to pdf.js as a port, so a refused worker fails the PDF instead of parsing it on
-the page's own thread. A worker obeys the policy of its own script, not the page's,
-so the shell answers every file of the app's that is not a page with
-`default-src 'none'` (`src-tauri/src/navigation.rs`): inside the worker there is no
-connection, no import and no eval.
+Quick Look opens `pdf-preview.html` from the bundle in a sandboxed frame with
+an opaque origin. The renderer's response and document policies deny network
+access. The frame receives the PDF bytes and page numbers over a private
+message port. It runs pdf.js and its worker and draws the canvas inside the
+frame. The mail window keeps the download action.
 
 `connect-src` is the load-bearing one. Its one source is Tauri's in-process
 command scheme, which every shell command already rides: a POST this app's own
@@ -305,7 +303,8 @@ a time.** Every URL in the binary naming `ohmail` or `trafficflow` must be one o
 |---|---|
 | `https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json` | the pinned update feed — the one endpoint this build reaches on its own. Prefix match, because a Rust literal has no terminator in rodata. |
 | `https://api.ohmail.app` | the hosted service, reached only after somebody signs in to it. Exact match, because it comes from a quote-terminated JavaScript literal. |
-| `https://ohmail.app/mailbox#/settings`, `https://ohmail.app/mailbox?settings=mailboxes#/settings`, `https://ohmail.app/mailbox?settings=devices#/settings`, `https://ohmail.app/mailbox?settings=storage#/settings`, `https://ohmail.app/link-desktop`, `https://ohmail.app/approve`, `https://ohmail.app/privacy`, `https://ohmail.app/subprocessors`, `https://ohmail.app/join`, `https://ohmail.app/login?next=join` | the fixed table in `src-tauri/src/engine.rs` of pages the app may hand to **your own browser**, listed here in the order that table lists them. The window selects one by key and can never name an address itself, so these are compiled in. The three carrying `?settings=` open a named Settings pane on the hosted door rather than its first one — the key is what the window passes, the whole address is decided in the table. `join` and `setup` (`?next=join`) are the Cloud door's way to an account; the Mac App Store build never offers them. `approve` opens only with the request id the engine was given, appended by the shell after its own parameter name. Prefix match, same rodata reason. |
+| `https://ohmail.app/mailbox#/settings`, `https://ohmail.app/mailbox?settings=mailboxes#/settings`, `https://ohmail.app/mailbox#/cal/cal-setup?step=signin&way=icloud`, `https://ohmail.app/mailbox?settings=devices#/settings`, `https://ohmail.app/mailbox?settings=storage#/settings`, `https://ohmail.app/link-desktop`, `https://ohmail.app/approve`, `https://ohmail.app/privacy`, `https://ohmail.app/subprocessors`, `https://ohmail.app/join`, `https://ohmail.app/forgot-password`, `https://ohmail.app/login?next=join` | the fixed table in `src-tauri/src/engine.rs` of pages the app may hand to **your own browser**, listed here in the order that table lists them. The window selects one by key and can never name an address itself, so these are compiled in. The three carrying `?settings=` open a named Settings pane on the hosted door rather than its first one — the key is what the window passes, the whole address is decided in the table. `join` and `setup` (`?next=join`) are the Cloud door's way to an account; the Mac App Store build never offers them. `approve` opens only with the request id the engine was given, appended by the shell after its own parameter name. The iCloud setup and password-reset URLs are matched exactly. |
+| `https://ohmail.app` | the exact hosted origin used when opening calendar settings in the browser. |
 
 Anything else naming this project fails the job. The extracted list is re-split on
 `http` before it is judged, because adjacent Rust literals come back from `grep`
@@ -526,7 +525,7 @@ rather than carried over, and the audit runs on the bundle the installers carry.
 ```
 apps/desktop/
 ├── index.html            document CSP, favicon, #root (the window)
-├── host.html             the served host client's own document
+├── host.html             the served host client's own document; its entry is ../paired-page/src/main.tsx
 ├── vite.config.ts        the aliases, base "./", modulePreload off, the two artifacts
 ├── src/
 │   ├── main.tsx          providers + theme stamp + mount the gate
@@ -535,8 +534,7 @@ apps/desktop/
 │   ├── DesktopDefaultMail.tsx  the ask-once card + the Settings → General row
 │   ├── offline-guard.ts  fetch/XHR/WebSocket/EventSource/sendBeacon → throw
 │   ├── bridge-fetch.ts   the local engine's transport
-│   ├── no-fixtures-adapter.ts  the sample world, absent
-│   └── host-client/      the served bundle's entry, bearer manager, pair landing
+│   └── no-fixtures-adapter.ts  the sample world, absent
 ├── scripts/smoke.mjs     the render + offline audit over dist/
 ├── scripts/scan-artifact.mjs  what the emitted bytes contain, both directions
 ├── test/                 the config drift guard (runs in the monorepo suite)

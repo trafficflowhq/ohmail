@@ -118,7 +118,7 @@ describe("the reported case: an unread conversation opened from the Ohbox", () =
       expect(m.earlier.every((h) => h.ready === true), "every member's body is final").toBe(true);
 
       // The reader in time order: the older members above the opened message, which the open anchors at the top.
-      const { above, below } = readerGroups(m, true);
+      const { above, below } = readerGroups(m);
       expect([above.map((h) => h.id), below.map((h) => h.id)]).toEqual([["p1", "p2", "p3", "o1"], []]);
       const reads: string[][] = [];
       const r = readerOf({ opened: "p4", unread: new Set(["p4", "p1", "p2", "p3"]), onRead: (ids) => { reads.push(ids); s.actions.markGlanced(ids); } });
@@ -164,13 +164,13 @@ describe("the reported case: an unread conversation opened from the Ohbox", () =
       expect(items.map((it) => [it.id, it.kind]), "oldest first, the opened one in its place").toEqual([
         ["p1", "unread"], ["p2", "unread"], ["p3", "unread"], ["o1", "mine"], ["p4", "unread"],
       ]);
-      const { above, below } = readerGroups(m, true);
+      const { above, below } = readerGroups(m);
       expect([...above.map((h) => h.id), m.id, ...below.map((h) => h.id)], "the reader draws the same order").toEqual(items.map((it) => it.id));
       const row = s.box().fresh.find((r) => r.rowKey === "T")!;
       expect(items.map((it) => it.kind), "the rail's squares are the row's").toEqual(row.marks);
       const at = items.findIndex((it) => it.id === "p4");
       expect(Copy.readerMarkFrom(at + 1, items.length, items[at]!.sender, true), "the newest is spoken last").toContain("5");
-      expect(readerGroups(m, false), "outside the Ohbox the opened message still leads").toEqual({ above: [], below: m.earlier });
+      expect(readerGroups(m), "every reader draws the same time order").toEqual({ above, below });
       // What a held square's sheet says: the date, the first line, no clip without a file.
       expect(items.map((it) => [it.id, it.at && new Date(it.at).toISOString()]), "each square's date").toEqual([
         ["p1", "2026-08-19T01:00:00.000Z"], ["p2", "2026-08-19T02:00:00.000Z"], ["p3", "2026-08-19T03:00:00.000Z"],

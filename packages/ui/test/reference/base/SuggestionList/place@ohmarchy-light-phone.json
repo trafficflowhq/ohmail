@@ -1,0 +1,296 @@
+{
+  "component": "SuggestionList",
+  "state": "place",
+  "look": "ohmarchy-light-phone",
+  "place": "cell",
+  "target": [24, 24, 340, 270.7969],
+  "clip": [24, 24, 340, 271],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "17.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "17.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "15px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "15px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 2 877dbc0c8604" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 3 6e5b27cdc156" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 3 49dff42e4c4a" },
+    {
+      "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; stroke rgb(56, 54, 53) 2.2px square miter 4; shapes 4 819f0b9c8ffd"
+    },
+    { "backgroundColor": "rgb(255, 252, 240)", "boxShadow": "rgb(32, 94, 166) 0px 0px 0px 2px" }
+  ],
+  "nodes": [
+    {
+      "role": "listbox",
+      "name": "Suggestions",
+      "box": [4, 4, 332, 240],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      }
+    },
+    {
+      "role": "group",
+      "name": "",
+      "box": [4, 4, 332, 240],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      }
+    },
+    {
+      "role": "option",
+      "name": "Swiss Science Center Technorama Technoramastrasse 1, 8404 Winterthur",
+      "box": [4, 4, 332, 48],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Swiss Science Center", "type": 0 },
+        { "said": "Tec", "type": 1 },
+        { "said": "hnorama", "type": 0 },
+        { "said": "Tec", "type": 2 },
+        { "said": "hnoramastrasse 1, 8404 Winterthur", "type": 3 }
+      ],
+      "surfaces": [{ "box": [18, 18, 20, 20], "paint": 0 }]
+    },
+    {
+      "role": "option",
+      "name": "Technikumstrasse 9 8400 Winterthur",
+      "box": [4, 52, 332, 48],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Tec", "type": 1 },
+        { "said": "hnikumstrasse 9", "type": 0 },
+        { "said": "8400 Winterthur", "type": 3 }
+      ],
+      "surfaces": [{ "box": [18, 66, 20, 20], "paint": 1 }]
+    },
+    {
+      "role": "option",
+      "name": "Technikumstrasse 8400 Winterthur",
+      "box": [4, 100, 332, 48],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Tec", "type": 1 },
+        { "said": "hnikumstrasse", "type": 0 },
+        { "said": "8400 Winterthur", "type": 3 }
+      ],
+      "surfaces": [{ "box": [18, 114, 20, 20], "paint": 2 }]
+    },
+    {
+      "role": "option",
+      "name": "Technopark Winterthur Technoparkstrasse 2, 8406 Winterthur",
+      "box": [4, 148, 332, 48],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Tec", "type": 1 },
+        { "said": "hnopark Winterthur", "type": 0 },
+        { "said": "Tec", "type": 2 },
+        { "said": "hnoparkstrasse 2, 8406 Winterthur", "type": 3 }
+      ],
+      "surfaces": [{ "box": [18, 162, 20, 20], "paint": 0 }]
+    },
+    {
+      "role": "option",
+      "name": "Tecknau Basel-Landschaft",
+      "box": [4, 196, 332, 48],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Tec", "type": 1 },
+        { "said": "knau", "type": 0 },
+        { "said": "Basel-Landschaft", "type": 3 }
+      ],
+      "surfaces": [{ "box": [18, 210, 20, 20], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "© OpenStreetMap contributors",
+      "box": [122.4, 248, 201.6, 16.8],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "text": [{ "said": "© OpenStreetMap contributors", "type": 4 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [{ "box": [0, 0, 340, 270.8], "paint": 4 }] }
+}

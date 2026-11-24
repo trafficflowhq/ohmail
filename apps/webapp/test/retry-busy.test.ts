@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../app/api-client";
 import { isBusy, retryBusy } from "../app/retry-busy";
-import { CONFIRM_ATTEMPTS, CONFIRM_CAP_MS } from "../app/shell/confirm-schedule";
+import { CONFIRM_ATTEMPTS, CONFIRM_CAP_MS } from "@ohmail/app-logic/session/confirm-schedule";
 
 /**
  * `retryBusy` — the one rule for a press that meets the API's busy answer. It retries ONLY our

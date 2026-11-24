@@ -3,7 +3,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
-import { UNDO_MS } from "../app/shell/screener-state";
+import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
+import { fireEvent, within } from "@testing-library/react";
+import { typeInto } from "./fixtures/rich-editor-driver";
+import { barVerb, letterShown, lettersShown, menuItem, moreButton, readingColumn, readingScroller } from "./ohbox/_finders.js";
 
 /**
  * THE PANEL IN VIEW AT OPEN IS THE PANEL THE BAR ACTS ON, through the shipped shell and the real engine.
@@ -11,6 +14,10 @@ import { UNDO_MS } from "../app/shell/screener-state";
  * ringed panel is `a1`, and the bar's Delete reaches the wire for `a1` alone, Later for `a1` and the row's
  * own reply beside it (the row is taken whole). A wheel on the stack
  * moves nothing the bar reads. Mutation: rebind the bar to the conversation's last member — red at the id.
+ *
+ * RE-POINTED (share reader-1, the switch's older tests): the shell was already the new one through its test door
+ * (`fixtures/live-walk-shell.js` mounts the web's `MailShell`); the warm-up import is that door's, not today's
+ * `AppShell`, and the forward is read by what its send names on the wire, not by today's dock's mark.
  */
 
 const ME = "walker@example.invalid";
@@ -58,17 +65,38 @@ const click = async (el: Element | null | undefined, what: string): Promise<void
   await settle();
 };
 const rowOf = (host: HTMLElement, id: string): HTMLElement | null =>
-  host.querySelector<HTMLElement>(`[role="listbox"] .row[data-id="${id}"]`);
+  host.querySelector<HTMLElement>(`[role="listbox"] :is(.row, [role=option])[data-id="${id}"]`);
 /** A row press, as a person makes it at this width: the first click selects, the second opens. */
 const openRow = async (host: HTMLElement, id: string): Promise<void> => {
   await click(rowOf(host, id), `the Ohbox row ${id}`);
   await click(rowOf(host, id), `the Ohbox row ${id}`);
 };
-/** The ringed panel — the one the reader's anchor scrolls to. */
-const anchored = (host: HTMLElement): string | null =>
-  host.querySelector<HTMLElement>('.read-col [data-conv-id][aria-current="true"]')?.dataset.convId ?? null;
-const docked = (host: HTMLElement): string | null =>
-  host.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? null;
+/**
+ * The ringed panel — the one the reader's anchor scrolls to. At the seated Ohbox the open letter is the address's
+ * (`#/ohbox/m/<id>`); a single letter (no conversation panels) rings nothing.
+ */
+const anchored = (host: HTMLElement): string | null => {
+  const id = /^#\/ohbox\/[mt]\/([^/?]+)/.exec(window.location.hash)?.[1] ?? null;
+  return lettersShown(host).length > 1 && id !== null && letterShown(host, id) !== null ? id : null;
+};
+/**
+ * The letter the open forward forwards. The new shell's forward is `write`'s sheet after the conversation (the kit's
+ * composer, a section named Forward), which carries no letter's id of its own: the forward is sent, as a person
+ * sends it (a recipient, a line, Send on the panel), and the id is the one its send names on the wire (`forwardOfMessageId`).
+ */
+const docked = async (host: HTMLElement): Promise<string | null> => {
+  const sheet = readingColumn(host)?.querySelector<HTMLElement>('section[aria-label="Forward"]') ?? null;
+  if (sheet === null) return null;
+  const to = within(sheet).getByRole("combobox", { name: "To" }) as HTMLInputElement;
+  await act(async () => { fireEvent.change(to, { target: { value: "mila@example.invalid, " } }); });
+  await act(async () => { typeInto(within(sheet).getByRole("textbox", { name: "Forward body" }), "For you"); });
+  /* An open reply's verbs stand in the letter's panel: Send is there. */
+  await click(barVerb(host, "Send"), "the forward's Send");
+  const sent = (globalThis.fetch as unknown as { mock: { calls: Array<[unknown, RequestInit | undefined]> } }).mock.calls
+    .flatMap(([, init]) => (typeof init?.body === "string" && init.body.includes("forwardOfMessageId") ? [init.body] : []))
+    .map((body) => (JSON.parse(body) as { forwardOfMessageId?: string | null }).forwardOfMessageId ?? null);
+  return sent.length === 1 ? sent[0]! : null;
+};
 /** Every request the engine made, as method and path. */
 const wire = (): Array<{ method: string; url: string }> =>
   (globalThis.fetch as unknown as { mock: { calls: Array<[unknown, RequestInit | undefined]> } }).mock.calls
@@ -78,13 +106,14 @@ const deletesOf = (id: string): number =>
 const triagesOf = (id: string): number =>
   wire().filter((w) => w.method === "POST" && w.url.includes(`/messages/${id}/triage`)).length;
 
-/** The bar's Delete, as a person presses it: More, Delete, then the ask's own Delete. */
+/**
+ * The bar's Delete, as a person presses it: More, Delete. At the seated Ohbox More's Delete moves the letter to
+ * Trash at once into its Undo window, with no ask of its own (declared: the Undo window is the confirm); the
+ * window then passes, as after today's ask.
+ */
 const pressBarDelete = async (host: HTMLElement): Promise<void> => {
-  await click(host.querySelector(".read-col .abar .abar-more"), "the bar's More");
-  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-    .find((b) => (b.textContent ?? "").trim().startsWith("Delete"));
-  await click(item, "Delete in the bar's menu");
-  await click(host.querySelector(".read-col .abar-delete .abar-danger"), "the ask's Delete");
+  await click(moreButton(host), "the bar's More");
+  await click(menuItem("Delete"), "Delete in the bar's menu");
   await tick(UNDO_MS * 2);
 };
 
@@ -97,14 +126,14 @@ async function mountOpenedAtA1(over: Record<string, unknown>): Promise<HTMLEleme
   // A held x2 (the gate, Junk) stands in no conversation a header threaded it into: no panel, and
   // the bar still has only a1 to act on. Every other x2 is a panel beside it.
   const held = over.folder === "ohmail/Screener" || over.folder === "ohmail/Quarantine";
-  expect(Boolean(host.querySelector('.read-col article.pm[data-conv-id="x2"]')), "the premise: x2 is a panel unless it is held").toBe(!held);
+  expect(Boolean(letterShown(host, "x2")), "the premise: x2 is a panel unless it is held").toBe(!held);
   // Held, x2 leaves a1 alone: one message, no conversation panels, nothing to ring.
   expect(anchored(host), "the ringed panel is the one the row opened").toBe(held ? null : "a1");
   return host;
 }
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 
@@ -128,7 +157,7 @@ describe("the bar acts on the panel the conversation opened at", () => {
     const rowTakesX2 = label === "our own reply";
     it(`with ${label} newer than a1, Later files ${rowTakesX2 ? "a1 and our reply" : "a1 alone"}`, async () => {
       const host = await mountOpenedAtA1(over);
-      await click(host.querySelector(".read-col .abar .abar-later"), "the bar's Later");
+      await click(barVerb(host, "Later"), "the bar's Later");
       expect(triagesOf("a1"), "a1's Later reached the wire").toBe(1);
       expect(triagesOf("x2"), "x2's filing").toBe(rowTakesX2 ? 1 : 0);
     }, 30_000);
@@ -137,8 +166,8 @@ describe("the bar acts on the panel the conversation opened at", () => {
   it("the ringed panel, Delete's id and Forward's id are one id", async () => {
     const host = await mountOpenedAtA1(laterX2["our own reply"]!);
     const ringed = anchored(host);
-    await click(host.querySelector(".read-col .abar-fwd button"), "the bar's Forward");
-    expect(docked(host)).toBe(ringed);
+    await click(barVerb(host, "Forward"), "the bar's Forward");
+    expect(await docked(host)).toBe(ringed);
     await pressBarDelete(host);
     expect(deletesOf(ringed!)).toBe(1);
     expect(deletesOf("x2")).toBe(0);
@@ -147,7 +176,7 @@ describe("the bar acts on the panel the conversation opened at", () => {
   it("a wheel on the stack before Delete moves nothing the bar reads", async () => {
     const host = await mountOpenedAtA1(laterX2["our away answer"]!);
     await act(async () => {
-      host.querySelector(".read-col .conv")!.dispatchEvent(new WheelEvent("wheel", { deltaY: 600, bubbles: true }));
+      readingScroller(host)!.dispatchEvent(new WheelEvent("wheel", { deltaY: 600, bubbles: true }));
     });
     await settle();
     await pressBarDelete(host);

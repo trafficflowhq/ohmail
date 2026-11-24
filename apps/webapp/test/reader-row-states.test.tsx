@@ -1,14 +1,11 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
-import { readerHolder } from "../app/shell/reader-holder";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding";
+import { act, cleanup } from "@testing-library/react";
+import { readerHolder } from "@ohmail/app-logic/reading/reader-holder";
+import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { M, O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * ═══ "ORGANIZED BY ANOTHER INSTALL" WITH NO OTHER INSTALL ══════════════════════════════════
@@ -65,14 +62,20 @@ import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding
  * (a) cases go red naming `mailboxes.readerLabelLegacy` — which is the released behaviour
  * exactly. The (b) and (c) cases are green either way: they are what says this slice changed the
  * state nobody held and nothing else.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`_first-run-stage.tsx`); the mailbox is the ground's row, its holder's date the row's `holderSince`
+ * (the live facts format it only where the instant is written, `live.ts` `rowOf`: the same withholding), and a poll
+ * landing is the ground's rows moved under the run; a choice is the claim question's radio by its name. The holder
+ * row is the step's setting line that names the holder, and its description the note right under it: on the claim
+ * question the first line of the step, on the reader's summary the second. The service is the managed one, the fact
+ * the new stage reads before it names a cloud holder ohmail Cloud. The words are the stage's catalogue.
+ * Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-const t = messages.onboarding;
-const tm = messages.mailboxes;
+const t = O;
+const organizeTitle = t.organizeLast.replace("<window></window>", t.windowYear).replace(/\.$/, "");
+const tm = M;
 
 /** State (a): a consent-less reader, and nothing anywhere has recorded a holder. */
 const NOBODY: OnboardingMailbox = {
@@ -139,7 +142,7 @@ const NAMED_UNDATED: OnboardingMailbox = {
 };
 
 /**
- * WHAT `AppShell` HANDS THE SCREENS for a given row: the holder's instant as a date in words, or
+ * WHAT THE LIVE FACTS HAND THE SCREENS for a given row: the holder's instant as a date in words, or
  * nothing at all. One formatter for the whole file so no case can assert a date the mount would
  * not have produced.
  */
@@ -173,63 +176,44 @@ interface Harness {
   move: (mailbox: OnboardingMailbox) => Promise<void>;
 }
 
-const roots: Root[] = [];
-afterEach(async () => {
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
 });
 
-async function mount(initial: OnboardingMailbox): Promise<Harness> {
-  let current = facts(initial);
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
+/** The ground's row for a mailbox, its holder's date withheld exactly where the live facts withhold it. */
+const rowOf = (mailbox: OnboardingMailbox): FirstRunRow => {
+  const since = sinceProp(mailbox);
+  return { id: id("mb-1"), address: "me@example.invalid", ...mailbox, ...(since ? { holderSince: since } : {}) } as FirstRunRow;
+};
 
-  const host: FirstRunHost = {
-    door: "local",
-    ai: "unset",
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async () => "stored",
-    complete: async () => { /* the summary's own verb */ },
-    setAiEnabled: async () => { /* answered */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-
-  let bumpOutside: (() => void) | null = null;
-  const Stage = () => {
-    const [, bump] = React.useState(0);
-    bumpOutside = () => bump((n) => n + 1);
-    return h(FirstRun, {
-      host,
-      facts: current,
-      onRefresh: () => bump((n) => n + 1),
-      onLeave: () => { /* left */ },
-      pull: { screened: 0, history: 0, pulled: 0 },
-      decide: null,
-      mailboxId: "mb-1",
-      /* THE PROP IS DERIVED THE WAY `AppShell` DERIVES IT, INCLUDING THE WITHHOLDING.
-         `AppShell`'s `holderSince` returns `null` for an absent or unparseable instant and the
-         mount then spreads NOTHING (`{...(holderSince ? { organizedSince } : {})}`), so a fixture
-         that hands the screens a placeholder string is a fixture of a state the product cannot be
-         in — and it would hide exactly the defect these cases are about, which is what the sites
-         do when the prop is missing. */
-      ...(sinceProp(current.mailbox) ? { organizedSince: sinceProp(current.mailbox)! } : {}),
-    });
-  };
-
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Stage, null) }),
+/** The step's setting lines, in order: each a group named by its label, its description the note under it. */
+const linesOf = (el: HTMLElement): HolderRow[] =>
+  [...(el.querySelector("h1")?.closest("form")?.querySelectorAll<HTMLElement>('[role="group"][aria-labelledby]') ?? [])]
+    .map((g) => ({
+      label: (document.getElementById(g.getAttribute("aria-labelledby")!)?.textContent ?? "").trim(),
+      description: (g.querySelector(".oh-settingline-text")?.textContent ?? "").trim(),
     }));
+
+async function mount(initial: OnboardingMailbox): Promise<Harness> {
+  const st = await mountStage({
+    rows: [rowOf(initial)],
+    door: "local",
+    /* Whose service: today's harness named none and said a cloud holder as ohmail Cloud, which the new stage says
+       only on the managed service (`words.ts` HOLDER_MANAGED): the fact it reads is given. */
+    service: "managed",
+    verbs: {
+      ai: "unset",
+      organize: async () => "stored",
+      complete: async () => { /* the summary's own verb */ },
+      setAiEnabled: async () => { /* answered */ },
+    },
   });
+  const el = st.el;
 
   const press = async (label: string) => {
     const button = [...el.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith(label));
+      .find((b) => (b.getAttribute("aria-label") ?? b.textContent ?? "").trim().startsWith(label));
     if (!button) {
       throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `
         + [...el.querySelectorAll("button")].map((b) => JSON.stringify(b.textContent)).join(", "));
@@ -241,39 +225,27 @@ async function mount(initial: OnboardingMailbox): Promise<Harness> {
   };
 
   const row = (): HolderRow => {
-    /* The banner is the claim question's; the summary has no banner and carries the holder row
+    /* The claim question's holder line is its first; the summary carries the holder row
        SECOND, under "It reads this mailbox". `onSummary` asserts that position once. */
-    const node = el.querySelector(".set-banner")
-      ?? (el.querySelectorAll(".ob-done .set-row")[1] as Element | undefined);
+    const lines = linesOf(el);
+    const node = el.querySelector("[role=radiogroup]") !== null ? lines[0] : lines[1];
     if (!node) {
-      throw new Error("no holder row on screen; rows: "
-        + [...el.querySelectorAll(".set-row .lab b")].map((b) => JSON.stringify(b.textContent))
-          .join(", "));
+      throw new Error("no holder row on screen; rows: " + lines.map((l) => JSON.stringify(l.label)).join(", "));
     }
-    return {
-      label: (node.querySelector(".lab b")?.textContent ?? "").trim(),
-      description: (node.querySelector(".lab span")?.textContent ?? "").trim(),
-    };
+    return node;
   };
 
   return {
     el: () => el,
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
+    heading: st.heading,
     text: () => el.textContent ?? "",
     row,
     press,
     pick: async (value) => {
-      const radios = [...el.querySelectorAll("input[type=radio]")] as HTMLInputElement[];
-      const radio = radios.find((i) => i.value === value);
-      if (!radio) {
-        throw new Error(`no ${JSON.stringify(value)} option; saw: `
-          + radios.map((i) => JSON.stringify(i.value)).join(", "));
-      }
-      await act(async () => { radio.click(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
+      await st.pick(value === "here" ? t.elsewhereChoiceHere : t.elsewhereChoiceRead);
     },
     move: async (mailbox) => {
-      current = facts(mailbox);
-      await act(async () => { bumpOutside?.(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
+      await st.move([rowOf(mailbox)]);
     },
   };
 }
@@ -290,15 +262,15 @@ const SINCE = tm.readerSinceUnknown.slice(0, tm.readerSinceUnknown.indexOf("{sin
 async function onSummary(initial: OnboardingMailbox = CLOUD): Promise<Harness> {
   const s = await mount(initial);
   expect(s.heading(), "the walk to the summary did not start on the claim question")
-    .toBe(t.elsewhereTitle);
+    .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   await s.pick("read");
   await s.press(t.continue);
   expect(s.heading(), "the walk did not reach the reader summary").toBe(t.doneReaderTitle);
   /* THE POSITION `row()` READS, pinned here rather than assumed at every case: a row inserted
      above the holder's would otherwise move every assertion below onto the wrong sentence and
      they would all still pass or all still fail, for the wrong reason. */
-  const first = s.el().querySelectorAll(".ob-done .set-row")[0];
-  expect((first?.querySelector(".lab b")?.textContent ?? "").trim(),
+  const first = linesOf(s.el())[0];
+  expect(first?.label ?? "",
     "the summary's rows moved — `row()` reads the second one").toBe(t.doneReaderReads);
   return s;
 }
@@ -317,13 +289,13 @@ async function onSummary(initial: OnboardingMailbox = CLOUD): Promise<Harness> {
  */
 async function onElsewhere(): Promise<Harness> {
   const s = await mount(CLOUD);
-  expect(s.heading()).toBe(t.elsewhereTitle);
+  expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   await s.pick("here");
   await s.press(t.continue);
   expect(s.heading(), "'Organize here instead' did not reach the consent statement")
-    .toBe(t.consentTitle);
+    .toBe(organizeTitle);
   await s.press(t.back);
-  expect(s.heading(), "Back did not park the cursor on the claim question").toBe(t.elsewhereTitle);
+  expect(s.heading(), "Back did not park the cursor on the claim question").toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   return s;
 }
 
@@ -451,10 +423,10 @@ describe("SURFACE 2 — the claim question's banner", () => {
     const s = await onElsewhere();
     await s.move(NOBODY);
     expect(s.heading(), "a screen about another install stood over a mailbox nothing organizes")
-      .not.toBe(t.elsewhereTitle);
-    expect(s.heading(), "the run lost its place instead of moving on").toBe(t.consentTitle);
+      .not.toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
+    expect(s.heading(), "the run lost its place instead of moving on").toBe(organizeTitle);
     expect(s.text(), "the lead about a second install survived the install")
-      .not.toContain(t.elsewhereLead);
+      .not.toContain("This mailbox already has an organizer. Two installs never organize one mailbox at once.");
     expect(s.text(), "a relationship with an install that does not exist")
       .not.toContain(tm.readerHolderUnknown);
   });
@@ -482,19 +454,19 @@ describe("SURFACE 2 — the claim question's banner", () => {
        carrying a stamp — "Organize here instead", which moves the cursor two screens ahead of the
        write that would end the situation, then Back. */
     const s = await mount({ ...CLOUD, organizerEventAt: t2 });
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.pick("here");
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toBe(organizeTitle);
     await s.press(t.back);
     expect(s.heading(), "the walk did not park the cursor on the claim question")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     // A read prepared BEFORE the holder was recorded, landing now. It says the same thing a
     // current one would; only its stamp says it is not news.
     await s.move({ ...NOBODY, organizerEventAt: t1 });
     expect(s.heading(), "a late-landing read took the claim question away")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     /* AND A READ THAT OMITS THE FIELD ALTOGETHER is not an answer either, whatever its stamp
        says. Both producers used to normalize this into "nobody", which is what made the arm
@@ -504,13 +476,13 @@ describe("SURFACE 2 — the claim question's banner", () => {
     delete noField.organizedBy;
     await s.move(noField as unknown as OnboardingMailbox);
     expect(s.heading(), "a read that said nothing about the organizer took the screen away")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     // …and the release actually happening does move the run on, which is what keeps the rule
     // above from being a screen nobody can leave.
     await s.move({ ...NOBODY, organizerEventAt: t3 });
     expect(s.heading(), "the release the person is waiting for did not move the run on")
-      .not.toBe(t.elsewhereTitle);
+      .not.toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   });
 
   /**
@@ -529,27 +501,27 @@ describe("SURFACE 2 — the claim question's banner", () => {
     const t3 = "2026-09-07T09:10:00.000Z";
 
     const s = await mount({ ...CLOUD, organizerEventAt: t3 });
-    expect(s.heading()).toBe(t.elsewhereTitle);
+    expect(s.heading()).toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
     await s.pick("here");
     await s.press(t.continue);
     await s.press(t.back);
     expect(s.heading(), "the walk did not park the cursor on the claim question")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     // A HOLDER read issued before that one, landing now. It still names a holder, so the screen
     // is right to stay — the question is what it does to the floor.
     await s.move({ ...CLOUD, organizerEventAt: t2 });
-    expect(s.heading(), "a read that still names a holder took the screen away").toBe(t.elsewhereTitle);
+    expect(s.heading(), "a read that still names a holder took the screen away").toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     // The floor must still be the third instant, so a `nobody` at the second is older and refused.
     await s.move({ ...NOBODY, organizerEventAt: t2 });
     expect(s.heading(), "a late holder read lowered the floor and let an older nobody through")
-      .toBe(t.elsewhereTitle);
+      .toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
 
     // …and the third is not older, so the genuine release still lands.
     await s.move({ ...NOBODY, organizerEventAt: t3 });
     expect(s.heading(), "the floor stopped the release it was supposed to admit")
-      .not.toBe(t.elsewhereTitle);
+      .not.toContain(t.elsewhereSay.replace("{name}", "").replace(/\.$/, "").trim());
   });
 
   it("(b) CONTROL: a recorded holder with no name is unchanged here", async () => {

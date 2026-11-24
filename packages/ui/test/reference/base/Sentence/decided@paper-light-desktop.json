@@ -1,0 +1,79 @@
+{
+  "component": "Sentence",
+  "state": "decided",
+  "look": "paper-light-desktop",
+  "place": "cell",
+  "target": [24, 24, 396.1875, 31.3594],
+  "clip": [24, 24, 397, 32],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "28px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "31.36px",
+      "letterSpacing": "-0.616px",
+      "fontVariationSettings": "\"opsz\" 48",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "28px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "31.36px",
+      "letterSpacing": "-0.616px",
+      "fontVariationSettings": "\"opsz\" 48",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [{ "backgroundColor": "rgb(18, 16, 14)", "borderRadius": "999px" }],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Ohbox",
+      "box": [302, 0, 82.5, 31.4],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "28px",
+        "fontWeight": "800",
+        "lineHeight": "31.36px",
+        "letterSpacing": "-0.616px",
+        "borderRadius": "11.2px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Ohbox", "type": 0 }]
+    }
+  ],
+  "loose": {
+    "text": [{ "said": "Lena Kaufmann goes to", "type": 1 }],
+    "surfaces": [{ "box": [386.7, 14.5, 9.5, 9.5], "paint": 0 }]
+  }
+}

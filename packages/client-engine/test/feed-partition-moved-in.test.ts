@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, MutationOutcome, WaterlineMeta } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -6,13 +7,9 @@ import {
   feedLineUndo,
   mutationEffects,
   waterlineIdOf,
-  type EngineMessage,
-  type Folder,
   type SyncChange,
-  type WaterlineMeta,
   OhmailEngine,
   type EngineAdapter,
-  type MutationOutcome,
   type SyncResponse,
 } from "@ohmail/client-engine";
 

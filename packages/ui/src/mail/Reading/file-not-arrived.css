@@ -1,0 +1,43 @@
+/* A file that did not arrive keeps its tile. What cannot be pressed is set small in the second ink; the state may take two lines. */
+@layer oh {
+  .oh-file[data-state] {
+    --oh-file-line-max: 24em;
+  }
+
+  .oh-file[data-state] .oh-file-size {
+    max-width: var(--oh-file-line-max);
+    white-space: normal;
+    text-wrap: pretty;
+  }
+
+  .oh-file[data-state="failed"] .oh-file-main,
+  .oh-file[data-state="large"] .oh-file-main {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    cursor: default;
+  }
+
+  .oh-file[data-state="failed"] .oh-file-title,
+  .oh-file[data-state="large"] .oh-file-title {
+    color: var(--ink2);
+  }
+
+  .oh-file[data-state="failed"] .oh-file-size {
+    color: var(--ink);
+    font-weight: var(--w-mid);
+  }
+
+  /* The way on stands on the tile where a fetched file has its arrow, on its own ground, said at the tile's small size. */
+  .oh-file-way {
+    display: contents;
+  }
+
+  .oh-file-way > .oh-button {
+    background: var(--oh-file-way, var(--sheet));
+  }
+
+  .oh-file-way > .oh-button > * {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+}

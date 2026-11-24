@@ -2,6 +2,9 @@ import { readSelfCheck, selfCheckSaid, type SelfCheckDiffer, type SelfCheckSaid 
 import { faultDetail, refuse, sayArg, type Refusal } from "../refusal";
 import type { PhoneServer } from "../engine/standalone-door";
 import type { ConnectedSession } from "./pairing.js";
+
+/** What these reads and verbs take from a session: its transport and where to point it. Either surface's. */
+type MailboxSession = Pick<ConnectedSession, "fetch" | "profile">;
 /* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
 import { requestBase } from "./request-base";
 /**
@@ -170,6 +173,8 @@ export interface PhoneMailbox {
   /** `MailboxDTO.errorCode` and `authKind`, read only to class the support mail's block; absent where the wire sent none. */
   errorCode?: string;
   authKind?: string;
+  provider?: string;
+  messageCount?: number;
   /**
    * IS NEW MAIL BEING FETCHED FOR THIS MAILBOX — `MailboxDTO.fetching`: `behind` when nothing
    * fetches or fetching has fallen behind, `since` the last finished pass. `null`: the answering
@@ -255,9 +260,15 @@ function roleOf(raw: unknown): PhoneMailbox["organizerRole"] {
  * here is either matching an address or naming a holder, and a row that can do neither is a
  * row that can only produce a wrong answer.
  */
-export async function readMailboxes(session: ConnectedSession): Promise<PhoneMailbox[] | null> {
+/** The same session with every request bound to one abort signal: the phone page's mailbox answer is cancelled
+ * as a whole when the page leaves or the session ends. */
+export function mailboxSessionWithSignal(session: MailboxSession, signal: AbortSignal): MailboxSession {
+  return { profile: session.profile, fetch: (path, init) => session.fetch(path, { ...(init as RequestInit), signal }) };
+}
+
+export async function readMailboxes(session: MailboxSession, counts = false): Promise<PhoneMailbox[] | null> {
   try {
-    const res = await session.fetch(`${requestBase(session)}/mailboxes`, { method: "GET" });
+    const res = await session.fetch(`${requestBase(session)}/mailboxes${counts ? "?counts=1" : ""}`, { method: "GET" });
     if (res.status !== 200) return null;
     const body = (await res.json()) as unknown;
     /**
@@ -339,6 +350,9 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         ...("syncBlockedSince" in r ? { syncBlockedSince: instantOf(r.syncBlockedSince) } : {}),
         ...("hostedLastSyncAt" in r ? { hostedLastSyncAt: instantOf(r.hostedLastSyncAt) } : {}),
         ...(filingOf(r.filing) === undefined ? {} : { filing: filingOf(r.filing)! }),
+        ...(typeof r.provider === "string" ? { provider: r.provider } : {}),
+        ...(typeof r.messageCount === "number" && Number.isSafeInteger(r.messageCount) && r.messageCount >= 0
+          ? { messageCount: r.messageCount } : {}),
         ...(typeof r.errorCode === "string" && r.errorCode !== "" ? { errorCode: r.errorCode } : {}),
         ...(typeof r.authKind === "string" && r.authKind !== "" ? { authKind: r.authKind } : {}),
         ...("fetching" in r ? { fetching: fetchingOf(r.fetching) } : {}),
@@ -356,7 +370,7 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
  * caller re-reads the roster after a write; a refusal or no answer wrote nothing.
  */
 export async function writeMailboxName(
-  session: ConnectedSession,
+  session: MailboxSession,
   mailboxId: string,
   displayName: string | null,
 ): Promise<{ k: "written"; displayName: string | null } | { k: "refused" } | { k: "failed" }> {
@@ -384,7 +398,7 @@ export async function writeMailboxName(
  * every message, and is reversible with the press beside it.
  */
 export async function releaseMailbox(
-  session: ConnectedSession,
+  session: MailboxSession,
   mailboxId: string,
 ): Promise<"requested" | "already" | "refused"> {
   try {
@@ -406,7 +420,7 @@ export async function releaseMailbox(
  * read carries the new one.
  */
 export async function answerGapLetters(
-  session: ConnectedSession,
+  session: MailboxSession,
   mailboxId: string,
   answer: { file: boolean; count: number; strangers: number },
 ): Promise<"pressed" | "left" | "changed" | "refused"> {
@@ -455,7 +469,7 @@ export type OrganizeOutcome =
   | { kind: "refused"; reason: Refusal };
 
 export async function organizeHere(
-  session: ConnectedSession,
+  session: MailboxSession,
   mailboxId: string,
 ): Promise<OrganizeOutcome> {
   let res: Response;
@@ -567,22 +581,22 @@ export type ResupplyOutcome =
  * factor once at boot, so it is the same permanent 403 `organizeHere` names above. The engine
  * tries the password before it stores it, so a refusal leaves this phone exactly as it was.
  */
+export function patchLocalMailbox(session: MailboxSession, mailboxId: string, patch: object): Promise<Response> {
+  return session.fetch(`${requestBase(session)}/local/mailboxes/${encodeURIComponent(mailboxId)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
 export async function resupplyPassword(
-  session: ConnectedSession,
+  session: MailboxSession,
   mailboxId: string,
   password: string,
 ): Promise<ResupplyOutcome> {
   let res: Response;
   try {
-    res = await session.fetch(
-      `${requestBase(session)}/local/mailboxes/${encodeURIComponent(mailboxId)}`,
-      {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        /* The ONE thing this request is. Never logged, never kept here, never in a refusal. */
-        body: JSON.stringify({ imap: { pass: password } }),
-      },
-    );
+    res = await patchLocalMailbox(session, mailboxId, { imap: { pass: password } });
   } catch (err) {
     /* The transport's own words, rendered HERE so the sentence beside the field is in the
        language that is active now — a store fault classifies, anything else quotes. */
@@ -611,25 +625,17 @@ export type ServerChangeOutcome = { kind: "kept" } | { kind: "refused"; reason: 
  * the record of which submission server this password was saved for.
  */
 export async function changeServerSettings(
-  session: ConnectedSession,
+  session: MailboxSession,
   mailboxId: string,
   change: { imap: PhoneServer; smtp: PhoneServer | null; password: string },
 ): Promise<ServerChangeOutcome> {
   const { imap, smtp, password } = change;
   let res: Response;
   try {
-    res = await session.fetch(
-      `${requestBase(session)}/local/mailboxes/${encodeURIComponent(mailboxId)}`,
-      {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        /* The password is in this body and nowhere else: never logged, never in a refusal. */
-        body: JSON.stringify({
-          imap: { ...imap, pass: password, ...(smtp !== null ? { smtpHost: smtp.host } : {}) },
-          ...(smtp !== null ? { smtp: { ...smtp, pass: password } } : {}),
-        }),
-      },
-    );
+    res = await patchLocalMailbox(session, mailboxId, {
+      imap: { ...imap, pass: password, ...(smtp !== null ? { smtpHost: smtp.host } : {}) },
+      ...(smtp !== null ? { smtp: { ...smtp, pass: password } } : {}),
+    });
   } catch (err) {
     return { kind: "refused", reason: refuse("serverSettingsRefused", faultDetail(err)) };
   }
@@ -693,16 +699,21 @@ export type MailboxCheck = { k: "said"; said: SelfCheckSaid } | { k: "refused" }
 
 const lastReadings = new Map<string, unknown>();
 
-export async function checkMailbox(session: ConnectedSession, mailboxId: string): Promise<MailboxCheck> {
+export async function readMailboxCheck(session: MailboxSession, mailboxId: string) {
   const res = await session.fetch(
     `${requestBase(session)}/mailboxes/${encodeURIComponent(mailboxId)}/self-check`, { method: "GET" },
   );
-  if (res.status !== 200) return { k: "refused" };
+  if (res.status !== 200) return null;
   const wire = (await res.json().catch(() => null)) as unknown;
   const check = readSelfCheck(wire);
-  if (check === null || check.mailboxId !== mailboxId) return { k: "refused" };
-  lastReadings.set(mailboxId, wire);
-  return { k: "said", said: selfCheckSaid(check) };
+  return check !== null && check.mailboxId === mailboxId ? { wire, check } : null;
+}
+
+export async function checkMailbox(session: MailboxSession, mailboxId: string): Promise<MailboxCheck> {
+  const answer = await readMailboxCheck(session, mailboxId);
+  if (answer === null) return { k: "refused" };
+  lastReadings.set(mailboxId, answer.wire);
+  return { k: "said", said: selfCheckSaid(answer.check) };
 }
 
 /** The readings this session took, by mailbox id — the diagnostic file's input. */
@@ -727,7 +738,7 @@ export interface PhoneFilingsGroup {
   reasons: Array<{ reason: string | null; count: number }>;
 }
 
-export async function readFilings(session: ConnectedSession, mailboxId: string): Promise<PhoneFilingsGroup[] | null> {
+export async function readFilings(session: MailboxSession, mailboxId: string): Promise<PhoneFilingsGroup[] | null> {
   try {
     const res = await session.fetch(`${requestBase(session)}/mailboxes/${encodeURIComponent(mailboxId)}/filings`, { method: "GET" });
     if (res.status !== 200) return null;
@@ -753,7 +764,7 @@ export async function readFilings(session: ConnectedSession, mailboxId: string):
 export type FilingsPress = { k: "retried" | "left"; count: number } | { k: "elsewhere" } | { k: "failed" };
 
 async function filingsPress(
-  session: ConnectedSession, mailboxId: string, verb: "retry" | "leave", body: Record<string, string>,
+  session: MailboxSession, mailboxId: string, verb: "retry" | "leave", body: Record<string, string>,
 ): Promise<FilingsPress> {
   try {
     const res = await session.fetch(
@@ -769,9 +780,9 @@ async function filingsPress(
   }
 }
 
-export const retryFilings = (session: ConnectedSession, mailboxId: string, folder: string): Promise<FilingsPress> =>
+export const retryFilings = (session: MailboxSession, mailboxId: string, folder: string): Promise<FilingsPress> =>
   filingsPress(session, mailboxId, "retry", { folder });
 
-export const leaveFilings = (session: ConnectedSession, mailboxId: string, folder: string, through: string): Promise<FilingsPress> =>
+export const leaveFilings = (session: MailboxSession, mailboxId: string, folder: string, through: string): Promise<FilingsPress> =>
   filingsPress(session, mailboxId, "leave", { folder, through });
 

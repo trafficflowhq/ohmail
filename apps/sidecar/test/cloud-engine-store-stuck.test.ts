@@ -1,7 +1,7 @@
+import type { SyncChange, SyncResponse } from "@ohmail/wire";
 import { rmSync } from "node:fs";
 import { sql } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
-import type { SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { ensureLocalWorld } from "../src/identity.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";

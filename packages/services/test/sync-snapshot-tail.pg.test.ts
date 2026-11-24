@@ -1,3 +1,4 @@
+import type { SnapshotResponse } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -11,7 +12,7 @@ import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { SNAPSHOT_FIRST_PAGE_MESSAGES, SNAPSHOT_WINDOW, syncService } from "@trafficflow/services";
-import type { ServiceContext, SnapshotResponse } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
 
 /**
  * TAGGED MAIL BELOW THE SNAPSHOT WINDOW STILL REACHES THE MIRROR.

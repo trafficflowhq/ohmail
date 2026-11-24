@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 20_000 });
@@ -10,21 +11,24 @@ import {
   MutationRejectedError,
   OhmailEngine,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import {
   COMPOSER_KEY, EMPTY_COMPOSE, composeSessionId, resetComposerForTest, writeComposeDraft,
   writeComposeRow,
-} from "../app/shell/compose";
+} from "@ohmail/app-logic/writing/compose";
 import { typeInto as typeIntoEditor } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
+
+/** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
+const OWNER = "acc-typed-text";
 
 /**
  * TEXT A PERSON TYPED REACHES A SERVER DRAFT OR A NAMED LOCAL UNIT ON EVERY EXIT, and no exit
@@ -136,6 +140,8 @@ const msg = (id: string): EngineMessage => ({
   subject: `Subject ${id}`, from: { address: SENDER, name: "The colleague" },
   to: [{ address: "me@example.invalid", name: "Me" }],
   date: "2026-09-27T08:29:00.000Z", unread: false, updatedAt: "2026-09-27T08:29:00.000Z",
+  /* Made whole by the older tests' sorting (share write-1): the new reader reads a letter's tags and copies. */
+  cc: [], labels: [],
 } as unknown as EngineMessage);
 
 async function storeWith(ids: string[], rows: string[]): Promise<MirrorStore> {
@@ -224,10 +230,13 @@ function engineOver(s: MirrorStore, page: Page): OhmailEngine {
 async function mountShell(opts: {
   hash: string; messages?: string[]; rows?: string[]; store?: MirrorStore;
 }): Promise<Page> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   // The route the page OPENS on, before anything renders: a page does not arrive by navigating.
   window.location.hash = opts.hash;
+  /* The window's width, as the new frame's plan reads it (made whole by the older tests' sorting, share write-1). */
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
+  Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 768 });
   store = opts.store ?? await storeWith(opts.messages ?? [], opts.rows ?? []);
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -251,7 +260,7 @@ async function mountShell(opts: {
   for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
   await goHash(opts.hash);
   if (opts.hash === "#/compose") {
-    await waitFor(() => container.querySelector(".view-compose") !== null, "the compose view");
+    await waitFor(() => letterOpen(), "the compose view");
   }
   return page;
 }
@@ -293,20 +302,48 @@ async function goHash(hash: string): Promise<void> {
   for (let i = 0; i < 6; i += 1) await act(async () => { await Promise.resolve(); });
 }
 
-const q = <T extends Element>(sel: string): T | null => container.querySelector<T>(sel);
 
-async function typeInto(sel: string, value: string): Promise<void> {
-  const input = q<HTMLInputElement>(sel)!;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+/*
+ * THE NEW SHELL's PARTS, by role and name (re-pointed from today's ids and classes by the older tests' sorting, share
+ * write-1). The new letter is Write's: the region "New message", its combobox "To", its field "Subject", the lines
+ * that say what happened to it its statuses. The letters are opened at the Ohbox (History is not mounted; what these
+ * cases state is the reply's and its send's): the open letter the region "Open message", the reply's words its textbox
+ * "Reply body", its verbs the toolbar "Actions".
+ */
+const LETTER = '[role="region"][aria-label="New message"]';
+const letterOpen = (): boolean => container.querySelector(LETTER) !== null;
+const letterTo = (): HTMLInputElement | null => container.querySelector<HTMLInputElement>(`${LETTER} [role="combobox"][aria-label="To"]`);
+const letterSubject = (): HTMLTextAreaElement | HTMLInputElement | null =>
+  container.querySelector<HTMLTextAreaElement>(`${LETTER} textarea[aria-label="Subject"], ${LETTER} input[aria-label="Subject"]`);
+async function typeInto(field: HTMLInputElement | HTMLTextAreaElement | null, value: string): Promise<void> {
+  const input = field!;
+  const proto = input instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, "value")!.set!;
   await act(async () => {
     setter.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+/** To, as a person writes it: the address typed, then taken onto the line (Enter). */
+async function typeTo(value: string): Promise<void> {
+  await typeInto(letterTo(), value);
+  await act(async () => {
+    letterTo()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+}
+const OPEN = '[role="region"][aria-label="Open message"]';
+const ohboxRow = (id: string): HTMLElement | null =>
+  container.querySelector<HTMLElement>(`section[aria-label="Messages"] [role=option][data-id="${id}"]`);
+const replySurface = (): HTMLElement | null =>
+  container.querySelector<HTMLElement>(`${OPEN} [role="textbox"][aria-label="Reply body"]`);
+const replySend = (): HTMLButtonElement | null =>
+  [...container.querySelectorAll<HTMLElement>('[role="toolbar"][aria-label="Actions"]')]
+    .flatMap((t) => [...t.querySelectorAll<HTMLButtonElement>("button")]).find((b) => b.getAttribute("aria-label") === "Send") ?? null;
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+    // Keys go where the keys are: the focused row, the letter's or the reply's text.
+    (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
   await settleEditor();
 };
@@ -327,14 +364,17 @@ const pause = async (ms = 80): Promise<void> => {
 type DraftSave = Extract<EngineMutation, { kind: "draft_save" }>;
 const drafts = (): DraftSave[] => sent.filter((m): m is DraftSave => m.kind === "draft_save");
 const subjects = (): string[] => drafts().map((m) => m.subject);
-const subjectShown = (): string => q<HTMLInputElement>("#compose-subject")?.value ?? "";
-const notes = (): string[] => [...container.querySelectorAll(".send-note")].map((n) => n.textContent ?? "");
+const subjectShown = (): string => letterSubject()?.value ?? "";
+/** What the letter says of itself: its status lines, and the frame's reports. */
+const notes = (): string[] =>
+  [...document.querySelectorAll(`${LETTER} [role="status"], ${LETTER} [role="alert"], .fr-report [role="status"]`)].map((n) => n.textContent ?? "");
 
 beforeEach(() => {
   window.location.hash = "";
   window.localStorage.clear();
   window.sessionStorage.clear();
   resetComposerForTest();
+  setStorageOwner(OWNER);
   Object.defineProperty(window, "matchMedia", {
     configurable: true, writable: true,
     value: (query: string) => ({
@@ -369,6 +409,7 @@ afterEach(async () => {
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
   vi.restoreAllMocks();
+  resetStorageOwnerForTest();
 });
 
 const message = (subject: string, body = `${subject} words`) =>
@@ -383,17 +424,17 @@ describe("a tab that closes inside the autosave window", () => {
   it("leaves the last keystroke in the local unit, and the next open writes it to the account", async () => {
     newTab();
     const first = await mountShell({ hash: "#/compose" });
-    await typeInto("#compose-to", "sam@example.invalid");
-    await typeInto("#compose-subject", "Friday");
+    await typeTo("sam@example.invalid");
+    await typeInto(letterSubject(), "Friday");
     expect(drafts(), "the debounce did not hold — this case measures nothing").toHaveLength(0);
 
     await closeTab(first);
-    const slot = JSON.parse(window.localStorage.getItem("ohmail.ui.compose.local") ?? "{}") as { subject?: string };
+    const slot = JSON.parse(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}`) ?? "{}") as { subject?: string };
     expect(slot.subject, "the closing tab's last keystroke is not in the local unit").toBe("Friday");
     expect(drafts(), "the closed page reached the account after all").toHaveLength(0);
 
     newTab();
-    await mountShell({ hash: "#/ohbox" });
+    await mountShell({ hash: "#/history" });
     await waitFor(
       () => subjects().includes("Friday"), "the next open writing the message to the account",
       AUTOSAVE_DELAY_MS + 3000,
@@ -406,7 +447,7 @@ describe("a tab that closes inside the autosave window", () => {
     const first = await mountShell({ hash: "#/compose" });
     await closeTab(first);
     newTab();
-    await mountShell({ hash: "#/ohbox" });
+    await mountShell({ hash: "#/history" });
     await pause(AUTOSAVE_DELAY_MS + 400);
     expect(drafts(), "an untouched composer became a draft").toHaveLength(0);
   });
@@ -421,9 +462,9 @@ describe("a duplicated tab", () => {
   it("gets its own composer while the original is still open", async () => {
     const locks = installLocks();
     tabNamed("dup-x");
-    writeComposeDraft(message("A's message"));
-    composeSessionId();
-    writeComposeRow("row-a");
+    writeComposeDraft(message("A's message"), storageOwner());
+    composeSessionId(storageOwner());
+    writeComposeRow("row-a", storageOwner());
     locks.held.set(`${COMPOSER_KEY}.dup-x`, "the original tab");
     tabNamed("dup-x");
 
@@ -431,25 +472,25 @@ describe("a duplicated tab", () => {
     await pause();
     expect(subjectShown(), "the duplicate opened the other tab's message").toBe("");
 
-    await typeInto("#compose-to", "bo@example.invalid");
-    await typeInto("#compose-subject", "B's own");
+    await typeTo("bo@example.invalid");
+    await typeInto(letterSubject(), "B's own");
     await waitFor(() => drafts().length > 0, "the duplicate's own save", AUTOSAVE_DELAY_MS + 2000);
     expect(drafts()[0]!.draftId, "the duplicate wrote into the other tab's draft").toBeNull();
-    const aUnit = JSON.parse(window.localStorage.getItem("ohmail.ui.compose.local.dup-x") ?? "{}") as { subject?: string };
+    const aUnit = JSON.parse(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.dup-x`) ?? "{}") as { subject?: string };
     expect(aUnit.subject, "the duplicate wrote over the other tab's local unit").toBe("A's message");
-    expect(window.localStorage.getItem("ohmail.compose.row.local.dup-x")).toBe("row-a");
+    expect(window.localStorage.getItem(`ohmail.compose.row.${OWNER}.dup-x`)).toBe("row-a");
     expect(window.sessionStorage.getItem(COMPOSER_KEY)).not.toBe("dup-x");
   });
 
   it("puts a closed tab's waiting message in its own composer, never in the original's keys", async () => {
     const locks = installLocks();
-    window.localStorage.setItem("ohmail.ui.compose.local", JSON.stringify(message("left by a closed tab")));
+    window.localStorage.setItem(`ohmail.ui.compose.${OWNER}`, JSON.stringify(message("left by a closed tab")));
     locks.held.set(`${COMPOSER_KEY}.dup-z`, "the original tab, composing nothing");
     tabNamed("dup-z");
 
     await mountShell({ hash: "#/compose" });
     await waitFor(() => subjectShown() === "left by a closed tab", "the waiting message in the duplicate");
-    expect(window.localStorage.getItem("ohmail.ui.compose.local.dup-z"), "it landed in the original tab's keys")
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.dup-z`), "it landed in the original tab's keys")
       .toBeNull();
   });
 
@@ -457,8 +498,8 @@ describe("a duplicated tab", () => {
     const locks = installLocks();
     tabNamed("reload-y");
     const old = await mountShell({ hash: "#/compose" });
-    await typeInto("#compose-to", "sam@example.invalid");
-    await typeInto("#compose-subject", "mine across the reload");
+    await typeTo("sam@example.invalid");
+    await typeInto(letterSubject(), "mine across the reload");
     // A reload: `pagehide`, and the old page's lock outlives it by a moment.
     await closeTab(old);
     resetComposerForTest();
@@ -475,7 +516,7 @@ describe("a duplicated tab", () => {
       value: { request: () => never(), query: () => never() },
     });
     tabNamed("silent-x");
-    writeComposeDraft(message("restored all the same"));
+    writeComposeDraft(message("restored all the same"), storageOwner());
     tabNamed("silent-x");
 
     await mountShell({ hash: "#/compose" });
@@ -485,7 +526,7 @@ describe("a duplicated tab", () => {
   it("CONTROL: a reload of the same tab keeps its composer and its message", async () => {
     installLocks();
     tabNamed("reload-x");
-    writeComposeDraft(message("still mine"));
+    writeComposeDraft(message("still mine"), storageOwner());
     tabNamed("reload-x");
 
     await mountShell({ hash: "#/compose" });
@@ -504,20 +545,20 @@ describe("a tab that dies without pagehide", () => {
     newTab();
     const dead = await mountShell({ hash: "#/compose", rows: ["row-x"] });
     const deadId = window.sessionStorage.getItem(COMPOSER_KEY)!;
-    writeComposeDraft(message("lost in a crash"));
-    writeComposeRow("row-x");
+    writeComposeDraft(message("lost in a crash"), storageOwner());
+    writeComposeRow("row-x", storageOwner());
     await killTab(dead);
     window.navigator.locks && (window.navigator.locks as unknown as FakeLocks).held.clear();
 
     newTab();
-    await mountShell({ hash: "#/ohbox", rows: ["row-x"] });
+    await mountShell({ hash: "#/history", rows: ["row-x"] });
     await pause(200);
     await goHash("#/compose");
-    await waitFor(() => container.querySelector(".view-compose") !== null, "the compose view");
+    await waitFor(() => letterOpen(), "the compose view");
     expect(subjectShown(), "the dead tab's message was not offered back").toBe("lost in a crash");
     expect(document.body.textContent ?? "", "the message came back without a word")
-      .toContain(messages.compose.recoveredFromClosedTab);
-    expect(window.localStorage.getItem(`ohmail.ui.compose.local.${deadId}`), "the dead tab's unit outlived the adoption")
+      .toContain(messages.compose.recoveredFromClosedTab.replace(/\.$/, ""));
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.${deadId}`), "the dead tab's unit outlived the adoption")
       .toBeNull();
     await waitFor(() => drafts().length > 0, "the recovered message reaching the account", AUTOSAVE_DELAY_MS + 2000);
     expect(drafts()[0]!.draftId, "a second row for a message that already had one").toBe("row-x");
@@ -525,7 +566,7 @@ describe("a tab that dies without pagehide", () => {
 
   /** A unit as a tab of this bundle leaves it: written while that tab held its composer. */
   const unitOf = (id: string, subject: string, locked: boolean): void => {
-    window.localStorage.setItem(`ohmail.ui.compose.local.${id}`, JSON.stringify({
+    window.localStorage.setItem(`ohmail.ui.compose.${OWNER}.${id}`, JSON.stringify({
       ...message(subject), attachments: undefined, ...(locked ? { locked: true } : {}),
     }));
   };
@@ -539,7 +580,7 @@ describe("a tab that dies without pagehide", () => {
     await mountShell({ hash: "#/compose" });
     await pause(200);
     expect(subjectShown(), "an open tab's message was taken from it").toBe("");
-    expect(window.localStorage.getItem("ohmail.ui.compose.local.alive-x")).not.toBeNull();
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.alive-x`)).not.toBeNull();
   });
 
   it("CONTROL: a unit no lock ever covered (a tab of an older build, maybe still open) is left", async () => {
@@ -550,7 +591,7 @@ describe("a tab that dies without pagehide", () => {
     await mountShell({ hash: "#/compose" });
     await pause(200);
     expect(subjectShown(), "an unmarked unit was taken from a tab that may still be open").toBe("");
-    expect(window.localStorage.getItem("ohmail.ui.compose.local.older-x")).not.toBeNull();
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.older-x`)).not.toBeNull();
   });
 
   it("CONTROL: a recovery answered after the restore has run moves nothing", async () => {
@@ -568,7 +609,7 @@ describe("a tab that dies without pagehide", () => {
     await mountShell({ hash: "#/compose" });
     await pause(4_500);
     expect(subjectShown()).toBe("");
-    expect(window.localStorage.getItem("ohmail.ui.compose.local.dead-late"), "moved under a composer that was not told")
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.dead-late`), "moved under a composer that was not told")
       .not.toBeNull();
   });
 
@@ -576,12 +617,12 @@ describe("a tab that dies without pagehide", () => {
     installLocks();
     unitOf("dead-y", "left by a dead tab", true);
     newTab();
-    writeComposeDraft(message("already writing"));
+    writeComposeDraft(message("already writing"), storageOwner());
 
     await mountShell({ hash: "#/compose" });
     await pause(200);
     expect(subjectShown(), "the dead tab's unit replaced a message in progress").toBe("already writing");
-    expect(window.localStorage.getItem("ohmail.ui.compose.local.dead-y"), "it waits for the next composer")
+    expect(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}.dead-y`), "it waits for the next composer")
       .not.toBeNull();
   });
 });
@@ -594,7 +635,7 @@ describe("the body ceiling", () => {
    */
   it("keeps the composer open over a message too long to save, and Discard still lets it go", async () => {
     newTab();
-    writeComposeDraft({ ...message("Long"), body: "x".repeat(DRAFT_BODY_MAX_BYTES + 16) });
+    writeComposeDraft({ ...message("Long"), body: "x".repeat(DRAFT_BODY_MAX_BYTES + 16) }, storageOwner());
     await mountShell({ hash: "#/compose" });
     await waitFor(() => subjectShown() === "Long", "the long message restored");
 
@@ -606,36 +647,37 @@ describe("the body ceiling", () => {
       .toBe(true);
     expect(notes().some((n) => n.includes("Too long to save")), "the way to shorten it is not said").toBe(true);
 
-    await act(async () => { q<HTMLButtonElement>(".compose-foot .compose-cancel")!.click(); });
-    const confirm = [...container.querySelectorAll<HTMLButtonElement>(".compose-confirm button")]
-      .find((b) => b.textContent === "Discard message");
-    expect(confirm, "there is no way to discard it").toBeTruthy();
-    await act(async () => { confirm!.click(); });
+    // The letter's Discard acts in one press and offers Undo.
+    const discard = [...container.querySelectorAll<HTMLElement>('[role="toolbar"][aria-label="Send or discard"]')]
+      .flatMap((t) => [...t.querySelectorAll<HTMLButtonElement>("button")]).find((b) => b.getAttribute("aria-label") === "Discard");
+    expect(discard, "there is no way to discard it").toBeTruthy();
+    await act(async () => { discard!.click(); });
     await pause();
     expect(window.location.hash).toBe("#/ohbox");
   });
 });
 
 describe("a reply whose send was under way when its parent was deleted elsewhere", () => {
-  const laneBody = (): string | null => window.localStorage.getItem("ohmail.ui.reply:m1");
+  const laneBody = (): string | null => window.localStorage.getItem(replyDraftKey("m1", OWNER));
 
   async function replySentThenParentGone(text: string): Promise<void> {
     newTab();
     holdSends = true;
+    // The letter opened at the Ohbox (re-pointed: History is not mounted; the claim is the reply's and its send's).
     await mountShell({ hash: "#/ohbox", messages: ["m1", "m2"] });
-    await waitFor(() => container.querySelector('.view-ohbox .row[data-id="m1"]') !== null, "m1 in the Ohbox");
-    const row = container.querySelector<HTMLElement>('.view-ohbox .row[data-id="m1"]')!;
+    await waitFor(() => ohboxRow("m1") !== null, "m1 in the Ohbox");
+    const row = ohboxRow("m1")!;
     await act(async () => {
       row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await key("r");
-    const surface = container.querySelector<HTMLElement>(".read-col .msg .rte-surface, .reader .msg .rte-surface");
+    const surface = replySurface();
     expect(surface, "the reply editor never mounted").not.toBeNull();
     await act(async () => { typeIntoEditor(surface!, text); });
     await waitFor(() => (laneBody() ?? "").includes(text), "the reply lane holding the text");
-    await act(async () => { q<HTMLButtonElement>(".reply-actions .btn.primary")!.click(); });
+    await act(async () => { replySend()!.click(); });
     await waitFor(() => heldSend !== null, "the send on the wire");
 
     pending = [{ type: "message", op: "delete", id: "m1", seq: ++seq, updatedAt: NOW.toISOString(), entity: null } as unknown as SyncChange];
@@ -666,19 +708,21 @@ describe("a reply whose send was under way when its parent was deleted elsewhere
   it("is saved as a draft when the send restored at the next open is refused for good", async () => {
     newTab();
     sendMode = "lose";
+    // The letter opened at the Ohbox (re-pointed: History is not mounted; the claim is the reply's and its send's).
     const first = await mountShell({ hash: "#/ohbox", messages: ["m1", "m2"] });
     const kept = store!;
-    const row = container.querySelector<HTMLElement>('.view-ohbox .row[data-id="m1"]')!;
+    await waitFor(() => ohboxRow("m1") !== null, "m1 in the Ohbox");
+    const row = ohboxRow("m1")!;
     await act(async () => {
       row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await key("r");
-    const surface = container.querySelector<HTMLElement>(".read-col .msg .rte-surface, .reader .msg .rte-surface");
+    const surface = replySurface();
     await act(async () => { typeIntoEditor(surface!, "the answer from yesterday"); });
     await waitFor(() => (laneBody() ?? "").includes("the answer from yesterday"), "the reply lane");
-    await act(async () => { q<HTMLButtonElement>(".reply-actions .btn.primary")!.click(); });
+    await act(async () => { replySend()!.click(); });
     await waitFor(() => sent.some((m) => m.kind === "mail_send"), "the send reaching the wire");
     await pause(100);
     await killTab(first);
@@ -690,7 +734,7 @@ describe("a reply whose send was under way when its parent was deleted elsewhere
     sendMode = "refuse";
     sent = [];
     newTab();
-    await mountShell({ hash: "#/ohbox", store: kept });
+    await mountShell({ hash: "#/history", store: kept });
     await waitFor(() => sent.some((m) => m.kind === "mail_send"), "the restored send replayed", 6000);
     await waitFor(() => drafts().length > 0, "the lane handed back after its restored send was refused", 6000);
     expect(drafts()[0]!.body).toContain("the answer from yesterday");

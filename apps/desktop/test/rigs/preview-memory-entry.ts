@@ -8,9 +8,9 @@
 import { BODIES_IDS_MAX, OhmailEngine } from "@ohmail/client-engine";
 import { bridgeTransportReading, createEngineAdapter } from "../../src/bridge-fetch.js";
 import { installOfflineGuard } from "../../src/offline-guard.js";
-import { enableDesktopAttachments } from "../../../webapp/app/shell/open-attachment.js";
+import { desktopFileShell, enableDesktopAttachments } from "../../../webapp/app/shell/open-attachment.js";
 import { ensurePreview } from "../../../webapp/app/shell/attachments.js";
-import { buildMailDocument, FRAME_SANDBOX, sanitizeMailHtml } from "../../../webapp/app/components/MessageBody.js";
+import { buildMailDocument, FRAME_SANDBOX, sanitizeMailHtml } from "../../../../packages/letter-body/src/MessageBody.js";
 
 installOfflineGuard(globalThis as never, "win32");
 enableDesktopAttachments();
@@ -18,7 +18,7 @@ enableDesktopAttachments();
 async function open(id: string, how: "preview" | "bytes"): Promise<Record<string, unknown>> {
   const engine = new OhmailEngine({ adapter: createEngineAdapter() });
   await engine.loadAttachments("m1");
-  if (how === "preview") await ensurePreview(engine, "m1", id);
+  if (how === "preview") await ensurePreview(engine, desktopFileShell(), "m1", id);
   else await engine.openAttachment("m1", id);
   const held = engine.attachmentsOf("m1", { includeInlineParts: true });
   const item = held.state === "ready" ? held.items.find((i) => i.id === id) : undefined;

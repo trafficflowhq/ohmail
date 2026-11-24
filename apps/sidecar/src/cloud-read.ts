@@ -4,10 +4,14 @@ import { messageBodies, messages } from "@trafficflow/db/mail";
 import {
   messageService, threadService, searchService, mailboxService, tagsService, rulesService,
   syncService, SEARCH_SORTS, isSearchSort, SEARCH_PARTS, isSearchParts, ServiceError,
-  ADDRESS_DIRECTIONS, isAddressSearchDirection,
+  ADDRESS_DIRECTIONS, isAddressSearchDirection, namedCalendarSpan,
   type AddressSearchOptions,
   type SearchFilters, type SearchOptions, type ServiceContext,
 } from "@trafficflow/services/mail";
+import { calendarFeed } from "@trafficflow/services/calendar";
+import { hostedDevices } from "./cloud-mirror-devices.js";
+import { carryBinding, isCalendarRecordKind } from "@trafficflow/db";
+import type { AnswerOf, OnlyNamesOf, RouteName } from "@ohmail/wire";
 
 /**
  * The Cloud-mode local read surface — the full mail READ routes, served from the mirror in PGlite.
@@ -35,6 +39,16 @@ export interface ReadRoute {
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+/**
+ * A 2xx OF A ROUTE THE WINDOW'S CLIENT IS BOUND TO through `@ohmail/wire`. On a Cloud account this
+ * door answers that client instead of the account's server, so it answers through the same type
+ * and under the same names (`packages/api`'s `answer`, whose two calls this repeats): a field
+ * renamed on the wire, in the server and in the client together does not compile here until it
+ * is renamed here too. Nothing but the types: the bytes are {@link json}'s.
+ */
+const answer = <R extends RouteName>() =>
+  <B extends AnswerOf<R>>(body: B & OnlyNamesOf<B, AnswerOf<R>>): Response => json(body);
+
 /** A numeric query param, or undefined when absent/blank (the service applies its own default). */
 const num = (v: string | null): number | undefined => (v != null && v !== "" ? Number(v) : undefined);
 
@@ -43,12 +57,16 @@ function searchFiltersOf(url: URL): SearchFilters {
   const filters: SearchFilters = {};
   const folder = url.searchParams.get("folder");
   const sender = url.searchParams.get("sender");
+  const to = url.searchParams.get("to");
+  const party = url.searchParams.get("party");
   const dateFrom = url.searchParams.get("dateFrom");
   const dateTo = url.searchParams.get("dateTo");
   const unread = boolParam(url.searchParams.get("unread"));
   const hasAttachments = boolParam(url.searchParams.get("hasAttachments"));
   if (folder) filters.folder = folder;
   if (sender) filters.sender = sender;
+  if (to) filters.to = to;
+  if (party) filters.party = party;
   if (dateFrom) filters.dateFrom = dateFrom;
   if (dateTo) filters.dateTo = dateTo;
   if (unread !== undefined) filters.unread = unread;
@@ -81,17 +99,13 @@ function boolParam(v: string | null): boolean | undefined {
  * read it (so the wire item carries the left join's `text: ""`) and present when the presence query
  * ran (so the id is admitted) would be answered as an ordinary empty body and cached as settled,
  * the very failure this file prevents in a narrower window. One transaction, `read only` at the same
- * isolation, so the two answers describe one instant.
+ * isolation, so the two answers describe one instant. The transaction becomes the snapshot's
+ * handle through `carryBinding`: it carries the binding of the context it was opened on, or it is
+ * refused.
  */
 async function inSnapshot<T>(ctx: ServiceContext, fn: (snap: ServiceContext) => Promise<T>): Promise<T> {
-  const tx = ctx.db as unknown as {
-    transaction<R>(
-      run: (t: ServiceContext["db"]) => Promise<R>,
-      opts: { isolationLevel: "repeatable read"; accessMode: "read only" },
-    ): Promise<R>;
-  };
-  return tx.transaction(
-    async (t) => fn({ ...ctx, db: t }),
+  return ctx.db.transaction(
+    async (t) => fn({ ...ctx, db: carryBinding(ctx.db, t) }),
     { isolationLevel: "repeatable read", accessMode: "read only" },
   );
 }
@@ -133,12 +147,22 @@ export const READ_ROUTES: ReadRoute[] = [
       const limit = num(limitRaw);
       // The labelled tail alone, a closed set at the read exactly as the local door's route reads
       // it; anything else is the ordinary walk. Dropped, the window's tail rehydrate ran that walk.
-      const phase = url.searchParams.get("phase") === "tail" ? "tail" as const : undefined;
-      return json(
+      // And the calendar's phase alone: this copy keeps the hosted account's calendar.
+      const asked = url.searchParams.get("phase");
+      const phase = asked === "tail" ? "tail" as const : asked === "calendar" ? "calendar" as const : undefined;
+      // The kinds named matter only to the calendar's gate, so only the calendar's are kept.
+      const types = (url.searchParams.get("types") ?? "").split(",").map((t) => t.trim()).filter(isCalendarRecordKind);
+      const span = phase === "calendar" ? namedCalendarSpan(url.searchParams.get("from"), url.searchParams.get("to")) : undefined;
+      return answer<"GET /sync/snapshot">()(
         await syncService.getSnapshot(ctx, {
           ...(cursor ? { cursor } : {}),
           ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
           ...(phase ? { phase } : {}),
+          ...(types.length > 0 ? { types } : {}),
+          calendar: calendarFeed,
+          // The hosted account's devices, as the mirror last read them (`cloud-mirror-devices.ts`).
+          devices: hostedDevices,
+          ...(span ? { span } : {}),
         }),
       );
     },
@@ -177,19 +201,19 @@ export const READ_ROUTES: ReadRoute[] = [
           const held = await mirroredBodyIds(snap, page.items.map((i) => i.messageId));
           return page.items.filter((i) => held.has(i.messageId));
         });
-        return json({ items, nextCursor: null });
+        return answer<"GET /messages/bodies">()({ items, nextCursor: null });
       }
       const page = await messageService.getBodies(ctx, {
         ...(after ? { after } : {}),
         ...(limit !== undefined ? { limit } : {}),
       });
-      return json({ items: page.items, nextCursor: page.nextCursor });
+      return answer<"GET /messages/bodies">()({ items: page.items, nextCursor: page.nextCursor });
     },
   },
   {
     method: "GET",
     pattern: "/messages/:id",
-    handler: async (_req, ctx, params) => json(await messageService.get(ctx, params.id!)),
+    handler: async (_req, ctx, params) => answer<"GET /messages/:id">()(await messageService.get(ctx, params.id!)),
   },
   /**
    * One body — from the mirror when the mirror has it, and NOT INVENTED when it does not. The
@@ -206,7 +230,7 @@ export const READ_ROUTES: ReadRoute[] = [
     pattern: "/messages/:id/body",
     handler: async (_req, ctx, params) => {
       const id = params.id!;
-      return json(await inSnapshot(ctx, async (snap) => {
+      return answer<"GET /messages/:id/body">()(await inSnapshot(ctx, async (snap) => {
         if (!(await mirroredBodyIds(snap, [id])).has(id)) {
           throw new ServiceError("not_found", 404, "message not found");
         }
@@ -255,7 +279,7 @@ export const READ_ROUTES: ReadRoute[] = [
           direction: directionRaw,
           ...(addrLimit !== undefined ? { limit: addrLimit } : {}),
         };
-        return json(await searchService.searchByAddress(ctx, addrOpts));
+        return answer<"GET /search">()(await searchService.searchByAddress(ctx, addrOpts));
       }
 
       const q = url.searchParams.get("q") ?? "";
@@ -295,7 +319,7 @@ export const READ_ROUTES: ReadRoute[] = [
         ...(partsRaw !== null ? { parts: partsRaw } : {}),
         ...(cursor ? { cursor } : {}),
       };
-      return json(await searchService.search(ctx, opts));
+      return answer<"GET /search">()(await searchService.search(ctx, opts));
     },
   },
   {

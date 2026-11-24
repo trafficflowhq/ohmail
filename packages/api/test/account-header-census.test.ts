@@ -444,6 +444,7 @@ describe("the sign-in and token routes name the credential, not the session", ()
    * gives each route's real closure source, and a route that reaches any session-minting seam is
    * a credential route by construction. Add a route that calls `webSession(...)` and this goes red
    * until it carries the flag; delete a seam and it goes red for naming one that no longer mints.
+   * Password reset also uses the flag to suppress attribution to an ambient session.
    *
    * **The seams are the property, and they are named rather than pattern-matched.** A list of
    * FUNCTIONS THAT MINT is a fact about the code that changes when the code does; a list of route
@@ -453,7 +454,7 @@ describe("the sign-in and token routes name the credential, not the session", ()
    * answer here fails LOUDLY, in a test, and a wrong answer in `handle` would fail silently on a
    * sign-in response. Derivation belongs where it is checked, not where it is served.
    */
-  it("every session-minting route carries the flag, and only those", () => {
+  it("every public session minter and password reset ceremony carries the flag, and only those", () => {
     /** Route-level seams that mint or rotate a session from a credential in the request. */
     const MINTING_SEAMS = [
       "webSession(",           // the full-session route helper (2FA verifies, recovery)
@@ -461,6 +462,7 @@ describe("the sign-in and token routes name the credential, not the session", ()
       "enrollmentResult(",     // the factor-enrolment helper — exchanges into a FULL session
       "sessionMinter(",        // the paired-device redeem's minter
       ".refresh(",             // POST /auth/refresh
+      "rotateNativeRefresh(",  // the native rotation: POST /auth/refresh's body branch and POST /pair/handoff
       ".token(",               // POST /oauth/token
       ".claimDesktopLink(",    // POST /auth/desktop-claim
       ".claimDesktopApproval(", // POST /auth/desktop-approval/claim
@@ -485,8 +487,20 @@ describe("the sign-in and token routes name the credential, not the session", ()
     // So the property is "mints from a body credential AND is public", and the public half is what
     // makes an ambient session capable of disagreeing with the credential in the first place. That
     // is the whole reason this flag exists.
-    const derived = apiRoutes.filter((r) => mints(r).length > 0 && r.options?.public === true)
+    const publicMinters = apiRoutes.filter((r) => mints(r).length > 0 && r.options?.public === true)
       .map((r) => `${r.method} ${r.pattern}`).sort();
+
+    // These responses deliberately name no account. Requesting a link must keep the same answer
+    // for known and unknown addresses. Completing a reset revokes sessions and leaves sign-in
+    // to the usual ceremony, so neither response should inherit the caller's session account.
+    const resetRoutes = apiRoutes.filter((r) =>
+      /\.(requestPasswordReset|completePasswordReset)\(/.test(r.handler.toString()));
+    const resetKeys = resetRoutes.map((r) => `${r.method} ${r.pattern}`).sort();
+    expect(resetKeys).toEqual(["POST /auth/password/reset", "POST /auth/password/reset/complete"]);
+    for (const route of resetRoutes) {
+      expect(route.options?.public).toBe(true);
+      expect(mints(route)).toEqual([]);
+    }
 
     // Named so the exclusion is visible rather than implied: these mint and are deliberately out.
     const protectedMinters = apiRoutes.filter((r) => mints(r).length > 0 && r.options?.public !== true)
@@ -500,14 +514,13 @@ describe("the sign-in and token routes name the credential, not the session", ()
 
     // Anti-vacuity, both ways: a `toString` that stopped returning source, or a seam list that
     // matched nothing, would make this pass on an empty set.
-    expect(derived.length, "no route appears to mint a session — the derivation is broken").toBeGreaterThan(5);
+    expect(publicMinters.length, "no route appears to mint a session — the derivation is broken").toBeGreaterThan(5);
 
     expect(
       flagged,
-      "a route whose handler reaches a session-minting seam must carry `credentialSubject`, and " +
-        "a route that carries it must reach one. This set is DERIVED from the handlers; if it " +
-        "disagrees with the flags, the flags are the thing to change.",
-    ).toEqual(derived);
+      "public session minters and password reset ceremonies must carry `credentialSubject`; " +
+        "the set is derived from the route handlers",
+    ).toEqual([...publicMinters, ...resetKeys].sort());
 
     // Every seam must still be reachable — a renamed helper would silently shrink the derived set
     // and this census would agree with the flags while covering less.

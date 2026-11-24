@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
+import { getByRole, queryByRole } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell,
+  ISO, act, answerConsentWith, answerSyncWith, installShellEnv, liveAccountResponse, mailbox, mountShell,
   teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 
@@ -82,7 +83,7 @@ beforeEach(() => {
   fetched = [];
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const inner = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) => {
+  const respond = async (input: unknown, init?: unknown): Promise<Response> => {
     const url = String(input);
     const list = /\/messages\/([^/?]+)\/attachments(?:$|\?)/.exec(url);
     if (list) {
@@ -101,7 +102,9 @@ beforeEach(() => {
       return new Response(new Blob(["x"]), { status: 200, headers: { "content-type": "application/octet-stream" } });
     }
     return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-  }) as unknown as typeof globalThis.fetch;
+  };
+  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) =>
+    liveAccountResponse(await respond(input, init))) as unknown as typeof globalThis.fetch;
   (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => "blob:harness/1";
   (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
 });
@@ -116,21 +119,26 @@ const goHash = async (hash: string): Promise<void> => {
   await tick(0);
   await tick(500);
 };
-const key = async (k: string): Promise<void> => {
-  await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
-  });
-  await tick(500);
-};
+/** The frame's reading column, where the new shell reads an open letter. */
+const READING = '[role="region"][aria-label="Open message"]';
 const scopeOf = (sel: string): Element => {
   const el = document.querySelector(sel);
   expect(el, `${sel} is not on screen`).not.toBeNull();
   return el!;
 };
-/** The file names one surface's strips show, stem and extension joined. */
-const tilesIn = (scope: Element): string[] =>
-  [...scope.querySelectorAll(".att-strip .att-name")].map((n) =>
-    `${n.querySelector(".att-stem")?.textContent ?? ""}${n.querySelector(".att-ext")?.textContent ?? ""}`);
+/** A button's accessible name: its label, else its words. */
+const nameOf = (b: Element): string => b.getAttribute("aria-label") ?? (b.textContent ?? "").trim();
+/** The file names one surface's letter files show, in their order: each ready file offers its own "Download <name>"
+ *  (the set's own "Download all" is no file). */
+const tilesIn = (scope: Element): string[] => {
+  const names: string[] = [];
+  for (const b of scope.querySelectorAll("button")) {
+    if (nameOf(b) === "Download all") continue;
+    const m = /^Download (.+)$/.exec(nameOf(b));
+    if (m && !names.includes(m[1]!)) names.push(m[1]!);
+  }
+  return names;
+};
 
 async function open(): Promise<void> {
   await mountShell([mailbox()]);
@@ -139,11 +147,14 @@ async function open(): Promise<void> {
 
 /** A tile a person can use: its name, its size, and a press that fetches the bytes. */
 async function expectUsableTile(scope: Element, filename: string, attachmentId: string): Promise<void> {
-  const tile = [...scope.querySelectorAll<HTMLElement>(".att-item")]
-    .find((t) => (t.textContent ?? "").includes(filename.replace(/\.[^.]+$/, "")));
+  const named = (want: string): HTMLButtonElement[] =>
+    [...scope.querySelectorAll<HTMLButtonElement>("button")].filter((b) => nameOf(b) === want);
+  /* The tile: the press on the file itself (a look where the file has one, else its download), its face its name and size. */
+  const tile = named(`Preview ${filename}`)[0] ?? named(`Download ${filename}`)[0];
   expect(tile, `no tile for ${filename}`).toBeTruthy();
-  expect(tile!.querySelector(".att-state")?.textContent ?? "", `${filename} states no size`).toMatch(/\d/);
-  const save = tile!.querySelector<HTMLButtonElement>("button.att-side") ?? tile!.querySelector<HTMLButtonElement>("button.att-tile");
+  expect((tile!.textContent ?? "").replace(filename, ""), `${filename} states no size`).toMatch(/\d/);
+  /* Its save: the file's own Download beside the tile (the last control so named). */
+  const save = named(`Download ${filename}`).at(-1);
   expect(save, `${filename} has nothing to press`).toBeTruthy();
   await act(async () => { save!.click(); });
   await tick(500);
@@ -157,9 +168,7 @@ describe("a file is listed on the open message, whatever the body's type", () =>
     { id: "h1", names: ["invoice.pdf", "terms.txt", "logo.png"] },
   ];
   /* History reads a routed letter in its own column, Search in the reader over it. */
-  const READERS: Array<[view: string, pane: string]> = [
-    ["history", ".view-history .read-col"], ["search", "[role=dialog].reader"],
-  ];
+  const READERS = ["history", "search"];
 
   for (const s of SHAPES) {
     it(`${s.id}: the Ohbox column lists it (the control, green before the fix)`, async () => {
@@ -169,11 +178,11 @@ describe("a file is listed on the open message, whatever the body's type", () =>
       await expectUsableTile(document.body, s.names[0]!, FILES[s.id]!.find((f) => f.filename === s.names[0])!.id as string);
     }, 30_000);
 
-    for (const [view, pane] of READERS) {
+    for (const view of READERS) {
       it(`${s.id}: the reading on ${view} lists it, asked once`, async () => {
         await open();
         await goHash(`#/${view}/m/${s.id}`);
-        const reader = scopeOf(pane);
+        const reader = scopeOf(READING);
         expect(tilesIn(reader), `the reader over ${view} shows no file for ${s.id}`).toEqual(s.names);
         expect(listed.filter((id) => id === s.id), "the list was asked more than once").toHaveLength(1);
         await expectUsableTile(reader, s.names[0]!, FILES[s.id]!.find((f) => f.filename === s.names[0])!.id as string);
@@ -184,28 +193,31 @@ describe("a file is listed on the open message, whatever the body's type", () =>
   it("a view's own column lists it: Tag, on its own cursor", async () => {
     await open();
     await goHash("#/tag/tg1");
-    await key("j");
-    const view = scopeOf(".view-tag");
+    await act(async () => getByRole(document.body, "option", { name: /subject of t1/ }).click());
+    await tick(500);
+    const view = scopeOf(READING);
     expect(tilesIn(view), "the Tag column shows no file").toEqual(["notes.txt"]);
   }, 30_000);
 
   it("a view's own column lists it: Folder, on its own cursor", async () => {
     await open();
     await goHash("#/folder/fd1");
-    await key("j");
-    const view = scopeOf(".view-folder");
+    await act(async () => getByRole(document.body, "option", { name: /subject of f1/ }).click());
+    await tick(500);
+    const view = scopeOf(READING);
     expect(tilesIn(view), "the Folder column shows no file").toEqual(["report.txt"]);
   }, 30_000);
 
   it("a message already in the mirror lists its file on every open, the list asked again after a close", async () => {
     await open();
-    await goHash("#/search/m/t1");
-    expect(tilesIn(scopeOf("[role=dialog].reader"))).toEqual(["notes.txt"]);
-    // Settings shows no message, so nothing holds `t1` there and its list is let go.
-    await goHash("#/settings");
-    expect(document.querySelector(".att-strip"), "a strip outlived every pane").toBeNull();
-    await goHash("#/search/m/t1");
-    expect(tilesIn(scopeOf("[role=dialog].reader")), "a re-open shows no file").toEqual(["notes.txt"]);
+    /* Opened where the new shell reads a letter, the Ohbox's reading column (Search is not mounted yet). */
+    await goHash("#/ohbox/m/t1");
+    expect(tilesIn(scopeOf(READING))).toEqual(["notes.txt"]);
+    // Write shows no message, so nothing holds `t1` there and its list is let go.
+    await goHash("#/write");
+    expect(tilesIn(document.body), "a strip outlived every pane").toEqual([]);
+    await goHash("#/ohbox/m/t1");
+    expect(tilesIn(scopeOf(READING)), "a re-open shows no file").toEqual(["notes.txt"]);
     expect(listed.filter((id) => id === "t1"), "the close did not let the list go, or the re-open did not ask").toHaveLength(2);
   }, 30_000);
 });
@@ -214,41 +226,40 @@ describe("a preview belongs to the pane that shows its message", () => {
   it("the look opened in the reader stands, and goes when the reader closes", async () => {
     await open();
     await goHash("#/search/m/p1");
-    const tile = scopeOf("[role=dialog].reader").querySelector<HTMLButtonElement>("button.att-tile");
+    const tile = getByRole(scopeOf(READING) as HTMLElement, "button", { name: "Preview scan.png" });
     expect(tile, "the reader shows no tile").toBeTruthy();
     await act(async () => { tile!.click(); });
     await tick(500);
-    expect(document.querySelector(".ap-panel"), "the look closed itself as it opened").not.toBeNull();
+    expect(queryByRole(document.body, "dialog", { name: "Attachment preview" }), "the look closed itself as it opened").not.toBeNull();
     await goHash("#/ohbox");
-    expect(document.querySelector(".ap-panel"), "the look outlived the reader it was opened in").toBeNull();
+    expect(queryByRole(document.body, "dialog", { name: "Attachment preview" }), "the look outlived the reader it was opened in").toBeNull();
     // Closed, not merely undrawn: a look left standing over a released list comes back on a re-open.
     await goHash("#/search/m/p1");
-    expect(tilesIn(scopeOf("[role=dialog].reader"))).toEqual(["scan.png"]);
-    expect(document.querySelector(".ap-panel"), "a closed look came back when the message was opened again").toBeNull();
+    expect(tilesIn(scopeOf(READING))).toEqual(["scan.png"]);
+    expect(queryByRole(document.body, "dialog", { name: "Attachment preview" }), "a closed look came back when the message was opened again").toBeNull();
   }, 30_000);
 
   it("a move inside one conversation closes the look and keeps both files listed", async () => {
     await open();
     await goHash("#/ohbox/m/q2");
     expect(tilesIn(document.body), "the conversation does not show both files").toEqual(["draft.png", "final.png"]);
-    const sibling = [...document.querySelectorAll<HTMLButtonElement>(".att-strip button.att-tile")]
-      .find((b) => (b.textContent ?? "").includes("draft"));
+    const sibling = getByRole(document.body, "button", { name: "Preview draft.png" });
     await act(async () => { sibling!.click(); });
     await tick(500);
-    expect(document.querySelector(".ap-panel"), "the sibling's look did not open").not.toBeNull();
+    expect(queryByRole(document.body, "dialog", { name: "Attachment preview" }), "the sibling's look did not open").not.toBeNull();
     await goHash("#/ohbox/m/q1");
-    expect(document.querySelector(".ap-panel"), "a selection move left the look standing").toBeNull();
+    expect(queryByRole(document.body, "dialog", { name: "Attachment preview" }), "a selection move left the look standing").toBeNull();
     expect(tilesIn(document.body), "a move inside the conversation lost a file").toEqual(["draft.png", "final.png"]);
   }, 30_000);
 
   it("the Ohbox's own look still closes on a selection move (the control)", async () => {
     await open();
     await goHash("#/ohbox/m/p1");
-    const tile = document.querySelector<HTMLButtonElement>(".att-strip button.att-tile");
+    const tile = getByRole(document.body, "button", { name: "Preview scan.png" });
     await act(async () => { tile!.click(); });
     await tick(500);
-    expect(document.querySelector(".ap-panel")).not.toBeNull();
+    expect(queryByRole(document.body, "dialog", { name: "Attachment preview" })).not.toBeNull();
     await goHash("#/ohbox/m/t1");
-    expect(document.querySelector(".ap-panel"), "a selection move left the look standing").toBeNull();
+    expect(queryByRole(document.body, "dialog", { name: "Attachment preview" }), "a selection move left the look standing").toBeNull();
   }, 30_000);
 });

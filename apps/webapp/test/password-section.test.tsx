@@ -118,7 +118,7 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
 }
 
 const buttonByText = (c: ParentNode, text: string): HTMLButtonElement => {
-  const b = [...c.querySelectorAll("button")].find((x) => x.textContent?.trim() === text);
+  const b = [...c.querySelectorAll("button")].find((x) => x.querySelector("span")?.textContent?.trim() === text || x.textContent?.trim() === text);
   expect(b, `a button reading "${text}"`).toBeTruthy();
   return b!;
 };
@@ -134,7 +134,7 @@ async function fill(c: ParentNode, current: string, next: string, repeat = next)
 }
 
 async function verifyCode(c: ParentNode): Promise<void> {
-  await type(c.querySelector<HTMLInputElement>("#stepup-code")!, "123456");
+  await type(c.querySelector<HTMLInputElement>('[role="dialog"] input[autocomplete="one-time-code"]')!, "123456");
   await click(buttonByText(c, en.devices.stepUpVerify));
 }
 
@@ -148,18 +148,63 @@ describe("changing the password", () => {
     await fill(c, CURRENT, NEXT);
     await click(buttonByText(c, en.passwordChange.submit));
 
-    expect(c.querySelector('[data-testid="step-up-prompt"]'), "the refusal asks for the factor").toBeTruthy();
-    // The typed values left the page with the attempt; the factor sends what was parked.
-    expect(c.querySelector("#pwc-current")).toBeNull();
+    const dialog = c.querySelector('[role="dialog"]');
+    expect(dialog, "the refusal opens the factor dialog").toBeTruthy();
+    // The form stays behind the dialog with its values cleared. The factor sends what was parked.
+    expect(fields(c).map((field) => field.value)).toEqual(["", "", ""]);
     await verifyCode(c);
 
     expect(changes().map((r) => r.body)).toEqual([
       { currentPassword: CURRENT, newPassword: NEXT }, { currentPassword: CURRENT, newPassword: NEXT },
     ]);
     expect(calls.filter((r) => r.url.includes("/api/auth/step-up/"))).toHaveLength(1);
-    expect(c.querySelector('[data-testid="step-up-prompt"]')).toBeNull();
+    expect(c.querySelector('[role="dialog"]')).toBeNull();
     expect(c.textContent).toContain("2 other sessions were signed out");
     expect(fields(c).map((f) => f.value)).toEqual(["", "", ""]);
+  });
+
+  it.each(["Escape", "outside press"])("%s dismisses verification and restores the opening press", async (dismiss) => {
+    answers["POST /api/auth/password"] = [STEP_UP_REQUIRED];
+    const c = await mount();
+    await fill(c, CURRENT, NEXT);
+    const opener = buttonByText(c, en.passwordChange.submit);
+    opener.focus();
+    await click(opener);
+    const dialog = c.querySelector<HTMLElement>('[role="dialog"]')!;
+    const field = dialog.querySelector("input");
+    expect(document.activeElement).toBe(field);
+    await act(async () => {
+      if (dismiss === "Escape") {
+        field!.dispatchEvent(new KeyboardEvent("keydown", { key: dismiss, bubbles: true }));
+      } else {
+        c.querySelector("[data-scrim]")!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      }
+    });
+    expect(c.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    expect(changes()).toHaveLength(1);
+    expect(fields(c).map((input) => input.value)).toEqual(["", "", ""]);
+  });
+
+  it("a wrong code and a lockout stay in the dialog without replaying the change", async () => {
+    answers["POST /api/auth/password"] = [STEP_UP_REQUIRED];
+    answers["POST /api/auth/step-up/totp"] = [
+      { status: 401, body: { error: { code: "credential_refused", message: "factor refused" } } },
+      { status: 423, body: { error: { code: "account_locked", message: "locked", details: { retryAfter: 75 } } } },
+    ];
+    const c = await mount();
+    await fill(c, CURRENT, NEXT);
+    await click(buttonByText(c, en.passwordChange.submit));
+    await verifyCode(c);
+    expect(c.querySelector('[role="dialog"]')?.textContent).toContain(en.stepUp.badCode);
+    await verifyCode(c);
+    expect(c.querySelector('[role="dialog"]')?.textContent).toContain("2 minutes");
+    expect(changes()).toHaveLength(1);
+    const factors = calls.filter((r) => r.url.includes("/api/auth/step-up/totp"));
+    expect(factors.map(({ method, body }) => ({ method, body }))).toEqual([
+      { method: "POST", body: { code: "123456" } },
+      { method: "POST", body: { code: "123456" } },
+    ]);
   });
 
   it("a second step-up refusal after the factor is the sign-in sentence, never a second prompt", async () => {
@@ -171,7 +216,7 @@ describe("changing the password", () => {
     await verifyCode(c);
 
     expect(changes()).toHaveLength(2);
-    expect(c.querySelector('[data-testid="step-up-prompt"]')).toBeNull();
+    expect(c.querySelector('[role="dialog"]')).toBeNull();
     expect(c.textContent).toContain(en.devices.stepUpExpired);
   });
 
@@ -190,7 +235,7 @@ describe("changing the password", () => {
     expect(calls.filter((r) => r.url.includes("/auth/refresh")), "a verdict was renewed and sent again").toEqual([]);
     expect(changes()).toHaveLength(1);
     expect(window.location.href).toBe(where);
-    expect(c.querySelector('[data-testid="step-up-prompt"]')).toBeNull();
+    expect(c.querySelector('[role="dialog"]')).toBeNull();
     expect(fields(c).map((f) => f.value)).toEqual(["", "", ""]);
   });
 
@@ -215,7 +260,7 @@ describe("changing the password", () => {
     await click(buttonByText(c, en.passwordChange.submit));
 
     expect(c.textContent).toContain("Try again in 10 minutes");
-    expect(c.querySelector('[data-testid="step-up-prompt"]')).toBeNull();
+    expect(c.querySelector('[role="dialog"]')).toBeNull();
     expect(fields(c).map((f) => f.value)).toEqual(["", "", ""]);
   });
 
@@ -243,22 +288,15 @@ describe("changing the password", () => {
 });
 
 describe("where the pane is reached", () => {
-  it("Settings → Account renders it above the account's own cards, on every build", () => {
-    /* Comments blanked: a mention in prose is not a mount. `CloudShell` serves the managed and
-       the self-hosted build alike (`SELF_HOST_BUILD` chooses nothing here). */
-    const src = readFileSync(resolve(process.cwd(), "apps/webapp/app/(product)/mailbox/CloudShell.tsx"), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[^\n]*?\/\/.*$/gm, "");
-    expect(src).toContain("accountSection={<><PasswordSection /><AccountSection /></>}");
-  });
 
   it("the wall opens it by a press, and takes no password before the press", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock.js");
-    const c = await mountNode(h(AccessLock, {
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute.js");
+    const c = await mountNode(h(WallRoute, {
       facts: { reason: "payment_required" as const, manageUrl: "https://manage.example/t" },
     }));
     expect(c.querySelectorAll("input[type=password]")).toHaveLength(0);
-    // The wall's three actions are unchanged; the door stands beside the way out.
-    expect([...c.querySelectorAll(".wall-act")].map((b) => b.textContent))
+    // The wall's ways out are unchanged; the door stands beside the way out, not among them.
+    expect([...c.querySelectorAll("li")].map((li) => li.querySelector("button")?.textContent))
       .not.toContain(en.accessLock.changePassword);
 
     await click(buttonByText(c, en.accessLock.changePassword));

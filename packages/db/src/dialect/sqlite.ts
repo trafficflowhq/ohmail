@@ -654,8 +654,12 @@ export function sqliteDialect(): Dialect {
       return [];
     },
 
+    screenerActivityCandidates: async () => null,
+
     // The instant is milliseconds here.
     monthBucket: (instant: SQL): SQL => sql`strftime('%Y-%m', ${instant} / 1000, 'unixepoch')`,
+
+    lockedMonths: async () => null,
 
     // Epoch milliseconds here, so the tolerance is 48 h in ms and the undated floor is 0.
     arrivalKey: (date: SQL, arrivedAt: SQL): SQL => sql`(case when ${arrivedAt} is null then coalesce(${date}, 0) when ${date} is null then ${arrivedAt} when ${date} <= ${arrivedAt} and ${arrivedAt} - ${date} <= 172800000 then ${date} else ${arrivedAt} end)`,

@@ -25,11 +25,11 @@ export type OrganizerPlatform = "android" | "ios";
  */
 export type AppPhase = "active" | "inactive" | "background";
 
-/** What the notification says. Composed in JS from the deck, because the address is runtime data. */
+/** What the notification says. Composed in JS from the deck, in the language of the start. */
 export interface ServiceNotice {
   /** The channel's user-visible name — "Organizing". */
   readonly channelName: string;
-  /** The body — "Organizing mila@example.com." The address comes from the mailbox row. */
+  /** The body — "Organizing your mail on this phone." It names no mailbox: a locked screen shows it. */
   readonly body: string;
   /** The one action's label — "Stop organizing". */
   readonly stopLabel: string;

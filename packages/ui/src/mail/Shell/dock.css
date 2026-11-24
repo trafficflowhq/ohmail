@@ -1,0 +1,424 @@
+/* The dock: a capsule of tabs at the foot of a phone; upright at the side of an unfolded one. */
+@layer oh {
+  .oh-dock {
+    --oh-dock-in: var(--s1);
+    --oh-dock-badge: 18px;
+    --oh-dock-badge-in: 0 5px;
+    --oh-dock-badge-size: 12px;
+    --oh-dock-badge-edge: 0 0 0 2px var(--sheet);
+    --oh-dock-badge-edge-on: 0 0 0 2px var(--nav-on);
+    --oh-dock-entry-min: 36px;
+    --oh-dock-entry-max: 56px;
+    --oh-dock-round-radius: 50%;
+    --oh-dock-float: var(--float);
+    --oh-dock-upright-r: calc(var(--r-sheet) + 8px);
+    --oh-dock-word-size: 15px;
+    --oh-dock-entry-in: 0;
+    --oh-dock-write-in: 0;
+
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .oh-dock-places {
+    flex: 1 1 auto;
+    display: flex;
+    gap: 0;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 0;
+    height: var(--h-xl);
+    padding: var(--oh-dock-in);
+    border-radius: var(--r-pill);
+    background: var(--sheet);
+    box-shadow: var(--oh-dock-float);
+  }
+
+  .oh-dock-end {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .oh-dock-entry {
+    position: relative;
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--oh-dock-gap);
+    min-width: var(--oh-dock-entry-min);
+    max-width: var(--oh-dock-entry-max);
+    height: var(--h-l);
+    padding: var(--oh-dock-entry-in);
+    border-radius: var(--r-pill);
+    color: var(--ink);
+    font-size: var(--t-ui);
+    font-weight: var(--w-bold);
+    white-space: nowrap;
+    transition: background-color var(--d-fade) var(--e-std);
+
+    --oh-dock-gap: 10px;
+  }
+
+  .oh-dock[data-round] .oh-dock-places > .oh-dock-entry {
+    flex: 0 0 var(--h-l);
+    width: var(--h-l);
+    min-width: 0;
+    max-width: none;
+    border-radius: var(--oh-dock-round-radius);
+  }
+
+  .oh-dock-entry[hidden] {
+    display: none;
+  }
+
+  .oh-dock-entry:focus-visible,
+  .oh-dock-write:focus-visible {
+    border-radius: var(--r-pill);
+  }
+
+  .oh-dock-entry[aria-current="page"] {
+    background: var(--nav-on);
+    color: var(--on-nav-on);
+  }
+
+  .oh-dock-word {
+    display: none;
+  }
+
+  /* The count rides the icon's shoulder as a badge. */
+  .oh-dock-count {
+    position: absolute;
+    top: 3px;
+    left: 50%;
+    display: grid;
+    place-items: center;
+    min-width: var(--oh-dock-badge);
+    height: var(--oh-dock-badge);
+    margin-left: var(--s1);
+    padding: var(--oh-dock-badge-in);
+    border-radius: var(--r-pill);
+    background: var(--ground);
+    box-shadow: var(--oh-dock-badge-edge);
+    color: var(--ink);
+    font-size: var(--oh-dock-badge-size);
+    line-height: var(--oh-lh-tight);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .oh-dock-count[data-hot] {
+    background: var(--hot);
+    color: var(--on-hot);
+  }
+
+  .oh-dock-entry[aria-current="page"] > .oh-dock-count {
+    box-shadow: var(--oh-dock-badge-edge-on);
+  }
+
+  /* Search is a disc of its own beside the tabs; Write is the ink disc. */
+  .oh-dock-entry[data-search] {
+    flex: none;
+    width: var(--h-xl);
+    max-width: none;
+    height: var(--h-xl);
+    background: var(--sheet);
+    box-shadow: var(--oh-dock-float);
+  }
+
+  .oh-dock-entry[data-search][aria-current="page"] {
+    background: var(--nav-on);
+    color: var(--on-nav-on);
+  }
+
+  .oh-dock-write {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    width: var(--h-xl);
+    height: var(--h-xl);
+    padding: var(--oh-dock-write-in);
+    border-radius: var(--r-pill);
+    background: var(--solid);
+    box-shadow: var(--oh-dock-float);
+    color: var(--on-solid);
+    font-size: var(--t-ui);
+    font-weight: var(--w-bold);
+    line-height: var(--oh-lh-tight);
+    transition: transform var(--d-press) var(--e-press);
+  }
+
+  .oh-dock-write:active {
+    transform: var(--x-press);
+  }
+
+  /* The unfolded phone: upright, Write first, then every place that fits, Search last. */
+  :root[data-device="fold"] .oh-dock {
+    --oh-dock-badge-edge: 0 0 0 2px var(--ground);
+    --oh-dock-between: 2px;
+
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s3);
+    overflow: visible;
+  }
+
+  .oh-dock-entry:disabled {
+    color: var(--on-off);
+  }
+
+  .oh-dock-foot {
+    display: grid;
+    justify-items: center;
+    margin-block-start: auto;
+  }
+
+  :root[data-device="fold"] .oh-dock-end {
+    display: contents;
+  }
+
+  :root[data-device="fold"] .oh-dock-places {
+    flex: none;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: var(--oh-dock-between);
+    height: auto;
+    border-radius: var(--oh-dock-upright-r);
+    background: transparent;
+    box-shadow: none;
+  }
+
+  :root[data-device="fold"] .oh-dock-entry {
+    flex: none;
+    align-self: center;
+    width: var(--h-l);
+    max-width: none;
+    height: var(--h-l);
+  }
+
+  :root[data-device="fold"] .oh-dock-entry[data-search] {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  :root[data-device="fold"] .oh-dock-entry[data-search][aria-current="page"] {
+    background: var(--nav-on);
+  }
+
+  :root[data-device="fold"] .oh-dock-count {
+    top: 0;
+    right: -2px;
+    left: auto;
+    margin: 0;
+  }
+
+  :root[data-device="fold"] .oh-dock-write {
+    --oh-dock-write-ring: inset 0 0 0 1px var(--btn-ring);
+
+    order: -1;
+    align-self: center;
+    background: var(--soft);
+    box-shadow: var(--oh-dock-write-ring);
+    color: var(--ink);
+  }
+
+  /* A low room (one column under 480 high: a phone held on its side, the Duo folded on its side): where the frame
+     asks for it (`upright`), the dock stands upright beside the column, as beside two columns, Write first, then
+     every place that fits, Search last. It floats on nothing there: in ohmarchy too it wears no ring. The window's
+     height alone never turns it: the room is the frame's to read. */
+  :root[data-device="phone"] .oh-dock[data-upright] {
+    --oh-dock-badge-edge: 0 0 0 2px var(--ground);
+    --oh-dock-between: 2px;
+
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s2);
+    overflow: visible;
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-end {
+    display: contents;
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-places {
+    flex: none;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: var(--oh-dock-between);
+    height: auto;
+    border-radius: var(--oh-dock-upright-r);
+    background: transparent;
+    box-shadow: none;
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-entry {
+    flex: none;
+    align-self: center;
+    width: var(--h-l);
+    max-width: none;
+    height: var(--h-l);
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-entry[data-search] {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  /* On Search its disc is the open place, filled as beside two columns: its sign is set for that fill. */
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-entry[data-search][aria-current="page"] {
+    background: var(--nav-on);
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-count {
+    top: 0;
+    right: -2px;
+    left: auto;
+    margin: 0;
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-write {
+    --oh-dock-write-ring: inset 0 0 0 1px var(--btn-ring);
+
+    order: -1;
+    align-self: center;
+    background: var(--soft);
+    box-shadow: var(--oh-dock-write-ring);
+    color: var(--ink);
+  }
+
+  /* A rail of words: each place by its name, its count at the line's end. */
+  :root[data-device="fold"][data-icons="0"] .oh-dock {
+    --oh-dock-in: 0;
+    --oh-dock-entry-in: 0 var(--s3);
+    --oh-dock-write-in: 0 var(--s4);
+  }
+
+  :root[data-device="fold"][data-icons="0"] .oh-dock-entry {
+    align-self: stretch;
+    justify-content: flex-start;
+    width: 100%;
+    height: var(--h-m);
+    font-weight: var(--w-mid);
+  }
+
+  :root[data-device="fold"][data-icons="0"] .oh-dock-entry > .oh-icon,
+  :root[data-device="fold"][data-icons="0"] .oh-dock-write > .oh-icon {
+    display: none;
+  }
+
+  :root[data-device="fold"][data-icons="0"] .oh-dock-entry > .oh-dock-word {
+    flex: 1;
+    display: block;
+    overflow: hidden;
+    min-width: 0;
+    font-size: var(--oh-dock-word-size);
+    text-overflow: ellipsis;
+  }
+
+  :root[data-device="fold"][data-icons="0"] .oh-dock-write {
+    align-self: flex-start;
+    width: auto;
+    height: var(--h-l);
+  }
+
+  :root[data-device="fold"][data-icons="0"] .oh-dock-write > .oh-dock-word {
+    display: inline;
+  }
+
+  :root[data-device="fold"][data-icons="0"] .oh-dock-count {
+    position: static;
+    min-width: 1ch;
+    height: auto;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+
+  :root[data-device="fold"][data-icons="0"] .oh-dock-count[data-hot] {
+    color: var(--hot-ink);
+  }
+
+  :root[data-device="fold"][data-icons="0"] .oh-dock-entry[aria-current="page"] > .oh-dock-count {
+    color: var(--on-nav-on);
+  }
+
+  /* Ohmarchy: quieter badges, lighter words. */
+  :root[data-face="ohmarchy"] .oh-dock-count {
+    font-weight: var(--w-text);
+  }
+
+  :root[data-face="ohmarchy"] .oh-dock-entry[aria-current="page"] > .oh-dock-count {
+    font-weight: var(--w-bold);
+  }
+
+  :root[data-face="ohmarchy"] .oh-dock-write {
+    font-weight: var(--w-mid);
+  }
+
+  /* On a phone the capsule and the discs wear a ring; upright the rail is a sheet. */
+  :root[data-face="ohmarchy"][data-device="phone"] .oh-dock {
+    --oh-dock-float: 0 0 0 2px var(--ink2);
+  }
+
+  :root[data-face="ohmarchy"][data-device="fold"] .oh-dock {
+    --oh-dock-pad: var(--s2) 0;
+    --oh-dock-between: 0;
+
+    gap: var(--gap);
+    padding: var(--oh-dock-pad);
+    background: var(--sheet);
+    box-shadow: 0 0 0 var(--ringw) var(--ring);
+  }
+
+  :root[data-face="ohmarchy"][data-device="fold"][data-icons="0"] .oh-dock {
+    --oh-dock-pad: var(--s2) var(--s1);
+    --oh-dock-entry-in: 0 6px 0 14px;
+    --oh-dock-write-in: 0 var(--s2);
+  }
+}
+
+@layer oh {
+  .oh-dock-entry[data-words] {
+    flex: 0 1 auto;
+    max-width: none;
+    min-width: 0;
+    padding-inline: var(--s3);
+  }
+  .oh-dock-entry[data-words]:not([aria-current]) {
+    color: var(--ink2);
+  }
+  .oh-dock-entry[data-words] .oh-dock-word {
+    display: inline;
+  }
+}
+
+@layer oh {
+  :root[data-device="phone"][data-product="cal"]
+    .oh-dock[data-round]
+    .oh-dock-places
+    > .oh-dock-entry[data-words] {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: var(--h-l);
+    border-radius: var(--r-pill);
+  }
+
+  :root[data-device="phone"][data-product="cal"] .oh-dock-word {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  :root[data-device="phone"][data-product="cal"] .oh-dock:not([data-round]) .oh-dock-word {
+    max-inline-size: var(--s6);
+  }
+}

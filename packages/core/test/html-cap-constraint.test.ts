@@ -32,7 +32,7 @@ describe("migration 0022 round-trip (message_bodies html cap)", () => {
     const messageId = await seedMessage(db);
     const tooBig = "x".repeat(STORED_HTML_CAP_BYTES + 1);
     await expect(
-      db.insert(messageBodies).values({ messageId, text: "t", html: tooBig }),
+      db.insert(messageBodies).values({ messageId, accountId: acct, text: "t", html: tooBig }),
     ).rejects.toThrow(/message_bodies_html_cap|violates check constraint/i);
   });
 
@@ -44,7 +44,7 @@ describe("migration 0022 round-trip (message_bodies html cap)", () => {
     const emoji = "😀".repeat(100_000);
     expect(emoji.length).toBeLessThan(STORED_HTML_CAP_BYTES);
     await expect(
-      db.insert(messageBodies).values({ messageId, text: "t", html: emoji }),
+      db.insert(messageBodies).values({ messageId, accountId: acct, text: "t", html: emoji }),
     ).rejects.toThrow(/message_bodies_html_cap|violates check constraint/i);
   });
 
@@ -53,7 +53,7 @@ describe("migration 0022 round-trip (message_bodies html cap)", () => {
     const messageId = await seedMessage(db);
     const exact = "x".repeat(STORED_HTML_CAP_BYTES);
     const [row] = await db.insert(messageBodies)
-      .values({ messageId, text: "t", html: exact }).returning();
+      .values({ messageId, accountId: acct, text: "t", html: exact }).returning();
     expect(row!.html!.length).toBe(STORED_HTML_CAP_BYTES);
   });
 
@@ -61,7 +61,7 @@ describe("migration 0022 round-trip (message_bodies html cap)", () => {
     const db = await makeTestDb();
     const messageId = await seedMessage(db);
     const [row] = await db.insert(messageBodies)
-      .values({ messageId, text: "redacted", html: null }).returning();
+      .values({ messageId, accountId: acct, text: "redacted", html: null }).returning();
     expect(row!.html).toBeNull();
   });
 
@@ -78,7 +78,7 @@ describe("migration 0022 round-trip (message_bodies html cap)", () => {
       const messageId = await seedMessage(db);
       const prepared = prepareHtmlForStorage(raw);
       const [row] = await db.insert(messageBodies)
-        .values({ messageId, text: "t", html: prepared }).returning();
+        .values({ messageId, accountId: acct, text: "t", html: prepared }).returning();
       expect(Buffer.byteLength(row!.html!, "utf8")).toBeLessThanOrEqual(STORED_HTML_CAP_BYTES);
     }
   });

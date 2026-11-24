@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { SHELL_MESSAGE_KEYS, SHELL_MESSAGE_NAMESPACES, WINDOW_ONLY_NAMESPACES } from "../vite.config.js";
+import desktopConfig, { SHELL_MESSAGE_KEYS, SHELL_MESSAGE_NAMESPACES, WINDOW_ONLY_NAMESPACES } from "../vite.config.js";
 
 /**
  * The desktop binary must not contain the marketing site's copy.
@@ -84,9 +84,13 @@ const HAVE_PUBLISHER = fs.existsSync(path.join(REPO, PUBLISHER));
  */
 const MIRROR_SOURCE_DIRS = [
   "apps/desktop/src",
+  "apps/paired-page/src",
   "apps/webapp/app/components",
+  "packages/letter-body/src",
   "apps/webapp/app/shell",
-  "apps/webapp/app/views",
+  "packages/app-logic/src",
+  // The frame and its text reader (`@ohmail/app/text`): the window draws it, so what it reads ships.
+  "packages/app/src",
   "packages/ui/src",
 ];
 
@@ -161,7 +165,8 @@ function sourceFiles(): string[] {
  *  · `useTranslations("ohbox")` → the namespace is the argument;
  *  · `useTranslations()` unscoped (AppShell.tsx) → the namespace is the first
  *    segment of every dotted key passed to the returned `t`;
- *  · `liveCopy("mailBody", …)` / `activeTranslator("place")` → the NON-HOOK read.
+ *  · `liveCopy("mailBody", …)` / `activeTranslator("place")` → the NON-HOOK read;
+ *  · `bodyCopy("mailBody", …)` → the body package's own non-hook read (`packages/letter-body/src/words.ts`).
  *
  * The second shape is the one a reader misses, and missing it renders key names.
  *
@@ -179,23 +184,131 @@ function sourceFiles(): string[] {
  * German translation of the whole reading pane invisible to this guard — the shape of failure the
  * header above describes ("correct when written, silently stale afterwards").
  */
-function namespacesUsed(): Set<string> {
+function namespacesRead(src: string): Set<string> {
   const found = new Set<string>();
-  for (const rel of sourceFiles()) {
-    const src = read(rel);
-
-    for (const m of src.matchAll(/useTranslations\(\s*"([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
-    for (const m of src.matchAll(/\b(?:liveCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
-      found.add(m[1]!);
-    }
-
-    // Unscoped: collect dotted keys from `t("a.b")` in files that call useTranslations().
-    if (/useTranslations\(\s*\)/.test(src)) {
-      for (const m of src.matchAll(/\bt\(\s*"([A-Za-z0-9_]+)\.[A-Za-z0-9_.]+"/g)) found.add(m[1]!);
-    }
-    for (const ns of computedKeyNamespaces(src)) found.add(ns);
+  for (const m of src.matchAll(/useTranslations\(\s*"([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
+  // The one text reader's door reads a namespace the same way (`@ohmail/app/text`).
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  for (const m of code.matchAll(/\buseText\(\s*"([A-Za-z0-9_]+)"/g)) found.add(m[1]!);
+  // Settings panes and menu labels hand their declared namespaces to the host text reader.
+  for (const m of code.matchAll(/\bexport const [A-Z_]+_NAMESPACE = "(settings[A-Z][A-Za-z0-9_]*)"/g)) found.add(m[1]!);
+  for (const m of src.matchAll(/\b(?:liveCopy|bodyCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
+    found.add(m[1]!);
   }
+
+  // Unscoped: collect dotted keys from `t("a.b")` in files that call useTranslations().
+  if (/useTranslations\(\s*\)/.test(src)) {
+    for (const m of src.matchAll(/\bt\(\s*"([A-Za-z0-9_]+)\.[A-Za-z0-9_.]+"/g)) found.add(m[1]!);
+  }
+  for (const ns of computedKeyNamespaces(src)) found.add(ns);
   return found;
+}
+
+/** Every scanned source file and the namespaces it reads. */
+function readsByFile(): Map<string, Set<string>> {
+  return new Map(sourceFiles().map((rel) => [rel, namespacesRead(read(rel))]));
+}
+
+function namespacesUsed(): Set<string> {
+  return new Set([...readsByFile().values()].flatMap((reads) => [...reads]));
+}
+
+/**
+ * ── THE DOORS' PAGES ARE SCANNED, AND THE DESKTOP MOUNTS NONE OF THEM ──────────────────────────
+ *
+ * `packages/app/src` is a scan root because the frame and its text reader ship in the window. The doors live in the
+ * same package (`packages/app/src/doors`), and only the web's routes under `apps/webapp/app/(product)` mount them:
+ * the window opens every page of an account in the system browser (`WEB_PLACES` in `apps/desktop/src/native.ts`),
+ * and neither entry imports a door. So a namespace read only by the doors' pages does not ship; each is named here
+ * with the door that reads it and why the desktop cannot reach it. An exception covers the doors' pages alone: the
+ * same namespace read anywhere else in the bundle's roots is a surface the desktop draws, and is red below.
+ */
+const DOORS = "packages/app/src/doors/";
+const DOOR_ONLY: Record<string, string> = {
+  approve: "the approval (/approve) and the words the link, the authorization and the erase share: opened in the browser",
+  authorizeDesktop: "the native authorization (/authorize-desktop): a web route, in the browser",
+  deleteAccount: "the erase (/account/delete): a web route; the window's Account opens the browser",
+  gate: "the doors' sentence for a build with no server (no page, setup, signed out, after paying): web routes",
+  joinInvite: "the household invite (/join/invite): a link in a letter, opened in the browser",
+  linkDesktop: "the desktop link (/link-desktop): the browser half of the window's sign-in (DoorChooser's openWeb)",
+  login: "the sign-in (/login) and the words the link and the authorization share: the window signs in by its own door",
+  resume: "the signed-out page (/resume) and the sign-in's reason line: web routes; the window's door is desktopDoor",
+  setup: "the server setup (/setup): the window opens it in the browser (WEB_PLACES)",
+  stepUp: "the step-up dialog: the web's mailbox and account routes mount it; the window's first run hands no step-up",
+  subscribed: "the return after paying (/subscribed): the payment page returns to the browser",
+  verify: "the email confirmation (/verify-email): a link in a letter, opened in the browser",
+};
+
+/**
+ * ── THE ACCOUNT GROUP'S PANES ARE SCANNED, AND THE DESKTOP MOUNTS NONE OF THEM YET ─────────────────────────────────
+ *
+ * The six panes of Settings' Account group live in the same package (`packages/app/src/account`), built and seated
+ * nowhere the window reaches: the window draws its own Devices and Subscription, Storage through the web shell's
+ * shared pane, and the browser card for Security and Account (`DesktopWebSection`). So a namespace read only by the
+ * account folder does not ship; each is named here with the pane that reads it. As the doors' exception, it covers
+ * that folder alone, and a row leaves when the window mounts its pane and ships its words.
+ */
+const ACCOUNT = "packages/app/src/account/";
+const ACCOUNT_ONLY: Record<string, string> = {
+  account: "the Account pane's sheet (who is signed in, sign-out, the way to erase): the window's Account is the card",
+  accountDevices: "the Devices pane's own words: the window draws its own Devices pane",
+  accountInvites: "the Invites pane's own words: a self-hosted web build's pane, never the window's",
+  accountOwn: "the Account pane's and the password form's own words: the window's Account is the card",
+  accountSecurity: "the Security pane's own words: the window's Security is the card",
+  accountStorage: "the Storage pane's own words: the window draws Storage with the web shell's shared pane",
+  accountSubscription: "the Subscription pane's own words: the window draws its own Subscription",
+  devices: "the Devices pane, and the factor's 'nothing ran' Storage says: the window draws its own Devices pane",
+  invites: "the Invites pane: a self-hosted web build's pane, never the window's",
+  passwordChange: "the password form: the window's Account is the card, and the wall that mounts it is a web route",
+  security: "the Security pane: the window's Security is the card",
+};
+
+/**
+ * ── THE PHONE'S DOOR PAGE IS SCANNED, AND THE DESKTOP MOUNTS NONE OF IT ─────────────────────────────────────────────
+ *
+ * The phone's ways in (`packages/app/src/phone-door`) are drawn on the phone's own door page alone
+ * (`apps/mobile/web`, by `@ohmail/app/phone-door`); neither of the desktop's entries imports them. As the doors'
+ * exception, it covers that folder alone.
+ */
+const PHONE_DOOR = "packages/app/src/phone-door/";
+const PHONE_DOOR_ONLY: Record<string, string> = {
+  phoneDoor: "the phone's ways in and its form's words: drawn on the phone's door page, never in the window",
+  phoneRefusal: "what the phone's native side refused, said by its code",
+};
+const PHONE_SETTINGS_ONLY: Record<string, string> = {
+  phoneSettings: "the phone's own Settings panes",
+  phoneRefusal: PHONE_DOOR_ONLY.phoneRefusal!,
+};
+const PHONE_SERVERS_ONLY: Record<string, string> = {
+  servers: "the phone's organizer roster and connection",
+  phoneRefusal: PHONE_DOOR_ONLY.phoneRefusal!,
+};
+
+/** Each folder whose namespaces are read and not shipped, with its exceptions. */
+const ONLY_IN: readonly (readonly [string, Record<string, string>])[] = [
+  [DOORS, DOOR_ONLY],
+  [ACCOUNT, ACCOUNT_ONLY],
+  [PHONE_DOOR, PHONE_DOOR_ONLY],
+  ["packages/app/src/phone-settings/", PHONE_SETTINGS_ONLY],
+  ["packages/app/src/servers/", PHONE_SERVERS_ONLY],
+];
+
+/**
+ * What the shipped lists and the exceptions leave unexplained: a namespace on neither list and not excepted, or an
+ * excepted one read outside its folder. Empty is green.
+ */
+function unexplained(reads: ReadonlyMap<string, ReadonlySet<string>>): string[] {
+  const shipped = new Set<string>([...SHELL_MESSAGE_NAMESPACES, ...Object.keys(SHELL_MESSAGE_KEYS)]);
+  const out = new Set<string>();
+  for (const [file, namespaces] of reads) {
+    for (const ns of namespaces) {
+      if (shipped.has(ns)) continue;
+      const owners = ONLY_IN.filter(([, table]) => Object.hasOwn(table, ns));
+      if (owners.length === 0) out.add(ns);
+      else if (!owners.some(([directory]) => file.startsWith(directory))) out.add(`${ns} in ${file}`);
+    }
+  }
+  return [...out].sort();
 }
 
 /**
@@ -237,20 +350,16 @@ function computedKeyNamespaces(raw: string): Set<string> {
  * about the import graph: a namespace is READABLE on a door only if some file reachable from that
  * door's entry point reads it.
  *
- * Deliberately a text walk over relative specifiers, not a bundler: the two entries and everything
- * they pull are this repository's own sources, the desktop config's aliases point at those same
- * files, and a resolver that followed packages would drag `node_modules` in for no gain. A
- * specifier it cannot resolve is one it does not follow, which is the SAFE direction here — it can
- * only make a graph smaller, and every case below asserts a namespace is ABSENT from the host
- * graph, so an under-resolved walk cannot manufacture a pass it would otherwise fail. The size
- * floors below are what keeps that honest.
+ * A source walk follows both relative imports and the desktop build's workspace aliases. Its size floors
+ * catch lost sources, which could otherwise leave the assertion about the host's graph passing vacuously.
  */
 const ENTRY_WINDOW = "apps/desktop/src/main.tsx";
-const ENTRY_HOST = "apps/desktop/src/host-client/main.tsx";
+const ENTRY_HOST = "apps/paired-page/src/main.tsx";
 
 function importGraph(entryRel: string): string[] {
   const seen = new Set<string>();
   const queue = [path.join(REPO, entryRel)];
+  const aliases = desktopConfig.resolve?.alias;
   const tryFile = (base: string): string | null => {
     const candidates = [
       base.replace(/\.js$/, ".ts"),
@@ -276,8 +385,14 @@ function importGraph(entryRel: string): string[] {
     }
     for (const m of src.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)) {
       const spec = m[1]!;
-      if (!spec.startsWith(".")) continue;
-      const next = tryFile(path.resolve(path.dirname(file), spec));
+      const alias = Array.isArray(aliases) ? aliases.find(({ find }) =>
+        typeof find === "string" ? spec === find || spec.startsWith(`${find}/`) : find.test(spec),
+      ) : undefined;
+      const candidate = spec.startsWith(".") ? path.resolve(path.dirname(file), spec) : (
+        alias ? spec.replace(alias.find, alias.replacement) : null
+      );
+      if (candidate === null || !candidate.startsWith(`${REPO}${path.sep}`)) continue;
+      const next = tryFile(candidate);
       if (next !== null) queue.push(next);
     }
   }
@@ -295,7 +410,7 @@ function namespacesIn(files: string[]): Map<string, string[]> {
   for (const rel of files) {
     const src = read(rel);
     for (const m of src.matchAll(/useTranslations\(\s*"([A-Za-z0-9_]+)"/g)) add(m[1]!, rel);
-    for (const m of src.matchAll(/\b(?:liveCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
+    for (const m of src.matchAll(/\b(?:liveCopy|bodyCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
       add(m[1]!, rel);
     }
     if (/useTranslations\(\s*\)/.test(src)) {
@@ -367,12 +482,49 @@ describe("desktop message filter", () => {
   });
 
   it("SHELL_MESSAGE_NAMESPACES is exactly what the sources read", () => {
-    const used = [...namespacesUsed()].sort();
+    const reads = readsByFile();
+    const used = [...new Set([...reads.values()].flatMap((r) => [...r]))].sort();
     /* BOTH LISTS, because both ship. A namespace the shell reads is satisfied by the wholesale
        list or by the subset one, and a namespace on NEITHER is the omission this guard exists
        for — a raw key in front of a user. Concatenated rather than made optional: a subset entry
-       for a namespace nobody reads is dead payload and this still catches it. */
-    expect(used).toEqual([...SHELL_MESSAGE_NAMESPACES, ...Object.keys(SHELL_MESSAGE_KEYS)].sort());
+       for a namespace nobody reads is dead payload and this still catches it. The doors' own
+       namespaces, the account panes' and the phone door's are read and not shipped ({@link DOOR_ONLY},
+       {@link ACCOUNT_ONLY}, {@link PHONE_DOOR_ONLY}); an exception nobody reads is red here as well, and one read outside
+       its folder is red by `unexplained`. */
+    expect(unexplained(reads)).toEqual([]);
+    expect(used).toEqual(
+      [...new Set([
+        ...SHELL_MESSAGE_NAMESPACES,
+        ...Object.keys(SHELL_MESSAGE_KEYS),
+        ...Object.keys(DOOR_ONLY),
+        ...Object.keys(ACCOUNT_ONLY),
+        ...Object.keys(PHONE_DOOR_ONLY),
+        ...Object.keys(PHONE_SETTINGS_ONLY),
+        ...Object.keys(PHONE_SERVERS_ONLY),
+      ])].sort(),
+    );
+  });
+
+  it("a namespace neither shipped nor excepted is red, and so is a door's namespace read outside the doors", () => {
+    const reads = readsByFile();
+    expect(unexplained(reads)).toEqual([]);
+    const planted = (file: string, ns: string) => new Map([...reads, [file, new Set([ns])]]);
+    expect(unexplained(planted(`${DOORS}sign-in/Planted.tsx`, "plantedDoor"))).toEqual(["plantedDoor"]);
+    expect(unexplained(planted("apps/desktop/src/Planted.tsx", "plantedDoor"))).toEqual(["plantedDoor"]);
+    expect(unexplained(planted("apps/desktop/src/Planted.tsx", "login"))).toEqual([
+      "login in apps/desktop/src/Planted.tsx",
+    ]);
+    expect(unexplained(planted("apps/webapp/app/shell/Planted.tsx", "stepUp"))).toEqual([
+      "stepUp in apps/webapp/app/shell/Planted.tsx",
+    ]);
+    // The account panes' exception is the account folder's alone, as the doors' is theirs.
+    expect(unexplained(planted(`${ACCOUNT}devices/Planted.tsx`, "plantedPane"))).toEqual(["plantedPane"]);
+    expect(unexplained(planted("apps/desktop/src/Planted.tsx", "accountDevices"))).toEqual([
+      "accountDevices in apps/desktop/src/Planted.tsx",
+    ]);
+    expect(unexplained(planted(`${DOORS}sign-in/Planted.tsx`, "security"))).toEqual([
+      `security in ${DOORS}sign-in/Planted.tsx`,
+    ]);
   });
 
   it("every listed namespace exists in en.json", () => {
@@ -393,7 +545,7 @@ describe("desktop message filter", () => {
    * seconds instead of after a platform build.
    *
    * The leak was copy, not code. The served bundle contains no provider component — the desktop
-   * host passes it in, and `src/host-client/HostGate.tsx` mounts `AppShell` with no `firstRun`
+   * host passes it in, and `apps/paired-page/src/HostGate.tsx` mounts `AppShell` with no `firstRun`
    * host at all — but `shellMessagesOnly()` filters by NAMESPACE and both artifacts asked for the
    * same namespaces, so `aiProvider`'s `choiceOllama` / `choiceAnthropicWhy` and `onboarding`'s
    * self-host fact screens ("the operator has set an Anthropic key on this server") shipped to a
@@ -458,7 +610,9 @@ describe("desktop message filter", () => {
     // they catch a resolver that stopped following, not a refactor.
     expect(windowFiles.length).toBeGreaterThan(100);
     expect(hostFiles.length).toBeGreaterThan(100);
-    expect(hostFiles).toContain("apps/desktop/src/host-client/HostGate.tsx");
+    expect(hostFiles).toContain("apps/paired-page/src/HostGate.tsx");
+    const phoneNamespaces = new Set([...Object.keys(PHONE_DOOR_ONLY), ...Object.keys(PHONE_SETTINGS_ONLY), ...Object.keys(PHONE_SERVERS_ONLY)]);
+    expect([...namespacesIn([...windowFiles, ...hostFiles]).keys()].filter((ns) => phoneNamespaces.has(ns))).toEqual([]);
 
     /* EXACTLY ONE READER, and that is the design rather than an accident: `door-copy.ts` holds
        the whole namespace as one `liveCopy` table and every pane imports `DOOR_COPY` from it.

@@ -1,0 +1,90 @@
+{
+  "component": "Report",
+  "state": "why",
+  "look": "paper-light-phone",
+  "place": "block",
+  "target": [16, 659.2188, 358, 96.7813],
+  "clip": [16, 659, 358, 98],
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(255, 255, 255)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "21.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(255, 255, 255)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "21.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    {
+      "boxShadow": "rgba(18, 16, 14, 0.22) 0px 6px 20px -8px, rgba(18, 16, 14, 0.08) 0px 1px 3px 0px",
+      "borderRadius": "20px"
+    },
+    { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "status",
+      "name": "Nothing changed ohmail Cloud organizes this mailbox, so piles and returns are set there.",
+      "box": [0, 0, 358, 96.8],
+      "drawn": {
+        "color": "rgb(255, 255, 255)",
+        "backgroundColor": "rgb(18, 16, 14)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "20px",
+        "paddingTop": "16px",
+        "paddingRight": "12px",
+        "paddingBottom": "16px",
+        "paddingLeft": "24px",
+        "borderColor": "rgb(255, 255, 255)"
+      },
+      "text": [
+        { "said": "Nothing changed", "type": 0 },
+        { "said": "ohmail Cloud organizes this mailbox, so piles and returns are set there.", "type": 1 }
+      ],
+      "surfaces": [
+        { "box": [0, 0, 358, 96.8], "paint": 0 },
+        { "box": [146.9, 25.6, 6.4, 6.4], "paint": 1 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

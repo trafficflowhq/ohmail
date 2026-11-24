@@ -1,16 +1,14 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   OhmailEngine,
   MutationRejectedError,
   screenerSegments,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * GAP "when I select one as ohbox, it does not seem to work", and then it does.

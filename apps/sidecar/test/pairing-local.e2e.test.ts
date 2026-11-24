@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { freshDataDir } from "./_datadir.js";
 import { eq } from "drizzle-orm";
-import { devices, sessions } from "@trafficflow/db";
+import { devices, sessions, bindDb } from "@trafficflow/db";
 import {
   makeAuthConfig, makeSessionLifecycle, mintPairingToken, redeemDevicePair, resolveSession,
   type ServiceContext, type SessionLifecycle,
 } from "@trafficflow/services/auth";
+import { dbFor } from "@trafficflow/services/mail";
 import { openLocalDb, type LocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, mintLaunchSession, type LocalWorld } from "../src/identity.js";
 
@@ -60,7 +61,8 @@ async function freshWorld(): Promise<{ db: LocalDb; world: LocalWorld; lifecycle
 /** A ServiceContext over the local store, as the stdio door's request path builds one. */
 function ctxFor(db: LocalDb, world: LocalWorld, now: Date): ServiceContext {
   return {
-    db: db as ServiceContext["db"],
+    // The device's own account: the store's one world (a device binds as a type and a mark).
+    db: dbFor(db, world.accountId),
     accountId: world.accountId,
     userId: world.userId,
     now: () => now,
@@ -86,25 +88,25 @@ describe("THE LAUNCH-SESSION LANDMINE — pair, relaunch, and the phone must sti
 
     // Launch one: the app starts, the shell gets its per-launch bearer.
     const launch1 = await mintLaunchSession(db, world, AT);
-    expect(await resolveSession(db, launch1.token, at(1_000))).not.toBeNull();
+    expect(await resolveSession(bindDb(db, { account: null }), launch1.token, at(1_000))).not.toBeNull();
 
     // A phone pairs (mint → redeem → establish) and its bearer pair works.
     const phone = await pairPhone(db, world, lifecycle, at(60_000));
-    expect(await resolveSession(db, phone.accessToken, at(61_000))).not.toBeNull();
+    expect(await resolveSession(bindDb(db, { account: null }), phone.accessToken, at(61_000))).not.toBeNull();
 
     // ── THE RELAUNCH. This is the line the whole scenario exists for. ───────────────────────
     const launch2 = await mintLaunchSession(db, world, at(120_000));
 
     // The old launch token is dead — the per-launch property `identity.ts` has always enforced.
-    expect(await resolveSession(db, launch1.token, at(121_000))).toBeNull();
+    expect(await resolveSession(bindDb(db, { account: null }), launch1.token, at(121_000))).toBeNull();
     // The new one works.
-    expect(await resolveSession(db, launch2.token, at(121_000))).not.toBeNull();
+    expect(await resolveSession(bindDb(db, { account: null }), launch2.token, at(121_000))).not.toBeNull();
 
     // THE PAIRED SESSION STILL WORKS. Red under the blanket revoke: paired sessions share the
     // `sessions` table, and only `isNull(sessions.deviceId)` — launch sessions carry no device
     // row, `establishPairedDevice` always sets one — keeps a restart from unpairing the phone.
     expect(
-      await resolveSession(db, phone.accessToken, at(121_000)),
+      await resolveSession(bindDb(db, { account: null }), phone.accessToken, at(121_000)),
       "the desktop relaunch silently unpaired the phone",
     ).not.toBeNull();
 
@@ -116,7 +118,7 @@ describe("THE LAUNCH-SESSION LANDMINE — pair, relaunch, and the phone must sti
     const ctx = ctxFor(db, world, at(180_000));
     const rotated = await lifecycle.refresh(ctx, { refreshToken: phone.refreshToken });
     expect(rotated.tokens).toBeDefined();
-    expect(await resolveSession(db, rotated.tokens!.accessToken, at(181_000))).not.toBeNull();
+    expect(await resolveSession(bindDb(db, { account: null }), rotated.tokens!.accessToken, at(181_000))).not.toBeNull();
   });
 });
 
@@ -131,7 +133,7 @@ describe("the paired-device lifecycle, end to end on PGlite", () => {
     // The bearer works, and the session it names carries a DEVICE — the row that makes the
     // pairing visible in the device list and revocable, and the row the relaunch narrowing
     // keys on.
-    const resolved = await resolveSession(db, pair.accessToken, at(11_000));
+    const resolved = await resolveSession(bindDb(db, { account: null }), pair.accessToken, at(11_000));
     expect(resolved).not.toBeNull();
     const [sessionRow] = await db.select().from(sessions).where(eq(sessions.id, resolved!.sessionId));
     expect(sessionRow!.deviceId).not.toBeNull();
@@ -143,15 +145,15 @@ describe("the paired-device lifecycle, end to end on PGlite", () => {
     const r1 = await lifecycle.refresh(ctx(30_000), { refreshToken: pair.refreshToken });
     expect(r1.tokens).toBeDefined();
     expect(r1.tokens!.refreshToken).not.toBe(pair.refreshToken);
-    expect(await resolveSession(db, r1.tokens!.accessToken, at(31_000))).not.toBeNull();
-    expect(await resolveSession(db, pair.accessToken, at(31_000)),
+    expect(await resolveSession(bindDb(db, { account: null }), r1.tokens!.accessToken, at(31_000))).not.toBeNull();
+    expect(await resolveSession(bindDb(db, { account: null }), pair.accessToken, at(31_000)),
       "rotation must retire the previous access token").toBeNull();
 
     // REUSE DETECTION: replaying the consumed refresh token is the theft signal, and on the
     // bearer surface (no grace) it revokes the WHOLE family — the fresh rotation included.
     await expect(lifecycle.refresh(ctx(60_000), { refreshToken: pair.refreshToken }))
       .rejects.toThrow(/reuse detected/);
-    expect(await resolveSession(db, r1.tokens!.accessToken, at(61_000)),
+    expect(await resolveSession(bindDb(db, { account: null }), r1.tokens!.accessToken, at(61_000)),
       "a detected reuse must kill the family's live access token").toBeNull();
     await expect(lifecycle.refresh(ctx(62_000), { refreshToken: r1.tokens!.refreshToken }),
       "a detected reuse must kill the family's live refresh token too")
@@ -171,7 +173,7 @@ describe("the paired-device lifecycle, end to end on PGlite", () => {
     const windowOf = async (kind: "web" | "macos"): Promise<number> => {
       const minted = await mintPairingToken(ctx, { grant: "device-pair", label: `probe-${kind}` });
       const { tokens } = await redeemDevicePair(ctx, lifecycle, { token: minted.token, kind });
-      const resolved = await resolveSession(db, tokens.accessToken, at(1_000));
+      const resolved = await resolveSession(bindDb(db, { account: null }), tokens.accessToken, at(1_000));
       const [row] = await db.select().from(sessions).where(eq(sessions.id, resolved!.sessionId));
       return row!.refreshExpiresAt.getTime() - AT.getTime();
     };
@@ -194,11 +196,11 @@ describe("the paired-device lifecycle, end to end on PGlite", () => {
     const { db, world, lifecycle } = await freshWorld();
     const launch = await mintLaunchSession(db, world, AT);
     const windowCtx: ServiceContext = {
-      ...ctxFor(db, world, at(1_000)), sessionId: (await resolveSession(db, launch.token, at(1_000)))!.sessionId,
+      ...ctxFor(db, world, at(1_000)), sessionId: (await resolveSession(bindDb(db, { account: null }), launch.token, at(1_000)))!.sessionId,
     };
     const first = await mintPairingToken(windowCtx, { grant: "device-pair", label: "Pixel in the kitchen" });
     const { tokens } = await redeemDevicePair(ctxFor(db, world, at(1_500)), lifecycle, { token: first.token });
-    const phone = (await resolveSession(db, tokens.accessToken, at(2_000)))!;
+    const phone = (await resolveSession(bindDb(db, { account: null }), tokens.accessToken, at(2_000)))!;
     const [row] = await db.select({ deviceId: sessions.deviceId }).from(sessions).where(eq(sessions.id, phone.sessionId));
     const waiting = await mintPairingToken(windowCtx, { grant: "device-pair", label: "The tablet" });
 
@@ -206,7 +208,7 @@ describe("the paired-device lifecycle, end to end on PGlite", () => {
 
     await expect(redeemDevicePair(ctxFor(db, world, at(3_000)), lifecycle, { token: waiting.token }))
       .rejects.toMatchObject({ code: "pairing_invalid" });
-    expect(await resolveSession(db, tokens.accessToken, at(3_000))).toBeNull();
+    expect(await resolveSession(bindDb(db, { account: null }), tokens.accessToken, at(3_000))).toBeNull();
     const next = await mintPairingToken(windowCtx, { grant: "device-pair", label: "The tablet" });
     await expect(redeemDevicePair(ctxFor(db, world, at(4_000)), lifecycle, { token: next.token })).resolves.toBeTruthy();
   });
@@ -215,7 +217,7 @@ describe("the paired-device lifecycle, end to end on PGlite", () => {
     const { db, world, lifecycle } = await freshWorld();
     const launch = await mintLaunchSession(db, world, AT);
     const windowCtx: ServiceContext = {
-      ...ctxFor(db, world, at(1_000)), sessionId: (await resolveSession(db, launch.token, at(1_000)))!.sessionId,
+      ...ctxFor(db, world, at(1_000)), sessionId: (await resolveSession(bindDb(db, { account: null }), launch.token, at(1_000)))!.sessionId,
     };
     const waiting = await mintPairingToken(windowCtx, { grant: "device-pair", label: "The tablet" });
 
@@ -228,7 +230,7 @@ describe("the paired-device lifecycle, end to end on PGlite", () => {
     // The next launch mints again.
     const relaunch = await mintLaunchSession(db, world, at(5_000));
     const next = await mintPairingToken({
-      ...ctxFor(db, world, at(6_000)), sessionId: (await resolveSession(db, relaunch.token, at(6_000)))!.sessionId,
+      ...ctxFor(db, world, at(6_000)), sessionId: (await resolveSession(bindDb(db, { account: null }), relaunch.token, at(6_000)))!.sessionId,
     }, { grant: "device-pair", label: "The tablet" });
     await expect(redeemDevicePair(ctxFor(db, world, at(7_000)), lifecycle, { token: next.token })).resolves.toBeTruthy();
   });
@@ -257,6 +259,6 @@ describe("the paired-device lifecycle, end to end on PGlite", () => {
       token: third.token, kind: "toaster" as unknown as "web",
     })).rejects.toThrow(/device kind/);
     const { tokens } = await redeemDevicePair(ctx, lifecycle, { token: third.token });
-    expect(await resolveSession(db, tokens.accessToken, at(2_000))).not.toBeNull();
+    expect(await resolveSession(bindDb(db, { account: null }), tokens.accessToken, at(2_000))).not.toBeNull();
   });
 });

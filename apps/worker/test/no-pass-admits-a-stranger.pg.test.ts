@@ -9,8 +9,8 @@ import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, type Logger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * NO AUTOMATIC PASS LETS A STRANGER IN (owner report 2026-11-02): a cold letter from a sender the
@@ -68,13 +68,13 @@ describe("no automatic pass lets a stranger into News or Receipts", () => {
       .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test`, ...ORGANIZER_CONSENT }).returning();
     const enc = await KP.encrypt("pw");
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
-    // Every automatic switch on: the old bulk filing, automatic suggestions and the act on them.
+    // Every automatic switch on: automatic suggestions and the act on them.
     const on = new Date(Date.now() - 60_000);
     await db.insert(accountSettings).values({
-      accountId, screenerAutoApplyAt: on, autoSuggestAt: on, screenerAutoActAt: on, screeningScope: "all_time",
+      accountId, autoSuggestAt: on, screenerAutoActAt: on, screeningScope: "all_time",
     });
 
     const fleet = new FakeAdapterFleet();
@@ -125,7 +125,7 @@ describe("no automatic pass lets a stranger into News or Receipts", () => {
       .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test`, ...ORGANIZER_CONSENT }).returning();
     const enc = await KP.encrypt("pw");
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
     /** What the 0.30.28 act wrote when it let `address` in: its rule, an inferred contact, its decision. */

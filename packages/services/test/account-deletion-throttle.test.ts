@@ -1,8 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { join } from "node:path";
-import ts from "typescript";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { users } from "@trafficflow/db";
 import {
@@ -10,7 +6,7 @@ import {
 } from "@trafficflow/db/cloud";
 import { eq } from "drizzle-orm";
 import {
-  deleteAccount, makeTestAuthDeps, throttleKeysFor, DEFAULT_AUTH_CONFIG, LIVE_BODY_WINDOW_MS, type ServiceContext,
+  dbFor, deleteAccount, makeTestAuthDeps, throttleKeysFor, DEFAULT_AUTH_CONFIG, LIVE_BODY_WINDOW_MS, type ServiceContext,
 } from "../src/index.js";
 import { NOTICE_EVERY_MS } from "../src/auth/auth-service.js";
 import { NOW, seedFullAccount } from "./helpers/erasure-fixture.js";
@@ -18,10 +14,10 @@ import { NOW, seedFullAccount } from "./helpers/erasure-fixture.js";
 /**
  * ERASURE REACHES EVERY THROTTLE ROW THAT NAMES THE ACCOUNT'S PEOPLE, including the ones keyed by a
  * hash of their address that no `users` join can build in SQL — and spares a neighbour's. Plus the
- * two pins that keep it true: both production callers hand the keyer over (parsed for the CALL),
- * and every throttle policy fits under the prune's one retention constant.
+ * pin that keeps it true: every throttle policy fits under the prune's one retention constant.
+ * That both doors hand the keyer over, and say whether refunds drain, is held at the doors:
+ * `packages/api/test/account-delete.test.ts` and `internal-account-lifecycle.test.ts`.
  */
-const HERE = fileURLToPath(new URL(".", import.meta.url));
 const keys = throttleKeysFor(makeTestAuthDeps().keyProvider);
 /** One login typed into both accounts' connect forms: their probe rows differ by the account alone. */
 const typed = keys.address("typed@example.invalid");
@@ -62,10 +58,20 @@ describe("erasure and the sign-in throttle", () => {
     await db.insert(authThrottle).values([...myKeys, ...theirKeys].filter((k) => !k.startsWith("probe-rate:"))
       .map((key) => ({ key, failures: 1 })));
 
-    const ctx: ServiceContext = { db, accountId: mine.accountId, userId: mine.userId, now: () => NOW, requestId: "del" };
+    // These hashes belong to former addresses. Only the recorded account IDs can find the rows.
+    const myFormerAddress = `notice:ceiling:${keys.address("previous-erased")}`;
+    const theirFormerAddress = `notice:ceiling:${keys.address("previous-kept")}`;
+    await db.insert(authThrottle).values([
+      { key: myFormerAddress, failures: 1, noticeAccountId: mine.accountId, noticeUserId: mine.userId },
+      { key: theirFormerAddress, failures: 1, noticeAccountId: theirs.accountId, noticeUserId: theirs.userId },
+    ]);
+
+    const ctx: ServiceContext = { db: dbFor(db, mine.accountId), accountId: mine.accountId, userId: mine.userId, now: () => NOW, requestId: "del" };
     await deleteAccount(ctx, { throttleKeys: keys });
 
     const left = new Set((await db.select({ key: authThrottle.key }).from(authThrottle)).map((r) => r.key));
+    expect(left.has(myFormerAddress)).toBe(false);
+    expect(left.has(theirFormerAddress)).toBe(true);
     for (const k of myKeys) expect(left.has(k), `left behind: ${family(k)}`).toBe(false);
     for (const k of theirKeys) expect(left.has(k), `a neighbour's row went: ${family(k)}`).toBe(true);
   });
@@ -81,30 +87,6 @@ describe("erasure and the sign-in throttle", () => {
     await db.delete(authThrottle).where(probeRowsOfAccount(id));
     expect((await db.select({ key: authThrottle.key }).from(authThrottle)).map((r) => r.key).sort())
       .toEqual(kept.sort());
-  });
-
-  it("both production callers hand the keyer to the erasure, and say whether refunds drain", () => {
-    const root = join(HERE, "..", "..", "..");
-    const callers = ["packages/api/src/routes/account.ts", "packages/services/src/account-lifecycle-pass.ts"];
-    for (const rel of callers) {
-      const src = ts.createSourceFile(rel, readFileSync(join(root, rel), "utf8"), ts.ScriptTarget.Latest, true);
-      const calls: ts.CallExpression[] = [];
-      const walk = (n: ts.Node): void => {
-        if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "deleteAccount") calls.push(n);
-        ts.forEachChild(n, walk);
-      };
-      walk(src);
-      expect(calls.length, `${rel}: no deleteAccount call`).toBeGreaterThan(0);
-      for (const c of calls) {
-        const opts = c.arguments[1];
-        // `drainsRefunds` too: absent, a metered host's erasure would drop a refund still owed.
-        for (const key of ["throttleKeys", "drainsRefunds"]) {
-          const named = opts !== undefined && ts.isObjectLiteralExpression(opts)
-            && opts.properties.some((p) => p.name !== undefined && ts.isIdentifier(p.name) && p.name.text === key);
-          expect(named, `${rel}: deleteAccount without ${key}`).toBe(true);
-        }
-      }
-    }
   });
 
   it("every throttle policy fits under the prune's one retention", () => {

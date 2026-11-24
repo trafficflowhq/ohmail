@@ -1,13 +1,16 @@
+import type {
+  EngineMessage,
+  EngineMutation,
+  FolderEntity,
+  MessageStateDTO,
+  MutationKind,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { MemoryMirrorStore } from "../src/store.js";
 import { inverseMutations, UNDO_CLASS } from "../src/undo.js";
 import { mutationEffects } from "../src/mutations.js";
 import {
   MUTATION_KINDS,
-  type EngineMessage,
-  type EngineMutation,
-  type MessageStateDTO,
-  type MutationKind,
 } from "../src/types.js";
 
 /**
@@ -163,8 +166,9 @@ describe("move", () => {
     ]);
     expect(inv.slice(2).map((mu) => (mu.kind === "triage_set" ? `${mu.messageId}:${mu.state}` : mu.kind)).sort(), "a booking is never spent")
       .toEqual(["m2:resurfaced", "r3:resurfaced"]);
-    // Any place but the Ohbox takes the row; a letter moved back into the Ohbox goes back up alone.
-    expect(inverseMutations(reader, { kind: "move", messageId: "m1", folder: "Archive" as EngineMessage["folder"] }).length).toBe(4);
+    // Any place but the Ohbox takes the row, a person's own folder too; a letter moved back into the Ohbox goes back up alone.
+    await reader.putLocal("folder", "f-archive", { id: "f-archive", name: "Archive", mailboxId: "mb-1", mailbox: "me@example.test" });
+    expect(inverseMutations(reader, { kind: "move", messageId: "m1", folder: "Archive" }).length).toBe(4);
     const filed = await seeded([msg("m1", { ...T, folder: "ohmail/Receipts", triage: pin("m1", "resurfaced") }), msg("m2", { ...T, triage: pin("m2", "resurfaced") })]);
     expect(inverseMutations(filed, { kind: "move", messageId: "m1", folder: "INBOX" })).toEqual([
       { kind: "move", messageId: "m1", folder: "ohmail/Receipts" },
@@ -180,6 +184,87 @@ describe("move", () => {
     await apply(store, m);
     for (const u of inv) await apply(store, u);
     expect(visible(store, "m1")).toEqual(before);
+  });
+
+  /**
+   * A PERSON'S OWN FOLDER, both ways. The way back is a move too, so it is offered only where the
+   * server takes one: one of the six, or a folder this mirror lists for the letter's own mailbox
+   * with no command standing on it. Anywhere else the Undo would be refused, so none is offered.
+   */
+  describe("a person's own folder", () => {
+    const folderOf = (id: string, name: string, over: Partial<FolderEntity> = {}): FolderEntity =>
+      ({ id, name, mailboxId: "mb-1", mailbox: "me@example.test", ...over });
+    async function world(rows: EngineMessage[], folders: FolderEntity[]): Promise<MemoryMirrorStore> {
+      const store = await seeded(rows);
+      for (const f of folders) await store.putLocal("folder", f.id, f);
+      return store;
+    }
+    const ACME = folderOf("f-acme", "Clients/Acme");
+    const BETA = folderOf("f-beta", "Clients/Beta");
+    const inAcme = (over: Partial<EngineMessage> = {}) => msg("m1", { folder: "Clients/Acme" as EngineMessage["folder"], ...over });
+    async function roundTrip(store: MemoryMirrorStore, m: EngineMutation): Promise<void> {
+      const before = visible(store, "m1");
+      const inv = inverseMutations(store, m);
+      await apply(store, m);
+      expect(visible(store, "m1").folder, "the press moved nothing").not.toBe(before.folder);
+      for (const u of inv) await apply(store, u);
+      expect(visible(store, "m1")).toEqual(before);
+    }
+
+    it("pile to folder: the Undo files it back where it was", async () => {
+      const store = await world([msg("m1")], [ACME]);
+      const m: EngineMutation = { kind: "move", messageId: "m1", folder: "Clients/Acme" };
+      expect(inverseMutations(store, m)).toEqual([{ kind: "move", messageId: "m1", folder: "INBOX" }]);
+      await roundTrip(store, m);
+    });
+
+    it("folder to pile: back into the folder, by its listed name", async () => {
+      const store = await world([inAcme()], [ACME]);
+      const m: EngineMutation = { kind: "move", messageId: "m1", folder: "ohmail/News" };
+      expect(inverseMutations(store, m)).toEqual([{ kind: "move", messageId: "m1", folder: "Clients/Acme" }]);
+      await roundTrip(store, m);
+    });
+
+    it("folder to folder", async () => {
+      const store = await world([inAcme()], [ACME, BETA]);
+      const m: EngineMutation = { kind: "move", messageId: "m1", folder: "Clients/Beta" };
+      expect(inverseMutations(store, m)).toEqual([{ kind: "move", messageId: "m1", folder: "Clients/Acme" }]);
+      await roundTrip(store, m);
+    });
+
+    it("the pin the move spent goes back up after the move back into the folder", async () => {
+      const store = await world([inAcme({ triage: pin("m1", "resurfaced") })], [ACME]);
+      const m: EngineMutation = { kind: "move", messageId: "m1", folder: "ohmail/Receipts" };
+      expect(inverseMutations(store, m)).toEqual([
+        { kind: "move", messageId: "m1", folder: "Clients/Acme" },
+        { kind: "triage_set", messageId: "m1", state: "resurfaced" },
+      ]);
+      await roundTrip(store, m);
+    });
+
+    it("no Undo where the way back is a place the server refuses", async () => {
+      const press: EngineMutation = { kind: "move", messageId: "m1", folder: "ohmail/News" };
+      const origins: Array<[string, EngineMessage, FolderEntity[]]> = [
+        ["a folder this mirror does not list", inAcme(), [BETA]],
+        ["the mailbox's Sent", msg("m1", { folder: "Sent" as EngineMessage["folder"] }), [ACME]],
+        ["a folder of the same name in another mailbox", inAcme(), [folderOf("f-x", "Clients/Acme", { mailboxId: "mb-2" })]],
+        ["a folder with a rename standing on it", inAcme(), [folderOf("f-acme", "Clients/Acme", { op: { kind: "rename", to: "Kunden" } })]],
+        ["a folder being deleted", inAcme(), [folderOf("f-acme", "Clients/Acme", { op: { kind: "delete" } })]],
+      ];
+      for (const [why, row, folders] of origins) {
+        expect(inverseMutations(await world([row], folders), press), why).toEqual([]);
+      }
+    });
+
+    it("a press that moves nothing here offers nothing: a folder this mirror does not list", async () => {
+      const store = await world([msg("m1")], [ACME]);
+      expect(inverseMutations(store, { kind: "move", messageId: "m1", folder: "Clients/Gone" })).toEqual([]);
+    });
+
+    it("a rule press made on a letter in a person's folder offers no Undo: the server takes a rule press's move only into the six", async () => {
+      const store = await world([inAcme()], [ACME]);
+      expect(inverseMutations(store, { kind: "move", messageId: "m1", folder: "ohmail/Receipts", pressRule: true })).toEqual([]);
+    });
   });
 });
 

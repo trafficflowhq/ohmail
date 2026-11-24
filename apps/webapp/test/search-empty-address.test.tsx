@@ -1,20 +1,17 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { fireEvent, within } from "@testing-library/react";
+import { enterSearchRoute, RegisteredSearch, findSearchField, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import messages from "../messages/en.json";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
 
 /**
  * the search empty state offers the address door when its two scopes apply.
@@ -29,7 +26,6 @@ import { KeymapProvider } from "../app/shell/keymap";
 // See `sync-liveness-shell.test.ts` for why React is published as a global.
 (globalThis as unknown as { React: unknown }).React = React;
 
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -83,9 +79,11 @@ async function engineWith(rows: EngineMessage[]): Promise<OhmailEngine> {
 
 let host: HTMLDivElement;
 let root: Root;
+let leaveSearch: () => void;
 
 beforeEach(() => {
   window.localStorage.clear();
+  leaveSearch = enterSearchRoute();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -94,22 +92,13 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  leaveSearch();
 });
 
 async function render(engine: OhmailEngine, query: string): Promise<void> {
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(KeymapProvider, {
-          children: h(SearchView, {
-            engine, version: 1, now: NOW, query,
-            onQuery: () => {}, onOpen: () => {},
-          }),
-        }),
-      }),
-    );
-  });
+  await act(async () => { root.render(<RegisteredSearch engine={engine} now={NOW} />); });
+  await findSearchField(host);
+  await act(async () => { typeSearch(host, query); });
 }
 
 /** Past the 250 ms archive debounce, plus the microtasks its promise resolves through. */
@@ -121,8 +110,7 @@ async function settleArchive(): Promise<void> {
 
 const CORPUS = [msg("studio", "Notes from the studio", "ben@lichtgrat.example")];
 
-const door = (): HTMLAnchorElement | null =>
-  host.querySelector('[data-testid="search-empty-address"]');
+const door = () => within(host).queryByRole("list", { name: "People" });
 
 describe("the empty state's address door", () => {
   it("offers the address door for an address-shaped query, naming both scopes", async () => {
@@ -132,11 +120,9 @@ describe("the empty state's address door", () => {
 
     const a = door();
     expect(a).not.toBeNull();
-    expect(a!.getAttribute("href")).toBe(`#/address/${encodeURIComponent("hallo@quarzwerk.zzz")}`);
-    // The sentence names the two scopes that exist: what the address sent, and anything with it.
-    expect(a!.textContent).toBe(
-      "An address is its own search — everything hallo@quarzwerk.zzz sent, or anything from or to them.",
-    );
+    expect(host.textContent).not.toContain("An address is its own search");
+    await act(async () => { fireEvent.click(within(a!).getByRole("button", { name: /hallo/ })); });
+    expect(window.location.hash).toBe(`#/address/${encodeURIComponent("hallo@quarzwerk.zzz")}`);
   });
 
   it("stays silent on a non-address empty query", async () => {
@@ -145,7 +131,7 @@ describe("the empty state's address door", () => {
     await settleArchive();
 
     // The empty state itself is up — only the door is withheld.
-    expect(host.querySelector(".empty")).not.toBeNull();
+    expect(within(host).getByText((_, node) => node?.textContent === "Nothing matched", { selector: ".oh-empty-label" })).toBeTruthy();
     expect(door()).toBeNull();
   });
 
@@ -154,7 +140,7 @@ describe("the empty state's address door", () => {
     await render(engine, "ben@lichtgrat.example");
     await settleArchive();
 
-    expect(host.querySelectorAll(".hit").length).toBeGreaterThan(0);
+    expect(within(host).getAllByRole("button", { name: /Notes from the studio/ }).length).toBeGreaterThan(0);
     expect(door()).toBeNull();
   });
 });

@@ -1,0 +1,396 @@
+"use client";
+
+/**
+ * ONE FOCUS RULE FOR THE SHELL. A sheet, dialog or menu that opens takes focus: its first control,
+ * or itself when it has none. When it closes — by Escape, a verb or a finished action — focus goes
+ * back to what opened it; when that is gone, to the row after it in the list, then the list itself.
+ * An `aria-modal` surface keeps Tab and Shift+Tab inside. A focused control the page takes away
+ * (a row's Done) lands the same way, so focus does not fall to the page body while a list stands;
+ * one taken away inside a writing surface (the inline reply) lands back where one writes in it.
+ * Surfaces call {@link useFocusFollows}; the shell mounts {@link FocusFollows} once.
+ */
+import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { KEY_WRITING } from "./keymap.js";
+import { pageModal } from "../session/modal-gate.js";
+import { queryAllVisible, queryVisible } from "../lists/visible-dom.js";
+
+const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+/** A message row (today's, or the Ohbox's own list's), and any list item a verb can take away. */
+const ITEM = '.row[data-id], .oh-row[data-id], [role="listitem"]';
+/**
+ * A list's own stop, where the keyboard stands when no row holds it: today's scroller, the Ohbox's, in a view of
+ * today's or in a seated place's list (the frame's list section).
+ */
+const LIST_STOP = ".view .scroller, .view .ob-scroll, section.fr-list .ob-scroll";
+/** What a place draws: a view of today's, or a seated place's list. The page's last fallback asks it before the body. */
+const PLACE = ".view, section.fr-list";
+/** Where a focused control sat when it was a layer over the page. */
+const LAYER = '[role="dialog"], [role="alertdialog"], [role="menu"], [aria-modal="true"]';
+/** The surfaces that own the page while they stand: nothing behind one may take focus. */
+const MODAL = '[aria-modal="true"], .reader';
+const TABBABLE = [
+  "a[href]", "button:not([disabled])", "input:not([disabled]):not([type=\"hidden\"])",
+  "select:not([disabled])", "textarea:not([disabled])", "[tabindex]", "[contenteditable=\"true\"]",
+].join(", ");
+
+/** Where somebody was: the control, the row it stood in and the rows either side, and the list. */
+interface Place {
+  /** The frame this control belonged to. Its replacement is another host scope, even if row ids repeat. */
+  frame: Element | null;
+  el: HTMLElement | null;
+  row: HTMLElement | null;
+  id: string | null;
+  next: HTMLElement | null;
+  nextId: string | null;
+  prev: HTMLElement | null;
+  prevId: string | null;
+  list: HTMLElement | null;
+  /** The layer it stood in, and that surface's own opener when the layer is one of ours. */
+  layer: HTMLElement | null;
+  /** The writing surface it stood in (`keymap.KEY_WRITING`). */
+  writing: HTMLElement | null;
+  parent: Place | null;
+}
+
+interface Surface { root: HTMLElement; opener: Place; seq: number }
+
+const open: Surface[] = [];
+let seq = 0;
+let lastPress: Place | null = null;
+let lastFocus: Place | null = null;
+let returning = 0;
+/** The shell's half is mounted: somebody watches the document for a list that comes back. */
+let watching = 0;
+/**
+ * A RETURN THAT WAITS FOR ITS LIST. The opener stood in a row, or no place is drawn at all, and neither that row,
+ * the cursor's row nor a list's own stop is in the document yet: a place drawn a commit after the surface closed.
+ * The page's first control is not taken meanwhile (there the next Enter would write a new letter); the watcher
+ * lands the return once one of the three is inserted, and after {@link LIST_WAIT_MS} the page's fallback answers.
+ */
+let waiting: { place: Place; timer: ReturnType<typeof setTimeout> } | null = null;
+const LIST_WAIT_MS = 1000;
+
+function showing(el: HTMLElement): boolean {
+  if (el.hidden || el.getAttribute("aria-hidden") === "true") return false;
+  const style = el.ownerDocument.defaultView?.getComputedStyle(el);
+  return !style || (style.display !== "none" && style.visibility !== "hidden");
+}
+
+function tabbables(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(TABBABLE)]
+    .filter((el) => el.tabIndex >= 0 && showing(el));
+}
+
+/* An app focus move never scrolls: a scroll it caused would read as the person's in the reader. */
+function tryFocus(el: HTMLElement | null | undefined): boolean {
+  if (!el || !el.isConnected) return false;
+  el.focus({ preventScroll: true });
+  return document.activeElement === el;
+}
+
+/** A control a person types or chooses in — it outranks a surface's declared entry. */
+const FIELD = 'input:not([type="button"]):not([type="submit"]), select, textarea, [contenteditable="true"]';
+
+/**
+ * Into a surface: its first control, else the surface itself. A surface may name the control ↵
+ * belongs to (`data-focus-entry`), and with no field before it focus lands there: a setup step
+ * whose body had no control landed on its first one, "Start over", while "Open ohmail" wore the
+ * ↵ badge, so ↵ started setup over.
+ */
+function enterInto(root: HTMLElement, atRoot = false): boolean {
+  if (!atRoot) {
+    const stops = tabbables(root);
+    const entry = stops.findIndex((el) => el.hasAttribute("data-focus-entry"));
+    const field = stops.findIndex((el) => el.matches(FIELD));
+    if (entry >= 0 && (field < 0 || field > entry) && tryFocus(stops[entry])) return true;
+    if (tryFocus(stops[0])) return true;
+  }
+  if (!root.hasAttribute("tabindex")) root.setAttribute("tabindex", "-1");
+  return tryFocus(root);
+}
+
+function rowOf(el: HTMLElement): HTMLElement | null {
+  return el.closest<HTMLElement>(ITEM)
+    ?? el.closest(".row-slot, .oh-row-slot")?.querySelector<HTMLElement>(".row[data-id], .oh-row[data-id]") ?? null;
+}
+
+function rowById(id: string | null): HTMLElement | null {
+  if (id === null) return null;
+  for (const row of queryAllVisible<HTMLElement>(".row[data-id], .oh-row[data-id]")) {
+    if (row.dataset.id === id) return row;
+  }
+  return null;
+}
+
+/** The row the list's cursor is on: in a view of today's, or in a seated place's list. */
+function cursorRow(): HTMLElement | null {
+  return queryVisible<HTMLElement>(".view .row.sel, .view .oh-row[data-open], section.fr-list .oh-row[data-open]");
+}
+
+function holderOf(el: HTMLElement | null): Surface | null {
+  if (el === null) return null;
+  for (let i = open.length - 1; i >= 0; i -= 1) if (open[i]!.root.contains(el)) return open[i]!;
+  return null;
+}
+
+/** The place of a press or a focus. Nothing focused lands on the cursor's row, below (`land`). */
+function placeOf(target: Element | null): Place {
+  const el = target instanceof HTMLElement && target !== document.body ? target : null;
+  const row = el ? rowOf(el) : null;
+  const list = row?.closest<HTMLElement>('.scroller, .ob-scroll, [role="list"]') ?? null;
+  let next: HTMLElement | null = null;
+  let prev: HTMLElement | null = null;
+  if (row && list) {
+    const rows = [...list.querySelectorAll<HTMLElement>(ITEM)];
+    const at = rows.indexOf(row);
+    next = at >= 0 ? rows[at + 1] ?? null : null;
+    prev = at > 0 ? rows[at - 1] ?? null : null;
+  }
+  return {
+    frame: el?.closest(".fr-root") ?? null,
+    el, row, list, next, prev,
+    id: row?.dataset.id ?? null,
+    nextId: next?.dataset.id ?? null,
+    prevId: prev?.dataset.id ?? null,
+    layer: el?.closest<HTMLElement>(LAYER) ?? null,
+    writing: el?.closest<HTMLElement>(`[${KEY_WRITING}]`) ?? null,
+    parent: holderOf(el)?.opener ?? null,
+  };
+}
+
+function standingModal(): HTMLElement | null {
+  const all = [...document.querySelectorAll<HTMLElement>(MODAL)].filter(showing);
+  return all[all.length - 1] ?? null;
+}
+
+/** The opener's chain: the place, then the opener of each surface it stood in. */
+function chainOf(p: Place): Place[] {
+  const chain: Place[] = [];
+  for (let q: Place | null = p; q && !chain.includes(q); q = q.parent) chain.push(q);
+  return chain;
+}
+
+/** The list a return in a row goes back to is in the document: that row, the cursor's row, or a list's own stop. */
+function listStands(p: Place): boolean {
+  return chainOf(p).some((q) => rowById(q.id) !== null) || cursorRow() !== null || queryVisible(LIST_STOP) !== null;
+}
+
+function stopWaiting(): Place | null {
+  if (waiting === null) return null;
+  clearTimeout(waiting.timer);
+  const { place } = waiting;
+  waiting = null;
+  return place;
+}
+
+/**
+ * Land focus for a place. A return tries the opener first — a row stands for the list's cursor,
+ * so a cursor that moved while the surface was open wins — then whose opener it had, then the
+ * rows either side, the cursor's row, the list, and the view or the seated place's list. A standing
+ * modal takes focus itself before anything behind it can. `wait`: a return from a row whose list is
+ * not in the document yet stays pending instead of taking the page's first control.
+ */
+function land(p: Place, returnTo: boolean, wait = false): boolean {
+  // A document whose root has unmounted has no body: there is nowhere left to put focus.
+  if (document.body === null || (p.frame !== null && !p.frame.isConnected)) return false;
+  const modal = standingModal();
+  const take = (el: HTMLElement | null | undefined): boolean =>
+    el != null && el.isConnected && (modal === null || modal.contains(el))
+    && (tryFocus(el) || tryFocus(tabbables(el)[0]));
+  const chain = chainOf(p);
+  if (returnTo) {
+    for (const q of chain) {
+      // A list drawn again after leaving the place returns to the original row by id.
+      if (q.row !== null && !q.row.isConnected && take(rowById(q.id))) return true;
+      const cursor = cursorRow();
+      if (q.el !== null && q.el === q.row && cursor !== null && cursor !== q.el && take(cursor)) return true;
+      if (take(q.el) || take(rowById(q.id))) return true;
+    }
+  } else if (p.writing?.isConnected
+    && take(p.writing.querySelector<HTMLElement>('[contenteditable="true"]') ?? p.writing)) {
+    /* A CONTROL TAKEN AWAY WHILE WRITING (a file's remove): the list's row would turn the next
+       letter into a mailbox verb on the message being answered. */
+    return true;
+  } else if (p.layer?.isConnected && (modal === null || modal.contains(p.layer))) {
+    return enterInto(p.layer);
+  } else if (p.el !== null && p.el === p.row && p.el.hasAttribute("tabindex")) {
+    /* A CURSOR ROW TAKEN AWAY (moved under New, or filed): the ring goes where the cursor is, or
+       to the list's own stop. A neighbour would wear the ring while the verbs act elsewhere. */
+    if (take(cursorRow()) || take(p.list?.closest<HTMLElement>(".scroller, .ob-scroll") ?? null)) return true;
+  }
+  for (const q of chain) {
+    if (take(q.next) || take(rowById(q.nextId)) || take(q.prev) || take(rowById(q.prevId))) return true;
+  }
+  if (take(cursorRow()) || take(queryVisible<HTMLElement>(LIST_STOP))) return true;
+  if (returnTo && wait && modal === null && watching > 0 && !listStands(p)
+    && (chain.some((q) => q.row !== null) || queryVisible(PLACE) === null)) {
+    stopWaiting();
+    waiting = {
+      place: p,
+      timer: setTimeout(() => {
+        const late = stopWaiting();
+        if (late !== null && focusIsLost()) land(late, true);
+      }, LIST_WAIT_MS),
+    };
+    return false;
+  }
+  if (returnTo && take(tabbables(queryVisible<HTMLElement>(PLACE) ?? document.body)[0])) return true;
+  return modal !== null && enterInto(modal);
+}
+
+function focusIsLost(): boolean {
+  const now = document.activeElement;
+  return now === null || now === document.body;
+}
+
+export interface FocusFollowsOptions {
+  /** Open while truthy; default `true`, for a surface mounted only while it is open. A new
+   *  value is a new surface (the same confirm, opened under another row). */
+  active?: boolean | string | null;
+  /** Take focus on open. `false` where the surface places focus itself (a composer, a strip);
+   *  `"root"` on the surface itself, never its first control (a sheet the width raised). */
+  enter?: boolean | "root";
+  /** Close on Escape, pressed inside it or on the control that opened it. Only for a surface
+   *  the shell's Escape ladder does not own. */
+  onEscape?: () => void;
+  /** Hold Tab inside while open, for a surface that covers the page and is not `aria-modal`
+   *  (the navigation drawer, which stays a navigation landmark). */
+  trap?: boolean;
+}
+
+/** The rule, for one surface. `ref` is its root; `aria-modal="true"` on it traps Tab. */
+export function useFocusFollows(ref: RefObject<HTMLElement | null>, opts: FocusFollowsOptions = {}): void {
+  const { active = true, enter = true, trap = false } = opts;
+  const escape = useRef(opts.onEscape);
+  escape.current = opts.onEscape;
+  const closes = opts.onEscape !== undefined;
+  useCommitEffect(() => {
+    const root = ref.current;
+    if (!active || root === null) return undefined;
+    const pressed = lastPress?.el && !root.contains(lastPress.el) ? lastPress : null;
+    const surface: Surface = { root, opener: pressed ?? placeOf(document.activeElement), seq: ++seq };
+    open.push(surface);
+    if (enter) {
+      queueMicrotask(() => {
+        if (root.isConnected && !root.contains(document.activeElement)) enterInto(root, enter === "root");
+      });
+    }
+    const onTab = (e: KeyboardEvent): void => {
+      if (e.key !== "Tab" || (!trap && root.getAttribute("aria-modal") !== "true")) return;
+      e.preventDefault();
+      const stops = tabbables(root);
+      if (stops.length === 0) { tryFocus(root); return; }
+      const at = stops.indexOf(document.activeElement as HTMLElement);
+      const to = e.shiftKey ? (at <= 0 ? stops.length - 1 : at - 1) : (at < 0 || at === stops.length - 1 ? 0 : at + 1);
+      tryFocus(stops[to]);
+    };
+    const onEscape = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape" || e.defaultPrevented || !(e.target instanceof Node)) return;
+      // Read at the press: a windowed list can remount the surface while it stays open.
+      if (!(ref.current ?? root).contains(e.target) && e.target !== surface.opener.el) return;
+      e.preventDefault();
+      e.stopPropagation();
+      escape.current?.();
+    };
+    root.addEventListener("keydown", onTab);
+    if (closes) document.addEventListener("keydown", onEscape, true);
+    return () => {
+      root.removeEventListener("keydown", onTab);
+      if (closes) document.removeEventListener("keydown", onEscape, true);
+      open.splice(open.indexOf(surface), 1);
+      // Focus somebody moved elsewhere was moved on purpose; only a close that took it is answered.
+      const had = document.activeElement;
+      if (had !== null && had !== document.body && !root.contains(had)) return;
+      const closedAt = seq;
+      returning += 1;
+      queueMicrotask(() => {
+        returning -= 1;
+        // A surface opened in the same breath (a sheet replaced by the one it opened) takes focus.
+        if (open.some((s) => s.seq > closedAt) || !focusIsLost()) return;
+        land(surface.opener, true, true);
+      });
+    };
+  }, [active, enter, closes, trap, ref]);
+}
+
+/**
+ * The shell's half, mounted once: where each press happened (the opener a surface records), and
+ * the answer to a focused control the page removes. A blur leaves its element standing and is
+ * left alone; only a removal is answered, after a surface's own return has had its turn.
+ */
+export function FocusFollows(): null {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      lastPress = placeOf(document.activeElement);
+      /* A KEY AT THE PAGE ROOT UNDER A PAGE MODAL ENTERS IT. Tab there walked to the first control
+         behind the dialog; the key itself reaches nothing behind (the keymap asks `pageModal`). */
+      const modal = focusIsLost() ? pageModal(document) : null;
+      if (modal === null) return;
+      enterInto(modal);
+      if (e.key === "Tab") e.preventDefault();
+    };
+    const onPress = (e: Event): void => {
+      const target = e.target instanceof Element ? e.target.closest<HTMLElement>(TABBABLE) : null;
+      lastPress = placeOf(target);
+    };
+    const onFocusIn = (e: FocusEvent): void => {
+      lastFocus = e.target instanceof HTMLElement ? placeOf(e.target) : null;
+    };
+    const onFocusOut = (e: FocusEvent): void => {
+      const left = e.target;
+      queueMicrotask(() => {
+        if (lastFocus?.el === left && left instanceof HTMLElement && left.isConnected
+          && document.activeElement !== left) lastFocus = null;
+      });
+    };
+    let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+    const observer = new MutationObserver(() => {
+      /* A return that waited for its list: somebody put the keyboard elsewhere, or the list is here now. */
+      if (waiting !== null && !focusIsLost()) stopWaiting();
+      if (returning > 0 || !focusIsLost()) return;
+      if (waiting !== null && listStands(waiting.place)) {
+        const back = stopWaiting();
+        if (back !== null && land(back, true)) return;
+      }
+      const lost = lastFocus;
+      if (lost?.el != null && !lost.el.isConnected) {
+        lastFocus = null;
+        land(lost, false);
+        return;
+      }
+      if (restoreTimer !== null) return;
+      /* A PAGE MODAL HOLDS FOCUS. A step that disabled or swapped its own button left focus on
+         the page root with no removal to answer, and ↵ there reached the mail behind setup.
+         WebKit can deliver mutations between blurring one control and focusing the next, so the
+         check waits one task: a transient page-root focus must not steal a text-field click. */
+      restoreTimer = setTimeout(() => {
+        restoreTimer = null;
+        if (returning > 0 || !focusIsLost()) return;
+        const modal = pageModal(document);
+        if (modal !== null) enterInto(modal);
+      }, 0);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    watching += 1;
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPress, true);
+    document.addEventListener("mousedown", onPress, true);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      observer.disconnect();
+      watching -= 1;
+      stopWaiting();
+      if (restoreTimer !== null) clearTimeout(restoreTimer);
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onPress, true);
+      document.removeEventListener("mousedown", onPress, true);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+      lastPress = null;
+      lastFocus = null;
+    };
+  }, []);
+  return null;
+}

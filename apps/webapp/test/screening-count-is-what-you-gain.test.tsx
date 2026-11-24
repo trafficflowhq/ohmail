@@ -1,28 +1,29 @@
 /** @vitest-environment jsdom */
+import { readFileSync } from "node:fs";
+import { clickMounted, withMountedSender } from "./fixtures/mounted-sender-sheet.js";
+import { tick as tickWeb } from "./fixtures/screening-web.js";
+import { reportSays } from "./ohbox/_finders.js";
+import { UNDO_MS } from "@ohmail/app-logic/press/routing-undo";
+import type { EngineMessage, EngineMutation, Folder, MessageBodyWire } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider, createTranslator } from "next-intl";
+import { within } from "@testing-library/react";
+import { createTranslator } from "next-intl";
 import {
   OhmailEngine,
   MemoryMirrorStore,
-  consentPartition,
   mutationEffects,
-  presentationReader,
   pressGained,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type MessageBodyWire,
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { settleFirstPaint } from "./_first-paint.js";
-import { shellSliceOf } from "./source-anchor";
-import { COMMIT_MS } from "../app/shell/screener-state";
-import { shellConsentOptions, type ShellConsentFacts } from "../app/shell/consent-options";
-import { screeningReadBack, screeningShown } from "../app/shell/press-verdict";
-import { dispatchScreeningChange, planScreeningChange, senderScreening } from "../app/shell/sender-screening";
+import { sliceOfDeclaration } from "./source-anchor";
+import { act, answerConsentWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
+import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
+import type { ShellConsentFacts } from "@ohmail/app-logic/press/consent-options";
+import { screeningReadBack, screeningShown } from "@ohmail/app-logic/press/press-verdict";
+import { dispatchScreeningChange, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
+import { planBulkScreening, screenBulk } from "../../../packages/app-logic/src/press/selection-screening.js";
+import type { VerbContext } from "../../../packages/app-logic/src/press/verb-context.js";
 
 /**
  * THE COUNT IS WHAT YOU GAIN. Accepting a waiting sender said "Ohbox — 1 message
@@ -34,11 +35,6 @@ import { dispatchScreeningChange, planScreeningChange, senderScreening } from ".
  * in `screener-state.ts` → `count: plan.moved`, and the first two cases read 0, not 1 and 26.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
 const NOW = new Date("2026-09-26T12:00:00.000Z");
 const ADDR = "letters@split.example";
 const FACTS: ShellConsentFacts = {
@@ -49,12 +45,10 @@ const tr = createTranslator({ locale: "en", messages: messages as never, namespa
 
 let seq = 0;
 let sent: EngineMutation[] = [];
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
 
 function msg(id: string, folder: Folder, date = "2026-09-25T09:00:00.000Z"): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
+    id, accountId: "acct_live_1", mailboxId: "mb_1", threadId: null, messageIdHeader: null,
     subject: `Subject ${id}`, from: { name: null, address: ADDR }, to: [], cc: [],
     date, folder, snippet: `snippet ${id}`, unread: true, hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
@@ -94,85 +88,53 @@ async function engineWith(mail: EngineMessage[]): Promise<OhmailEngine> {
   });
 }
 
-interface StateLike {
-  waiting: Array<{ id: string; from: { address: string }; gatePhysical?: boolean }>;
-  decide: (sender: unknown, dest: string, opts: { read: boolean; scope: string }) => void;
-}
-
-/** The hook as `AppShell` wires it: the projected queue, and the count read over the same partition. */
-async function mountScreener(engine: OhmailEngine, said: string[]): Promise<{ get: () => StateLike }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  let latest: StateLike | null = null;
-  function Probe(): null {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const reader = engine.read();
-    const presented = presentationReader(reader, consentPartition(reader, shellConsentOptions(FACTS, NOW, [])));
-    latest = useScreenerState(
-      engine, v, ((m: string) => { said.push(m); }) as never, undefined, presented, true,
-      undefined, [], [],
-      (subject, dest) => screeningShown(engine.read(), subject, dest, { consent: FACTS, now: NOW, ownAddresses: [] }),
-    ) as unknown as StateLike;
-    return null;
-  }
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, { locale: "en", messages: messages as never, timeZone: "UTC", now: NOW, children: h(Probe) }));
-  });
-  await settleFirstPaint();
-  return { get: () => latest! };
-}
-
-/** The undo window closes, the awaited rule answers, and the toast is raised. */
-async function settleCommit(): Promise<void> {
-  await act(async () => { vi.advanceTimersByTime(COMMIT_MS + 50); });
-  for (let i = 0; i < 24; i++) await act(async () => { await Promise.resolve(); });
-}
-
-async function acceptIntoOhbox(mail: EngineMessage[]): Promise<{ said: string[]; moves: number }> {
+async function acceptIntoOhbox(mail: EngineMessage[]): Promise<{ said: string[]; moves: number; dot: boolean }> {
   const engine = await engineWith(mail);
-  await engine.start();
-  const said: string[] = [];
-  const { get } = await mountScreener(engine, said);
-  const row = get().waiting.find((s) => s.from.address === ADDR);
-  expect(row, "the sender is not waiting in the Screener").toBeDefined();
-  expect(row!.gatePhysical, "the row must take the past-the-gate press").toBe(false);
-  await act(async () => { get().decide(row, "ohbox", { read: false, scope: "sender" }); });
-  await settleCommit();
-  return { said, moves: sent.filter((m) => m.kind === "move").length };
+  window.location.hash = "#/screener";
+  const host = await mountShell([mailbox({
+    id: "mb_1", lastSyncAt: NOW.toISOString(), organizerRole: "organizer", organizeConsentedAt: NOW.toISOString(),
+  })], { engine, suggestWire: "none", junkWire: "none" });
+  await tick(50);
+  const waiting = within(host).getByRole("listbox", { name: messages.screener.title });
+  const sender = within(waiting).getByRole("option", { name: /in-0|in-1/ });
+  await act(async () => { sender.click(); });
+  await tick(0);
+  const actions = within(host).getByRole("toolbar", { name: messages.screener.place.panel });
+  const ohbox = within(actions).getByRole("button", { name: messages.screener.pileOhbox });
+  await act(async () => { ohbox.click(); });
+  await tick(COMMIT_MS + 50);
+  const said = within(host).queryAllByRole("status").map((status) => status.textContent?.trim() ?? "");
+  const dot = host.querySelector('.fr-report [role="status"] .oh-nowrap > .oh-dot') !== null;
+  return { said, moves: sent.filter((m) => m.kind === "move").length, dot };
 }
-
-const ruled = (count: number) => tr("toastRuledMoved", { place: "Ohbox", sender: ADDR, count });
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  installShellEnv();
+  vi.setSystemTime(NOW);
+  answerConsentWith({ dormancyDays: FACTS.dormancyDays });
+  window.localStorage.clear();
   sent = [];
+  seq = 0;
 });
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-  vi.useRealTimers();
-});
+afterEach(async () => { await teardownShellEnv(); });
 
 describe("the Screener's accept says what the Ohbox gained", () => {
   it("one letter in the INBOX and one in Screened: one is there, and the Screened one stays where it is", async () => {
     // Ruled, the card files what it shows: the rule asks no past-mail answer, so the Screened letter
     // stays and the sentence says so; the count is the INBOX letter the rule placed.
-    const { said, moves } = await acceptIntoOhbox([msg("in-1", "INBOX"), msg("sc-1", "ohmail/Screened", "2026-09-20T09:00:00.000Z")]);
+    const { said, moves, dot } = await acceptIntoOhbox([msg("in-1", "INBOX"), msg("sc-1", "ohmail/Screened", "2026-09-20T09:00:00.000Z")]);
     expect(moves, "an Ohbox decision moves nothing: the letter is already in the INBOX").toBe(0);
-    expect(said, said.join(" | ")).toContain(ruled(1));
+    expect(said, said.join(" | ")).toContain("1 is in Ohbox · 1 is still in Screened");
+    expect(dot).toBe(true);
   });
 
   it("twenty-six already in the INBOX and one in Screened: twenty-six, and no move", async () => {
     const inbox = Array.from({ length: 26 }, (_, i) => msg(`in-${i}`, "INBOX", `2026-09-25T0${i % 10}:${String(i).padStart(2, "0")}:00.000Z`));
-    const { said, moves } = await acceptIntoOhbox([...inbox, msg("sc-1", "ohmail/Screened", "2026-09-20T09:00:00.000Z")]);
+    const { said, moves, dot } = await acceptIntoOhbox([...inbox, msg("sc-1", "ohmail/Screened", "2026-09-20T09:00:00.000Z")]);
     expect(moves).toBe(0);
-    expect(said, said.join(" | ")).toContain(ruled(26));
+    expect(said, said.join(" | ")).toContain("26 are in Ohbox · 1 is still in Screened");
+    expect(dot).toBe(true);
   });
 
   it("the sentence says a letter is there, never that it moved", () => {
@@ -180,6 +142,123 @@ describe("the Screener's accept says what the Ohbox gained", () => {
       expect(tr(key, { place: "Ohbox", sender: ADDR, count: 2 }), key).not.toMatch(/\bmoved\b/);
     }
   });
+});
+
+function bulkContext(
+  engine: OhmailEngine,
+  sentences: Array<string | null>,
+  reports: Promise<number>[],
+  roster: VerbContext["press"]["rosterRef"]["current"] = { kind: "absent" },
+): VerbContext {
+  return {
+    engine,
+    press: {
+      rosterRef: { current: roster },
+      refusalCopy: {
+        named: (name) => createTranslator({ locale: "en", messages, namespace: "screener" })("readerMoveRefused", { name }),
+        unknown: () => messages.screener.readerMoveRefusedUnknown,
+        nobody: () => messages.screener.readerMoveRefusedNobody,
+      },
+      mutateSetAndReport: (writes, say) => {
+        const report = Promise.all(writes.map((write) => engine.mutate(write))).then(() => {
+          sentences.push(say(writes.length));
+          return writes.length;
+        });
+        reports.push(report);
+        return report;
+      },
+    } as VerbContext["press"],
+    rulesTravel: false,
+    t: createTranslator({ locale: "en", messages: messages as never }) as unknown as VerbContext["t"],
+    toast: (sentence) => { sentences.push(sentence); },
+    consent: { ...FACTS, resurfaceTime: "09:00" },
+    demo: false,
+    nowAt: () => NOW,
+    tags: [],
+    ownAddresses: [],
+    surfaceById: new Map(),
+    markSeen: async () => false,
+    offOhbox: false,
+    letterUp: null,
+    closeLetterUp: vi.fn(),
+    answer: vi.fn(),
+  };
+}
+
+async function checkSelectedSenderDecision(): Promise<void> {
+  const waiting = msg("picked-waiting", "ohmail/Screener");
+  const second = msg("also-picked", "ohmail/Screener", "2026-09-25T08:00:00.000Z");
+  const unpickedHeld = msg("held-unpicked", "ohmail/Screener", "2026-09-25T07:00:00.000Z");
+  const unpicked = msg("not-picked", "ohmail/Screened");
+  const other = {
+    ...msg("other-waiting", "ohmail/Screener"),
+    from: { name: null, address: "other@split.example" },
+  };
+  const placed = {
+    ...msg("picked-placed", "INBOX"),
+    from: { name: null, address: "placed@split.example" },
+  };
+  const sibling = { ...placed, id: "unpicked-placed" };
+  const engine = await engineWith([waiting, second, unpickedHeld, unpicked, other, placed, sibling]);
+  await engine.start();
+  const sentences: Array<string | null> = [];
+  const reports: Promise<number>[] = [];
+  const cx = bulkContext(engine, sentences, reports);
+  const ids = [waiting.id, second.id];
+  expect(planBulkScreening(cx, ids, "reads")).toMatchObject({ senders: 1, messages: 3, rules: 1 });
+  const mixed = planBulkScreening(cx, [...ids, placed.id], "reads");
+  expect(mixed).toMatchObject({ senders: 2, messages: 5, rules: 1 });
+  const moves = mixed.mutations.filter((mutation) => mutation.kind === "move");
+  expect(moves).toHaveLength(2);
+  expect(moves).toEqual(expect.arrayContaining([
+    { kind: "move", messageId: placed.id, folder: "ohmail/News" },
+    { kind: "move", messageId: sibling.id, folder: "ohmail/News" },
+  ]));
+  expect(screenBulk(cx, ids, "reads")).toBe(true);
+  await Promise.all(reports);
+  expect(sentences).toEqual([
+    "News — 3 messages from 1 sender are now there, and 1 rule was made: future mail from them files there too.",
+  ]);
+  expect(sent).toEqual([expect.objectContaining({
+    kind: "screener_decide", senderId: waiting.id, scope: "sender", dest: "reads", applyRetro: true,
+  })]);
+}
+
+it("refuses bulk Screening when an unpicked sibling is in a read-only mailbox", async () => {
+  const picked = msg("picked", "INBOX");
+  const sibling = { ...msg("unpicked-sibling", "INBOX"), mailboxId: "mb_2" };
+  const engine = await engineWith([picked, sibling]);
+  await engine.start();
+  const sentences: Array<string | null> = [];
+  const reports: Promise<number>[] = [];
+  const organizer = "Studio Mac";
+  const cx = bulkContext(engine, sentences, reports, {
+    kind: "known",
+    rows: [
+      { id: picked.mailboxId, status: "connected", organizerRole: "organizer" },
+      {
+        id: sibling.mailboxId,
+        status: "connected",
+        organizerRole: "reader",
+        organizerState: "held",
+        organizedBy: { kind: "desktop", name: organizer, since: NOW.toISOString() },
+      },
+    ],
+  });
+
+  const ids = [picked.id];
+  expect(planBulkScreening(cx, ids, "reads").mutations).toEqual([
+    { kind: "move", messageId: picked.id, folder: "ohmail/News" },
+    { kind: "move", messageId: sibling.id, folder: "ohmail/News" },
+  ]);
+  const accepted = screenBulk(cx, ids, "reads");
+  await Promise.all(reports);
+
+  expect(sent).toEqual([]);
+  expect(engine.verbRead().get<EngineMessage>("message", picked.id)?.folder).toBe("INBOX");
+  expect(engine.verbRead().get<EngineMessage>("message", sibling.id)?.folder).toBe("INBOX");
+  expect(accepted).toBe(false);
+  expect(sentences).toEqual([messages.screener.readerMoveRefused.replace("{name}", organizer)]);
 });
 
 /**
@@ -224,17 +303,42 @@ describe("the sender sheet's count is the same reading", () => {
     expect(pressGained(before, screeningShown(engine.verbRead(), sender.scopes.sender.messages, "ohbox", facts))).toBe(1);
   });
 
-  it("every sheet sentence takes its count from pressGained, never from the plan's moves", () => {
-    const says = shellSliceOf("changeScreening");
-    expect(says).toMatch(/const before = shownNow\(\);/);
-    expect(says).toMatch(/count: pressGained\(before, back\?\.shown \?\? shownNow\(\)\)/);
-    expect(says).not.toMatch(/count: plan\.moved/);
-    const held = shellSliceOf("holdScreenPress");
-    expect(held.match(/count: p\.gained\(\)/g) ?? [], "the refused and queued sentences").toHaveLength(2);
-    expect(shellSliceOf("pressSentence")).not.toMatch(/plan\.moved/);
-    const bulk = shellSliceOf("onBulkScreen");
+  it("every sheet sentence takes its count from pressGained, never from the plan's moves", async () => {
+    const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+    const bulk = sliceOfDeclaration(source("../../../packages/app-logic/src/press/selection-screening.ts"), "screenBulk");
     expect(bulk.match(/count: gained\(\)/g) ?? [], "both bulk sentences").toHaveLength(2);
-    expect(shellSliceOf("screenerShownAt"), "AppShell hands the Screener the lists' own reading")
-      .toMatch(/screeningShown\(engine\.read\(\), subject, dest, \{ consent: demo \? null : consent/);
-  });
+    await checkSelectedSenderDecision();
+    const shown = sliceOfDeclaration(source("../../../packages/app-logic/src/screener/live.ts"), "shownAt");
+    expect(shown, "the Screener uses the lists' own reading")
+      .toMatch(/screeningShown\(engine\.read\(\), subject, dest, \{\s*consent: demo \? null : consent/);
+
+    await withMountedSender(async ({ sheet, writes, id }) => {
+      await clickMounted(sheet.getByRole("radio", { name: /^Everyone at sender\.example/ }));
+      await clickMounted(sheet.getByRole("radio", { name: /^News/ }));
+      await tickWeb(500);
+      expect(writes.filter(({ path }) => path.endsWith("/move")).map(({ path }) => path)).toEqual([
+        `/api/messages/${id}/move`,
+      ]);
+      expect(writes.filter(({ path }) => path === "/api/rules")).toEqual([{
+        method: "POST", path: "/api/rules",
+        body: expect.objectContaining({ kind: "domain", destination: "ohmail/News" }),
+      }]);
+      expect(reportSays()).toBe("News — 2 messages from sender.example are now there. Future mail from them files there too");
+      expect(document.querySelector('.fr-report [role="status"] .oh-nowrap > .oh-dot')).not.toBeNull();
+    }, { organizerFilesBacklog: true });
+
+    for (const refused of [true, false]) {
+      await withMountedSender(async ({ sheet, writes, id }) => {
+        await clickMounted(sheet.getByRole("radio", { name: /^News/ }));
+        await tickWeb(UNDO_MS + 500);
+        expect(writes.filter(({ path }) => path.endsWith("/move")).map(({ path }) => path)).toEqual([
+          `/api/messages/${id}/move`,
+        ]);
+        expect(writes.filter(({ path }) => path === "/api/rules")).toHaveLength(1);
+        expect(reportSays()).toContain("mail already here stays where it is");
+        expect(reportSays()).toContain(refused ? "the rule couldn't be made" : "the server answered the rule with an error");
+        expect(reportSays()).not.toMatch(/\b[1-9] messages? from/);
+      }, { refused, queued: !refused, extraPlaced: true });
+    }
+  }, 30_000);
 });

@@ -6,8 +6,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import messages from "../../webapp/messages/en.json";
-import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../src/host-client/bearer.js";
-import { PairScreen } from "../src/host-client/PairScreen.js";
+import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../../paired-page/src/bearer.js";
+import { PairScreen } from "../../paired-page/src/PairScreen.js";
 
 /**
  * ═══ THE /pair FRAGMENT LANDING — the credential discipline, held behaviourally ═══════════════
@@ -71,7 +71,7 @@ async function mount(props: { ended?: "revoked" | null; onPaired?: () => void; s
   document.body.append(hostEl);
   root = createRoot(hostEl);
   const screen = h(NextIntlClientProvider, { locale: "en", messages: messages as never },
-    h(PairScreen, { bearer, ended: props.ended ?? null, onPaired: props.onPaired ?? (() => undefined) }));
+    h(PairScreen, { bearer, readsCode: true, ended: props.ended ?? null, onPaired: props.onPaired ?? (() => undefined) }));
   await act(async () => {
     root.render(props.strict ? h(React.StrictMode, null, screen) : screen);
   });

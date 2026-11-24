@@ -41,8 +41,9 @@ export async function seedTypoMailbox(db: unknown, account: string): Promise<voi
     select m.id, m.account_id, to_tsvector('english', m.subject), to_tsvector('english', ''),
       lower(m.subject || ' ' || m.from_name || ' ' || m.from_address), 'text'
     from messages m where m.account_id = ${account}::uuid`);
-  await x.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${account}::uuid, now())
-    on conflict (account_id) do update set search_index_built_at = now()`);
+  await x.execute(sql`insert into pass_progress (account_id, job, subject_id, done_at)
+    values (${account}::uuid, 'search_index_backfill', ${account}::uuid, now())
+    on conflict (account_id, job, subject_id) do update set done_at = now()`);
   await x.execute(sql`analyze messages`);
   await x.execute(sql`analyze message_search`);
 }

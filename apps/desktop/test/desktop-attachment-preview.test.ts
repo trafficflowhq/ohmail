@@ -48,7 +48,12 @@ const STAGED = "0123456789abcdef".repeat(2);
 async function world(armed: boolean) {
   const mod = await import("../../webapp/app/shell/open-attachment.js");
   if (armed) mod.enableDesktopAttachments();
-  const seam = await import("../../webapp/app/shell/attachments.js");
+  const door = await import("../../webapp/app/shell/attachments.js");
+  /* The door's preview as this window's host mounts it: over the shell the window armed, or none. */
+  const seam = {
+    ensurePreview: (e: Parameters<typeof door.ensurePreview>[0], messageId: string, id: string, opts?: { retry?: boolean }) =>
+      door.ensurePreview(e, mod.desktopFileShell(), messageId, id, opts),
+  };
   const { OhmailEngine } = await import("@ohmail/client-engine");
   const fetched: string[] = [];
   const wire = (id: string, contentType: string) => ({ id, filename: `${id}.x`, contentType, sizeBytes: 40 << 20, inline: false, messageId: "m1" });

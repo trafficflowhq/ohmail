@@ -4,7 +4,7 @@ import {
   ISO, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 import { consentVia } from "../../desktop/src/consent-wire";
-import type { ConsentReadFailure, ConsentTransport } from "../app/shell/consent-state";
+import type { ConsentReadFailure, ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 
 /**
  * THE PAIRED DESKTOP'S OHBOX FILES MAIL BY RULE WHILE ITS CONSENT READ FAILS (FIX-025).
@@ -89,13 +89,17 @@ function ruledWorld(): Response {
   return json(200, { changes: { creates, updates: [], moves: [], deletes: [] }, cursor: "c1", hasMore: false, serverTime: ISO });
 }
 
-/** The Ohbox's unread count, as the rail states it ("4 unread"). */
+/**
+ * The Ohbox's unread count, as the rail states it. Today's rail said it in a tooltip ("4 unread"); the new rail's
+ * entry says it in its accessible name ("Ohbox 4", the kit's `RailEntry`), and draws no tooltip (RE-POINTED, share
+ * ohbox-2: the shell is the one there is, `_mail-shell.tsx` through the shared fixture; expectations as they stood).
+ */
 function ohboxUnread(): number {
-  const titled = [...document.querySelectorAll("[title]")]
-    .map((el) => /^(\d+) unread\b/.exec(el.getAttribute("title") ?? ""))
+  const named = [...document.querySelectorAll<HTMLElement>('[data-rail-id="ohbox"] button')]
+    .map((el) => /^Ohbox (\d+)$/.exec(el.getAttribute("aria-label") ?? ""))
     .filter((m): m is RegExpExecArray => m !== null);
-  expect(titled.length, "the rail's Ohbox item was not found").toBeGreaterThan(0);
-  return Number(titled[0]![1]);
+  expect(named.length, "the rail's Ohbox item was not found").toBeGreaterThan(0);
+  return Number(named[0]![1]);
 }
 
 describe("the paired desktop's Ohbox while its consent read fails", () => {

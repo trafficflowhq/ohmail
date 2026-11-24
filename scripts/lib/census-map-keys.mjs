@@ -3,7 +3,7 @@
  *
  * A repeated property in an object literal is TS1117, and TypeScript catches it — in the programs
  * the typecheck compiles. The census maps that pin what a guard expects live in `test/` directories,
- * and `scripts/typecheck-test-dirs.mjs` pins fourteen of those as UNREACHED (CLAUDE.md): there, a
+ * and `scripts/typecheck-test-dirs.mjs` pins fourteen of those as UNREACHED (AGENTS.md): there, a
  * second `foo:` silently overwrites the first and the census counts one fewer sink than it lists.
  * Measured 2026-09-12 on `IN_SINKS` in `packages/api/test/input-bounds-census.test.ts`.
  *

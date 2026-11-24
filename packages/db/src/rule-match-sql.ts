@@ -83,9 +83,26 @@ export function ruleNamesSenderSql(
   d: Dialect, rule: { kind: SQL | AnyColumn; match: SQL | AnyColumn; destination: SQL | AnyColumn }, sender: SQL,
 ): SQL {
   const key = ruleMatchKeySql(rule.match);
-  const shared = sql.join(SHARED_PROVIDER_DOMAINS.map((x) => sql`${x}`), sql`, `);
-  const holding = sql.join([...HOLDING].map((x) => sql`${x}`), sql`, `);
   return sql`((${rule.kind} = 'sender' and ${key} = ${sender})
     or (${rule.kind} = 'domain' and ${key} = ${d.domainOf(sender)}
-      and not (${key} in (${shared}) and ${rule.destination} not in (${holding}))))`;
+      and ${ruleCanNameDomainSql(key, rule.destination)}))`;
+}
+
+/** A rule can name a shared provider's domain only when it holds mail back. */
+export function ruleCanNameDomainSql(key: SQL, destination: SQL | AnyColumn): SQL {
+  const shared = sql.join(SHARED_PROVIDER_DOMAINS.map((x) => sql`${x}`), sql`, `);
+  const holding = sql.join([...HOLDING].map((x) => sql`${x}`), sql`, `);
+  return sql`not (${key} in (${shared}) and ${destination} not in (${holding}))`;
+}
+
+/** Test a sender against two account-scoped key sets. Postgres can hash each set once per query. */
+export function ruleSetNamesSenderSql(
+  d: Dialect, rule: { kind: SQL; match: SQL; destination: SQL }, sender: SQL, source: SQL,
+): SQL {
+  const key = ruleMatchKeySql(rule.match);
+  return sql`(
+    (${sender} in (select ${key} ${source} and ${rule.kind} = 'sender')) is true
+    or (${d.domainOf(sender)} in (select ${key} ${source} and ${rule.kind} = 'domain'
+      and ${ruleCanNameDomainSql(key, rule.destination)})) is true
+  )`;
 }

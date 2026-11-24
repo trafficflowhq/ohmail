@@ -21,15 +21,16 @@
  */
 
 import {
-  CLIENT_HEADER, clientHeaderValue, HttpAdapter, OhmailEngine, retryingRead, updateAnswerOf, type UpdateAnswer,
+  CLIENT_HEADER, clientHeaderValue, HttpAdapter, OhmailEngine, retryingRead, updateAnswerOf, type UpdateAnswer, type CalendarSetupTransport,
   type WindowSearchPhases, type WindowSyncFailure,
 } from "@ohmail/client-engine";
+import type { CalendarWriteTransport } from "@ohmail/client-engine/calendar-writes";
 import { BUILD_VERSION } from "./build-id.js";
-import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
+import { DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 import { WindowOutboxStore } from "./window-outbox-store.js";
-import { readStoredVerdict, storeVerdict } from "../../webapp/app/shell/wall-lift.js";
-import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "../../webapp/app/shell/access-window.js";
-import { storageOwner } from "../../webapp/app/shell/storage-owner.js";
+import { readStoredVerdict, storeVerdict } from "@ohmail/app-logic/doors/wall-lift";
+import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "@ohmail/app-logic/session/access-window";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { SHELL_DEADLINE_MS, withDeadline } from "./shell-deadline.js";
 import { hostLabelOf } from "./host-label.js";
 
@@ -198,7 +199,7 @@ function noticeAccessRefusal(status: number, body: Uint8Array): void {
   }
   if (env?.code !== ACCESS_REFUSED_CODE) return;
   // The one staleness decision, shared with the drain loop (`shell/access-window.ts`).
-  if (refusalIsStale()) return;
+  if (refusalIsStale(storageOwner())) return;
   storeVerdict(storageOwner(), "closed");
   const d = (env.details ?? {}) as { reason?: unknown; manageUrl?: unknown; lifecycle?: unknown };
   const url = typeof d.manageUrl === "string" && d.manageUrl.length > 0 ? d.manageUrl : undefined;
@@ -478,6 +479,7 @@ interface BridgeInit {
   signal?: AbortSignal;
   /** This call's own deadline (`local-server-deadline.ts`); absent is the one minute. */
   deadlineMs?: number;
+  expectedCalendarSession?: number;
 }
 
 /**
@@ -500,9 +502,10 @@ export const BRIDGE_DEADLINE_MS = SHELL_DEADLINE_MS;
  * not happen. The deadline above rides the same race (`shell-deadline.ts`, the one helper every
  * shell call here goes through), so a late loser rejecting is never an unhandled rejection.
  */
-export const bridgeFetch: BridgeFetch = async (url, init) => {
+async function requestOverBridge(url: string, init?: unknown, calendarSession?: number): Promise<Response> {
   const options = (init ?? {}) as BridgeInit;
   const method = (options.method ?? "GET").toUpperCase();
+  const expectedCalendarSession = calendarSession ?? options.expectedCalendarSession;
   const bytes = await withDeadline(
     "the local engine",
     () => shell().invoke(REQUEST_COMMAND, {
@@ -510,6 +513,7 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
       url,
       headers: named(headerPairs(options.headers)),
       ...bodyField(options.body),
+      ...(expectedCalendarSession === undefined ? {} : { expectedCalendarSession }),
     }),
     {
       ...(options.signal ? { signal: options.signal } : {}),
@@ -522,7 +526,9 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
     },
   );
   return toResponse(asBytes(bytes), url);
-};
+}
+
+export const bridgeFetch: BridgeFetch = requestOverBridge;
 
 /**
  * {@link bridgeFetch} FOR THE WINDOW'S OWN POLLS — the same request, asked again when the engine
@@ -551,6 +557,10 @@ export type DoorFlavorWire = "managed" | "selfhost" | "desktop-host";
 
 /** What the shell says about the engine. A tagged object; `state` is always there. */
 export interface EngineStatus {
+  noticeDocument?: number;
+  noticeSession?: number;
+  /** The native shell's version of the installed standalone door. */
+  localDoorVersion?: number;
   state:
     | "absent"
     | "not_configured"
@@ -878,7 +888,7 @@ export interface SignOutPress {
   status: EngineStatus;
   /**
    * The window's reading of the hosted session (`doors.ts` `HostedSession`, spelled here because this
-   * module may import nothing that reaches the build-time platform flag): only `live` is ended.
+   * module may import nothing that reaches the build-time platform flag). An unread session may still be live.
    */
   session: "live" | "out" | "unknown";
 }
@@ -905,7 +915,7 @@ export function waitingFor(door: EngineStatus): string | null {
  * {@link engineConfigure}), this install's key for the next account's credential, and the window's
  * changes still waiting for this account, which the answer counts (`waiting`).
  */
-export async function engineLogout(press: SignOutPress | null = null): Promise<SignedOut> {
+export async function engineLogout(press: SignOutPress | null = null, expectedLocalDoor?: number): Promise<SignedOut> {
   return alone("signing out", async () => {
     let stillListedFrom: EngineStatus | null = null;
     let waiting: SignedOut["waiting"] = null;
@@ -926,7 +936,9 @@ export async function engineLogout(press: SignOutPress | null = null): Promise<S
         /* Not asked in time: said as not confirmed. The shell's sign-out below runs either way. */
       }
     }
-    const status = (await shell().invoke(LOGOUT_COMMAND)) as EngineStatus;
+    const status = (expectedLocalDoor === undefined
+      ? await shell().invoke(LOGOUT_COMMAND)
+      : await shell().invoke(LOGOUT_COMMAND, { expectedLocalDoor })) as EngineStatus;
     return { status, stillListedFrom, waiting };
   });
 }
@@ -934,7 +946,7 @@ export async function engineLogout(press: SignOutPress | null = null): Promise<S
 /** A Cloud door holding a session, with no switch or pending door the shell would refuse over. */
 function endsAtServer(press: SignOutPress): boolean {
   const door = press.status;
-  return door.mode === "cloud" && press.session === "live"
+  return door.mode === "cloud" && press.session !== "out"
     && door.switchPending !== true && door.identityPending !== true;
 }
 
@@ -957,6 +969,35 @@ export function createEngineAdapter(options: EngineAdapterOptions = {}): HttpAda
     // Send later with files where /hello says the door keeps them: the local engine, or a server naming its days.
     scheduleFilesCheck: true,
     ...(stage ? { stageAttachments: true } : {}),
+  });
+}
+
+/** The reminder view reads settings under the native session it was opened with. */
+export function readDesktopCalendarSettings(session: number) {
+  return new HttpAdapter({
+    baseUrl: "",
+    fetch: (url, init) => bridgeFetch(url, { ...init, expectedCalendarSession: session }),
+  }).calendarSettings();
+}
+
+/** Calendar setup uses the same native session binding as the calendar's event writes. */
+export function desktopCalendarSetup(session: number): CalendarSetupTransport {
+  const adapter = new HttpAdapter({
+    baseUrl: "",
+    fetch: (url, init) => requestOverBridge(url, init, session),
+  });
+  return { ...adapter.calendarSetupTransport(), saveCalendarSettings: (body) => adapter.patchCalendarSettings(body) };
+}
+
+/** Bind the shared calendar write client to the native account session that opened it. */
+export function desktopCalendarWrites(session: number, onWritten: () => void): CalendarWriteTransport {
+  return new HttpAdapter({
+    baseUrl: "",
+    fetch: async (url, init) => {
+      const answer = await requestOverBridge(url, init, session);
+      if (answer.ok) onWritten();
+      return answer;
+    },
   });
 }
 

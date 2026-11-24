@@ -4,6 +4,7 @@
  * are `liveTagged`'s — every message carrying the tag, which the mirror holds whatever its age
  * (the engine pins tagged mail and the snapshot serves it), so the count is the account's own.
  */
+import { MailAppearance } from "../../src/theme/mail";
 import { useLocalSearchParams } from "expo-router";
 import { View } from "react-native";
 import { Copy } from "../../src/copy";
@@ -32,9 +33,11 @@ export default function TagScreen({ inPane = false, id }: {
   useLocale();
   return (
     <SurfaceBoundary surface="tag">
-      <Gated>
-        <TagBody inPane={inPane} paneId={id} />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <TagBody inPane={inPane} paneId={id} />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }

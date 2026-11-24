@@ -11,14 +11,13 @@ import { fileURLToPath } from "node:url";
  */
 
 const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-const BANNED = /archiv|archive|this device|dieses Gerät|this computer|diesem Computer|window|Fenster/i;
+const BANNED = /archiv|archive|this device|diese[ms] Gerät|this computer|diesem Computer|window|Fenster/i;
 
-/** The failure sentences — the only places a device may be named. The mirror's three and the address
+/** The failure sentences — the only places a device may be named. The mirror and the address
     view's offline line are a paired desktop's while ohmail Cloud is unreachable. */
 const ADMITTED_WEB = new Set([
   "history.storeUnavailable", "search.scopeUnanswered", "search.scopeFailed",
-  "search.scopeMirror", "search.scopeMirrorAtLeast", "search.scopeMirrorAbout", "search.addressOffline",
-  "search.scopeMirrorNear", "search.scopeMirrorNearAtLeast",
+  "search.saidMirror", "search.addressOffline",
 ]);
 const ADMITTED_PHONE = new Set(["historyStoreUnavailable", "searchUnanswered", "searchFailed"]);
 
@@ -53,12 +52,16 @@ describe("History and Search say 'your whole mailbox', never a device, an archiv
     it(`${file.slice(12)}: only the failure sentence names the device`, () => {
       const scope = webScope(file);
       expect(scope.size, "the census reads the surfaces' copy").toBeGreaterThan(40);
-      expect(scope.get("search.scopeWholeAbout"), "the estimate's count line is read").toMatch(/\{total, number\}/);
+      expect(scope.get("search.saidAbout"), "the estimate's count line is read").toMatch(/\{total\}/);
       const hits = [...scope].filter(([k, v]) => BANNED.test(v) && !ADMITTED_WEB.has(k)).map(([k]) => k);
       expect(hits).toEqual([]);
       // The admitted keys exist, say the device, and say it in the one failure sentence.
       for (const k of ADMITTED_WEB) expect(BANNED.test(scope.get(k) ?? ""), `${k} is the failure sentence`).toBe(true);
+      const german = file.endsWith("/de.json");
       expect(scope.get("history.storeUnavailable")).toBe(scope.get("search.scopeUnanswered"));
+      expect(scope.get("search.scopeUnanswered")).toBe(german
+        ? "Dein Server hat nicht geantwortet. Diese Treffer stammen aus den neueren Mails auf diesem Gerät."
+        : "Your server did not answer, so these are from the recent mail this device holds.");
     });
   }
 

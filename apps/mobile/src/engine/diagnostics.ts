@@ -24,9 +24,11 @@ export { SUPPORT_ADDRESS, supportBody, supportMailto, withSupportBlock, withoutS
 
 import type { SecureKV } from "../state/servers";
 import { MOBILE_WINDOW } from "./boot";
+import { phoneDiagnosticLines } from "./diagnostic-log";
 
 /** The builder's one file name, for the native half: this file is the package's one importer here. */
 export const PHONE_DIAGNOSTIC_FILE_NAME = DIAGNOSTIC_FILE_NAME;
+export { MIRROR_ENTITY_TYPES as PHONE_DIAGNOSTIC_ENTITIES };
 
 /** Where the install identity is kept between files. */
 export const PHONE_DIAGNOSTIC_INSTALL_KEY = "ohmail.diagnostics.install";
@@ -43,12 +45,11 @@ export interface PhoneDiagnosticDeps {
 }
 
 /** What the screen holds: the mirror to count, the rows the paired door answered, the checks run. */
-export interface PhoneDiagnosticState {
-  reader: EntityReader | null;
+export type PhoneDiagnosticState = {
   mailboxes: readonly DiagnosticMailboxInput[];
   /** The session's self-check readings by mailbox id; a reading for a mailbox the roster lacks adds its row. */
   selfChecks?: Readonly<Record<string, unknown>>;
-}
+} & ({ reader: EntityReader | null } | { counts: Readonly<Record<string, number>> });
 
 const hex = (bytes: Uint8Array): string => [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -81,7 +82,9 @@ export async function writePhoneDiagnostics(state: PhoneDiagnosticState, deps: P
   }
   const { record, rotated } = diagnosticInstall(stored, now, () => hex(deps.random16()));
   if (rotated) await deps.kv?.set(PHONE_DIAGNOSTIC_INSTALL_KEY, JSON.stringify(record)).catch(() => {});
-  const counts = Object.fromEntries(MIRROR_ENTITY_TYPES.map((t) => [t, state.reader ? state.reader.list(t).length : 0]));
+  const counts = "counts" in state
+    ? state.counts
+    : Object.fromEntries(MIRROR_ENTITY_TYPES.map((t) => [t, state.reader ? state.reader.list(t).length : 0]));
   const bundle = buildDiagnosticBundle({
     surface: "phone",
     now,
@@ -95,7 +98,7 @@ export async function writePhoneDiagnostics(state: PhoneDiagnosticState, deps: P
       ...Object.keys(state.selfChecks ?? {}).filter((id) => !state.mailboxes.some((m) => m.id === id)).map((id) => ({ id })),
     ],
     ...(state.selfChecks ? { selfChecks: state.selfChecks } : {}),
-    log: deps.lines(),
+    log: phoneDiagnosticLines(deps.lines()),
   });
   const where = await deps.write(renderDiagnosticBundle(bundle));
   return typeof where === "string" && where !== "" ? where : null;

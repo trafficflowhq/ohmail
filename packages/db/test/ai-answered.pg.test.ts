@@ -26,7 +26,7 @@ import { pgTestUrl } from "../src/testing.js";
  *
  * The write is a conditional UPDATE on a column with a NOT NULL DEFAULT, and the whole point is
  * what happens when the value does NOT change. PGlite green means nothing for that class
- * (CLAUDE.md), and the interesting half — the migration's backfill touching only `ai_enabled =
+ * (AGENTS.md), and the interesting half — the migration's backfill touching only `ai_enabled =
  * false` rows — is a statement, not a function.
  *
  * Mutation-checked, each watched red and restored:

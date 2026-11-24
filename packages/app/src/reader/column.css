@@ -1,0 +1,99 @@
+/* The reading column's own placement. The sheets, their width and their look are the kit's (`Sheet kind="reading"`). */
+
+/* The column fills what the frame gives it, so the reading sheet stands the column's whole height and its panel at
+   the column's foot, however short the letter. */
+.rd-column {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+:root[data-face="ohmarchy"] .rd-column {
+  --oh-sheet-run-start: var(--s3);
+}
+
+/* The way to Trash under the gone letter's sentence stands a step below it. */
+.rd-gone-way {
+  margin-top: var(--s4);
+}
+
+/* Keep the opening position reachable if the last letter gets shorter while it loads. */
+.rd-column [data-reading-scroll][data-manual-anchor] {
+  --oh-thread-landing-padding: calc(var(--oh-sheet-foot-room) + var(--oh-thread-landing-room, 0px));
+
+  padding-block-end: var(--oh-thread-landing-padding);
+}
+
+/* The reply lands clear of the action panel, including its last row of tools. */
+.rd-column [data-reading-scroll]:has(.rd-reply [data-reply]) {
+  scroll-padding-block-end: var(--oh-sheet-foot-room);
+}
+
+/* The reply's writing surface draws no box of its own: the reply's sheet stands where the kit lays the column's
+   sheets. */
+.rd-reply {
+  display: contents;
+}
+
+/* The panel's wrapper is an item of the kit's foot: it may shrink to the foot, so the panel folds its verbs to the
+   reading width instead of running past it. */
+.rd-stop {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* The Resurface menu's time: one line, the word and the field, before the answers it qualifies. */
+.rd-resurface-at {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s1) var(--s3) var(--s2);
+  color: var(--ink2);
+  font-size: var(--t-meta);
+}
+.rd-resurface-time {
+  height: var(--h-s);
+  padding: 0 var(--s3);
+  border: 0;
+  border-radius: var(--r-row);
+  background: var(--soft-sheet);
+  color: var(--ink);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+/* Reply Run's count stays with the subject at the top of the reading column. */
+.rd-reply-run {
+  display: flex;
+  gap: var(--s2);
+  align-items: baseline;
+  padding: var(--s3) var(--s4);
+  color: var(--ink2);
+  font-size: var(--t-meta);
+}
+
+.rd-stream-conversation[data-thread] {
+  display: grid;
+  grid-template-columns: var(--sq-gutter) minmax(0, 1fr);
+}
+
+.rd-stream-conversation:not([data-thread]) > .rd-stream-squares {
+  display: none;
+}
+
+.rd-stream-squares {
+  min-width: 0;
+  margin-block-start: var(--ringw);
+}
+
+.rd-stream-letters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.rd-invitation:not(:empty) {
+  margin-block-start: var(--s4);
+}

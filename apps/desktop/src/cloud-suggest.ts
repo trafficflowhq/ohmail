@@ -9,8 +9,9 @@
  * and `POST /screener/suggest` fall through to the engine's write-through proxy.
  */
 
+import { SUGGESTION_GRANT_HEADER } from "@trafficflow/core/suggestion-consent";
 import { ACCOUNT_ACCESS_PATH, bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
-import type { SuggestWire } from "../../webapp/app/shell/screener-suggest.js";
+import type { SuggestWire } from "@ohmail/app-logic/screener/screener-suggest";
 import type { ScreenerSuggestWire, ScreenerWirePage } from "../../webapp/app/api-client.js";
 
 /**
@@ -106,11 +107,13 @@ export const cloudSuggestWire: SuggestWire = {
       headers: {
         "content-type": "application/json",
         ...(opts.idempotencyKey ? { "idempotency-key": opts.idempotencyKey } : {}),
+        ...(opts.relayGrant ? { [SUGGESTION_GRANT_HEADER]: opts.relayGrant } : {}),
       },
       body: JSON.stringify({
         ...(opts.dryRun
           ? { senders, dryRun: true }
           : { senders, ...(typeof opts.maxCredits === "number" ? { maxCredits: opts.maxCredits } : {}) }),
+        ...(!opts.dryRun && opts.quoteGrant !== undefined ? { quoteGrant: opts.quoteGrant } : {}),
         ...(opts.automatic === true ? { automatic: true } : {}),
       }),
     }),

@@ -19,7 +19,7 @@ import { bracketSpan, lineOf, withoutComments, withoutCommentsAndLiterals } from
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 const API_HOST = ["packages/api/src", "packages/services/src", "apps/server/src", "apps/api-vercel/src"];
-const WORKER = ["apps/worker/src"];
+const WORKER = ["apps/worker/src", "packages/organizer/src"];
 
 const DOOR_BINDING = /\b([A-Za-z_$][\w$]*)\s*=\s*await\s+(?:dialFieldsFor|checkedDial)\s*\(/g;
 const DIAL_CALL = /\b(new\s+ImapAdapter|newAdapter|makeAdapter|new\s+ImapFlow|verifySmtpLogin|createTransport|new\s+SMTPConnection)\s*\(/g;
@@ -349,7 +349,7 @@ const HOST_FIELD_ADMITTED: Record<string, (value: string, src: string) => boolea
   // The API's own base URL, which the cron pokes: the operator's server, never a mailbox's.
   "apps/worker/src/api-cron.ts": (v) => /^new\s+URL\(\s*[A-Za-z_$][\w$]*\s*\)\.host$/.test(v),
   // The process role on the worker's AI usage line.
-  "apps/worker/src/ai-usage-line.ts": (v) => v === "\"worker\"",
+  "packages/organizer/src/ai-usage-line.ts": (v) => v === "\"worker\"",
   // The same role handed in by the composition root: shorthand, typed by the closed `AiUsageHost` union.
   "packages/services/src/ai-usage-lines.ts": (v, src) => v === "host" && /\bhost:\s*AiUsageHost\b/.test(src),
   // The self-hosted server's trusted-proxy notes: a name the operator put in TF_TRUSTED_PROXIES, or the
@@ -420,11 +420,12 @@ describe("no structured log line names a mail server", () => {
     const dir = mkdtempSync(join(tmpdir(), "ohmail-log-host-"));
     try {
       mkdirSync(join(dir, "apps", "worker", "src"), { recursive: true });
+      mkdirSync(join(dir, "packages", "organizer", "src"), { recursive: true });
       writeFileSync(join(dir, "apps", "worker", "src", "api-cron.ts"), [
         "log.info(\"api_cron_started\", { host: new URL(baseUrl).host, count: 1 });",
         "log.warn(\"api_cron_failed\", { host: cfg.imap.host });",
       ].join("\n"));
-      writeFileSync(join(dir, "apps", "worker", "src", "ai-usage-line.ts"), [
+      writeFileSync(join(dir, "packages", "organizer", "src", "ai-usage-line.ts"), [
         "aiUsageLineOf(r, { accountId, action, host: \"worker\" });",
         "aiUsageLineOf(r, { accountId, action, host: meta.host });",
       ].join("\n"));
@@ -453,12 +454,12 @@ describe("no structured log line names a mail server", () => {
         "  aiUsageLineOf(r, { accountId, action, host: meta.host });",
         "}",
       ].join("\n"));
-      const found = logHostFields(dir, ["apps/worker/src", "packages/services/src", "apps/server/src"]);
+      const found = logHostFields(dir, ["apps/worker/src", "packages/organizer/src", "packages/services/src", "apps/server/src"]);
       expect.soft(found.filter((f) => f.admitted).map((f) => `${f.file}:${f.line}`).sort(), "the admitted fields must be seen")
-        .toEqual(["apps/server/src/index.ts:1", "apps/server/src/index.ts:2", "apps/worker/src/ai-usage-line.ts:1",
-          "apps/worker/src/api-cron.ts:1", "packages/services/src/ai-usage-lines.ts:2"]);
+        .toEqual(["apps/server/src/index.ts:1", "apps/server/src/index.ts:2",
+          "apps/worker/src/api-cron.ts:1", "packages/organizer/src/ai-usage-line.ts:1", "packages/services/src/ai-usage-lines.ts:2"]);
       expect.soft(found.filter((f) => !f.admitted).map((f) => `${f.file}:${f.line}`).sort())
-        .toEqual(["apps/server/src/index.ts:3", "apps/worker/src/ai-usage-line.ts:2", "apps/worker/src/api-cron.ts:2", "apps/worker/src/attach.ts:3",
+        .toEqual(["apps/server/src/index.ts:3", "packages/organizer/src/ai-usage-line.ts:2", "apps/worker/src/api-cron.ts:2", "apps/worker/src/attach.ts:3",
           "apps/worker/src/attach.ts:4", "apps/worker/src/attach.ts:5", "apps/worker/src/attach.ts:6",
           "apps/worker/src/attach.ts:9", "apps/worker/src/attach.ts:10", "packages/services/src/ai-usage-lines.ts:3"].sort());
       // The type is that admission's premise: the same shorthand typed as a string is refused.

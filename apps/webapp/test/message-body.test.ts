@@ -55,8 +55,8 @@ async function unmount(): Promise<void> {
 }
 afterEach(async () => { await unmount(); });
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../../../packages/letter-body/src/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../../../packages/letter-body/src/MessageBody.js");
 
 /** The body markup the sanitizer produced, plus what it refused. */
 async function clean(html: string, opts: Parameters<Mod["sanitizeMailHtml"]>[1] = {}) {
@@ -74,15 +74,15 @@ async function docFor(
   return buildMailDocument(body, opts);
 }
 
-/** Mount the component and hand back the container `MessagePane` wraps it in. */
-async function render(props: Parameters<Mod["MessageBody"]>[0]): Promise<HTMLDivElement> {
+/** Mount the component and hand back the container the shared Reader wraps it in. */
+async function render(props: Omit<Parameters<Mod["MessageBody"]>[0], "owner">): Promise<HTMLDivElement> {
   await unmount();
   const { MessageBody } = await mod();
   host = document.createElement("div");
   host.className = "msg-body";
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, props)); });
+  await act(async () => { root!.render(h(MessageBody, { ...props, owner: null })); });
   return host;
 }
 
@@ -481,6 +481,41 @@ describe("remote content is blocked, and blocked means not named", () => {
     // And `null` is not a degraded policy — it is exactly the policy a message with no
     // consent gets, so a misconfigured proxy blocks rather than half-loads.
     expect(frameCsp(proxyImgSource(() => "https://evil.example/pic", origin))).toBe(frameCsp(null));
+  });
+
+  it("a proxy that answers nothing, or the origin's root, gives the frame no picture source", async () => {
+    // A window that may not read for its account answers "" at the probe, and "" resolves to the
+    // origin's root: a source naming every path of the origin. Read on the frame a consented letter
+    // gets; each refusal is a soft arm, so each fails alone. Mutation: drop the empty and slash
+    // refusals in `proxyImgSource`. Real failure text, the first of four arms:
+    //   AssertionError: an empty answer named the origin
+    //   Received: "default-src 'none'; img-src data: blob: http://localhost:3000/; style-src …"
+    const { frameCsp } = await mod();
+    const origin = window.location.origin;
+    const policyFor = async (imageProxy: (url: string) => string): Promise<string | null | undefined> => {
+      const el = await render({
+        text: "Hello there.",
+        html: `<table width="600" cellpadding="0"><tr><td>` +
+          `<img src="https://cdn.example.com/pic.png" width="400" height="200"></td></tr></table>`,
+        remoteLoaded: true,
+        imageProxy,
+        onLoadRemote: () => {},
+      });
+      const doc = el.querySelector("iframe")?.getAttribute("srcdoc");
+      expect(doc, "no frame was rendered").toBeTruthy();
+      return new DOMParser().parseFromString(doc!, "text/html")
+        .querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content");
+    };
+    expect.soft(await policyFor(() => ""), "an empty answer named the origin").toBe(frameCsp(null));
+    expect.soft(await policyFor(() => `${origin}/`), "the origin's root named every path of it").toBe(frameCsp(null));
+    expect.soft(await policyFor((u) => `/?u=${encodeURIComponent(u)}`), "a root path with a query named every path")
+      .toBe(frameCsp(null));
+    // A path that ends in a slash is a directory source: every path under it.
+    expect.soft(await policyFor((u) => `${origin}/api/?u=${encodeURIComponent(u)}`), "a directory named every path under it")
+      .toBe(frameCsp(null));
+    // The picture door's own path is still the one source.
+    expect(await policyFor((u) => `${origin}/api/img?mid=m1&u=${encodeURIComponent(u)}`))
+      .toBe(frameCsp(`${origin}/api/img`));
   });
 
   it("consent routes an image through the proxy and NEVER at the sender directly", async () => {
@@ -1285,7 +1320,7 @@ describe("links look like links and say where they go", () => {
     // Built as elements and serialised, never joined from strings. Mutations: the address written
     // into markup as a string → the second address's script; the policy or referrer meta dropped →
     // their rows; the decoy host or a second link added → the link count.
-    const { askPage } = await import("../app/components/link-ask.js");
+    const { askPage } = await import("../../../packages/letter-body/src/link-ask.js");
     const copy = {
       lang: "en", title: "Open this link?", elsewhere: "The text of this link names a different site.",
       goes: (host: string) => `It goes to ${host}.`, open: (host: string) => `Open ${host}`, stay: "To stay, close this tab.",
@@ -1313,7 +1348,7 @@ describe("links look like links and say where they go", () => {
     // Attributes only. Mutations: a page per link → three pages for two addresses; no cap → every
     // link past it armed; a link that has an address armed → the honest link changes; the address
     // not checked again → the script row armed; the disposer revoking nothing → none taken back.
-    const { armAsks, ASK_PAGES_MAX } = await import("../app/components/link-ask.js");
+    const { armAsks, ASK_PAGES_MAX } = await import("../../../packages/letter-body/src/link-ask.js");
     const made: string[] = [];
     const revoked: string[] = [];
     const urlStatics = URL as unknown as Record<string, unknown>;

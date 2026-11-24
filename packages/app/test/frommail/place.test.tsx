@@ -1,0 +1,667 @@
+/** @vitest-environment jsdom */
+/**
+ * FROM MAIL in the frame, over a mirror: only what the gate lets through is listed (never a reading of a letter's
+ * sentences), Add is one create under one key into the settings' calendar, Add for all is one press per event, an
+ * event already on a shown calendar offers no Add and leads to it, and with no shown calendar that can be written
+ * nothing offers Add. One found event is made once, whichever Add is pressed, and only into a shown calendar.
+ */
+import type { CalendarAct } from "@ohmail/wire";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OhmailEngine } from "@ohmail/client-engine";
+import type {
+  CalendarConnectionRecord,
+  CalendarEventRecord,
+  CalendarPort,
+  CalendarRecord,
+} from "@ohmail/app-logic/calendar";
+import type { CalendarSuggestionRecord } from "@ohmail/app-logic/calendar/found";
+import calendarEn from "../../messages/calendar.en.json" with { type: "json" };
+import eventEn from "../../messages/event.en.json" with { type: "json" };
+import frameEn from "../../messages/frame.en.json" with { type: "json" };
+import frommailEn from "../../messages/frommail.en.json" with { type: "json" };
+import receiptsEn from "../../messages/receipts.en.json" with { type: "json" };
+import { calendar } from "../../src/calendar/entry.js";
+import { Frame } from "../../src/frame/Frame.js";
+import { usePress } from "../../src/frame/room.js";
+import type { CalendarEntry } from "../../src/frame/contract.js";
+import { fromMailPlace } from "../../src/frommail/index.js";
+import { MailGround, mailPlaces } from "../../src/mail/index.js";
+import { TextProvider, type Messages } from "../../src/text/index.js";
+import { fakeMail, letter } from "../reader/support/fake-mail.js";
+import { fakeHost } from "../support/fake-host.js";
+import { fakeAddress, fakeWindow, type FakeAddress } from "../support/fake-window.js";
+import { FRAME_WORDS } from "../support/frame-words.js";
+
+const ZURICH = "Europe/Zurich";
+const UPDATED = "2026-11-01T08:00:00.000Z";
+const WORDS = {
+  ...FRAME_WORDS.en,
+  ...calendarEn,
+  ...eventEn,
+  ...frommailEn,
+  viewError: frameEn.viewError,
+} as unknown as Messages;
+const withPlace: CalendarEntry = { ...calendar, places: { ...calendar.places, frommail: fromMailPlace } };
+
+const connection: CalendarConnectionRecord = {
+  id: "conn-1",
+  provider: "caldav",
+  label: "Home",
+  status: "active",
+  errorCode: null,
+  grantMailboxId: null,
+  serverHost: null,
+  consentedAt: UPDATED,
+  lastSyncedAt: UPDATED,
+  createdAt: UPDATED,
+  updatedAt: UPDATED,
+};
+const cal = (id: string, over: Partial<CalendarRecord> = {}): CalendarRecord => ({
+  id,
+  connectionId: "conn-1",
+  name: id === "cal-1" ? "Home" : "Studio",
+  color: "#3366cc",
+  access: "owner",
+  shown: true,
+  timeZone: ZURICH,
+  window: null,
+  defaultAlarms: [],
+  lastSyncedAt: null,
+  errorCode: null,
+  updatedAt: UPDATED,
+  ...over,
+});
+const found = (id: string, title: string, evidence: string, day = "20261120"): CalendarSuggestionRecord => ({
+  id,
+  messageId: `m-${id}`,
+  mailboxId: "mb-1",
+  evidence,
+  proposed: {
+    title,
+    start: { kind: "zoned", value: `${day}T190000`, zone: ZURICH },
+    end: null,
+    place: "Kunsthalle",
+  },
+  sourceWords: `${title} on Friday at 7pm`,
+  createdAt: UPDATED,
+  updatedAt: UPDATED,
+});
+const onCalendar = (id: string, title: string, day: string): CalendarEventRecord => ({
+  id,
+  calendarId: "cal-1",
+  uid: `${id}@home.test`,
+  recurrenceId: "",
+  thisAndFuture: false,
+  sequence: 0,
+  status: "confirmed",
+  title,
+  notes: null,
+  place: null,
+  callLink: null,
+  start: { kind: "zoned", value: `${day}T190000`, zone: ZURICH },
+  end: { kind: "zoned", value: `${day}T200000`, zone: ZURICH },
+  duration: null,
+  startsAt: UPDATED,
+  endsAt: UPDATED,
+  occurrenceAt: null,
+  repeat: null,
+  busy: true,
+  private: false,
+  organizer: null,
+  myAnswer: null,
+  heldBack: false,
+  invitees: [],
+  alarms: [],
+  cut: false,
+  writes: [],
+  updatedAt: UPDATED,
+});
+
+/**
+ * A mirror as far as From mail reads one, and a port that keeps every press and takes it. `lays`: a made event stands
+ * in the mirror at its press, as the queue's overlay lays it; `holds`: our server answers only on `answer()`.
+ */
+function mirror(
+  settings: { newEventsCalendarId: string | null },
+  how: { readonly lays?: boolean; readonly holds?: boolean } = {},
+) {
+  const kinds = new Map<string, Map<string, unknown>>();
+  const heard = new Set<() => void>();
+  const pressed: { key: string; act: CalendarAct }[] = [];
+  const held: (() => void)[] = [];
+  let version = 0;
+  let ids = 0;
+  const entries = (type: string) => [...(kinds.get(type)?.values() ?? [])].map((entity) => ({ entity }));
+  const subscribe = (listener: () => void) => {
+    heard.add(listener);
+    return () => void heard.delete(listener);
+  };
+  const engine = {
+    store: { entries },
+    subscribe,
+    read: () => ({ version: () => version }),
+  } as unknown as OhmailEngine;
+  const put = (type: string, id: string, entity: unknown) => {
+    const kind = kinds.get(type) ?? new Map<string, unknown>();
+    kinds.set(type, kind);
+    kind.set(id, entity);
+    version += 1;
+    for (const listener of [...heard]) listener();
+  };
+  const port: CalendarPort = {
+    newId: () => `ev-new-${++ids}`,
+    async press(a) {
+      const key = `key-${pressed.length + 1}`;
+      pressed.push({ key, act: a });
+      if (how.lays && a.kind === "calendar_event_create")
+        put("calendar_event", a.eventId, {
+          ...onCalendar(a.eventId, a.event.title, "20261120"),
+          calendarId: a.calendarId,
+          start: a.event.start,
+          end: a.event.end,
+        });
+      return { key };
+    },
+    flush: () => (how.holds ? new Promise<void>((resolve) => held.push(resolve)) : Promise.resolve()),
+    verdict: () => ({ kind: "taken", write: null }),
+    events: () =>
+      entries("calendar_event").map(({ entity }) => ({
+        record: entity as CalendarEventRecord,
+        waiting: null,
+        refusal: null,
+        refusedWriteId: null,
+      })),
+    settings: async () => ({
+      enabledAt: UPDATED,
+      secondZone: null,
+      weekNumbers: false,
+      dayFromMinute: null,
+      dayToMinute: null,
+      ...settings,
+    }),
+    held: () => ({ window: { daysBack: 30, daysAhead: 365, maxRows: 5000 }, loaded: [] }),
+    load: "none",
+    version: () => version,
+    subscribe,
+  };
+  put("calendar_connection", connection.id, connection);
+  const answer = () => {
+    for (const resolve of held.splice(0)) resolve();
+  };
+  return { engine, port, put, pressed, answer };
+}
+
+function mount(
+  m: ReturnType<typeof mirror>,
+  at = "#/cal/from-mail",
+  source?: { id: string; mailboxId: string } | true,
+  room: "desktop" | "phone" = "desktop",
+): FakeAddress {
+  const address = fakeAddress(at);
+  const messages =
+    source && source !== true
+      ? [
+          letter(source.id, {
+            subject: "Workshop details",
+            folder: "ohmail/Receipts",
+            mailboxId: source.mailboxId,
+          }),
+        ]
+      : [];
+  const mail = source ? fakeMail(messages) : null;
+  const made = fakeHost({
+    engine: mail ? Object.assign(mail.engine, { store: m.engine.store }) : m.engine,
+    ...(source && { places: mailPlaces(), above: MailGround }),
+    service: "managed",
+    scope: "acct-1",
+    calendar: withPlace,
+    products: "both",
+    wires: { calendar: m.port },
+    address,
+    window: fakeWindow(room),
+  });
+  render(
+    <TextProvider locale="en" messages={WORDS} timeZone={ZURICH}>
+      <Frame host={made.host} />
+    </TextProvider>,
+  );
+  return address;
+}
+
+const list = () => screen.getByRole("list", { name: "From mail" });
+const rowOf = (title: string) =>
+  within(list())
+    .getAllByText(title)
+    .map((el) => el.closest(".oh-erow"))
+    .find((el): el is HTMLElement => el !== null)!;
+const settle = () =>
+  act(async () => {
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+  });
+
+async function mountReceipt({
+  room = "desktop",
+  earlier,
+  restore,
+}: {
+  room?: "desktop" | "phone";
+  earlier?: () => void;
+  restore?: () => Promise<void>;
+} = {}) {
+  const m = mirror({ newEventsCalendarId: null });
+  const ticket = { ...found("ticket", "Train to Basel", "data"), messageId: "receipt" };
+  m.put("calendar_suggestion", ticket.id, ticket);
+  const mail = fakeMail([letter("receipt", { subject: "Your ticket", folder: "ohmail/Receipts" })]);
+  function Ground({ children }: Parameters<typeof MailGround>[0]) {
+    const press = usePress();
+    return (
+      <MailGround>
+        {children}
+        {earlier && (
+          <button
+            type="button"
+            onClick={() =>
+              press.undoToast("Earlier action done", {
+                undo: true,
+                action: "Undo earlier action",
+                onAction: earlier,
+              })
+            }
+          >
+            Do earlier action
+          </button>
+        )}
+      </MailGround>
+    );
+  }
+  const { host } = fakeHost({
+    engine: Object.assign(mail.engine, { store: m.engine.store }),
+    service: "managed",
+    scope: "acct-1",
+    calendar: withPlace,
+    products: "both",
+    wires: {
+      calendar: {
+        ...m.port,
+        async setSuggestionDismissed(id: string, dismissed: boolean) {
+          expect(id).toBe(ticket.id);
+          if (!dismissed) await restore?.();
+          m.put("calendar_suggestion", id, dismissed ? null : ticket);
+        },
+      },
+    },
+    places: mailPlaces(),
+    above: earlier ? Ground : MailGround,
+    address: fakeAddress("#/receipts"),
+    window: fakeWindow(room),
+  });
+  render(
+    <TextProvider locale="en" messages={{ ...WORDS, ...receiptsEn } as Messages} timeZone={ZURICH}>
+      <Frame host={host} />
+    </TextProvider>,
+  );
+  await settle();
+  const stream = () => within(screen.getByRole("region", { name: "Receipts stream" }));
+  return {
+    stream,
+    async dismiss() {
+      fireEvent.click(stream().getByRole("button", { name: "Dismiss" }));
+      await settle();
+    },
+  };
+}
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-11-16T08:00:00Z"));
+  Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
+  Element.prototype.scrollTo ??= () => {};
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+describe("From mail", () => {
+  it("lists what a letter's calendar part or data proposed, and no reading of its sentences", async () => {
+    const m = mirror({ newEventsCalendarId: null });
+    m.put("calendar", "cal-1", cal("cal-1"));
+    m.put("calendar_suggestion", "a", found("a", "Opening", "calendar"));
+    m.put("calendar_suggestion", "b", found("b", "Train to Basel", "data", "20261121"));
+    m.put("calendar_suggestion", "c", found("c", "Dinner at mine", "sentence"));
+    m.put("calendar_suggestion", "d", found("d", "Court booking", "sentence_model"));
+    mount(m);
+    await settle();
+    expect(within(list()).getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.queryByText("Dinner at mine")).toBeNull();
+    expect(screen.queryByText("Court booking")).toBeNull();
+    expect(screen.queryByText(/Dinner at mine on Friday/)).toBeNull();
+  });
+
+  it.each(["sentence", "sentence_model"])(
+    "keeps a %s finding hidden when opened by its link",
+    async (evidence) => {
+      const m = mirror({ newEventsCalendarId: null });
+      m.put("calendar", "cal-1", cal("cal-1"));
+      m.put("calendar_suggestion", "found", found("found", "Workshop", evidence));
+      mount(m, "#/cal/from-mail/e/found");
+      await settle();
+      expect(screen.queryByRole("dialog", { name: "Workshop" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+      expect(m.pressed).toEqual([]);
+    },
+  );
+
+  it("dismisses From mail’s open card through the same reversible suggestion action as a receipt", async () => {
+    const m = mirror({ newEventsCalendarId: null });
+    m.put("calendar", "cal-1", cal("cal-1"));
+    const suggestion = found("found", "Workshop", "calendar");
+    m.put("calendar_suggestion", suggestion.id, suggestion);
+    const dismiss = vi.fn(async (id: string, dismissed: boolean) =>
+      m.put("calendar_suggestion", id, dismissed ? null : suggestion),
+    );
+    m.port.setSuggestionDismissed = dismiss;
+    mount(m, "#/cal/from-mail/e/found", true);
+    const card = within(await screen.findByRole("dialog", { name: "Workshop" }));
+    fireEvent.click(card.getByRole("button", { name: "Dismiss" }));
+    await settle();
+    expect(dismiss).toHaveBeenCalledWith(suggestion.id, true);
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await settle();
+    expect(dismiss).toHaveBeenCalledWith(suggestion.id, false);
+  });
+
+  it("opens the source letter from a found event", async () => {
+    const m = mirror({ newEventsCalendarId: null });
+    m.put("calendar", "cal-1", cal("cal-1"));
+    const suggestion = found("found", "Workshop", "calendar");
+    m.put("calendar_suggestion", suggestion.id, suggestion);
+    const address = mount(m, "#/cal/from-mail/e/found", {
+      id: suggestion.messageId,
+      mailboxId: suggestion.mailboxId,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Open the letter" }));
+    expect(address.read()).toBe(`#/receipts/m/${suggestion.messageId}`);
+  });
+
+  it("keeps the source letter reachable from the matched calendar event", async () => {
+    const m = mirror({ newEventsCalendarId: null });
+    m.put("calendar", "cal-1", cal("cal-1"));
+    const suggestion = found("found", "Workshop", "calendar");
+    m.put("calendar_suggestion", suggestion.id, suggestion);
+    m.put("calendar_event", "already", onCalendar("already", suggestion.proposed.title, "20261120"));
+    const address = mount(m, "#/cal/week/2026-11-20/e/already", {
+      id: suggestion.messageId,
+      mailboxId: suggestion.mailboxId,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Workshop details" }));
+    expect(address.read()).toBe(`#/receipts/m/${suggestion.messageId}`);
+  });
+
+  it("offers only the structured finding on a receipt", async () => {
+    const m = mirror({ newEventsCalendarId: null });
+    m.put("calendar", "cal-1", cal("cal-1"));
+    for (const [id, title, evidence] of [
+      ["ticket", "Train to Basel", "data"],
+      ["rules", "Wrong departure", "sentence"],
+      ["model", "Wrong arrival", "sentence_model"],
+    ] as const) {
+      m.put("calendar_suggestion", id, { ...found(id, title, evidence), messageId: "receipt" });
+    }
+    const receipt = letter("receipt", { subject: "Your ticket", folder: "ohmail/Receipts" });
+    const mail = fakeMail([receipt]);
+    const { host } = fakeHost({
+      engine: Object.assign(mail.engine, { store: m.engine.store }),
+      service: "managed",
+      scope: "acct-1",
+      calendar: withPlace,
+      products: "both",
+      wires: { calendar: m.port },
+      places: mailPlaces(),
+      above: MailGround,
+      address: fakeAddress("#/receipts"),
+    });
+    render(
+      <TextProvider locale="en" messages={{ ...WORDS, ...receiptsEn } as Messages} timeZone={ZURICH}>
+        <Frame host={host} />
+      </TextProvider>,
+    );
+    await settle();
+    const stream = screen.getByRole("region", { name: "Receipts stream" });
+    expect(within(stream).getByText("Train to Basel")).toBeTruthy();
+    expect(within(stream).queryByText("Wrong departure")).toBeNull();
+    expect(within(stream).queryByText("Wrong arrival")).toBeNull();
+    fireEvent.click(within(stream).getByRole("button", { name: "Add" }));
+    await settle();
+    expect(m.pressed.map(({ act }) => act.kind === "calendar_event_create" && act.event.title)).toEqual([
+      "Train to Basel",
+    ]);
+  });
+
+  it.each(["desktop", "phone"] as const)(
+    "dismisses the receipt suggestion and offers Undo on %s",
+    async (room) => {
+      const { dismiss, stream } = await mountReceipt({ room });
+      await dismiss();
+      expect(stream().queryByText("Train to Basel")).toBeNull();
+      expect(stream().getByText("Your ticket")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+      await settle();
+      expect(stream().getByText("Train to Basel")).toBeTruthy();
+    },
+  );
+
+  it.each([false, true])(
+    "z restores the receipt suggestion with an earlier Undo armed: %s",
+    async (armEarlier) => {
+      const earlier = vi.fn();
+      const { dismiss, stream } = await mountReceipt({ earlier });
+      if (armEarlier) {
+        fireEvent.click(screen.getByRole("button", { name: "Do earlier action" }));
+        expect(screen.getByRole("button", { name: "Undo earlier action" })).toBeTruthy();
+      }
+      await dismiss();
+      expect(stream().queryByText("Train to Basel")).toBeNull();
+      expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
+      fireEvent.keyDown(document.body, { key: "z" });
+      await settle();
+      expect(earlier).not.toHaveBeenCalled();
+      expect(stream().getByText("Train to Basel")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    },
+  );
+
+  it("keeps a way back when the first restore is rejected", async () => {
+    const restore = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Temporarily unavailable"))
+      .mockResolvedValue(undefined);
+    const { dismiss, stream } = await mountReceipt({ restore });
+    await dismiss();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await settle();
+    expect(stream().queryByText("Train to Basel")).toBeNull();
+    expect(restore).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(new Date("2026-11-16T08:01:00Z"));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await settle();
+    expect(restore).toHaveBeenCalledTimes(2);
+    expect(stream().getByText("Train to Basel")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  it("adds phone suggestions to the calendar picked on each row", async () => {
+    const m = mirror({ newEventsCalendarId: "cal-1" });
+    m.put("calendar", "cal-1", cal("cal-1", { name: "Studio" }));
+    m.put("calendar", "cal-2", cal("cal-2", { name: "Personal" }));
+    m.put("calendar", "cal-3", cal("cal-3", { name: "Hidden", shown: false }));
+    m.put("calendar", "cal-4", cal("cal-4", { name: "Read only", access: "reader" }));
+    m.put("calendar_suggestion", "a", found("a", "Opening", "calendar"));
+    m.put("calendar_suggestion", "b", found("b", "Train to Basel", "data", "20261121"));
+    const address = mount(m, "#/cal/from-mail", undefined, "phone");
+    await settle();
+
+    const row = within(rowOf("Opening"));
+    fireEvent.click(row.getByRole("button", { name: "Goes to Studio" }));
+    const menu = within(screen.getByRole("menu", { name: "Calendar" }));
+    expect(menu.getAllByRole("menuitemradio")).toHaveLength(2);
+    fireEvent.click(menu.getByRole("menuitemradio", { name: "Personal" }));
+    expect(m.pressed).toHaveLength(0);
+    expect(address.read()).toBe("#/cal/from-mail");
+    expect(row.getByRole("button", { name: "Goes to Personal" })).toBeTruthy();
+    expect(within(rowOf("Train to Basel")).getByRole("button", { name: "Goes to Studio" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add 2" }));
+    await settle();
+    expect(m.pressed.map(({ act }) => act.kind === "calendar_event_create" && act.calendarId)).toEqual([
+      "cal-2",
+      "cal-1",
+    ]);
+  });
+
+  it("adds one event under one press into the settings' calendar, and then says it is on the calendar", async () => {
+    const m = mirror({ newEventsCalendarId: "cal-2" });
+    m.put("calendar", "cal-1", cal("cal-1"));
+    m.put("calendar", "cal-2", cal("cal-2"));
+    m.put("calendar_suggestion", "a", found("a", "Opening", "calendar"));
+    mount(m);
+    await settle();
+    fireEvent.click(within(rowOf("Opening")).getByRole("button", { name: "Add" }));
+    await settle();
+    expect(m.pressed).toHaveLength(1);
+    expect(m.pressed[0]!.act).toEqual({
+      kind: "calendar_event_create",
+      eventId: "ev-new-1",
+      calendarId: "cal-2",
+      event: {
+        title: "Opening",
+        start: { kind: "zoned", value: "20261120T190000", zone: ZURICH },
+        end: { kind: "zoned", value: "20261120T200000", zone: ZURICH },
+        notes: null,
+        place: "Kunsthalle",
+        callLink: null,
+        busy: true,
+        private: false,
+        repeat: null,
+        invitees: [],
+        alarms: [],
+      },
+    });
+    act(() =>
+      m.put("calendar_event", "ev-new-1", {
+        ...onCalendar("ev-new-1", "Opening", "20261120"),
+        calendarId: "cal-2",
+      }),
+    );
+    const row = rowOf("Opening");
+    expect(within(row).queryByRole("button", { name: "Add" })).toBeNull();
+    expect(within(row).getByText("On your calendar")).toBeTruthy();
+    expect(within(row).getByRole("button", { name: "Show in calendar" })).toBeTruthy();
+  });
+
+  it("adds every offer once with Add for all, one press after the other, and says how many", async () => {
+    const m = mirror({ newEventsCalendarId: null });
+    m.put("calendar", "cal-1", cal("cal-1"));
+    m.put("calendar_suggestion", "a", found("a", "Opening", "calendar"));
+    m.put("calendar_suggestion", "b", found("b", "Train to Basel", "data", "20261121"));
+    m.put("calendar_suggestion", "c", found("c", "Fair", "data", "20261122"));
+    m.put("calendar_event", "ev-9", onCalendar("ev-9", "Fair", "20261122"));
+    mount(m);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Add 2" }));
+    await settle();
+    expect(m.pressed.map((p) => p.act.kind === "calendar_event_create" && p.act.event.title)).toEqual([
+      "Opening",
+      "Train to Basel",
+    ]);
+    expect(new Set(m.pressed.map((p) => p.key)).size).toBe(2);
+    expect(
+      m.pressed.every((p) => p.act.kind === "calendar_event_create" && p.act.calendarId === "cal-1"),
+    ).toBe(true);
+    expect(
+      screen
+        .queryAllByRole("status")
+        .map((s) => s.textContent)
+        .join(" "),
+    ).toContain("2 events added");
+  });
+
+  it("offers no Add where no calendar can be written", async () => {
+    const m = mirror({ newEventsCalendarId: null });
+    m.put("calendar", "cal-1", cal("cal-1", { access: "reader" }));
+    m.put("calendar_suggestion", "a", found("a", "Opening", "calendar"));
+    mount(m);
+    await settle();
+    expect(within(rowOf("Opening")).queryByRole("button", { name: "Add" })).toBeNull();
+    expect(m.pressed).toEqual([]);
+  });
+
+  it("makes a found event once when Add for all and the open card's Add are both pressed", async () => {
+    const m = mirror({ newEventsCalendarId: null }, { lays: true, holds: true });
+    m.put("calendar", "cal-1", cal("cal-1"));
+    m.put("calendar_suggestion", "a", found("a", "Opening", "calendar"));
+    m.put("calendar_suggestion", "b", found("b", "Train to Basel", "calendar", "20261121"));
+    mount(m, "#/cal/from-mail/e/b");
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Add 2" }));
+    await settle();
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Train to Basel" })).getByRole("button", { name: "Add" }),
+    );
+    await settle();
+    for (let i = 0; i < 4; i += 1) {
+      m.answer();
+      await settle();
+    }
+    const made = m.pressed.filter(
+      (p) => p.act.kind === "calendar_event_create" && p.act.event.title === "Train to Basel",
+    );
+    expect(made).toHaveLength(1);
+  });
+
+  it("writes only into a shown calendar, so the event it made stops the row's Add", async () => {
+    const m = mirror({ newEventsCalendarId: "cal-1" }, { lays: true });
+    m.put("calendar", "cal-1", cal("cal-1", { shown: false }));
+    m.put("calendar", "cal-2", cal("cal-2"));
+    m.put("calendar_suggestion", "a", found("a", "Opening", "calendar"));
+    mount(m);
+    await settle();
+    fireEvent.click(within(rowOf("Opening")).getByRole("button", { name: "Add" }));
+    await settle();
+    expect(m.pressed.map((p) => p.act.kind === "calendar_event_create" && p.act.calendarId)).toEqual([
+      "cal-2",
+    ]);
+    const row = rowOf("Opening");
+    expect(within(row).queryByRole("button", { name: "Add" })).toBeNull();
+    expect(within(row).getByText("On your calendar")).toBeTruthy();
+  });
+
+  it("offers no Add where the only calendar that can be written is hidden", async () => {
+    const m = mirror({ newEventsCalendarId: null });
+    m.put("calendar", "cal-1", cal("cal-1", { shown: false }));
+    m.put("calendar_suggestion", "a", found("a", "Opening", "calendar"));
+    m.put("calendar_suggestion", "b", found("b", "Train to Basel", "data", "20261121"));
+    mount(m);
+    await settle();
+    expect(screen.queryAllByRole("button", { name: /Add/ })).toEqual([]);
+    expect(m.pressed).toEqual([]);
+  });
+
+  it("opens a found event beside the list with the letter's words and the calendar it goes to", async () => {
+    const m = mirror({ newEventsCalendarId: null });
+    m.put("calendar", "cal-1", cal("cal-1"));
+    m.put("calendar_suggestion", "a", found("a", "Opening", "calendar"));
+    m.port.setSuggestionDismissed = vi.fn(async () => undefined);
+    mount(m, "#/cal/from-mail/e/a", true);
+    await settle();
+    const card = screen.getByRole("dialog", { name: "Opening" });
+    expect(within(card).getByText("Opening on Friday at 7pm")).toBeTruthy();
+    expect(within(card).getByText("Home")).toBeTruthy();
+    expect(card.getAttribute("data-frame")).toBe("reading");
+    expect(within(card).getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    fireEvent.click(within(card).getByRole("button", { name: "Add" }));
+    await settle();
+    expect(m.pressed).toHaveLength(1);
+  });
+});

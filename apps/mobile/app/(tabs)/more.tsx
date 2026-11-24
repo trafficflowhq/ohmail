@@ -20,6 +20,7 @@ import { Panel, Rule, Screen, Scroller, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { MoreNav, Nav } from "../../src/ui/MoreNav";
 import { useLocale } from "../../src/i18n/LocaleProvider";
+import { MailThemeContext } from "../../src/theme/mail-context";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { askBeforePaneLeave, MorePickContext } from "../../src/ui/more-pane";
@@ -64,7 +65,8 @@ function MoreBody() {
       <Scroller avoidKeyboard>
         {/* The header names whose mail this is: the paired server and account. */}
         <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 }}>
-          <Txt variant="h1" numberOfLines={1}>{w.account.name}</Txt>
+          <Txt variant="h1" numberOfLines={1}>{Copy.tabMore}</Txt>
+          <Txt variant="settingsLabel" numberOfLines={1}>{w.account.name}</Txt>
           <Txt variant="meta" tone="ink3" style={{ marginTop: 4 }} numberOfLines={1}>
             {w.account.email}
           </Txt>
@@ -123,14 +125,14 @@ function MoreDestination({ paneKey }: { paneKey: string }) {
   const head = at < 0 ? paneKey : paneKey.slice(0, at);
   const arg = at < 0 ? undefined : paneKey.slice(at + 1);
   switch (head) {
-    case "settings": return <SettingsScreen inPane />;
+    case "settings": return <MailThemeContext.Provider value={null}><SettingsScreen inPane /></MailThemeContext.Provider>;
     case "history": return <HistoryScreen inPane />;
     case "search": return <SearchScreen inPane />;
     case "triage": return <TriageScreen inPane pile={arg} />;
     case "drafts": return <DraftsScreen inPane />;
     case "trash": return <TrashScreen inPane />;
-    case "away": return <AwayScreen inPane />;
-    case "servers": return <ServersScreen inPane />;
+    case "away": return <MailThemeContext.Provider value={null}><AwayScreen inPane /></MailThemeContext.Provider>;
+    case "servers": return <MailThemeContext.Provider value={null}><ServersScreen inPane /></MailThemeContext.Provider>;
     case "scheduled": return <ScheduledScreen inPane />;
     case "tag": return <TagScreen inPane id={arg} />;
     case "folder": return <FolderScreen inPane id={arg} />;

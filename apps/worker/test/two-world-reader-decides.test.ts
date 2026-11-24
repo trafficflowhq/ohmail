@@ -1,23 +1,24 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, folderState, rules, organizerRequests } from "@trafficflow/db";
-import { ScreenerService } from "@trafficflow/services/mail";
+import { dbFor, ScreenerService } from "@trafficflow/services/mail";
 import {
   deriveRequestKey,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage, type MetaRecordsList,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { applyMetaRequests, driveOutstandingRequests } from "../src/request-drain.js";
-import { listedOf } from "./_meta-list.js";
+import { applyMetaRequests, driveOutstandingRequests } from "@ohmail/organizer/request-drain";
+import { listedOf } from "../../../packages/organizer/test/_meta-list.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *  THE TWO-WORLD READER-DECIDES RIG (THE named test)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * `apps/worker/test/reader-two-worlds.imap.test.ts` is the LIVE version of this shape — a real
+ * `packages/organizer/test/reader-two-worlds.imap.test.ts` is the LIVE version of this shape — a real
  * GreenMail server, a real second IMAP connection, "skipped loudly with no server" (its own
  * header). That infrastructure is unavailable in this environment (no docker), so this file
  * proves the SAME property — the "Organize-in-place" invariant, "only the organizer moves": a reader's decision becomes a
@@ -94,7 +95,7 @@ describe("the two-world reader-decides rig", () => {
       subject: "s", fromAddress: "person@example.com", unread: true,
     }).returning({ id: messages.id });
     await db.insert(folderState).values({
-      messageId: msg!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
 
@@ -108,7 +109,7 @@ describe("the two-world reader-decides rig", () => {
 
     // ── WORLD 1: the reader presses "yes" ──────────────────────────────────────────────────
     const svc = new ScreenerService({});
-    const ctx = { db, accountId, userId: null, now: () => new Date("2026-09-03T12:00:00.000Z"), requestId: "r" };
+    const ctx = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date("2026-09-03T12:00:00.000Z"), requestId: "r" };
     const decided = await svc.decide(ctx, msg!.id, { decision: "yes" });
     expect("pending" in decided && decided.pending).toBe(true);
 
@@ -185,12 +186,12 @@ describe("the two-world reader-decides rig", () => {
       subject: "s", fromAddress: "person@example.com", unread: true,
     }).returning({ id: messages.id });
     await db.insert(folderState).values({
-      messageId: msg!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
 
     const svc = new ScreenerService({});
-    const ctx = { db, accountId, userId: null, now: () => new Date("2026-09-03T12:00:00.000Z"), requestId: "r" };
+    const ctx = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date("2026-09-03T12:00:00.000Z"), requestId: "r" };
 
     const before = await svc.list(ctx, {});
     expect(before.items).toHaveLength(1);

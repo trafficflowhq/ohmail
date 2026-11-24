@@ -12,14 +12,19 @@ import { sliceOfDeclaration } from "./source-anchor";
 
 const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
-/** Each gate by the name it is declared under — `sliceOfDeclaration` refuses a stale anchor. */
+/**
+ * Each gate by the name it is declared under — `sliceOfDeclaration` refuses a stale anchor. RE-POINTED TO THE NEW SHELL
+ * (RULING-NEW-SHELL-FIRST D (3)): today's shell gates (`shell-verbs.ts` canDeleteMessage and planMoveToPlace,
+ * `shell-open-state.ts` verbHolds) leave with it; a seat's verbs plan their moves in the press
+ * (`press/move-to-place.ts`), and the Ohbox's cursor row asks whether its row may be deleted in its keys
+ * (`ohbox/live.ts` useOhboxKeys, `d` and ⌫ at one column).
+ */
 const GATES: Array<{ file: string; name: string }> = [
-  { file: "../app/shell/shell-verbs.ts", name: "canDeleteMessage" },
-  { file: "../app/shell/shell-verbs.ts", name: "planMoveToPlace" },
-  { file: "../app/shell/shell-open-state.ts", name: "verbHolds" },
-  { file: "../app/shell/shell-dispatch.ts", name: "mutateAndReport" },
-  { file: "../app/shell/shell-dispatch.ts", name: "mutateSetAndReport" },
-  { file: "../app/shell/shell-dispatch.ts", name: "routing" },
+  { file: "../../../packages/app-logic/src/press/move-to-place.ts", name: "planMoveToPlace" },
+  { file: "../../../packages/app-logic/src/ohbox/live.ts", name: "useOhboxKeys" },
+  { file: "../../../packages/app-logic/src/press/shell-dispatch.ts", name: "mutateAndReport" },
+  { file: "../../../packages/app-logic/src/press/shell-dispatch.ts", name: "mutateSetAndReport" },
+  { file: "../../../packages/app-logic/src/press/shell-dispatch.ts", name: "routing" },
   { file: "../../mobile/src/state/live.ts", name: "messageOf" },
 ];
 
@@ -36,11 +41,25 @@ describe("every verb gate on the browser and the phone reads the verb reader", (
   }
 
   it("the Delete strip asks the verb reader's chrome field, and the `d` and ⌫ keys the same reader", () => {
-    expect(codeOf(sliceOfDeclaration(read("../app/shell/MessagePane.tsx"), "deleteConfirmAdmitted")))
-      .toMatch(/chrome\.verbHolds\?\./);
-    const keys = read("../app/shell/shell-keys.tsx");
-    expect(keys).toMatch(/\|\| engine\.verbRead\(\)\.get<EngineMessage>\("message", focused\.id\) == null/);
-    expect(keys).toMatch(/&& engine\.verbRead\(\)\.get<EngineMessage>\("message", focused\.id\) != null/);
+    const reader = "../../../packages/app/src/reader";
+    const panel = codeOf(sliceOfDeclaration(read(`${reader}/actions/ActionBar.tsx`), "ActionBar"));
+    const menus = codeOf(sliceOfDeclaration(read(`${reader}/actions/ActionMenus.tsx`), "ActionMenus"));
+    const keys = read(`${reader}/keys.ts`);
+    expect(panel).toMatch(/const file = \(\): void => \{\s*close\(\);\s*verbs\.act\("delete"\);/);
+    expect(panel).toContain("trash={file}");
+    expect(menus).toMatch(/if \(menu !== "cardDelete" \|\| !isCardDeleteKey\(e\.nativeEvent\)\) return false;\s*e\.preventDefault\(\);\s*trash\(\);/);
+    expect(keys).toContain('run: () => open.menu("cardDelete")');
+    expect(codeOf(sliceOfDeclaration(keys, "trashKeys"))).toContain('open.verbs.act("delete")');
+
+    const verbs = codeOf(sliceOfDeclaration(read(`${reader}/actions/use-verbs.ts`), "useVerbs"));
+    expect(verbs).toMatch(/if \(action === "delete" && host\.engine\.verbRead\(\)\.get<EngineMessage>\("message", message\.id\) == null\)\s*return;/);
+    expect(verbs).toContain("visit.act(action);");
+    const list = "../../../packages/app-logic/src/press";
+    const listVerbs = codeOf(sliceOfDeclaration(read(`${list}/message-verbs.ts`), "runMessageAction"));
+    expect(listVerbs).toMatch(/case "delete": \{\s*const current = rowOf\(cx, m\.id\);\s*if \(current === undefined\) return;/);
+    expect(read(`${list}/verb-context.ts`)).toContain("withRows(cx.engine.verbRead(), cx.surfaceById)");
+    expect(codeOf(sliceOfDeclaration(read(`${list}/verb-context.ts`), "rowOf")))
+      .toContain('setRead(cx).get<EngineMessage>("message", id)');
   });
 
   it("the census can see a gate on the mirror alone — its own positive control", () => {

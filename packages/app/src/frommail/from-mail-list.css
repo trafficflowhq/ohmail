@@ -1,0 +1,39 @@
+.cal-frommail-phone {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cal-frommail-results {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.cal-frommail-actions {
+  --oh-soft: var(--soft-sheet);
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  min-height: var(--h-s);
+}
+
+.cal-frommail-target {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.cal-frommail-target > [aria-haspopup="menu"] {
+  min-width: 0;
+  max-width: var(--cal-from-mail-target-width);
+  min-height: var(--h-s);
+  font-weight: var(--w-mid);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

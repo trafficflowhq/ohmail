@@ -10,6 +10,7 @@
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { design } from "@ohmail/tokens/design";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { size } from "../src/theme/type";
@@ -34,7 +35,7 @@ function literal(src: string, re: RegExp, what: string): number {
   if (!m) throw new Error(`no ${what} in the source this case reads`);
   return Number(m[1]);
 }
-const rowPadBottom = literal(ROW, /paddingHorizontal: 14, paddingVertical: (\d+)/, "MailRow padding");
+const rowPadBottom = Number.parseFloat(design.faces.paper.light.s2);
 const badgePad = literal(BASE, /paddingHorizontal: 7,\s*paddingVertical: (\d+)/, "Badge padding");
 
 /** The row's box as it lays out: the chip starts where the device read it, and is at least its text tall. */
@@ -49,6 +50,7 @@ describe("the slot holds the row it clips", () => {
   });
 
   it("once a row with its folder chip lays out, the slot holds the chip and the padding under it", () => {
+    expect(ROW).toMatch(/paddingBottom: receiptPaper \? \d+ : receipt \? \d+ : mailSize\.inset/);
     const h = new SlotHeights();
     h.record(0, rowNatural);
     const slot = h.heightOf(0);

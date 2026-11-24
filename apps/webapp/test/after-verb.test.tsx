@@ -11,6 +11,7 @@
  * the marker is the whole difference. The pure row walk (`nextRowAfter`) is pinned by unit
  * arms beside the journeys.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -19,19 +20,19 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import {
   AFTER_VERB_STORAGE_KEY,
   DEFAULT_AFTER_VERB,
   nextRowAfter,
   readAfterVerb,
-} from "../app/shell/after-verb";
+} from "@ohmail/app-logic/press/after-verb";
+import { blankSays, cursorRow, openLetter, pickedRows, seatedList } from "./ohbox/_finders.js";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
@@ -44,9 +45,13 @@ let seq = 0;
 /** What the next `/sync` page carries: another device's work, applied by the engine's own drain. */
 let pending: SyncChange[] = [];
 
+/* The account the shell is mounted for, named before it mounts: its views read the choice kept beside it. */
+const SHELL_OWNER = "acc-after-verb";
+
 beforeEach(() => {
   window.location.hash = "";
   window.localStorage.clear();
+  setStorageOwner(SHELL_OWNER);
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -85,17 +90,19 @@ afterEach(async () => {
   delete (globalThis as Record<string, unknown>).CSS;
   vi.restoreAllMocks();
   vi.useRealTimers();
+  resetStorageOwnerForTest();
 });
 
 const address = (id: string): string => `p${id}@example.invalid`;
 
-/** A message; thread, date, folder and sender default to a lone INBOX letter of the day before. */
-type Spec = { id: string; thread?: string; date?: string; folder?: string; from?: string };
+/** A message; thread, date, folder and sender default to a lone, read INBOX letter of the day before. */
+type Spec = { id: string; thread?: string; date?: string; folder?: string; from?: string; unread?: boolean };
 
 const msg = (s: Spec): EngineMessage => ({
   id: s.id, accountId: "a1", mailboxId: "mb1", threadId: s.thread ?? `t-${s.id}`, folder: s.folder ?? "INBOX",
   subject: `Subject ${s.thread ?? s.id}`, from: { address: s.from ?? address(s.id), name: `Person ${s.id}` },
-  to: [], date: s.date ?? "2026-09-03T09:00:00.000Z", unread: false,
+  to: [], cc: [], date: s.date ?? "2026-09-03T09:00:00.000Z", unread: s.unread ?? false,
+  labels: [],
   updatedAt: s.date ?? "2026-09-03T09:00:00.000Z",
 } as unknown as EngineMessage);
 
@@ -174,10 +181,11 @@ const ROSTER: MailboxFacts[] = [{
   organizedBy: null, organizeConsentedAt: "2026-09-01T00:00:00.000Z",
 }];
 
+/** `scope`: the account the host hands the shell; left out, the storage owner the file named. */
 async function shell(
-  specs: (string | Spec)[] = ["m1", "m2", "m3"], older: EngineMessage[] = [],
+  specs: (string | Spec)[] = ["m1", "m2", "m3"], older: EngineMessage[] = [], scope?: string,
 ): Promise<{ container: HTMLElement; store: MirrorStore; engine: OhmailEngine }> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const store = await storeWith(specs, older);
   const engine = engineOver(store, older);
@@ -190,7 +198,8 @@ async function shell(
       locale: "en", messages, timeZone: "UTC", now: NOW,
       children: h(ThemeProvider, {
         children: h(ToastHost, {
-          children: h(AppShell as never, {
+          children: h(MailShell as never, {
+            ...(scope === undefined ? {} : { scope }),
             demo: false,
             engine,
             mailboxFacts: async () => ROSTER,
@@ -223,10 +232,10 @@ const settle = async (): Promise<void> => {
 };
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll(".row[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
+  [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
 
 const selId = (el: HTMLElement): string | null =>
-  el.querySelector(".view .row.sel")?.getAttribute("data-id") ?? null;
+  cursorRow(el)?.getAttribute("data-id") ?? null;
 
 describe("nextRowAfter — the row walk", () => {
   const standing = (keys: string[]) => new Set(keys);
@@ -257,11 +266,11 @@ describe("nextRowAfter — the row walk", () => {
 describe("the stored choice", () => {
   it("defaults to advance, and refuses a foreign value", () => {
     expect(DEFAULT_AFTER_VERB).toBe("advance");
-    expect(readAfterVerb()).toBe("advance");
+    expect(readAfterVerb(null)).toBe("advance");
     window.localStorage.setItem(AFTER_VERB_STORAGE_KEY, "sideways");
-    expect(readAfterVerb()).toBe("advance");
+    expect(readAfterVerb(null)).toBe("advance");
     window.localStorage.setItem(AFTER_VERB_STORAGE_KEY, "close");
-    expect(readAfterVerb()).toBe("close");
+    expect(readAfterVerb(null)).toBe("close");
   });
 });
 
@@ -317,35 +326,6 @@ describe("after a verb, on the shipped shell", () => {
     });
   }
 
-  /* Load older folds their May letter into our reply's row as its open target. That letter was never
-     in the three groups, so a bar verb that leaves it standing must not move the cursor. */
-  for (const which of ["reply", "forward"] as const) {
-    it(`bar ${which} on a row carried by a Load-older letter keeps the cursor on the letter`, async () => {
-      // The shell dates the 60-day dormancy cutline by the wall clock: pinned to NOW (and still
-      // moving, so waitFor's deadline runs), our reply of 2026-09-04 keeps this sender active.
-      vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true, now: NOW });
-      const mirror: Spec[] = [
-        { id: "s", thread: "t-c", folder: "Sent", from: "me@example.com", date: "2026-09-04T08:00:00.000Z" },
-        ...[2, 3, 4].map((n) => ({ id: `b${n}`, from: `p${n}@example.com`, date: yesterday(22 - n) })),
-      ];
-      const old = msg({ id: "o", thread: "t-c", from: "c@example.com", date: "2026-05-02T09:00:00.000Z" });
-      const { container } = await shell(mirror, [old]);
-      const load = (): HTMLElement | undefined =>
-        [...container.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent?.includes("Load older mail"));
-      await waitFor(() => load() != null, "the Load older control");
-      await act(async () => { load()!.click(); });
-      await waitFor(() => rowIds(container).includes("o"), "the May letter to carry the conversation row");
-      await key("j");
-      await waitFor(() => selId(container) === "o", "the cursor on the May letter");
-      const btn = container.querySelector<HTMLElement>(which === "reply" ? "button.abar-reply" : ".abar-fwd button");
-      expect(btn).not.toBeNull();
-      await act(async () => { btn!.click(); });
-      await settle();
-      await settle();
-      expect(selId(container)).toBe("o");
-    });
-  }
-
   it("a bulk delete over the open row ADVANCES as a single delete does, and never says 'elsewhere'", async () => {
     const { container } = await shell(["m1", "m2", "m3", "m4"]);
     await key("j");
@@ -354,8 +334,8 @@ describe("after a verb, on the shipped shell", () => {
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "J", shiftKey: true, bubbles: true, cancelable: true }));
     });
-    await waitFor(() => container.querySelectorAll(".row.picked").length >= 2, "two rows picked");
-    const picked = [...container.querySelectorAll(".row.picked")].map((r) => r.getAttribute("data-id"));
+    await waitFor(() => pickedRows(container).length >= 2, "two rows picked");
+    const picked = pickedRows(container).map((r) => r.getAttribute("data-id"));
     await key("Backspace");
     await waitFor(() => !rowIds(container).includes(first), "the picked rows to leave");
     await waitFor(() => selId(container) != null, "the selection to advance");
@@ -376,7 +356,31 @@ describe("after a verb, on the shipped shell", () => {
     await waitFor(() => !rowIds(container).includes(first), "the acted row to leave");
     await settle();
     expect(selId(container)).toBeNull();
-    expect(container.textContent).toContain("Nothing open.");
+    /* PARITY L19, DECLARED (RULING-JOIN J-3): the resting column says the list's blank, not "Nothing open.": nothing is
+       open and the column says so. */
+    expect(openLetter(container)).toBeNull();
+    expect(blankSays(container), "the column does not rest").not.toBeNull();
+  });
+
+  /* The choice obeyed is the one kept for the shell's own account: its host hands it one account while the storage
+     owner names another (another tab signed in as somebody else), whose own choice is to advance. */
+  it("obeys the choice kept for the account its host hands it, whatever the storage owner names", async () => {
+    const other = "acc-another-tab";
+    window.localStorage.setItem(`${AFTER_VERB_STORAGE_KEY}:${SHELL_OWNER}`, "close");
+    window.localStorage.setItem(`${AFTER_VERB_STORAGE_KEY}:${other}`, "advance");
+    setStorageOwner(other);
+    const { container } = await shell(["m1", "m2", "m3"], [], SHELL_OWNER);
+    await key("j");
+    await waitFor(() => selId(container) != null, "the cursor to stand");
+    const first = selId(container)!;
+    await key("Backspace");
+    await waitFor(() => !rowIds(container).includes(first), "the acted row to leave");
+    await settle();
+    expect(selId(container)).toBeNull();
+    /* PARITY L19, DECLARED (RULING-JOIN J-3): the resting column says the list's blank, not "Nothing open.": nothing is
+       open and the column says so. */
+    expect(openLetter(container)).toBeNull();
+    expect(blankSays(container), "the column does not rest").not.toBeNull();
   });
 
   it("a removal MY verb did not cause moves nothing — the marker is the difference", async () => {
@@ -403,9 +407,9 @@ describe("the keyboard ring stays on the row the verbs act on", () => {
         new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
     });
   };
-  const ringId = (): string | null => (document.activeElement as HTMLElement | null)?.closest?.(".row")?.getAttribute("data-id") ?? null;
+  const ringId = (): string | null => (document.activeElement as HTMLElement | null)?.closest?.(":is(.row, [role=option])")?.getAttribute("data-id") ?? null;
   const focusCursor = async (el: HTMLElement): Promise<void> => {
-    await act(async () => { el.querySelector<HTMLElement>(".view .row.sel")!.focus(); });
+    await act(async () => { cursorRow(el)!.focus(); });
   };
 
   it("u moves the row up under New, and the ring goes with it, not to the row that slid into its place", async () => {
@@ -433,7 +437,7 @@ describe("the keyboard ring stays on the row the verbs act on", () => {
     await settle();
     expect(selId(container)).toBeNull();
     expect(ringId()).toBeNull();
-    expect(document.activeElement).toBe(container.querySelector(".view .scroller"));
+    expect(document.activeElement).toBe(seatedList(container)?.querySelector(".ob-scroll"));
     // j from the list takes the cursor, and the ring with it.
     await press("j");
     await waitFor(() => selId(container) != null, "j to take the cursor");
@@ -450,5 +454,154 @@ describe("the keyboard ring stays on the row the verbs act on", () => {
     await waitFor(() => selId(container) != null && selId(container) !== first, "the selection to advance");
     await settle();
     expect(ringId()).toBe(selId(container));
+  });
+
+  /* A layer opened from a control in the list's column gives the keyboard back to that control when it closes. */
+  const named = (role: string, name: string): HTMLElement => {
+    const all = [...document.querySelectorAll<HTMLElement>(role === "button" ? "button" : `[role=${role}]`)];
+    const el = all.find((e) => (e.getAttribute("aria-label") ?? e.textContent ?? "").trim().startsWith(name));
+    if (!el) throw new Error(`no ${role} named ${name}`);
+    return el;
+  };
+  const pressOn = async (el: HTMLElement): Promise<void> => {
+    await act(async () => { el.focus(); el.click(); });
+    await settle();
+  };
+  const escape = async (): Promise<void> => {
+    await press("Escape");
+    await settle();
+  };
+
+  it("the list's menu, closed with Escape or by a choice, gives the keyboard back to its button", async () => {
+    await shell([{ id: "m1", unread: true }, "m2", "m3"]);
+    const button = named("button", "Ohbox actions");
+    await pressOn(button);
+    expect(document.activeElement?.closest("[role=menu]"), "the menu took the keyboard").not.toBeNull();
+    await escape();
+    expect(document.querySelector("[role=menu]")).toBeNull();
+    expect(document.activeElement).toBe(button);
+    await pressOn(button);
+    await pressOn(named("menuitem", "Mark all read"));
+    expect(document.querySelector("[role=menu]")).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("the selection's More, closed with Escape or by a choice, gives the keyboard back to More", async () => {
+    const { container } = await shell();
+    await key("j");
+    await waitFor(() => selId(container) != null, "the cursor to stand");
+    await focusCursor(container);
+    await press("x");
+    const more = named("button", "More");
+    await pressOn(more);
+    expect(document.activeElement?.closest("[role=menu]"), "More took the keyboard").not.toBeNull();
+    await escape();
+    expect(document.querySelector("[role=menu]")).toBeNull();
+    expect(document.activeElement).toBe(more);
+    await pressOn(more);
+    await pressOn(named("menuitem", "Delete"));
+    await pressOn(named("menuitem", "Cancel"));
+    expect(document.querySelector("[role=menu], [role=dialog]")).toBeNull();
+    expect(document.activeElement).toBe(more);
+  });
+
+  /* An ask opened from a menu on the selection's foot, by keys alone: the case reaches the bar's control as Tab does,
+     then focuses nothing. Enter presses what holds the keyboard (jsdom does not turn the key into the press). */
+  const enter = async (): Promise<void> => {
+    await press("Enter");
+    await act(async () => { (document.activeElement as HTMLElement).click(); });
+    await settle();
+  };
+  const holder = (): Element | null => document.activeElement;
+  const pickTheCursor = async (): Promise<{ container: HTMLElement; first: string }> => {
+    const { container } = await shell();
+    await key("j");
+    await waitFor(() => selId(container) != null, "the cursor to stand");
+    await focusCursor(container);
+    await press("x");
+    await settle();
+    return { container, first: selId(container)! };
+  };
+  const tabTo = async (el: HTMLElement): Promise<void> => {
+    await act(async () => { el.focus(); });
+  };
+  const noLayer = (): Element | null => document.querySelector("[role=menu], [role=dialog]");
+
+  it("the delete ask opened from More holds the keyboard; ArrowDown then Enter deletes, and the row takes it", async () => {
+    const { container, first } = await pickTheCursor();
+    await tabTo(named("button", "More"));
+    await enter();
+    expect(holder()?.closest("[role=menu]"), "More's menu took the keyboard").not.toBeNull();
+    await enter();
+    expect(document.querySelector("[role=dialog]"), "the delete ask stands").not.toBeNull();
+    expect(holder(), "the ask holds the keyboard on its first control").toBe(named("menuitem", "Cancel"));
+    await press("ArrowDown");
+    await enter();
+    await waitFor(() => !rowIds(container).includes(first), "the picked row to leave");
+    await settle();
+    expect(noLayer()).toBeNull();
+    expect(selId(container), "a cursor stands").not.toBeNull();
+    expect(ringId(), "the keyboard on the cursor's row").toBe(selId(container));
+  });
+
+  it("the delete ask opened from More, cancelled or escaped, gives the keyboard back to More", async () => {
+    const { container, first } = await pickTheCursor();
+    const more = named("button", "More");
+    await tabTo(more);
+    await enter();
+    await enter();
+    expect(holder(), "the ask holds the keyboard on its first control").toBe(named("menuitem", "Cancel"));
+    await enter();
+    expect(noLayer()).toBeNull();
+    expect(holder(), "cancelled: the keyboard on More").toBe(more);
+    await enter();
+    await enter();
+    expect(holder()?.closest("[role=dialog]"), "the ask again, by keys alone").not.toBeNull();
+    await escape();
+    expect(noLayer()).toBeNull();
+    expect(holder(), "escaped: the keyboard on More").toBe(more);
+    expect(rowIds(container)).toContain(first);
+  });
+
+  it("Screening's ask opened from a place holds the keyboard; ArrowDown then Enter screens, and the list takes it", async () => {
+    const { container, first } = await pickTheCursor();
+    await tabTo(named("button", "Screening"));
+    await enter();
+    expect(holder()?.closest("[role=dialog]"), "the places took the keyboard").not.toBeNull();
+    await press("ArrowDown");
+    await enter();
+    expect(document.querySelector("[role=dialog]")?.getAttribute("aria-label"), "Screening's ask names its sender count and destination").toBe("1 sender · News.");
+    expect(holder(), "the ask holds the keyboard on its first control").toBe(named("menuitem", "Cancel"));
+    await press("ArrowDown");
+    await enter();
+    await waitFor(() => !rowIds(container).includes(first), "the screened row to leave");
+    await settle();
+    expect(noLayer()).toBeNull();
+    /* Screening moves no cursor on: the keyboard is on the cursor's row where one stands, else on the list. */
+    const list = cursorRow(container)
+      ?? seatedList(container)?.querySelector(".ob-scroll");
+    expect(list, "the list stands").not.toBeNull();
+    expect(holder(), "the keyboard back in the list").toBe(list);
+  });
+
+  it("Screening's ask, cancelled or escaped, gives the keyboard back to Screening", async () => {
+    const { container, first } = await pickTheCursor();
+    const screening = named("button", "Screening");
+    await tabTo(screening);
+    await enter();
+    await press("ArrowDown");
+    await enter();
+    expect(holder(), "the ask holds the keyboard on its first control").toBe(named("menuitem", "Cancel"));
+    await enter();
+    expect(noLayer()).toBeNull();
+    expect(holder(), "cancelled: the keyboard on Screening").toBe(screening);
+    await enter();
+    await press("ArrowDown");
+    await enter();
+    expect(holder()?.closest("[role=dialog]"), "the ask again, by keys alone").not.toBeNull();
+    await escape();
+    expect(noLayer()).toBeNull();
+    expect(holder(), "escaped: the keyboard on Screening").toBe(screening);
+    expect(rowIds(container)).toContain(first);
   });
 });

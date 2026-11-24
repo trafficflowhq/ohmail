@@ -1,3 +1,4 @@
+import { accountOfMessage, bindDb } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -6,7 +7,7 @@ import { attachments, drafts, mailboxes, messageBodies, outboundSends, outboundS
 import type { OpenSendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core";
 import { SendNotSubmitted } from "@trafficflow/core";
 import {
-  MailboxSideRefusal, SendService, ServiceError, TransientDialRefusal, runScheduledSendPass,
+  MailboxSideRefusal, SendService, ServiceError, TransientDialRefusal, dbFor, runScheduledSendPass,
   SEND_FAILED_SENTENCE, SEND_STALE_AFTER_MS,
 } from "../src/index.js";
 import type { ServiceContext, StagedAttachmentSource } from "../src/index.js";
@@ -75,7 +76,7 @@ async function world(o: { body?: string } = {}) {
   const accountId = randomUUID();
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "me@rearm.test" }).returning();
   let t = START.getTime();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => new Date(t), requestId: "rearm" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(t), requestId: "rearm" };
   const newDraft = async (body = o.body ?? "See below."): Promise<string> => {
     const [d] = await db.insert(drafts).values({
       accountId, mailboxId: mb!.id, subject: "The list", body,
@@ -351,7 +352,7 @@ describe("a refusal that will not pass is final, and says so", () => {
       nativeLocator: { folder: "INBOX", ref: "1:8" },
     });
     // Its words were let go by the store, so the forward reads them from the mailbox at send.
-    await w.db.insert(messageBodies).values({ messageId: orig.id, text: "", html: null, withheldReason: "storage_cap" });
+    await w.db.insert(messageBodies).values({ messageId: orig.id, accountId: accountOfMessage(orig.id), text: "", html: null, withheldReason: "storage_cap" });
     let reads = 0;
     const openFetchAdapter = async () => ({
       async fetchPart() { throw new Error("no parts here"); },
@@ -572,7 +573,7 @@ describe("the scheduled pass is unchanged", () => {
     const at = new Date(START.getTime() + 60_000);
     await w.db.update(drafts).set({ status: "scheduled", sendAt: at, sendKey: "appt-1" }).where(eq(drafts.id, w.draftId));
     const tr = transport({ dial: [() => shaped({ code: "EIMAPCLOSED" })] });
-    const r = await runScheduledSendPass(w.db, { openSendAdapter: tr.factory, now: () => new Date(at.getTime() + 1_000) });
+    const r = await runScheduledSendPass(bindDb(w.db, { account: null }), { openSendAdapter: tr.factory, now: () => new Date(at.getTime() + 1_000) });
     expect(r).toMatchObject({ claimed: 1, failed: 1, deferred: 0, sent: 0 });
     const d = await w.draft();
     expect({ status: d.status, sendKey: d.sendKey, sendAt: d.sendAt }).toEqual({ status: "draft", sendKey: null, sendAt: null });

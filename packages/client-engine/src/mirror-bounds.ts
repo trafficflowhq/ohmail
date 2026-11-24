@@ -28,6 +28,8 @@ export const MIRROR_ENTITY_TYPES = [
   // The `/sync` feed's vocabulary (contract §3.1).
   "message", "thread", "routing_decision", "approval", "draft", "rule", "message_state",
   "folder", "tag", "mailbox", "screener_suggestion", "mailbox_profile",
+  // The calendar's, on the same feed.
+  "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
   // Client-local: the demo world, view metadata, hydrated bodies, the held-release derivation.
   "screener_sender", "triage_item", "view_meta", "message_body", "held_release_group",
   "unscreened_sender_group", "screener_waiting",
@@ -42,7 +44,7 @@ export type KnownMirrorEntityType = (typeof MIRROR_ENTITY_TYPES)[number];
 /**
  * WHAT KEEPS ONE TYPE FROM GROWING WITH THE MAILBOX.
  *
- * Four of the five arms name a MECHANISM this package runs and the census drives. `person` is the
+ * Five of the six arms name a MECHANISM this package runs and the census drives. `person` is the
  * one that names a reason instead, and it carries `growsWith` so that the reason is a claim
  * somebody can disagree with rather than a silence.
  */
@@ -55,6 +57,12 @@ export type MirrorBound =
   | { by: "ceiling"; at: string; why: string }
   /** One named writer rewrites the WHOLE set and prunes the complement, so it cannot accumulate. */
   | { by: "replaced"; via: string; why: string }
+  /**
+   * A span of days around today, which the server states (`CalendarWindow`) and the device widens
+   * by what it loaded on purpose; an event is held while it can touch that span. The prune pass
+   * runs `calendar-span.ts`, the one predicate the server's own first load also answers by.
+   */
+  | { by: "span"; via: string; why: string }
   /** No mechanism: the set is bounded by what it is a function of, which `growsWith` names. */
   | { by: "person"; growsWith: string; why: string };
 
@@ -148,6 +156,31 @@ export const MIRROR_BOUNDS: Record<KnownMirrorEntityType, MirrorBound> = {
     growsWith: "the mailboxes this install only reads",
     why: "one row per read mailbox, carrying the organizer's rule list; a promotion drains it as "
       + "a tombstone and a mailbox removal cascades it by `mailboxId`",
+  },
+  calendar_connection: {
+    by: "person",
+    growsWith: "the calendar accounts the person connected",
+    why: "one row per connection, each a sign-in the person made by hand; it leaves by its own "
+      + "tombstone, and its delete takes the calendars and events that hang on it",
+  },
+  calendar: {
+    by: "person",
+    growsWith: "the calendars of the connected accounts",
+    why: "one row per calendar a provider lists for a connection, served whole on the first load "
+      + "so the list of calendars never shows a part; its delete takes its events",
+  },
+  calendar_event: {
+    by: "span",
+    via: "calendar-span.ts",
+    why: "a calendar's first read is every event it ever held, so the device keeps those that can "
+      + "touch the served span around today (and what it loaded earlier on purpose), at most the "
+      + "span's row ceiling, the farthest from today evicted first",
+  },
+  calendar_suggestion: {
+    by: "cascade",
+    via: "messageId",
+    why: "an event a letter seems to propose: it goes when that letter leaves the mirror, and a "
+      + "decided one drains from the server as its own delete",
   },
   screener_sender: {
     by: "person",

@@ -4,11 +4,11 @@
  * Change the password — `POST /auth/password`, for somebody told their password is known. The
  * server checks the current password on the sign-in lockout, asks for a second factor inside the
  * step-up window, and signs every OTHER session out; this one stays as it is. Its own component:
- * `AccountSection` is the erasure ceremony and stays out of it.
+ * The erasure ceremony lives on the delete page.
  *
  * The change is TRIED on the press, as the erase is. A closed window answers `step_up_required`
  * before anything is checked; the typed values are parked here (memory only) while
- * `StepUpPrompt` re-stamps the session, and the verified factor sends them once. Two answers are
+ * `StepUp` re-stamps the session, and the verified factor sends them once. Two answers are
  * read BEFORE `gatedRefusal`, which takes every 401 for a dead session: a wrong current password
  * is 401 `credential_refused`, a verdict said in place (never renewed, never the sign-in dead
  * end), and 423 is the lockout it shares with sign-in. The three fields are emptied on every
@@ -17,10 +17,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsSection } from "@ohmail/ui";
+import { Button, Field, FieldStack, RefusalLine } from "@ohmail/ui/base";
+import { SettingActs, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { ApiError, apiConfigured, auth } from "../../api-client";
 import { serverAnswered, useRefusalSentence } from "../refusal-sentence";
-import { StepUpPrompt } from "./StepUpPrompt";
+import { StepUp } from "./StepUp";
 import { gatedRefusal } from "./gated-refusal";
 
 /** The server's rule (`requirePassword`), said before anything is sent. Counted in code points. */
@@ -59,6 +60,7 @@ export function PasswordSection() {
   const [discarded, setDiscarded] = useState(false);
   /** The change the verified factor sends, held only while the prompt is open. */
   const parked = useRef<Change | null>(null);
+  const opener = useRef<HTMLButtonElement>(null);
 
   /** The pane can be left mid-ceremony; nothing may set state after that. */
   const alive = useRef(true);
@@ -136,62 +138,47 @@ export function PasswordSection() {
   if (!apiConfigured()) return null;
 
   return (
-    <SettingsSection className="acct">
-      <h2 className="acct-h">{t("title")}</h2>
-      <p className="acct-lead">{t("lead")}</p>
+    <SettingsSheet title={t("title")}>
+      <SettingNote>{t("lead")}</SettingNote>
+      {error ? <RefusalLine alert>{error}</RefusalLine> : null}
+      {revoked !== null ? <SettingNote said>{t("done", { count: revoked })}</SettingNote> : null}
+      {discarded ? <SettingNote said>{t("cancelled")}</SettingNote> : null}
 
-      {error ? <p className="acct-warn" role="alert">{error}</p> : null}
-      {revoked !== null ? (
-        <p className="acct-warn" role="status">{t("done", { count: revoked })}</p>
-      ) : null}
-      {discarded ? <p className="acct-warn" role="status">{t("cancelled")}</p> : null}
-
+      <form onSubmit={submit}>
+        <FieldStack>
+          <Field id="pwc-current" label={t("currentLabel")} type="password" autoComplete="current-password"
+            value={current} onChange={setCurrent} disabled={stage !== "form"} />
+          <Field id="pwc-next" label={t("nextLabel")} type="password" autoComplete="new-password"
+            hint={t("nextHint")} value={next} onChange={setNext} disabled={stage !== "form"} />
+          <Field id="pwc-repeat" label={t("repeatLabel")} type="password" autoComplete="new-password"
+            value={repeat} onChange={setRepeat} disabled={stage !== "form"} />
+        </FieldStack>
+        <SettingActs>
+          <Button ref={opener} type="submit" busy={stage !== "form"}>
+            {stage === "sending" ? t("working") : t("submit")}
+          </Button>
+        </SettingActs>
+      </form>
       {stage === "stepup" ? (
-        <div className="acct-confirm">
-          <h3 className="acct-sub">{t("confirmTitle")}</h3>
-          {/* Named at the moment it fires: the verified factor sends the change, no further click. */}
-          <p className="acct-fine">{t("factorBody")}</p>
-          <StepUpPrompt
-            onVerified={() => {
-              const change = parked.current;
-              if (change !== null && alive.current) void send(change, true);
-            }}
-            onCancel={() => {
-              parked.current = null;
-              setStage("form");
-            }}
-            onDiscarded={() => {
-              parked.current = null;
-              setStage("form");
-              setDiscarded(true);
-            }}
-          />
-        </div>
-      ) : (
-        <form className="acct-confirm" onSubmit={submit}>
-          <label className="join-label" htmlFor="pwc-current">{t("currentLabel")}</label>
-          <input
-            id="pwc-current" className="join-input" type="password" autoComplete="current-password"
-            value={current} onChange={(e) => setCurrent(e.target.value)} disabled={stage === "sending"}
-          />
-          <label className="join-label" htmlFor="pwc-next">{t("nextLabel")}</label>
-          <input
-            id="pwc-next" className="join-input" type="password" autoComplete="new-password"
-            value={next} onChange={(e) => setNext(e.target.value)} disabled={stage === "sending"}
-          />
-          <label className="join-label" htmlFor="pwc-repeat">{t("repeatLabel")}</label>
-          <input
-            id="pwc-repeat" className="join-input" type="password" autoComplete="new-password"
-            value={repeat} onChange={(e) => setRepeat(e.target.value)} disabled={stage === "sending"}
-          />
-          <p className="join-hint">{t("nextHint")}</p>
-          <div className="acct-actions">
-            <Button variant="primary" type="submit" disabled={stage === "sending"}>
-              {stage === "sending" ? t("working") : t("submit")}
-            </Button>
-          </div>
-        </form>
-      )}
-    </SettingsSection>
+        <StepUp
+          inline
+          line={t("factorBody")}
+          returnFocus={() => opener.current}
+          onVerified={() => {
+            const change = parked.current;
+            if (change !== null && alive.current) void send(change, true);
+          }}
+          onCancel={() => {
+            parked.current = null;
+            setStage("form");
+          }}
+          onDiscarded={() => {
+            parked.current = null;
+            setStage("form");
+            setDiscarded(true);
+          }}
+        />
+      ) : null}
+    </SettingsSheet>
   );
 }

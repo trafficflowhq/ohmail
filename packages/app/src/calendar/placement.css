@@ -1,0 +1,169 @@
+/* The calendar's body: the head over the view, and the Agenda's panel beside it. Placement only. */
+.cal-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.cal-first-step {
+  justify-content: center;
+}
+.cal-body-views {
+  display: flex;
+  flex: 1;
+  gap: var(--s2);
+  min-height: 0;
+  min-width: 0;
+}
+.cal-body-view {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 2;
+  min-height: 0;
+  min-width: 0;
+}
+.cal-body-panel {
+  --oh-calside-flex: 1;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.cal-invitations {
+  --cal-invitations-z: 9;
+  --oh-calside-flex: 1;
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: var(--cal-invitations-z);
+  min-block-size: 30%;
+  max-block-size: calc(100% - var(--h-xl));
+  animation: cal-invitations-in var(--d-slide) var(--e-out) both;
+}
+
+@keyframes cal-invitations-in {
+  from {
+    transform: translateY(var(--s6));
+    opacity: var(--o-slide);
+  }
+}
+
+:root[data-device="desktop"] .cal-body-panel {
+  flex: 0 0 var(--cal-side-width);
+}
+
+.cal-body [data-drag="lifted"] {
+  cursor: grabbing;
+}
+.cal-body [data-cal-drop-active] {
+  outline: var(--slot-line) solid var(--ink2);
+  outline-offset: calc(var(--slot-line) * -1);
+}
+
+.cal-event-panel {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+}
+
+:root[data-product="cal"]:not([data-device="phone"]) .fr-frame:has(.cal-event-panel) .fr-report {
+  bottom: calc(var(--edge) + var(--s4) + var(--h-xl) + var(--s3));
+}
+
+.cal-event-panel[data-call] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  padding: var(--s2);
+}
+
+.cal-call-menu-link {
+  text-decoration: none;
+}
+
+.cal-edit-panel {
+  --cal-edit-panel-z: 7;
+  z-index: var(--cal-edit-panel-z);
+}
+
+.cal-body-strip,
+.cal-mo-pick {
+  touch-action: pan-y;
+}
+
+.cal-date-jump {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding-block-end: var(--s2);
+}
+
+.cal-day-range-preview {
+  --cal-range-z: 4;
+  position: absolute;
+  z-index: var(--cal-range-z);
+  display: grid;
+  pointer-events: none;
+}
+
+.cal-event-backdrop {
+  --cal-event-backdrop-z: 8;
+  position: absolute;
+  inset: 0;
+  z-index: var(--cal-event-backdrop-z);
+  background: var(--scrim);
+}
+
+.cal-invitee-search {
+  margin: var(--s1) var(--s1) var(--s2);
+}
+
+.cal-edit-conflict {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--s1) var(--s3);
+}
+
+.cal-edit-failure {
+  padding-block-start: var(--s3);
+}
+
+.cal-edit-conflict-copy {
+  margin: 0;
+}
+
+.cal-event-panel[data-proposal] {
+  --cal-proposal-z: 7;
+  z-index: var(--cal-proposal-z);
+  padding-block-end: var(--s4);
+}
+
+.cal-proposal-answers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-block-start: var(--s2);
+}
+
+.cal-proposal-question {
+  margin: 0;
+  text-align: center;
+}
+
+:root[data-device="phone"] .cal-proposal-answers {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+}
+
+:root[data-device="phone"] .cal-event-panel[data-proposal] {
+  position: static;
+}

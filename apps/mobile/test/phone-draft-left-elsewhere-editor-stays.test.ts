@@ -5,11 +5,11 @@
  * The route's decision is driven directly (`compose-route.ts`), the rows come off `liveDrafts`
  * over `bootEngine`'s real HttpAdapter against the fake, and the wiring is READ (no RN renderer).
  */
+import type { EngineDraft } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import type { EngineDraft } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { keptRecipients, liveActions, liveDrafts, parseRecipients, type LiveWorldActions } from "../src/state/live";

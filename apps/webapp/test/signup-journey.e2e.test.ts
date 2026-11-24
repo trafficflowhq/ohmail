@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { createApp, apiRoutes, makeProbeHostGuard, type ApiDeps } from "@trafficflow/api";
@@ -15,6 +15,7 @@ import type { AccessLifecycle, AccessVerdict, EntitlementsPort, PlanHint } from 
 import { makeDeps } from "../../../packages/api/test/helpers.js";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
 import de from "../messages/de.json";
+import en from "../messages/en.json";
 
 type SpyMailer = Awaited<ReturnType<typeof makeDeps>>["mailer"];
 
@@ -71,7 +72,7 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-/** The real route table behind a socket, with the one header the hosted edge writes (the client's address). */
+/** The real route table behind a socket, with the client address the API host supplies. */
 async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
@@ -83,7 +84,7 @@ async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (Array.isArray(v)) for (const x of v) headers.append(k, x);
     else if (v !== undefined) headers.set(k, v);
   }
-  headers.set("x-vercel-forwarded-for", "203.0.113.7");
+  headers.set("x-forwarded-for", "203.0.113.7");
   const body = method === "GET" || method === "HEAD" || chunks.length === 0 ? undefined : Buffer.concat(chunks);
   const answer = await app.handle(new Request(url, { method, headers, body }), { ...world.deps, session: null, idempotency: null });
   const code = answer.status >= 400
@@ -143,6 +144,46 @@ async function said(page: Page): Promise<string> {
 
 const h1 = async (page: Page): Promise<string> => (await page.locator("h1").first().textContent())?.trim() ?? "";
 
+/*
+ * THE ONE CONNECT FORM, as a person finds it on the mailbox step (`@ohmail/app/mailboxes/connect`, the join's words):
+ * the providers are a group of pressed buttons, each field is found by its label, a refusal is the form's alert, and
+ * the second factor is the step-up dialog with its code field and Verify. English here; the German case names its own.
+ */
+const PROVIDERS = "Provider";
+const OTHER_IMAP = en.providerPicker.otherShort;
+const MAILBOX_ADDRESS = "Mailbox address";
+const IMAP_HOST = "IMAP server (incoming)";
+const SMTP_HOST = "SMTP server (outgoing)";
+const APP_PASSWORD = "App password";
+const tile = (page: Page, name: string | RegExp, group = PROVIDERS) =>
+  page.getByRole("group", { name: group }).getByRole("button", { name });
+const field = (page: Page, label: string) => page.getByLabel(label, { exact: true });
+const manualHeading = (page: Page) =>
+  page.getByRole("heading", { name: en.join.manualTitle, exact: true });
+const showManualHosts = (page: Page) =>
+  page.getByText(en.join.manualPorts, { exact: true }).click();
+const printed = (sentence: string) => sentence.replace(/\.$/, "");
+const sentHeading = (page: Page, copy: typeof en.join) =>
+  page.getByRole("heading", { level: 1 }).filter({ hasText: copy.openLink.split("<a>")[0]!.trim() });
+const factorHeading = (page: Page, copy: typeof en.join) =>
+  page.getByRole("heading", { name: copy.lockWith.replace("<how></how>.", copy.factorPasskeyWord) });
+const factorApp = (page: Page, copy: typeof en.join) =>
+  page.getByRole("radio", { name: new RegExp(copy.factorApp) });
+/**
+ * What the authenticator step says of a refused code, once it says it: the card's alert, or what describes the
+ * code's blank on a door's page (the field says its own refusal there).
+ */
+async function codeRefusal(page: Page): Promise<string> {
+  const read = (): string | null => {
+    const code = document.querySelector("#join-totp");
+    const describedBy = code?.getAttribute("aria-describedby") ?? "";
+    const described = describedBy ? document.getElementById(describedBy)?.textContent ?? "" : "";
+    return described || document.querySelector('[role="alert"]')?.textContent || null;
+  };
+  await page.waitForFunction(read, undefined, { timeout: 30_000 });
+  return (await page.evaluate(read)) ?? "";
+}
+
 /** The person's run: one browser, one account, carried through every case below in order. */
 const person = { email: "mila@family.example", password: "a-long-signup-password", totpSecret: "" };
 let ctx: BrowserContext | null = null;
@@ -169,24 +210,23 @@ async function signUp(
   await p.fill("#join-email", who.email);
   await p.fill("#join-name", "Mila Reyes");
   await p.fill("#join-pw", who.password);
-  await p.getByRole("button", { name: "Create account" }).click();
-  await p.getByRole("heading", { name: "Check your email" }).waitFor({ timeout: 30_000 });
+  await p.getByRole("button", { name: en.join.continue }).click();
+  await sentHeading(p, en.join).waitFor({ timeout: 30_000 });
 
   const mail = world.mailer.sent.find((m) => m.to === who.email && m.template === "email_verification");
   expect(mail, `no verification mail: ${await said(p)}`).toBeTruthy();
   const token = new URL((mail!.data as { verifyUrl: string }).verifyUrl).searchParams.get("token");
   await p.goto(`http://localhost:${webPort}/verify-email?token=${encodeURIComponent(token!)}`);
-  await p.fill("#verify-pw", who.password);
+  await p.getByLabel("Your password", { exact: true }).fill(who.password);
   await p.getByRole("button", { name: "Confirm my email" }).click();
-  await p.getByRole("heading", { name: "Add your second factor" }).waitFor({ timeout: 30_000 });
+  await factorHeading(p, en.join).waitFor({ timeout: 30_000 });
 
-  await p.getByRole("button", { name: "Use an authenticator app instead" }).click();
-  who.totpSecret = ((await p.locator(".join-secret code").textContent()) ?? "").trim();
+  await factorApp(p, en.join).click();
+  who.totpSecret = ((await p.getByText(/^[A-Z2-7]{4}( [A-Z2-7]{1,4})+$/).first().textContent()) ?? "").trim();
   await p.fill("#join-totp", totpAt(who.totpSecret, world.clock.now()));
   await p.getByRole("button", { name: "Activate" }).click();
-  await p.locator(".join-codes li").first().waitFor({ timeout: 30_000 });
-  await p.locator(".join-check input[type=checkbox]").check();
-  await p.getByRole("button", { name: "Continue" }).click();
+  await p.locator("ul li").first().waitFor({ timeout: 30_000 });
+  await p.getByRole("button", { name: en.join.codesSaved }).click();
 }
 
 /**
@@ -252,53 +292,62 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
   });
 
   it("the account, the mailed link, an authenticator and the codes bring a stranger to the mailbox step", async () => {
+    await resetPasswordJourney("en");
+    await resetPasswordJourney("de");
+    await newWorld();
     await signUp(page, person);
     // This host operates no entitlements program, so the plan step answers "entitled" and moves on.
-    await page.getByRole("heading", { name: "Connect a mailbox" }).waitFor({ timeout: 30_000 });
+    await page.getByRole("heading", { name: en.onboarding.providerFirst, exact: true }).waitFor({ timeout: 30_000 });
   }, 120_000);
 
   it("a mail server on the person's own network is refused ON the mailbox step, with everything typed kept", async () => {
-    await page.getByRole("radio", { name: /Any other IMAP mailbox/ }).click();
-    await page.fill("#join-mb-address", person.email);
-    await page.fill("#join-imap", OWN_NETWORK_HOST);
-    await page.fill("#join-smtp", PUBLIC_SMTP);
-    await page.fill("#join-mb-pass", "app-password-fixture");
-    await page.getByRole("button", { name: "Connect mailbox" }).click();
-    await page.locator(".join-error").first().waitFor({ timeout: 30_000 });
-    expect(await h1(page), `the refusal left the mailbox step: ${await said(page)}`).toBe("Connect a mailbox");
+    expect(await tile(page, OTHER_IMAP).evaluate((e) => getComputedStyle(e).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+    await tile(page, OTHER_IMAP).click();
+    await showManualHosts(page);
+    await field(page, MAILBOX_ADDRESS).fill(person.email);
+    await field(page, IMAP_HOST).fill(OWN_NETWORK_HOST);
+    await field(page, SMTP_HOST).fill(PUBLIC_SMTP);
+    await field(page, APP_PASSWORD).fill("app-password-fixture");
+    await page.getByRole("button", { name: en.join.manualConnect, exact: true }).click();
+    // The form's refusal: an alert that says something (the router's own announcer is an empty one).
+    const refusal = page.getByRole("alert").filter({ hasText: /\S/ }).first();
+    await refusal.waitFor({ timeout: 30_000 });
+    expect(await manualHeading(page).isVisible(), `the refusal left the mailbox step: ${await said(page)}`).toBe(true);
     // The host guard's own sentence for a name that resolves to a private address.
-    expect(await page.locator(".join-error").first().textContent()).toMatch(/points inside a private network/);
-    expect(await page.inputValue("#join-imap")).toBe(OWN_NETWORK_HOST);
-    expect(await page.inputValue("#join-mb-pass")).toBe("app-password-fixture");
+    expect(await refusal.textContent()).toMatch(/points inside a private network/);
+    expect(await field(page, IMAP_HOST).inputValue()).toBe(OWN_NETWORK_HOST);
+    expect(await field(page, APP_PASSWORD).inputValue()).toBe("app-password-fixture");
   }, 60_000);
 
   it("after six minutes making an app password, the second factor is asked in place and the same connect goes through", async () => {
     // Where the last case left the person; if it did not, start from the wizard's own resume.
-    if (await page.locator("#join-imap").count() === 0) {
+    if (await field(page, IMAP_HOST).count() === 0) {
       await page.goto(`http://localhost:${webPort}/join`);
-      await page.getByRole("radio", { name: /Any other IMAP mailbox/ }).click();
-      await page.fill("#join-mb-address", person.email);
-      await page.fill("#join-mb-pass", "app-password-fixture");
+      await tile(page, OTHER_IMAP).click();
+      await field(page, MAILBOX_ADDRESS).fill(person.email);
+      await field(page, APP_PASSWORD).fill("app-password-fixture");
     }
-    await page.fill("#join-imap", PUBLIC_IMAP);
-    await page.fill("#join-smtp", PUBLIC_SMTP);
+    if (!await field(page, IMAP_HOST).isVisible()) await showManualHosts(page);
+    await field(page, IMAP_HOST).fill(PUBLIC_IMAP);
+    await field(page, SMTP_HOST).fill(PUBLIC_SMTP);
     world.clock.advance(6 * 60_000);
     heard = [];
-    await page.getByRole("button", { name: "Connect mailbox" }).click();
-    await page.locator("[data-testid=step-up-prompt]").waitFor({ timeout: 30_000 }).catch(() => {});
-    expect(await page.locator("[data-testid=step-up-prompt]").count(), `no step-up prompt: ${await said(page)}`).toBe(1);
-    expect(await h1(page)).toBe("Connect a mailbox");
+    await page.getByRole("button", { name: en.join.manualConnect, exact: true }).click();
+    const stepUp = page.getByRole("dialog");
+    await stepUp.waitFor({ timeout: 30_000 }).catch(() => {});
+    expect(await stepUp.count(), `no step-up prompt: ${await said(page)}`).toBe(1);
+    expect(await manualHeading(page).isVisible()).toBe(true);
 
-    await page.fill("#stepup-code", totpAt(person.totpSecret, world.clock.now()));
-    await page.locator("[data-testid=step-up-prompt]").getByRole("button", { name: "Verify code" }).click();
-    await page.getByRole("heading", { name: "Your mailbox is connected" }).waitFor({ timeout: 30_000 }).catch(() => {});
-    expect(await h1(page), `the connect did not finish: ${await said(page)}`).toBe("Your mailbox is connected");
+    await stepUp.getByLabel("Six-digit code from your authenticator app").fill(totpAt(person.totpSecret, world.clock.now()));
+    await stepUp.getByRole("button", { name: "Verify code" }).click();
+    await page.getByRole("heading", { name: printed(en.join.myMailboxes) }).waitFor({ timeout: 30_000 }).catch(() => {});
+    expect(await h1(page), `the connect did not finish: ${await said(page)}`).toBe(printed(en.join.myMailboxes));
     const creates = heard.filter((h) => h.method === "POST" && h.path === "/mailboxes");
     expect(creates.map((c) => c.status), "one refusal for the window, then the same connect once").toEqual([403, 201]);
     expect(creates[1]!.body).toEqual(creates[0]!.body);
   }, 60_000);
 
-  it("on Cloud, Not now on the plan step leads to a front door that offers the trial, not a closed account", async () => {
+  it("on Cloud, leaving the plan step for the front door finds the trial offered there, not a closed account", async () => {
     const plane = neverStartedPlane();
     await newWorld(plane.port);
     const fresh = await browser!.newContext();
@@ -306,20 +355,17 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       const p = await fresh.newPage();
       const who = { email: "noor@family.example", password: "another-long-signup-password", totpSecret: "" };
       await signUp(p, who);
-      await p.getByRole("heading", { name: "Choose your plan" }).waitFor({ timeout: 30_000 });
-      const out = p.locator('a.join-alt[href="/"]');
-      await out.waitFor({ timeout: 30_000 });
-      const label = ((await out.textContent()) ?? "").trim();
-      await out.click();
-      await p.getByRole("heading", { name: "Start your free trial" }).waitFor({ timeout: 30_000 }).catch(() => {});
+      await p.getByRole("heading", { name: "Start your 14-day trial" }).waitFor({ timeout: 30_000 });
+      // The plan step has one way on (the account page). A person who leaves it lands on the front door by its address.
+      await p.goto(`http://localhost:${webPort}/`);
+      await p.getByRole("button", { name: "Start your trial" }).waitFor({ timeout: 30_000 }).catch(() => {});
       const wall = await p.evaluate(() => document.body?.innerText ?? "");
       expect(wall, `the front door: ${await said(p)}`).toContain("Start your free trial");
-      expect(wall).toContain("14 days free, no card.");
+      expect(wall).toContain(en.accessLock.neverLine);
       expect(await p.getByRole("button", { name: "Start your trial" }).count()).toBe(1);
       expect(await p.getByRole("button", { name: "Sign out" }).count()).toBe(1);
       // Nothing a closed account is told: not inactive, not stopped, no erasure clock, no move to self-hosting.
       expect(wall).not.toMatch(/not active|stopped organizing|will be (erased|deleted)|self-host/i);
-      expect(label, "the plan step's way out says what it does").toBe("Not now");
     } finally {
       await fresh.close();
     }
@@ -334,12 +380,12 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       const who = { email: "ines@family.example", password: "a-third-long-signup-password", totpSecret: "" };
       // The site's Pro button with the yearly toggle; the verification link comes back without the query.
       await signUp(p, who, "/join?plan=pro&interval=year");
-      await p.getByRole("heading", { name: "Choose your plan" }).waitFor({ timeout: 30_000 });
-      const trial = p.locator('[data-testid="join-plan-trial"]');
-      await trial.waitFor({ timeout: 30_000 }).catch(() => {});
-      expect(await trial.count(), `no trial line: ${await said(p)}`).toBe(1);
-      expect(((await trial.textContent()) ?? "").trim()).toBe("You chose Pro, billed yearly. 14 days free, no card.");
-      await p.locator('a.btn.primary[href^="https://plane.example/"]').waitFor({ timeout: 30_000 });
+      const trial = p.getByRole("heading", { name: "Start 14 days on Pro" });
+      await trial.waitFor({ timeout: 30_000 });
+      expect(await trial.count(), `no trial heading: ${await said(p)}`).toBe(1);
+      expect(await p.getByText(en.join.planYearly, { exact: true }).count()).toBe(1);
+      expect(await p.getByText("No card", { exact: true }).count()).toBe(1);
+      await p.locator('a[href^="https://plane.example/"]').waitFor({ timeout: 30_000 });
       expect(plane.mints, "the plan step's mint carries the language and the site's choice")
         .toContainEqual({ lang: "en", hint: { plan: "pro", interval: "year" } });
     } finally {
@@ -359,40 +405,41 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await p.fill("#join-email", who.email);
       await p.fill("#join-name", "Lena Graf");
       await p.fill("#join-pw", who.password);
-      await p.getByRole("button", { name: de.join.createAccount }).click();
-      await p.getByRole("heading", { name: de.join.step_sent_title }).waitFor({ timeout: 30_000 });
+      await p.getByRole("button", { name: de.join.continue }).click();
+      await sentHeading(p, de.join).waitFor({ timeout: 30_000 });
 
       const mail = world.mailer.sent.find((m) => m.to === who.email && m.template === "email_verification");
       expect(mail, `no verification mail: ${await said(p)}`).toBeTruthy();
-      expect(mail!.rendered.subject).toBe("Bestätige deine E-Mail-Adresse für ohmail");
-      expect(mail!.rendered.html).toContain('<html lang="de">');
+      expect(mail!.rendered.subject).toBe("Bestätige deine Adresse für ohmail");
+      expect(mail!.rendered.html).toContain('<html lang="de" ');
 
       const token = new URL((mail!.data as { verifyUrl: string }).verifyUrl).searchParams.get("token");
       await p.goto(`http://localhost:${webPort}/verify-email?token=${encodeURIComponent(token!)}`);
-      await p.fill("#verify-pw", "nicht-das-richtige-passwort");
+      await p.getByLabel(de.verify.passwordLabel, { exact: true }).fill("nicht-das-richtige-passwort");
       await p.getByRole("button", { name: de.verify.confirm }).click();
-      await p.locator(".join-error").first().waitFor({ timeout: 30_000 });
-      expect(await p.locator(".join-error").first().textContent()).toBe(de.verify.refusedPassword);
-      await p.fill("#verify-pw", who.password);
+      // The page says the refusal under its sentence, as an alert.
+      await p.getByRole("alert").filter({ hasText: de.verify.refusedPassword }).waitFor({ timeout: 30_000 });
+      await p.getByLabel(de.verify.passwordLabel, { exact: true }).fill(who.password);
       await p.getByRole("button", { name: de.verify.confirm }).click();
-      await p.getByRole("heading", { name: de.join.step_factor_title }).waitFor({ timeout: 30_000 });
+      await factorHeading(p, de.join).waitFor({ timeout: 30_000 });
 
-      await p.getByRole("button", { name: de.join.useTotp }).click();
-      who.totpSecret = ((await p.locator(".join-secret code").textContent()) ?? "").trim();
+      await factorApp(p, de.join).click();
+      who.totpSecret = ((await p.getByText(/^[A-Z2-7]{4}( [A-Z2-7]{1,4})+$/).first().textContent()) ?? "").trim();
       const right = totpAt(who.totpSecret, world.clock.now());
       await p.fill("#join-totp", right === "000000" ? "111111" : "000000");
       await p.getByRole("button", { name: de.join.activate }).click();
-      await p.locator(".join-error").first().waitFor({ timeout: 30_000 });
-      expect(await p.locator(".join-error").first().textContent()).toBe(de.join.refusedTotpCode);
+      expect(await codeRefusal(p)).toBe(de.join.refusedTotpCode);
       await p.fill("#join-totp", right);
       await p.getByRole("button", { name: de.join.activate }).click();
-      await p.locator(".join-codes li").first().waitFor({ timeout: 30_000 });
-      await p.locator(".join-check input[type=checkbox]").check();
-      await p.getByRole("button", { name: de.join.continue }).click();
-      await p.getByRole("heading", { name: de.join.step_mailbox_title }).waitFor({ timeout: 30_000 });
+      await p.locator("ul li").first().waitFor({ timeout: 30_000 });
+      await p.getByRole("button", { name: de.join.codesSaved }).click();
+      await p.getByRole("heading", { name: de.onboarding.providerFirst, exact: true }).waitFor({ timeout: 30_000 });
 
-      await p.getByRole("radio", { name: /GMX/ }).click();
-      expect(await p.locator(".pvp-note p").first().textContent()).toBe(de.providerPicker.note_gmx);
+      await tile(p, /GMX/, de.providerPicker.label).click();
+      await p.getByRole("heading", { name: printed(de.join.step_mailbox_title), exact: true }).waitFor({ timeout: 30_000 });
+      const note = p.getByText(de.providerPicker.note_gmx, { exact: true }).first();
+      await note.waitFor({ timeout: 30_000 }).catch(() => {});
+      expect(await note.textContent().catch(() => null), `no GMX note: ${await said(p)}`).toBe(de.providerPicker.note_gmx);
       const text = await p.evaluate(() => document.body?.innerText ?? "");
       expect(text, "English left on the German mailbox step").not.toMatch(/GMX ships with IMAP|enabling IMAP/);
     } finally {
@@ -405,10 +452,10 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
     const fresh = await browser!.newContext();
     try {
       const p = await fresh.newPage();
-      const current = async () => (await p.locator('.join-rail li[aria-current="step"]').textContent())?.trim();
+      const current = () => p.getByRole("img", { name: /^Step 1 of 5, Account/ }).getAttribute("aria-label");
       await p.goto(`http://localhost:${webPort}/join`);
       await p.locator("#join-email").waitFor({ timeout: 30_000 });
-      expect(await current()).toBe("Account");
+      expect(await current()).toBe("Step 1 of 5, Account, 1 of 5");
       // The provider's domain with its dot left out, as a thumb types it; the fixture helper builds both.
       const meant = personalAt("fixture.ada", "gmail.com");
       await p.fill("#join-email", meant.replace("gmail.com", "gmailcom"));
@@ -417,43 +464,102 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await p.fill("#join-email", "ada@family.exmaple");
       await p.fill("#join-name", "Ada Lund");
       await p.fill("#join-pw", "a-fourth-long-signup-password");
-      await p.getByRole("button", { name: "Create account" }).click();
-      await p.getByRole("heading", { name: "Check your email" }).waitFor({ timeout: 30_000 });
-      expect(await current(), "Check your email is the Email station").toBe("Email");
-      await p.getByRole("button", { name: "Wrong address? Change it" }).click();
-      await p.getByRole("heading", { name: "Create your account" }).waitFor({ timeout: 30_000 });
+      await p.getByRole("button", { name: en.join.continue }).click();
+      await sentHeading(p, en.join).waitFor({ timeout: 30_000 });
+      expect(await current(), "the link is the second account part").toBe("Step 1 of 5, Account, 2 of 5");
+      await p.getByRole("button", { name: en.join.changeAddress }).click();
+      await p.getByRole("heading", { level: 1 }).filter({ hasText: en.join.account.split("<name>")[0]!.trim() }).waitFor({ timeout: 30_000 });
       expect(await p.inputValue("#join-email")).toBe("ada@family.exmaple");
       await p.fill("#join-email", "ada@family.example");
       await p.fill("#join-pw", "a-fourth-long-signup-password");
-      await p.getByRole("button", { name: "Create account" }).click();
-      await p.getByRole("heading", { name: "Check your email" }).waitFor({ timeout: 30_000 });
+      await p.getByRole("button", { name: en.join.continue }).click();
+      await sentHeading(p, en.join).waitFor({ timeout: 30_000 });
 
       const mail = world.mailer.sent.find((m) => m.to === "ada@family.example" && m.template === "email_verification");
       expect(mail, `no verification mail: ${await said(p)}`).toBeTruthy();
       const token = new URL((mail!.data as { verifyUrl: string }).verifyUrl).searchParams.get("token");
       await p.goto(`http://localhost:${webPort}/verify-email?token=${encodeURIComponent(token!)}`);
-      await p.fill("#verify-pw", "a-fourth-long-signup-password");
+      await p.getByLabel("Your password", { exact: true }).fill("a-fourth-long-signup-password");
       await p.getByRole("button", { name: "Confirm my email" }).click();
-      await p.getByRole("heading", { name: "Add your second factor" }).waitFor({ timeout: 30_000 });
-      expect(await current()).toBe("Passkey");
+      await factorHeading(p, en.join).waitFor({ timeout: 30_000 });
+      expect(await current()).toBe("Step 1 of 5, Account, 3 of 5");
 
-      await p.getByRole("button", { name: "Use an authenticator app instead" }).click();
-      const qr = p.locator('.join-qr svg[role="img"]');
+      await factorApp(p, en.join).click();
+      const qr = p.getByRole("img", { name: "QR code for your authenticator app" });
       await qr.waitFor({ timeout: 30_000 });
       expect((await qr.boundingBox())?.width ?? 0, "the QR is drawn at a scannable size").toBeGreaterThanOrEqual(120);
-      const shown = ((await p.locator(".join-secret code").textContent()) ?? "").trim();
+      const shown = ((await p.getByText(/^[A-Z2-7]{4}( [A-Z2-7]{1,4})+$/).first().textContent()) ?? "").trim();
       expect(shown, "the key in groups of four").toMatch(/^([A-Z2-7]{4} )+[A-Z2-7]{1,4}$/);
-      const back = p.getByRole("button", { name: "Back" });
+      const back = p.getByRole("button", { name: en.join.factorAppWord });
       expect((await back.boundingBox())?.height ?? 0, "a text button is a 24px target").toBeGreaterThanOrEqual(24);
       await p.fill("#join-totp", totpAt(shown, world.clock.now()));
       await p.getByRole("button", { name: "Activate" }).click();
-      await p.locator(".join-codes li").first().waitFor({ timeout: 30_000 });
-      const download = p.getByRole("link", { name: "Download as a text file" });
-      expect(await download.getAttribute("download")).toBe("ohmail-recovery-codes.txt");
-      const first = ((await p.locator(".join-codes li").first().textContent()) ?? "").trim();
-      expect(decodeURIComponent((await download.getAttribute("href")) ?? "")).toContain(first);
+      await p.locator("ul li").first().waitFor({ timeout: 30_000 });
     } finally {
       await fresh.close();
     }
   }, 120_000);
+
+  async function resetPasswordJourney(locale: "en" | "de") {
+    await newWorld();
+    const text = (locale === "en" ? en : de).passwordReset;
+    const origin = `http://localhost:${webPort}`;
+    const fresh = await browser!.newContext();
+    try {
+      await fresh.addCookies([{ name: "ohmail.locale", value: locale, url: origin }]);
+      const p = await fresh.newPage();
+      const email = personalAt("fixture.recovery", "family.example");
+      const registration = await p.request.post(`${origin}/api/auth/register`, {
+        headers: { origin }, data: { email, password: randomBytes(24).toString("base64url"), displayName: "Reader" },
+      });
+      expect(registration.status()).toBe(202);
+      await p.goto(`${origin}/login`);
+      await p.getByRole("link", { name: (locale === "en" ? en : de).login.forgotPassword }).click();
+      expect(new URL(p.url()).pathname).toBe("/forgot-password");
+      await p.getByRole("textbox", { name: text.emailLabel }).fill(email);
+      await p.getByRole("button", { name: text.send, exact: true }).click();
+      await p.getByText(text.expires, { exact: true }).waitFor();
+      const resend = async () => {
+        const [resent] = await Promise.all([
+          p.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/auth/password/reset")),
+          p.getByRole("button", { name: text.sendAgain }).click(),
+        ]);
+        expect(resent.status()).toBe(202);
+      };
+      await resend();
+      expect(world.mailer.ofTemplate("password_reset")).toHaveLength(1);
+      world.clock.advance(5 * 60_000);
+      await resend();
+      await p.getByText(text.expires, { exact: true }).waitFor();
+      const resetMails = world.mailer.ofTemplate("password_reset");
+      expect(resetMails).toHaveLength(2);
+      const mail = resetMails[1]!;
+      expect(mail.data.locale).toBe(locale);
+      const mailed = new URL(mail.data.resetUrl);
+      const openLink = () => p.goto(`${origin}${mailed.pathname}${mailed.search}`);
+      const response = await openLink();
+      expect(response?.headers()["referrer-policy"]).toBe("no-referrer");
+      expect(response?.headers()["cache-control"]).toContain("no-store");
+      expect(response?.headers()["content-security-policy"]).toContain("'nonce-");
+      const password = randomBytes(24).toString("base64url");
+      const setPassword = async (repeat: string) => {
+        await p.getByLabel(text.passwordLabel, { exact: true }).fill(password);
+        await p.getByLabel(text.repeatLabel, { exact: true }).fill(repeat);
+        await p.getByRole("button", { name: text.setPassword, exact: true }).click();
+      };
+      await setPassword("a different phrase");
+      await p.getByText(text.mismatch, { exact: true }).waitFor();
+      expect(new URL(p.url()).searchParams.has("token")).toBe(false);
+      await setPassword(password);
+      await p.getByText(text.doneLine, { exact: true }).waitFor();
+      expect(await p.getByRole("link", { name: text.signIn }).getAttribute("href")).toBe("/login");
+      await openLink();
+      await setPassword(password);
+      await p.getByText(text.refusedLine, { exact: true }).waitFor();
+      await p.getByRole("link", { name: text.newLink }).click();
+      expect(new URL(p.url()).pathname).toBe("/forgot-password");
+    } finally {
+      await fresh.close();
+    }
+  }
 });

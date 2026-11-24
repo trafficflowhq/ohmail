@@ -1,15 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, inArray } from "drizzle-orm";
-import { accounts, devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { authEvents, pushSubscriptions, schema } from "@trafficflow/db/cloud";
+import { accounts, bindDb, devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
+import { authEvents, createDeviceCeremony, deviceCeremonyKey, makeOwnedDb, mailboxOauthDeviceCeremonies, pushSubscriptions, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  AuthService, SessionLifecycle, generateToken, hashToken, makeTestAuthDeps,
+  AuthService, SessionLifecycle, dbFor, generateToken, hashToken, makeTestAuthDeps,
   type AuthAuditEvent, type ServiceContext,
 } from "@trafficflow/services";
 
@@ -24,14 +21,17 @@ import {
  */
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 // An hour AGO, so every stamp below is in the past: a shared table must not carry future rows.
 const t0 = new Date(Date.now() - 60 * 60_000);
 const at = (ms: number): Date => new Date(t0.getTime() + ms);
+/** A refresh and a sign-out by token are doors before sign-in, bound to nothing; a signed-in jar's, to its account. */
 const ctx = (now: Date, over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => now, requestId: "logout-by-refresh-pg", ...over,
+  accountId: "", userId: null, now: () => now, requestId: "logout-by-refresh-pg", ...over,
+  credentialDb: over.accountId === undefined ? undefined : bindDb(db, { account: null }),
+  db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
 } as unknown as ServiceContext);
 const COOKIE = { concurrentGrace: true, surface: "cookie" } as const;
 
@@ -89,10 +89,10 @@ const REFUSED = { code: "refresh_revoked", httpStatus: 401, message: "invalid re
 describe.skipIf(!PG_UP)("logout by refresh token on real Postgres", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    client = postgres(PG_TEST_URL, { max: 5 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); });
 
   const svc = (): AuthService => new AuthService(makeTestAuthDeps());
 
@@ -173,6 +173,46 @@ describe.skipIf(!PG_UP)("logout by refresh token on real Postgres", () => {
     const first = await stamps();
     await expect(s.logout(ctx(at(9_000)), { refreshToken: f.r1 })).resolves.toEqual({ familyIds: [f.familyId] });
     expect(await stamps(), "a revoked row was stamped again").toEqual(first);
+  });
+
+  it("drops only the unused mailbox grants of the browser signing out with a spent refresh token", async () => {
+    const deps = makeTestAuthDeps();
+    const s = new AuthService(deps);
+    const departing = await seedFamily();
+    const otherSession = await seedFamily({ accountId: departing.accountId, userId: departing.userId });
+    const otherAccount = await seedFamily();
+    const grantFor = async (family: Family) => {
+      const state = randomUUID();
+      const sealed = await deps.keyProvider.encrypt(JSON.stringify({
+        sessionId: family.sessionId, deviceCode: "test-grant",
+      }));
+      const scope = { state, accountId: family.accountId, sessionId: family.sessionId };
+      await createDeviceCeremony(db, {
+        ...scope, provider: "microsoft",
+        deviceCodeEnc: sealed.ciphertext, deviceCodeKeyVersion: sealed.keyVersion,
+        userCode: "test", verificationUri: "https://example.invalid", pollIntervalMs: 5_000,
+        grantExpiresAt: at(15 * 60_000), now: t0,
+      });
+      return deviceCeremonyKey(scope);
+    };
+    const departingGrant = await grantFor(departing);
+    const otherSessionGrant = await grantFor(otherSession);
+    const otherAccountGrant = await grantFor(otherAccount);
+    const consumedGrant = await grantFor(departing);
+    await db.update(mailboxOauthDeviceCeremonies).set({ consumedAt: t0 })
+      .where(eq(mailboxOauthDeviceCeremonies.state, consumedGrant));
+    await lostRenewal(s, departing);
+
+    await s.logout(ctx(at(1_000)), {
+      refreshToken: departing.r1, browser: true, expectedFamily: departing.familyId,
+    });
+
+    const left = await db.select({ state: mailboxOauthDeviceCeremonies.state })
+      .from(mailboxOauthDeviceCeremonies).where(inArray(mailboxOauthDeviceCeremonies.state, [
+        departingGrant, otherSessionGrant, otherAccountGrant, consumedGrant,
+      ]));
+    expect(left.some((row) => row.state === departingGrant)).toBe(false);
+    expect(left.length).toBe(3);
   });
 
   it("a jar naming A's live session and B's refresh token ends BOTH — no conflict refusal", async () => {

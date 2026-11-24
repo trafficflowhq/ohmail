@@ -56,7 +56,7 @@ const READERS: ReadonlyArray<{ what: string; file: string; call: string }> = [
   },
   {
     what: "the SUGGEST reader — the auto-suggest candidate set",
-    file: "apps/worker/src/screener-auto-suggest.ts",
+    file: "packages/organizer/src/screener-auto-suggest.ts",
     call: "senderIsActiveSql(",
   },
 ];

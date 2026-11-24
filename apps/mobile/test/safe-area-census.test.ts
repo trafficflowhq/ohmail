@@ -52,6 +52,10 @@ const NO_TOP_STRIP = new Set(["_layout.tsx", join("(tabs)", "_layout.tsx")]);
  * strip into the carrier's source. A delegation this table does not know is still a refusal.
  */
 const BODY_CARRIERS: Record<string, { component: string; file: string }> = {
+  "welcome.tsx": { component: "OnboardingPage", file: "src/ui/OnboardingPage.tsx" },
+  "standalone.tsx": { component: "OnboardingPage", file: "src/ui/OnboardingPage.tsx" },
+  "scan.tsx": { component: "OnboardingPage", file: "src/ui/OnboardingPage.tsx" },
+  "connect.tsx": { component: "OnboardingPage", file: "src/ui/OnboardingPage.tsx" },
   [join("message", "[id].tsx")]: { component: "MessageReader", file: "src/ui/MessageReader.tsx" },
   [join("sender", "[seg]", "[id].tsx")]: { component: "SenderDetail", file: "src/ui/SenderDetail.tsx" },
   [join("trash", "[id].tsx")]: { component: "TrashReader", file: "src/ui/TrashReader.tsx" },

@@ -1,0 +1,25 @@
+{
+  "frommail": {
+    "source": "from mail",
+    "title": "From mail",
+    "unreadable": "The calendar cannot be read on this device.",
+    "noZone": "Events from mail cannot be listed: this device does not know its time zone.",
+    "empty": "Nothing found in mail",
+    "add": "Add",
+    "dismiss": "Dismiss",
+    "dismissed": "Calendar suggestion dismissed",
+    "dismissFailed": "Could not dismiss the calendar suggestion.",
+    "restoreFailed": "Could not restore the calendar suggestion.",
+    "addAll": "Add {count, number}",
+    "addedMany": "{count, plural, one {# event added} other {# events added}}",
+    "show": "Show in calendar",
+    "onCalendar": "On your calendar",
+    "waiting": "{count, plural, =0 {Nothing to add} one {# to add} other {# to add}}",
+    "words": "Words",
+    "goesTo": "Goes to",
+    "goesToCalendar": "Goes to {name}",
+    "close": "Close",
+    "allDay": "all day",
+    "span": "{from}–{to}"
+  }
+}

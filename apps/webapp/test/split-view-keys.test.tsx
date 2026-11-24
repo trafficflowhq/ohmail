@@ -1,48 +1,11 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { fireEvent, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell,
   teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
-
-/**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE NINE KEYCAPS THAT DID NOTHING IN FOLDER, TAG AND HISTORY
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * Those three views mount the message pane, and the pane's action bar prints each verb's keycap
- * READ FROM THE LIVE REGISTRY. Nine of those caps were advertising dead keys: `r`, `⇧R`, `a`,
- * `e`, `b`, `s`, `t`, `m` and `d` produced nothing in these views while the button beside the
- * cap worked and the same key worked in the Ohbox.
- *
- * The cause is structural. The shell's bindings act on `focused`; in a SPLIT view the message on
- * screen is the view's own `shown`, which the shell cannot see — so those bindings register
- * `disabled` here, and `MessagePane`'s `Key` prints a cap for a bound-but-disabled chord on
- * purpose ("a disabled owner still owns the key, and the cap must not vanish while the verb
- * rests"). That rule is right for a RESTING verb and produces a lie for an UNWIRED one, and the
- * two are indistinguishable from the bar. So the verbs are wired (`useMessageVerbs`) rather than
- * the caps suppressed.
- *
- * ── WHY THESE ASSERTIONS ─────────────────────────────────────────────────────────────────
- *
- * Every case pins the CLAIM and the OUTCOME as one pair: the bar prints the cap, and the key
- * produces the thing the cap promises. A binding-table check would pass for a binding that is
- * registered and wrong, which is the failure this file exists to catch.
- *
- * `m` and `d` are the two verbs chosen for the outcome half because they change only UI state —
- * the bar's destination strip and the delete ceremony's ask — so a jsdom walk observes them
- * without a mutation reaching the wire. `d` is the verb whose absence was most expensive: the
- * ceremony's first press is the only thing standing between a keyboard user and an un-undoable
- * delete. It used to need the folders consent, which this world turns on for the Folders RAIL;
- * it does not need it any more, and the last describe here is that change's control — `d` in a
- * split view with the consent answering folders OFF.
- *
- * ── HOW TO WATCH IT FAIL ─────────────────────────────────────────────────────────────────
- *
- * Delete the `useMessageVerbs` call from any one of the three views and that view's cases go red
- * while its keycaps are unchanged — which is the defect, exactly as it shipped. Drop the `m`
- * entry from `message-verbs.ts` and all three views' move cases redden together.
- */
+import en from "../messages/en.json";
 
 const message = (
   o: { id: string; from: string; folder?: string; date?: string; unread?: boolean;
@@ -69,7 +32,7 @@ const folderEntity = (id: string, name: string, seq: number) => ({
 
 const tagEntity = (id: string, name: string, seq: number) => ({
   type: "tag", op: "create", id, seq, updatedAt: ISO,
-  entity: { id, name, color: null, updatedAt: ISO },
+  entity: { id, name, hue: "blue", createdAt: ISO, updatedAt: ISO },
 });
 
 /** Comfortably past the History window measured from the fixture clock. */
@@ -121,139 +84,110 @@ const goHash = async (hash: string): Promise<void> => {
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(
+    (document.activeElement ?? document.body).dispatchEvent(
       new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
     );
   });
   await tick(0);
 };
 
-/** The keycap the bar prints for one verb, inside one view — the claim under test. */
-const capIn = (el: HTMLElement, scope: string, startsWith: string): string | undefined => {
-  const btn = [...el.querySelectorAll<HTMLButtonElement>(`${scope} .abar-b`)]
-    .find((b) => (b.textContent ?? "").startsWith(startsWith));
-  return btn?.querySelector("kbd")?.textContent ?? undefined;
-};
-
-const VIEWS: Array<{ name: string; scope: string; hash: string }> = [
-  { name: "Folder", scope: ".view-folder", hash: "#/folder/fd1" },
-  { name: "Tag", scope: ".view-tag", hash: "#/tag/tg1" },
-  { name: "History", scope: ".view-history", hash: "#/history" },
+const VIEWS = [
+  { name: "Folder", hash: "#/folder/fd1", subject: "subject of sv-1" },
+  { name: "Tag", hash: "#/tag/tg1", subject: "subject of sv-1" },
+  { name: "History", hash: "#/history", subject: "subject of sv-old" },
 ];
+
+async function openLetter(view: (typeof VIEWS)[number]) {
+  const shell = await mountShell([mailbox()]);
+  await tick(30_000);
+  await goHash(view.hash);
+  const queries = within(shell);
+  const row = queries.getByRole("option", { name: new RegExp(view.subject) });
+  await act(async () => { fireEvent.click(row); });
+  await tick(100);
+  expect(queries.getByRole("region", { name: "Reading" }).textContent).toContain(view.subject);
+  return queries;
+}
+
+async function advertised(queries: Awaited<ReturnType<typeof openLetter>>, label: string, cap: string) {
+  await key("?");
+  const sheet = within(queries.getByRole("dialog", { name: en.shortcuts.title }));
+  const group = sheet.getByRole("heading", { name: en.shortcuts.group.message });
+  const rows: Element[] = [];
+  for (let row = group.nextElementSibling; row?.tagName === "P"; row = row.nextElementSibling) rows.push(row);
+  const matching = rows.filter((row) => within(row as HTMLElement).queryByText(label) !== null);
+  expect(matching).toHaveLength(1);
+  expect(matching[0]!.querySelector("kbd")?.textContent).toBe(cap);
+  await key("Escape");
+}
+
+const outgoingDeletes = () => vi.mocked(fetch).mock.calls.filter(([input, init]) => {
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  const url = input instanceof Request ? input.url : String(input);
+  return method === "DELETE" && /\/messages\//.test(url);
+});
+
+function deleteIsOffered(queries: Awaited<ReturnType<typeof openLetter>>) {
+  const more = queries.getByRole("menu", { name: "More" });
+  expect(within(more).getByRole("menuitem", { name: "Delete" })).toBeTruthy();
+}
 
 describe("a printed keycap acts, in every split view", () => {
   for (const v of VIEWS) {
     describe(v.name, () => {
       it("prints the Move cap AND `m` opens the destination strip on the shown message", async () => {
-        const el = await mountShell([mailbox()]);
-        await tick(30_000);
-        await goHash(v.hash);
-        expect(el.querySelector(v.scope), `${v.name} view did not mount`).not.toBeNull();
-
-        // THE CLAIM: the bar advertises `m` here.
-        expect(capIn(el, v.scope, "Move"), `${v.name}'s bar does not advertise m`).toBe("m");
-        // Nothing is open yet — otherwise the assertion below would pass on the resting state.
-        expect(el.querySelector(`${v.scope} .abar-panel`)).toBeNull();
-
-        // THE OUTCOME: the key the cap promises opens the strip the button opens.
+        const queries = await openLetter(v);
+        await advertised(queries, en.reader.key.move, "m");
+        expect(queries.queryByRole("menu", { name: "Move" })).toBeNull();
         await key("m");
-        expect(
-          el.querySelector(`${v.scope} .abar-panel`),
-          `m printed a keycap in ${v.name} and opened nothing`,
-        ).not.toBeNull();
-      }, 30000);
+        expect(queries.getByRole("menu", { name: "Move" })).toBeTruthy();
+      }, 30_000);
 
       it("prints the Delete cap AND `d` opens the ask — never deleting on one press", async () => {
-        const el = await mountShell([mailbox()]);
-        await tick(30_000);
-        await goHash(v.hash);
-        expect(el.querySelector(v.scope), `${v.name} view did not mount`).not.toBeNull();
-
+        const queries = await openLetter(v);
+        await advertised(queries, en.reader.key.deleteAsk, "d");
+        expect(queries.queryByRole("menu", { name: "More" })).toBeNull();
+        const writesBefore = outgoingDeletes();
         await key("d");
-        const ask = el.querySelector(`${v.scope} .abar-delete`);
-        expect(ask, `d printed a keycap in ${v.name} and opened nothing`).not.toBeNull();
-        // The ceremony ASKS first — the cap on the danger button is the second `d`.
-        expect(ask!.getAttribute("role")).toBe("alertdialog");
-      }, 30000);
+        deleteIsOffered(queries);
+        await tick(30_000);
+        expect(outgoingDeletes()).toEqual(writesBefore);
+      }, 30_000);
 
-      /**
-       * AUTO-REPEAT IS ONE PRESS. A finger resting on `d` would otherwise walk the ask and the
-       * confirm on its own — the shell's own binding carries this guard as a review finding, and
-       * a second declaration of the ceremony needs it just as much.
-       */
       it("a HELD `d` cannot walk the ceremony — repeat is not a second press", async () => {
-        const el = await mountShell([mailbox()]);
-        await tick(30_000);
-        await goHash(v.hash);
-
+        const queries = await openLetter(v);
+        const writesBefore = outgoingDeletes();
         await key("d");
-        expect(el.querySelector(`${v.scope} .abar-delete`)).not.toBeNull();
-        // The key repeating while held must not press the danger button.
+        deleteIsOffered(queries);
         await key("d", { repeat: true });
-        expect(
-          el.querySelector(`${v.scope} .abar-delete`),
-          "auto-repeat confirmed a delete the user never pressed twice",
-        ).not.toBeNull();
-      }, 30000);
+        await tick(30_000);
+        deleteIsOffered(queries);
+        expect(outgoingDeletes()).toEqual(writesBefore);
+      }, 30_000);
     });
   }
 });
 
-
-/**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE SAME `d`, WITH "USE FOLDERS" OFF — the borrowed gate carries no folders term
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * These views declare their message verbs over their OWN cursor (`useMessageVerbs`), and the
- * delete gate is the one fact they cannot derive: it is resolved once in the shell as
- * `canDeleteMessage` and passed down. That predicate used to read the folders foundation flag,
- * so a folders-off account got a keycap for `d` in every split view and nothing when it pressed
- * it — a printed cap over a dead key, which is the exact defect the describe above exists for,
- * arriving through a different door.
- *
- * TAG AND HISTORY, NOT FOLDER. With the flag off there are no folder entities for the shell to
- * list, so `#/folder/fd1` has nothing to mount — that view legitimately needs the foundation and
- * still does. Tag and History do not, and they borrow the same predicate, so they are where this
- * is watched.
- */
 describe("the borrowed delete gate with the folders switch OFF", () => {
-  beforeEach(() => {
-    // Re-answered AFTER the outer `beforeEach` turned it on, so this is the whole difference.
-    answerConsentWith({ foldersEnabledAt: null });
-  });
+  beforeEach(() => { answerConsentWith({ foldersEnabledAt: null }); });
 
-  for (const v of VIEWS.filter((x) => x.name !== "Folder")) {
+  for (const v of VIEWS.filter((view) => view.name !== "Folder")) {
     it(`${v.name}: \`d\` still opens the ask — never deleting on one press`, async () => {
-      const el = await mountShell([mailbox()]);
-      await tick(30_000);
-      await goHash(v.hash);
-      expect(el.querySelector(v.scope), `${v.name} view did not mount`).not.toBeNull();
-
-      /* NO CAP ASSERTION HERE, and that is not an omission. Delete deliberately has no button on
-         the bar's row — "a destructive verb does not get a slot a stray click can land on"
-         (`action-bar.test.ts`) — it lives in the ⋯ menu, so `capIn(…, "Delete")` is `undefined`
-         for a perfectly correct bar. The first version of this case asserted a cap and went red
-         for that reason: a false claim about the product, caught by the whole-directory run.
-         Where the verb IS advertised on a folders-off account is the `?` sheet, and that is
-         asserted in `delete-key-shell.test.tsx` (both rows, neither greyed). What this case owns
-         is the OUTCOME half: the key acts in a split view with the switch off. */
+      const queries = await openLetter(v);
+      const writesBefore = outgoingDeletes();
       await key("d");
-      const ask = el.querySelector(`${v.scope} .abar-delete`);
-      expect(ask, `d printed a keycap in ${v.name} with folders off and opened nothing`)
-        .not.toBeNull();
-      expect(ask!.getAttribute("role")).toBe("alertdialog");
-    }, 30000);
+      deleteIsOffered(queries);
+      await tick(30_000);
+      expect(outgoingDeletes()).toEqual(writesBefore);
+    }, 30_000);
   }
 
   it("Folder is unreachable with the flag off — the foundation it DOES need", async () => {
-    /* The control for the filter above: this is not a view that was quietly dropped from the
-       loop, it is one the folders foundation really gates, and the flag term was removed from
-       the DELETE predicate only. */
-    const el = await mountShell([mailbox()]);
+    const shell = await mountShell([mailbox()]);
     await tick(30_000);
     await goHash("#/folder/fd1");
-    expect(el.querySelector(".view-folder"), "the Folder view mounted with folders off")
-      .toBeNull();
-  }, 30000);
+    const queries = within(shell);
+    expect(queries.queryByRole("button", { name: "Acme" })).toBeNull();
+    expect(queries.queryByRole("option", { name: /subject of sv-1/ })).toBeNull();
+  }, 30_000);
 });

@@ -1,0 +1,50 @@
+/* A list's rows as shape, in the list's own measures, while its mail is owed. */
+@layer oh {
+  /* The shapes breathe; with motion reduced the motion sheet's duration stops them. */
+  .oh-rowsshape {
+    --oh-rowsshape-pad: 0 var(--s2) var(--s1);
+    padding: var(--oh-rowsshape-pad);
+    animation: oh-shape-breathe var(--d-pull) var(--e-std) infinite alternate;
+  }
+  /* Among a list's own rows the list's box is already there. */
+  .oh-rowsshape[data-within] {
+    --oh-rowsshape-pad: 0;
+  }
+
+  .oh-rowsshape-row {
+    --oh-rowsshape-row-pad: 0 var(--s3) 0 var(--s1);
+    display: grid;
+    grid-template-columns: var(--gutter) minmax(0, 1fr);
+    align-content: center;
+    row-gap: var(--s2);
+    height: var(--row);
+    padding: var(--oh-rowsshape-row-pad);
+  }
+  .oh-rowsshape-face {
+    grid-row: 1 / span 3;
+    align-self: center;
+    justify-self: center;
+    width: var(--av);
+    height: var(--av);
+    border-radius: var(--av-r);
+    background: var(--soft-sheet);
+  }
+  .oh-rowsshape-first {
+    display: flex;
+    grid-column: 2;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+  }
+  .oh-rowsshape-row > .oh-shapebar {
+    grid-column: 2;
+  }
+  :root[data-touch="1"] .oh-rowsshape-row {
+    height: calc(var(--row) + var(--s4));
+  }
+
+  /* Among a list's rows a shape keeps exactly a row's room, so the list does not move when the row arrives. */
+  :root[data-touch="1"] .oh-rowsshape[data-within] > .oh-rowsshape-row {
+    height: var(--row);
+  }
+}

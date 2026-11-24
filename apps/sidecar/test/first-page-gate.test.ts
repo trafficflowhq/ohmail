@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { PassThrough } from "node:stream";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 import {
   armFirstPageGate, awaitFirstPage, FIRST_PAGE_GRACE_MS, noteFirstPageServed, resetFirstPageGate,
 } from "../src/first-page-gate.js";
@@ -174,7 +173,7 @@ describe("the door releases the gate", () => {
 // would leave every case above green.
 
 describe("the drain is wired to the gate", () => {
-  const src = readFileSync(resolve(process.cwd(), "apps/sidecar/src/engine.ts"), "utf8");
+  const src = readEngineAsOneText();
 
   /* The wait has one spelling, `yieldToFirstPage`, which the poll's drain and the launch's call. */
   it("awaits the first page BEFORE it drains", () => {

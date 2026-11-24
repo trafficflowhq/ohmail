@@ -9,7 +9,7 @@ import {
   META_FOLDER, parseClaim, type LeaseIo, type RawClaimMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
 import { startWorker } from "../src/index.js";
-import { imapCfg, rawClient, emlOf, ORGANIZER_CONSENT } from "./_workerenv.js";
+import { imapCfg, rawClient, emlOf, ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 /**
@@ -63,7 +63,7 @@ async function seedWorld(url: string, cfg: Cfg): Promise<{ db: Db; accountId: st
   await db.insert(contacts).values({ accountId, address: "anna@x.example" });
   const enc = await KP.encrypt(cfg.auth.pass);
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: cfg.host, port: cfg.port, secure: false, user: cfg.auth.user },
   });
   return { db, accountId, mailboxId: mb!.id };

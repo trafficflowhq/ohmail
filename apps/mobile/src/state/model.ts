@@ -94,6 +94,10 @@ export interface Mail {
   time: string;
   body: string;
   snippet?: string;
+  hasAttachments?: boolean;
+  toYou?: true;
+  imagesBlocked?: true;
+  additionalPeople?: number;
   unread: boolean;
   rationale?: string;
   trackerNote?: string;

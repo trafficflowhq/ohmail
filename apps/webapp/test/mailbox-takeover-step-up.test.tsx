@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import { ApiError, type MailboxDTO, type SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * ═══ A STEP-UP REFUSAL ON THE TAKE-OVER OPENS THE PROMPT, IT DOES NOT END THE PRESS ════════
@@ -56,7 +56,7 @@ vi.mock("../app/hello", async () => {
   return { ...actual, get SELF_HOST_BUILD() { return mockSelfHost; } };
 });
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: QUIET, refresh: () => {} }),
 }));
 

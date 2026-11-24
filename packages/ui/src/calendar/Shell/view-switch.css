@@ -1,0 +1,28 @@
+/* The four views: one segmented control where the head has the room, one capsule with a chevron where it has not. */
+@layer oh {
+  .oh-vs {
+    --oh-seg-ground: var(--soft);
+    --oh-vs-ring: inset 0 0 0 var(--oh-hair) var(--seg-ring);
+    display: inline-flex;
+    flex: none;
+  }
+  .oh-vs .oh-seg {
+    box-shadow: var(--oh-vs-ring);
+  }
+  /* The key that takes a view stands after its word, where a pointer is. */
+  :root[data-touch="0"] .oh-vs .oh-seg-item > .oh-key {
+    --oh-vs-key-gap: 6px;
+    margin-left: var(--oh-vs-key-gap);
+  }
+  .oh-vs-cap {
+    --oh-vs-cap-gap: 4px;
+    gap: var(--oh-vs-cap-gap);
+    font-weight: var(--w-mid);
+  }
+  .oh-vs-way {
+    flex: none;
+  }
+  :root[data-face="ohmarchy"] .oh-vs-cap {
+    --oh-vs-cap-gap: var(--s2);
+  }
+}

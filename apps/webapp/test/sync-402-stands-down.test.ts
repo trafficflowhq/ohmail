@@ -1,22 +1,24 @@
 /** @vitest-environment jsdom */
+import type { MessageBodyWire, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryMirrorStore,
   MutationRejectedError,
   OhmailEngine,
   type EngineAdapter,
-  type MessageBodyWire,
-  type MutationOutcome,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import {
   POLL_MS, SYNC_FAILURE_STREAK, reviveStandingDown, sameSyncStatus, startSyncScheduler, type SyncStatus,
-} from "../app/shell/sync-scheduler.js";
-import { deriveMailState, seedGrowth, stripSpeaks, type MailStateInputs } from "../app/shell/mail-state";
+} from "@ohmail/app-logic/session/sync-scheduler";
+import { deriveMailState, seedGrowth, stripSpeaks, type MailStateInputs } from "@ohmail/app-logic/mail-state/mail-state";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import { clearSignedInSync, serveSignedInSync, writeSignedInSync } from "./fixtures/signed-in-sync";
+
+vi.hoisted(() => { process.env.NEXT_PUBLIC_API_BASE = "/api"; });
 
 /**
  * A `402 subscription_required` IS A FACT ABOUT THE ACCOUNT, NOT A FAILED DRAIN. The loop
@@ -71,7 +73,7 @@ const ladder = (sync: SyncStatus): string => deriveMailState({
   sync, failureStreak: SYNC_FAILURE_STREAK,
   mailboxes: [], mirrored: 0, pulled: 0, growth: seedGrowth(0),
   freshness: { state: "unknown", asOf: null }, engineFreshness: { state: "unknown", asOf: null },
-  now: NOW, demo: false,
+  now: NOW, demo: false, scope: null,
 } satisfies MailStateInputs).key;
 
 function run(adapter: Scripted) {
@@ -173,7 +175,7 @@ describe("a stand-down asks the roster at once", () => {
 
   async function probesWithin(answer: () => SyncResponse | Error, ms: number): Promise<number> {
     const { EngineProvider } = await import("../app/shell/engine.js");
-    const { MailStateProvider } = await import("../app/shell/MailStateProvider.js");
+    const { MailStateProvider } = await import("@ohmail/app/mail-state");
     const engine = new OhmailEngine({ adapter: new Scripted(answer), store: new MemoryMirrorStore() });
     let probes = 0;
     const probe = async (): Promise<unknown[]> => { probes += 1; return []; };
@@ -185,7 +187,7 @@ describe("a stand-down asks the roster at once", () => {
         locale: "en", messages: messages as never, timeZone: "UTC",
         children: h(EngineProvider as never, {
           demo: false, engine,
-          children: h(MailStateProvider as never, { probe, mirrored: 0, children: h("i", null, "x") } as never),
+          children: h(MailStateProvider as never, { scope: null, probe, mirrored: 0, children: h("i", null, "x") } as never),
         } as never),
       } as never));
     });
@@ -221,21 +223,22 @@ describe("one staleness decision for the loop and the wall", () => {
   let stopSink: () => void = () => {};
 
   beforeEach(async () => {
-    process.env.NEXT_PUBLIC_API_BASE = "/api";
+    writeSignedInSync();
     const api = await import("../app/api-client");
     api.forgetAccess();
     walls = 0;
     stopSink = api.onAccessRefused(() => { walls += 1; });
-    vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
+    vi.stubGlobal("fetch", vi.fn(serveSignedInSync(async (input) => {
       const url = String(input);
       if (url.endsWith("/account/access")) return jsonRes({ metered: true, access: "open", canAddMailbox: true, mailboxes: 5 }, 200);
       return jsonRes(REFUSAL, 402);
-    }));
+    })));
     // The lift: the wall's fresh read answered open.
     await api.account.access({ fresh: true });
   });
   afterEach(async () => {
     stopSink();
+    clearSignedInSync();
     vi.unstubAllGlobals();
     (await import("../app/api-client")).forgetAccess();
   });

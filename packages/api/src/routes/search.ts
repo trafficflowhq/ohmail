@@ -11,7 +11,7 @@ import {
   type SearchOptions,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
-import { errorResponse, jsonResponse } from "../responses.js";
+import { answer, errorResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { search } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
@@ -42,6 +42,7 @@ export const searchRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/search",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
@@ -76,7 +77,16 @@ export const searchRoutes: Route[] = [
         const found = await search(deps).searchByAddress({ ...serviceContext(deps, req), timing }, addrOpts);
         timing.add("total", performance.now() - t0);
         timing.note({ part: "address", cut: found.totalExact === false, items: found.items.length });
-        return timed(jsonResponse(found), timing, deps);
+        return timed(answer<"GET /search">()(found), timing, deps);
+      }
+
+      if (url.searchParams.get("places") === "1") {
+        const timing = new SearchTiming();
+        const started = performance.now();
+        const result = await search(deps).places(serviceContext(deps, req));
+        timing.add("total", performance.now() - started);
+        timing.note({ part: "places" });
+        return timed(answer<"GET /search">()(result), timing, deps);
       }
 
       const q = url.searchParams.get("q") ?? "";
@@ -110,14 +120,14 @@ export const searchRoutes: Route[] = [
         ...(cursor ? { cursor } : {}),
       };
       const timing = new SearchTiming();
-      const answer = await search(deps).search({ ...serviceContext(deps, req), timing }, opts);
-      return timed(jsonResponse(answer), timing, deps);
+      const result = await search(deps).search({ ...serviceContext(deps, req), timing }, opts);
+      return timed(answer<"GET /search">()(result), timing, deps);
     },
   },
 ];
 
 /** The answer with its `Server-Timing`, the session's phase added, and its one `search_timing` log line. */
-function timed(res: Response, timing: SearchTiming, deps: ApiDeps): Response {
+function timed<T extends Response>(res: T, timing: SearchTiming, deps: ApiDeps): T {
   if (deps.sessionMs !== undefined) timing.add("session", deps.sessionMs);
   res.headers.set("Server-Timing", timing.header());
   deps.logger?.info("search_timing", timing.fields());
@@ -129,12 +139,16 @@ function filtersOf(url: URL): SearchFilters {
   const filters: SearchFilters = {};
   const folder = url.searchParams.get("folder");
   const sender = url.searchParams.get("sender");
+  const to = url.searchParams.get("to");
+  const party = url.searchParams.get("party");
   const dateFrom = url.searchParams.get("dateFrom");
   const dateTo = url.searchParams.get("dateTo");
   const unread = boolParam(url.searchParams.get("unread"));
   const hasAttachments = boolParam(url.searchParams.get("hasAttachments"));
   if (folder) filters.folder = folder;
   if (sender) filters.sender = sender;
+  if (to) filters.to = to;
+  if (party) filters.party = party;
   if (dateFrom) filters.dateFrom = dateFrom;
   if (dateTo) filters.dateTo = dateTo;
   if (unread !== undefined) filters.unread = unread;

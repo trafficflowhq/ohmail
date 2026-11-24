@@ -1,0 +1,6 @@
+M	apps/webapp/test/view-switch-journey.test.ts
+A	scripts/perf/open-letter.mjs
+A	scripts/perf/search-first.mjs
+A	scripts/perf/speed-check-entry.tsx
+A	scripts/perf/speed-check.mjs
+M	test/contracts/perf-budgets.json

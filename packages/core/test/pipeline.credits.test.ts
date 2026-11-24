@@ -114,7 +114,7 @@ interface RunResult {
 
 async function run(
   change: Change,
-  opts: { classifier?: SpyClassifier; credits?: CreditGate } = {},
+  opts: { classifier?: SpyClassifier; credits?: CreditGate; readModelConsent?: () => Promise<boolean> } = {},
 ): Promise<RunResult> {
   const repo = freshRepo();
   const routing = new FakeRouting();
@@ -122,7 +122,7 @@ async function run(
     repo, accountId: ACCOUNT, mailboxId: MAILBOX,
     classifier: opts.classifier,
     routing: opts.classifier ? routing : undefined,
-    credits: opts.credits,
+    credits: opts.credits, readModelConsent: opts.readModelConsent,
   });
   const res = await commitChange(plan, {
     storageCap: UNMETERED_STORAGE_CAP,
@@ -388,4 +388,15 @@ describe("the credit ledger never learns who wrote to you", () => {
     expect(credits.sources[0]).toBe(classifyLedgerSource(MAILBOX, await dedupKeyFor(eml({ from: SENDER, messageId: MID }))));
     expect(credits.sources[0]).not.toContain(MID);
   });
+});
+
+it("drops live classification when consent is withdrawn after the debit", async () => {
+  const credits = recordingGate(true);
+  let reads = 0;
+  const result = await run(createChange(eml()), {
+    classifier: new SpyClassifier(FEED), credits,
+    readModelConsent: async () => ++reads === 1,
+  });
+  expect(result.classifierCalls).toBe(0);
+  expect(credits.refunded).toHaveLength(1);
 });

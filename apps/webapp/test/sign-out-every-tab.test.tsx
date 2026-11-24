@@ -7,12 +7,13 @@
  * view switch — until it was reloaded. Two real `CloudShell`s share one jar, one wire and Node's
  * real `BroadcastChannel` here; the leave seam stands in for a navigation jsdom cannot make.
  */
+import { fireEvent, within } from "@testing-library/react";
 import * as shell from "./fixtures/cloud-confirm-shell";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetSessionTruthForTests } from "../app/shell/session-truth";
-import { readOwnerMarker } from "../app/shell/owner-cookie";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import {
-  listenSignedOut, postSignedOut, setSignedOutLeaveForTest, setThisTabForTest, signedOutChannel,
+  holdSignedOutLeave, listenSignedOut, postSessionChange, postSignedOut, setSignedOutLeaveForTest, setThisTabForTest, signedOutChannel,
 } from "../app/signed-out-signal";
 import { JAR_WATCH_MS, SESSION_FRESH_MS } from "../app/(product)/mailbox/useSignedOutElsewhere";
 
@@ -36,15 +37,84 @@ const OTHER = "acct_other_2";
 const SUBJECT = "SUBJECT-OF-THE-SIGNED-IN-ACCOUNT";
 const BODY = "BODY-TEXT-OF-THE-SIGNED-IN-ACCOUNT";
 
+it("visible tabs drop the previous account when a session change event is missed", async () => {
+  const first = await openTab("first");
+  const second = await openTab("second");
+  expect(typeof BroadcastChannel).toBe("function");
+
+  shell.rememberOwner(OTHER);
+  await shell.tick(JAR_WATCH_MS);
+
+  expect(showsMail(first)).toBe(false);
+  expect(showsMail(second)).toBe(false);
+  expect(leaves).toBe(2);
+});
+
+it("signing into a different account tells other tabs before the next jar check", async () => {
+  const first = await openTab("first");
+  const second = await openTab("second");
+  const { withSessionCookieLock } = await import("../app/session-refresh");
+
+  setThisTabForTest("sign-in-tab");
+  await withSessionCookieLock(async () => { shell.rememberOwner(OTHER); });
+  await oneTick();
+
+  expect(showsMail(first)).toBe(false);
+  expect(showsMail(second)).toBe(false);
+  expect(leaves).toBe(2);
+});
+
+it("a cross-tab session change retires the device poll and display before leaving", async () => {
+  document.cookie = "tf_family=fixture-family; Path=/";
+  const tab = await openTab("account-tab");
+  const { mailboxes } = await import("../app/api-client");
+  const { DEVICE_SIGN_IN_KEY, webDeviceSignIn } = await import("../app/(product)/mailbox/device-sign-in");
+  const { promise, resolve } = Promise.withResolvers<Awaited<ReturnType<typeof mailboxes.deviceOAuthPoll>>>();
+  const start = vi.spyOn(mailboxes, "deviceOAuthStart").mockResolvedValue({
+    state: "fixture-handle", userCode: "FIXTURE", verificationUri: "https://microsoft.com/devicelogin",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(), intervalMs: 5_000,
+  });
+  const poll = vi.spyOn(mailboxes, "deviceOAuthPoll").mockReturnValue(promise);
+  const unsubscribe = webDeviceSignIn.live.subscribe(() => {});
+  holdSignedOutLeave(new Promise(() => {}));
+  try {
+    await webDeviceSignIn.begin("microsoft");
+    expect(webDeviceSignIn.live.read()?.kind).toBe("shown");
+    expect(poll).toHaveBeenCalledTimes(1);
+    const signal = poll.mock.calls[0]?.[1]?.signal;
+
+    document.cookie = "tf_family=replacement-family; Path=/";
+    setThisTabForTest("sign-in-tab");
+    postSessionChange();
+    await oneTick();
+
+    expect(showsMail(tab)).toBe(false);
+    expect(leaves).toBe(0);
+    expect(signal?.aborted).toBe(true);
+    expect(webDeviceSignIn.live.read()).toBeNull();
+    expect(sessionStorage.getItem(DEVICE_SIGN_IN_KEY)).toBeNull();
+    resolve({ status: "pending", userCode: "FIXTURE", verificationUri: "https://microsoft.com/devicelogin" });
+    await oneTick();
+    expect(webDeviceSignIn.live.read()).toBeNull();
+    expect(poll).toHaveBeenCalledTimes(1);
+  } finally {
+    unsubscribe();
+    webDeviceSignIn.stop();
+    start.mockRestore();
+    poll.mockRestore();
+  }
+});
+
 let leaves = 0;
 /** What a case wants read at the moment the tab navigates, and what it read. */
 let atLeave: (() => unknown) | null = null;
 let readAtLeave: unknown[] = [];
 let wire: typeof globalThis.fetch;
 
-beforeEach(() => {
+beforeEach(async () => {
   resetSessionTruthForTests();
   shell.installConfirmEnv();
+  (await import("../app/api-client")).bindApiOwner(null);
   /* A live session renews: the fixture's default refresh answer is a revocation. */
   shell.scriptRefresh(shell.refresh204);
   localStorage.clear();
@@ -60,10 +130,13 @@ beforeEach(() => {
   wire = globalThis.fetch;
   globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
+    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") {
+      return new Response(null, { status: 202, headers: { "Clear-Site-Data": '"cache"' } });
+    }
     if (/\/messages\/[^/?]+\/body/.test(url)) {
       return new Response(JSON.stringify({
         text: BODY, html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
-      }), { status: 200, headers: { "content-type": "application/json" } });
+      }), { status: 200, headers: { "content-type": "application/json", "X-Ohmail-Account": ACCOUNT } });
     }
     return wire(input as RequestInfo, init);
   }) as unknown as typeof globalThis.fetch;
@@ -72,7 +145,9 @@ beforeEach(() => {
 afterEach(async () => {
   for (const w of watchers.splice(0)) w.disconnect();
   seam.beforeListen = null;
+  Reflect.deleteProperty(navigator, "locks");
   await shell.teardownConfirmEnv();
+  holdSignedOutLeave(null);
   setSignedOutLeaveForTest(null);
   setThisTabForTest(null);
   resetSessionTruthForTests();
@@ -86,24 +161,29 @@ async function openTab(name: string, accountId = ACCOUNT, subject = SUBJECT): Pr
   shell.scriptSync(() => shell.syncPage(subject, accountId));
   const el = await shell.mountCloudShell();
   await shell.tick(2_000);
-  expect(el.textContent, `${name} never painted its mailbox, so this proves nothing: ${el.innerHTML.slice(0, 300)}`)
-    .toContain(subject);
+  await vi.waitFor(() => expect(el.textContent, `${name} never painted its mailbox, so this proves nothing`).toContain(subject));
   return el;
 }
 
 /** Open the first row, so a body is on screen as well as the list. */
 async function readFirst(el: HTMLElement): Promise<void> {
-  const row = el.querySelector<HTMLElement>(".row[data-id]");
+  const row = el.querySelector<HTMLElement>(":is(.row, [role=option])[data-id]");
   expect(row, "no message row to open").not.toBeNull();
   await act(async () => { row!.click(); });
   await shell.tick(1_000);
   expect(el.textContent, "the reader never showed the body").toContain(BODY);
 }
 
+function expectSigningOut(tab: HTMLElement): void {
+  const statuses = within(tab).getAllByRole("status").map((status) => status.textContent);
+  expect(statuses).toContain("Signing out…");
+  expect(showsMail(tab), "the pressing tab painted account mail during sign-out").toBe(false);
+}
+
 /** Anything of the mailbox on this tab's screen. */
 function showsMail(el: HTMLElement, subject = SUBJECT): boolean {
   const text = el.textContent ?? "";
-  return el.querySelector(".app-root") !== null || el.querySelector(".row[data-id]") !== null
+  return el.querySelector(".fr-root") !== null || el.querySelector(":is(.row, [role=option])[data-id]") !== null
     || text.includes(subject) || text.includes(BODY) || text.includes(`snippet of ${subject}`);
 }
 
@@ -129,9 +209,25 @@ async function signOutIn(name: string, accountId = ACCOUNT): Promise<void> {
 async function finishPendingIn(name: string): Promise<void> {
   setThisTabForTest(name);
   document.cookie = "tf_owner=signed_out_pending; Path=/";
+  document.cookie = "tf_family=fixture-family; Path=/";
+  const { PENDING_SIGN_OUT_KEY } = await import("../app/sign-out");
+  localStorage.setItem(PENDING_SIGN_OUT_KEY, JSON.stringify({ press: "earlier-tab", account: ACCOUNT, family: "fixture-family" }));
+  Object.defineProperty(navigator, "locks", { configurable: true, value: {
+    request: async (_name: string, _opts: unknown, run: () => Promise<unknown>) => run(),
+  } });
   const { finishPendingSignOut } = await import("../app/(product)/login/finish-sign-out");
-  const done = await drive(finishPendingSignOut({ isCancelled: () => false, attempts: 1 }));
-  expect(done.outcome, "the finisher did not end the pending sign-out").toBe("confirmed");
+  try {
+    const done = await drive(finishPendingSignOut({ isCancelled: () => false, attempts: 1 }));
+    if (done.cleanup) {
+      expect(done.outcome).toBe("stopped");
+      expect(done.said).toEqual({ key: "signOutCleanupPending" });
+      expect(await done.cleanup).toBeNull();
+    } else {
+      expect(done.outcome, "the finisher did not end the pending sign-out").toBe("confirmed");
+    }
+  } finally {
+    Reflect.deleteProperty(navigator, "locks");
+  }
 }
 
 /** One task: a `BroadcastChannel` message is a TASK, delivered when the loop turns once. */
@@ -145,7 +241,7 @@ const watchers: MutationObserver[] = [];
 function mailEverOn(el: HTMLElement): () => boolean {
   let seen = showsMail(el);
   const isMail = (n: Node): boolean => (n.textContent ?? "").includes(SUBJECT)
-    || (n instanceof Element && (n.matches(".app-root, .row[data-id]") || n.querySelector(".app-root, .row[data-id]") !== null));
+    || (n instanceof Element && (n.matches(".fr-root, :is(.row, [role=option])[data-id]") || n.querySelector(".fr-root, :is(.row, [role=option])[data-id]") !== null));
   const watch = new MutationObserver((records) => {
     for (const r of records) for (const n of r.addedNodes) if (isMail(n)) seen = true;
   });
@@ -196,16 +292,21 @@ describe("a sign-out in one tab reaches every other tab of the account", { timeo
     const tab0 = await openTab("tab-0");
     atLeave = () => showsMail(tab1);
 
-    await signOutIn("tab-0");
+    const reply = holdTheDoor();
+    const { signOut } = await import("../app/sign-out");
+    const out = signOut(ACCOUNT);
+    for (let i = 0; i < 200 && shell.logoutCalls() === 0; i += 1) await oneTick();
     await oneTick();
 
     expect(shell.logoutCalls(), "the press never reached the sign-out door at its bare path").toBe(1);
     expect(showsMail(tab1), "tab 1 kept the signed-out account's mail on screen").toBe(false);
     expect(leaves, "tab 1 did not leave for the landing page").toBe(1);
     expect(readAtLeave, "the tab navigated with the mail still in its DOM").toEqual([false]);
-    /* The tab that signed out does not obey its own post: its pane still has its own sentence to
-       say (a wipe another tab blocked), and it navigates itself. */
-    expect(tab0.querySelector(".app-root"), "tab 0 obeyed its own message").not.toBeNull();
+    // The pressing tab stays to report progress and can still report a blocked browser cleanup.
+    expectSigningOut(tab0);
+    reply("204");
+    expect(await settle(out)).toBe(true);
+    expect(showsMail(tab0), "tab 0 kept its mail after revocation").toBe(false);
   });
 
   it("tab 1 drops its rows while tab 0's door is still out", async () => {
@@ -232,7 +333,7 @@ describe("a sign-out in one tab reaches every other tab of the account", { timeo
 
   it("a tab that leaves on another tab's post takes its own per-tab notes with it", async () => {
     await openTab("tab-1");
-    const { HANDOFF_KEY } = await import("../app/shell/wall-lift");
+    const { HANDOFF_KEY } = await import("@ohmail/app-logic/doors/wall-lift");
     const { SESSION_WATCH_PREFIX, SPLASH_PRESENTATION_KEY } = await import("../app/session-refresh");
     const notes = ["ohmail.deviceCeremony", HANDOFF_KEY, `${SESSION_WATCH_PREFIX}${ACCOUNT}`, SPLASH_PRESENTATION_KEY];
     for (const key of notes) sessionStorage.setItem(key, "{}");
@@ -246,11 +347,34 @@ describe("a sign-out in one tab reaches every other tab of the account", { timeo
     expect(readAtLeave, "the leaving tab kept its per-tab notes").toEqual([[]]);
   });
 
-  it("CONTROL: a tab of another account is untouched by this account's sign out", async () => {
-    const other = await openTab("tab-1", OTHER, "SUBJECT-OF-ANOTHER-ACCOUNT");
-    await openTab("tab-0");
+  it("a tab that leaves on another tab's post keeps none of the account's unsent words, as its own sign-out keeps none", async () => {
+    await openTab("tab-1");
+    /* What this tab's composer and reply hold for the account (a letter, its session and row, a reply and its meta),
+       written after the other tab's sweep had run: only this tab's own sweep can take them. Another account's stay. */
+    const mine = [
+      `ohmail.ui.compose.${ACCOUNT}.composer-1`,
+      `ohmail.ui.compose.${ACCOUNT}`,
+      `ohmail.compose.session.${ACCOUNT}.composer-1`,
+      `ohmail.compose.row.${ACCOUNT}.composer-1`,
+      `ohmail.ui.reply.${ACCOUNT}:m1`,
+      `ohmail.ui.replymeta.${ACCOUNT}:m1`,
+    ];
+    const theirs = [`ohmail.ui.compose.${OTHER}.composer-2`, `ohmail.ui.reply.${OTHER}:m2`];
+    for (const key of [...mine, ...theirs]) localStorage.setItem(key, JSON.stringify({ body: "UNSENT-WORDS" }));
+    atLeave = () => [...mine, ...theirs].filter((key) => localStorage.getItem(key) !== null);
+    document.cookie = "tf_owner=signed_out_pending; Path=/";
+    setThisTabForTest("tab-0");
+    postSignedOut(ACCOUNT);
+    await oneTick();
+    expect(leaves).toBe(1);
+    expect(readAtLeave, "the leaving tab kept the account's unsent words, or took another account's").toEqual([theirs]);
+  });
 
-    await signOutIn("tab-0");
+  it("CONTROL: a stale sign-out signal for another account leaves the current account open", async () => {
+    const other = await openTab("tab-1", OTHER, "SUBJECT-OF-ANOTHER-ACCOUNT");
+    setThisTabForTest("tab-0");
+    postSignedOut(ACCOUNT);
+    postSessionChange();
     await oneTick();
 
     expect(other.textContent, "another account's tab obeyed this account's sign out")
@@ -287,7 +411,7 @@ describe("which tabs hear it, and when", { timeout: 60_000 }, () => {
     shell.scriptSession(shell.db503);
     const tab1 = await shell.mountCloudShell();
     await shell.tick(1_000);
-    expect(tab1.querySelector(".app-root"), "the warm mirror did not open").not.toBeNull();
+    expect(tab1.querySelector(".fr-root"), "the warm mirror did not open").not.toBeNull();
 
     await signOutIn("tab-0");
     await oneTick();
@@ -350,15 +474,13 @@ describe("which tabs hear it, and when", { timeout: 60_000 }, () => {
     }
   });
 
-  it("a tab with a channel runs no jar watch: a jar moved with no message waits for its return", async () => {
+  it("a visible tab with a channel leaves when a sign-out signal is missed", async () => {
     const tab1 = await openTab("tab-1");
     document.cookie = "tf_owner=; Path=/; Max-Age=0";
     const asked = shell.sessionCalls();
-    await shell.tick(3 * JAR_WATCH_MS);
-    expect(leaves, "a tab that hears the channel watched the jar").toBe(0);
-    expect(showsMail(tab1)).toBe(true);
-    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
-    expect(leaves, "the return did not read the moved jar").toBe(1);
+    await shell.tick(JAR_WATCH_MS);
+    expect(leaves).toBe(1);
+    expect(showsMail(tab1)).toBe(false);
     expect(shell.sessionCalls() - asked).toBe(0);
   });
 });
@@ -373,6 +495,43 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
   beforeEach(async () => {
     (await import("../app/api-client")).bindApiOwner(null);
   });
+
+  it.each([
+    ["origin signal", OTHER, "fixture-family"],
+    ["jar watch", ACCOUNT, "replacement-family"],
+    ["return", OTHER, "replacement-family"],
+  ])("the pressing tab drops its mail on %s if another session replaces the pending sign-out",
+    async (notice, replacement, nextFamily) => {
+      document.cookie = "tf_family=fixture-family; Path=/";
+      const tab = await openTab("pressing-tab");
+      const reply = holdTheDoor();
+      const { signOut } = await import("../app/sign-out");
+      const done = signOut(ACCOUNT);
+      try {
+        for (let i = 0; i < 200 && shell.logoutCalls() === 0; i += 1) await oneTick();
+        expect(shell.logoutCalls()).toBe(1);
+        await shell.tick(JAR_WATCH_MS);
+        expectSigningOut(tab);
+        expect(leaves, "the pressing tab left before its session changed").toBe(0);
+
+        shell.rememberOwner(replacement);
+        document.cookie = `tf_family=${nextFamily}; Path=/`;
+        setThisTabForTest("replacement-tab");
+        if (notice === "origin signal") {
+          postSessionChange();
+          await oneTick();
+        } else if (notice === "return") {
+          await act(async () => { window.dispatchEvent(new Event("focus")); });
+        } else {
+          await shell.tick(JAR_WATCH_MS);
+        }
+        expect(showsMail(tab)).toBe(false);
+        expect(leaves).toBe(1);
+      } finally {
+        reply("refused");
+        await settle(done);
+      }
+    });
 
   it("THE REPORTED SHAPE: a tab opened during the held request never draws the mail, asks nothing, and leaves", async () => {
     const tab0 = await openTab("tab-0");
@@ -397,60 +556,41 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     reply("refused");
     expect(await settle(done), "the sign-out never ended").toBe(true);
     expect((await done).serverRefused, "the door's refusal was read as a sign-out").not.toBeNull();
-    expect(tab0.querySelector(".app-root"), "the pressing tab left").not.toBeNull();
+    expectSigningOut(tab0);
     expect(leaves).toBe(1);
   });
 
-  it("the jar is pending and the tabs are told at the press: while the wake row's DELETE is out, a new tab draws nothing", async () => {
+  it("the pending marker closes existing tabs and blocks new tabs before revocation answers", async () => {
+    document.cookie = "tf_family=fixture-family; Path=/";
+    Object.defineProperty(navigator, "locks", { configurable: true, value: {
+      request: async (_name: string, _opts: unknown, run: () => Promise<unknown>) => run(),
+    } });
+    localStorage.setItem("ohmail.notifications.subscriptionId", "fixture registration");
     const tab1 = await openTab("tab-1");
     await openTab("tab-0");
-    /* A browser that registered for wakes, installed after the boots so only the press's revoke meets it. */
-    const sub = {
-      endpoint: "https://push.example/ep/1",
-      getKey: (n: string) => new Uint8Array(n === "auth" ? 16 : 65).fill(7).buffer,
-      unsubscribe: () => Promise.resolve(true),
-    };
-    Object.defineProperty(navigator, "serviceWorker", {
-      configurable: true,
-      value: { register: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(sub) } }) },
-    });
-    localStorage.setItem("ohmail.notifications.subscriptionId", "row-7");
-    localStorage.setItem("ohmail.notifications.subscriptionEndpoint", sub.endpoint);
-    const deletes: string[] = [];
-    let release: () => void = () => {};
-    const inner = globalThis.fetch;
-    globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
-      if (init?.method === "DELETE" && String(input).includes("/push/subscriptions/")) {
-        deletes.push(String(input));
-        await new Promise<void>((resolve) => { release = resolve; });
-        return new Response(null, { status: 204 });
-      }
-      return inner(input as RequestInfo, init);
-    }) as unknown as typeof globalThis.fetch;
+    const reply = holdTheDoor();
+    const { signOut } = await import("../app/sign-out");
+    const done = signOut(ACCOUNT);
     try {
-      setThisTabForTest("tab-0");
-      const { signOut } = await import("../app/sign-out");
-      const done = signOut(ACCOUNT);
-      for (let i = 0; i < 200 && deletes.length === 0 && shell.logoutCalls() === 0; i += 1) await oneTick();
-      expect(deletes, "the press's own wake row was not deleted").toEqual(["/api/push/subscriptions/row-7"]);
-      expect(readOwnerMarker().kind, "the jar named the account while the DELETE was out").toBe("signed-out");
-      expect(showsMail(tab1), "tab 1 kept the mail while the DELETE was out").toBe(false);
+      for (let i = 0; i < 200 && shell.logoutCalls() === 0; i += 1) await oneTick();
+      expect(shell.logoutCalls()).toBe(1);
+      expect(readOwnerMarker().kind).toBe("signed-out");
+      await shell.tick(JAR_WATCH_MS);
+      expect(showsMail(tab1)).toBe(false);
       expect(leaves).toBe(1);
 
+      const asked = shell.sessionCalls();
       const tab2 = await bootTab("tab-2");
       await shell.tick(1_000);
-      expect(showsMail(tab2), "a tab opened while the DELETE was out drew the mailbox").toBe(false);
+      expect(showsMail(tab2)).toBe(false);
       expect(leaves).toBe(2);
-      expect(shell.logoutCalls(), "the door was asked before the wake row went").toBe(0);
-
-      setThisTabForTest("tab-0");
-      release();
-      expect(await settle(done), "the sign-out never ended").toBe(true);
-      expect(shell.logoutCalls()).toBe(1);
-      expect(localStorage.getItem("ohmail.notifications.subscriptionId"), "the row's id outlived the sign-out").toBeNull();
+      expect(shell.sessionCalls()).toBe(asked);
     } finally {
-      Reflect.deleteProperty(navigator, "serviceWorker");
+      reply("204");
+      expect(await settle(done)).toBe(true);
+      Reflect.deleteProperty(navigator, "locks");
     }
+    expect(localStorage.getItem("ohmail.notifications.subscriptionId"), "the row's id outlived the sign-out").toBeNull();
   });
 
   it("a cold tab whose confirm was out at the press leaves when it answers: no mail, nothing bound", async () => {
@@ -485,8 +625,8 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
   it.each([
     ["a pending sign-out", "tf_owner=signed_out_pending; Path=/", 1],
     ["nothing", "tf_owner=; Path=/; Max-Age=0", 0],
-    ["another account", `tf_owner=${OTHER}; Path=/`, 0],
-  ])("a jar that turned to %s between the first frame and the listener: leaves at the listener's mount only when pending", async (_what, jar, left) => {
+    ["another account", `tf_owner=${OTHER}; Path=/`, 1],
+  ])("a jar that turned to %s between the first frame and the listener: checks immediately at the listener", async (_what, jar, left) => {
     setThisTabForTest("tab-2");
     shell.rememberOwner(ACCOUNT);
     /* The confirm stays out, so nothing but the mount itself can send the tab away. */
@@ -496,7 +636,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     const tab2 = await shell.mountCloudShell();
     await shell.tick(250);
     expect(seam.beforeListen, "the listener never mounted, so this proves nothing").toBeNull();
-    expect(leaves, left === 1 ? "the tab stayed on a pending sign-out" : "a jar that is no pending sign-out sent the tab away")
+    expect(leaves, left === 1 ? "the tab stayed after the session changed" : "an unconfirmed jar sent the tab away")
       .toBe(left);
     if (left === 1) expect(showsMail(tab2), "the leaving tab kept the mailbox").toBe(false);
     expect(flushSyncWarnings()).toEqual([]);
@@ -511,7 +651,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     shell.scriptSession(() => new Promise<Response>((resolve) => { confirm = () => resolve(shell.sessionFull()); }));
     const tab0 = await shell.mountCloudShell();
     await shell.tick(500);
-    expect(tab0.querySelector(".app-root"), "the warm mirror did not open").not.toBeNull();
+    expect(tab0.querySelector(".fr-root"), "the warm mirror did not open").not.toBeNull();
     shell.scriptLogout(shell.db503);
     const { signOut } = await import("../app/sign-out");
     expect(await settle(signOut(ACCOUNT)), "the refused sign-out never ended").toBe(true);
@@ -519,7 +659,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     confirm();
     await shell.tick(1_000);
     expect(leaves, "the pressing tab left at its own confirm").toBe(0);
-    expect(tab0.querySelector(".app-root")).not.toBeNull();
+    expectSigningOut(tab0);
   });
 
   it("CONTROL: the demo is never sent away by a pending sign-out", async () => {
@@ -530,7 +670,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
       const demo = await shell.mountCloudShell();
       await shell.tick(1_000);
       expect(leaves, "the demo left").toBe(0);
-      expect(demo.querySelector(".app-root"), "the demo drew nothing").not.toBeNull();
+      expect(demo.querySelector(".fr-root"), "the demo drew nothing").not.toBeNull();
     } finally {
       window.history.replaceState(null, "", "/");
     }
@@ -625,6 +765,80 @@ describe("the belt: a tab that missed the message asks when it is looked at agai
     expect(leaves).toBe(1);
   });
 
+  it.each([
+    ["letter", false], ["letter", true], ["reply", false], ["reply", true],
+  ] as const)("an open editor that resumes after an account change preserves its %s according to explicit sign-out (%s)", async (editor, signedOut) => {
+    document.cookie = "tf_family=fixture-family; Path=/";
+    const tab = await openTab("tab-1");
+    const words = "unsynced words in account A";
+    if (editor === "letter") {
+      await act(async () => {
+        window.location.hash = "#/compose";
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+      });
+      await oneTick();
+      const subject = within(tab).getByRole("textbox", { name: "Subject" });
+      await act(async () => { fireEvent.change(subject, { target: { value: words } }); });
+    } else {
+      await readFirst(tab);
+      await act(async () => { within(tab).getByRole("button", { name: "Reply" }).click(); });
+      await shell.tick(200);
+      const body = within(tab).getByRole("textbox", { name: "Reply body" }) as HTMLElement & {
+        editor: import("@tiptap/core").Editor;
+      };
+      await act(async () => { body.editor.chain().selectAll().insertContent(words).run(); });
+    }
+    const holding = () => Object.keys(localStorage).filter((key) => localStorage.getItem(key)?.includes(words));
+    expect(holding().some((key) => key.includes(ACCOUNT))).toBe(true);
+    await setVisibility("hidden");
+    if (signedOut) {
+      await signOutIn("tab-0");
+      expect(holding()).toEqual([]);
+    }
+    shell.rememberOwner(OTHER);
+    document.cookie = "tf_family=replacement-family; Path=/";
+    const nextDraft = `ohmail.ui.compose.${OTHER}.other-editor`;
+    localStorage.setItem(nextDraft, "the second account’s own words");
+    await setVisibility("visible");
+    await shell.tick(4_000);
+    expect(showsMail(tab)).toBe(false);
+    expect(holding().some((key) => key.includes(ACCOUNT))).toBe(!signedOut);
+    expect(holding().some((key) => key.includes(OTHER))).toBe(false);
+    expect(localStorage.getItem(nextDraft)).toBe("the second account’s own words");
+  });
+
+  it.each(["return", "jar watch", "session answer"])(
+    "keeps each account's unsent words when another account takes over on %s",
+    async (path) => {
+      const tab = await openTab("tab-1");
+      const draft = (owner: string) => `ohmail.ui.compose.${owner}.composer-1`;
+      const reply = (owner: string) => `ohmail.ui.reply.${owner}:m1`;
+      const words = new Map([
+        [draft(ACCOUNT), "offline draft A"], [reply(ACCOUNT), "offline reply A"],
+        [draft(OTHER), "separate draft B"], [reply(OTHER), "separate reply B"],
+      ]);
+      for (const [key, value] of words) localStorage.setItem(key, value);
+      atLeave = () => showsMail(tab);
+      if (path === "session answer") {
+        await shell.tick(SESSION_FRESH_MS + 1_000);
+        shell.scriptSession(() => shell.sessionFull(OTHER));
+      } else {
+        shell.rememberOwner(OTHER);
+      }
+      const asked = shell.sessionCalls();
+      if (path === "jar watch") await shell.tick(JAR_WATCH_MS + 1);
+      else {
+        await act(async () => { window.dispatchEvent(new Event("pageshow")); });
+        await oneTick();
+      }
+      expect(readAtLeave).toEqual([false]);
+      expect(shell.sessionCalls() - asked).toBe(path === "session answer" ? 1 : 0);
+      for (const [key, value] of words) expect(localStorage.getItem(key)).toBe(value);
+      expect(tab.textContent).not.toContain("offline draft A");
+      expect(tab.textContent).not.toContain("separate draft B");
+    },
+  );
+
   it("CONTROL: a jar that still names the account waits for the server's none", async () => {
     const tab1 = await openTab("tab-1");
     await shell.tick(SESSION_FRESH_MS + 1_000);
@@ -655,9 +869,11 @@ describe("the belt: a tab that missed the message asks when it is looked at agai
     expect(leaves).toBe(0);
   });
 
-  it("the tab that pressed Sign out never leaves through the return check", async () => {
+  it("the pressing tab keeps its pending sign-out progress through the return check", async () => {
     const tab0 = await openTab("tab-0");
+    shell.scriptLogout(shell.db503);
     await signOutIn("tab-0");
+    expect(readOwnerMarker().kind).toBe("signed-out");
     await shell.tick(3 * JAR_WATCH_MS);
     expect(leaves, "the jar watch sent the pressing tab away").toBe(0);
     shell.scriptSession(shell.coded401);
@@ -668,8 +884,8 @@ describe("the belt: a tab that missed the message asks when it is looked at agai
     await act(async () => { window.dispatchEvent(new Event("focus")); });
     await shell.tick(1_000);
     expect(shell.sessionCalls() - asked, "the signing-out tab asked the session door").toBe(0);
-    expect(leaves, "the signing-out tab left before its pane could say how the sign-out ended").toBe(0);
-    expect(tab0.querySelector(".app-root")).not.toBeNull();
+    expect(leaves, "the signing-out tab left before it could say how the sign-out ended").toBe(0);
+    expectSigningOut(tab0);
   });
 
   /* A sign-out earlier in this page, then a sign-in that mounts the mailbox in the same page (a client-side
@@ -682,6 +898,7 @@ describe("the belt: a tab that missed the message asks when it is looked at agai
   ])("a page that %s and then signed in still leaves on %s", async (earlier, ended) => {
     if (earlier === "pressed Sign out") await signOutIn("tab-1");
     else await finishPendingIn("tab-1");
+    document.cookie = "tf_family=replacement-family; Path=/";
     const tab1 = await openTab("tab-1");
     const missed = ended === "a sign-out it missed";
     if (missed) document.cookie = "tf_owner=; Path=/; Max-Age=0";
@@ -835,9 +1052,53 @@ describe("a session revoked from another device", { timeout: 60_000 }, () => {
     const mirrors = await disk();
     const tab1 = await openTab("tab-1");
     await renewalRefused("refresh_expired");
-    expect(tab1.querySelector(".session-end")?.textContent).toContain(shell.messages.session.endedMidUse);
-    expect(tab1.querySelector(".row[data-id]"), "the rows left from behind the scrim").not.toBeNull();
+    expect(tab1.querySelector('[role="alertdialog"]')?.textContent).toContain(shell.messages.session.endedMidUse);
+    expect(tab1.querySelector(":is(.row, [role=option])[data-id]"), "the rows left from behind the scrim").not.toBeNull();
     expect(await mirrors()).toEqual([`ohmail-mirror:${ACCOUNT}`]);
     expect(leaves).toBe(0);
   });
+});
+
+
+it("drops mail in the pressing tab when unlocked revocation succeeds and the wipe remains incomplete", async () => {
+  Reflect.deleteProperty(navigator, "locks");
+  document.cookie = "tf_family=fixture-family; Path=/";
+  const tab = await openTab("pressing-tab");
+  setThisTabForTest("pressing-tab");
+  const { signOut } = await import("../app/sign-out");
+  const result = await drive(signOut(ACCOUNT));
+  expect(result.serverRefused).toBeNull();
+  expect(result.inventoryComplete).toBe(false);
+  await shell.tick(2 * JAR_WATCH_MS);
+  expect(showsMail(tab)).toBe(false);
+});
+
+it("opens a fresh mailbox and drafts while removal of the original account's old draft is refused", async () => {
+  const { retainAccountCleanup } = await import("../app/pending-sign-out-storage");
+  const { composeDraftKey } = await import("@ohmail/app-logic/writing/compose");
+  const oldDraft = composeDraftKey(ACCOUNT);
+  localStorage.setItem(oldDraft, JSON.stringify({ subject: "old private draft" }));
+  retainAccountCleanup({ press: "old-press", account: ACCOUNT, family: "departed-family", revoked: true });
+  document.cookie = "tf_family=replacement-family; Path=/";
+  const remove = Storage.prototype.removeItem;
+  const refused = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key) {
+    if (this === localStorage && key === oldDraft) return;
+    remove.call(this, key);
+  });
+  try {
+    const tab = await openTab("replacement-tab");
+    expect(refused).toHaveBeenCalledWith(oldDraft);
+    await act(async () => {
+      window.location.hash = "#/compose";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await oneTick();
+    const subject = within(tab).getByRole<HTMLInputElement>("textbox", { name: "Subject" });
+    expect(subject.value).toBe("");
+    await act(async () => { fireEvent.change(subject, { target: { value: "new draft" } }); });
+    expect(localStorage.getItem(oldDraft)).toContain("old private draft");
+    expect(Object.values(localStorage).some((value) => String(value).includes("new draft"))).toBe(true);
+  } finally {
+    refused.mockRestore();
+  }
 });

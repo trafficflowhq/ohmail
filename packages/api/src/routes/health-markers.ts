@@ -80,15 +80,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // a deployment that must name the missing migration rather than degrade quietly. It is the
   // NEWEST entry in the mail journal.
   ["flag_state", "desired_seen"],
-  // mail 0025_mailbox_kickstart — the once-per-mailbox HEY-shaping marker. One
-  // nullable column on `mailboxes`, and it earns a marker for exactly the reason
-  // `mailboxes.error_code` does rather than for a reason of its own: nothing READS it to make a
-  // product decision (the worker reads it only to decide skip-or-run), but `MailboxService.list`
-  // selects WHOLE ROWS through the drizzle schema, so an API deployed ahead of this migration
-  // answers Postgres 42703 on the mailbox panel and on the connect flow. The marker does not
-  // gate that traffic; it makes the deployment name the missing migration instead of leaving a
-  // 500 nobody can attribute. It is the NEWEST entry in the mail journal.
-  ["mailboxes", "kickstart_at"],
   // mail 0026_thread_resolution — the conversation's root Message-ID, the threading conflict
   // anchor. One nullable column on `threads`; `materializeThread` reads `select().from(threads)`,
   // so an API ahead of the migration 42703s `GET /threads/:id` and every `/sync` page that
@@ -119,14 +110,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // invisible in the product. Order: migration → API → worker; the marker makes getting it wrong
   // say `503 schema_incomplete`.
   ["mailboxes", "sync_blocked_reason"],
-  // mail 0030_sensitive_rescreen — the one-time re-evaluation of mail the sensitivity override
-  // misrouted into the Ohbox. It earns a marker for the generic `mailboxes` whole-row reason and
-  // only that one — worth saying because every entry above it since 0027 also carried a
-  // worker-side argument: there is no worker half here. The pass lives in `packages/services`,
-  // which the sync worker is forbidden by its own dependency test from importing, so no worker
-  // binary touches this column. Deploy order: migration → API. It is the newest entry in the mail
-  // journal.
-  ["mailboxes", "sensitive_rescreen_at"],
   // mail 0031_tags — two markers, one per new table, deliberately. `tags.id` alone would not
   // catch the failure that matters: the tables are created by separate statements, and
   // `message_tags` is what the sync path reads on every page — `materializeMessages` queries it
@@ -159,14 +142,8 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // deploy order migration → API. A marker on a nullable column is deliberate: the probe asks
   // whether the column exists, never whether anything has been written — every account starts
   // with no row, and that is the correct state.
+  ["account_settings", "draft_replies"],
   ["account_settings", "seed_confirmed_at"],
-  // mail 0036_sensitive_fp_backfill — repairing bodies a classifier false positive stored
-  // redacted. Generic half: whole-row `mailboxes` selects 42703 the mailbox panel and the connect
-  // flow. Worker half — which 0030 explicitly did not have: repairing a body means re-reading the
-  // message from the mail server, and only the worker holds that connection, so a worker ahead of
-  // the migration 42703s the marker read, logs per mailbox and repairs nothing — no damage, no
-  // repair, and nothing attributing the silence to deploy order. Order: migration → API → worker.
-  ["mailboxes", "sensitive_fp_backfill_at"],
   // mail 0037_draft_html — the rich half of a draft. One nullable column on `drafts`, with a
   // second consumer that makes it sharper than the `mailboxes` entries: `materializeDraft`
   // selects the row (42703 on every draft read), and `SendService.reserve` reads the same row to
@@ -223,22 +200,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // under `people_and_replied` rather than crashing — the safe direction. Order: migration → API.
   // No CHECK marker, no INDEX marker (row fetched by primary key).
   ["account_settings", "ohbox_policy"],
-  // mail 0043_ohbox_tidy — the resumable, re-armable marker for the Ohbox backlog re-route pass;
-  // three nullable columns on `account_settings`. `ohbox_tidy_requested_at` is probed:
-  // `requested_at IS NOT NULL` is half the owed predicate the worker evaluates every cycle, and
-  // the whole-row `consentSettings` select means a too-early API 42703s the screening surface.
-  // The worker half is the safe kind: a worker ahead of the migration fails its owed probe, so no
-  // mail moves and nothing is marked — visible, not silent. The INDEX this migration also creates
-  // is on `change_log` and joins `SCHEMA_INDEX_MARKERS` because its absence is silent.
-  ["account_settings", "ohbox_tidy_requested_at"],
-  // mail 0046_screener_auto_apply — the opt-in Screener auto-apply flag, one nullable column on
-  // `account_settings`, on the whole-row-select reason: `consentSettings` and
-  // `getScreeningPreference` reach this row, so a missing column 42703s the consent and screening
-  // surfaces, not just the feature. The worker reads the column every cycle, but a read that
-  // 42703s degrades to OFF (absent-config-selects-safe), so a worker ahead of the migration moves
-  // nothing — the safe direction. Order: migration → API (and worker). No CHECK marker, no INDEX
-  // marker.
-  ["account_settings", "screener_auto_apply_at"],
   // mail 0047_read_order — when a message stopped being unread, the sort key of the client's
   // "Earlier" group. The strongest whole-row-select case on this list, which is why a column
   // whose only consumer is a client-side sort is here at all: `messages` is projected through
@@ -299,12 +260,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // order: migration → API. No CHECK (a timestamp closes no set), no index (read by primary
   // key).
   ["accounts", "erased_at"],
-  // mail 0081 — the re-screen's RESUME POINT (`mailboxes.sensitive_rescreen_cursor`, NULL =
-  // start at the beginning, every existing row). `MailboxService.list` selects whole rows, so
-  // an API ahead of this migration 42703s the mailbox list itself, not merely the operator
-  // pass that writes the column.
-  ["mailboxes", "sensitive_rescreen_cursor"],
-  ["mailboxes", "sensitive_rescreen_started_at"],
   // mail 0077_send_later — the draft's appointment (`send_at` + `send_key` + `send_error`,
   // `status = 'scheduled'`; NULL = no appointment). Whole-row reason one table over:
   // `materializeDraft` selects whole `drafts` rows — the CRUD, the schedule verbs and every
@@ -657,14 +612,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // ahead of the migration 42703s the mailbox panel — and the credential writers read it to
   // refuse a save that began before the sign-out, on this computer or a phone paired to it.
   ["mailboxes", "signed_out_at"],
-  // mail 0109_gate_release_done_at — one column on `account_settings`: the per-account marker of
-  // the one-time gate release. Probed on the whole-row-select rule `signature_html` states above,
-  // and on the same door it names: `consentSettings` selects this table whole on every
-  // `GET /consent`, the settings read every client makes at boot, so an API deployed ahead of the
-  // migration 42703s an account's own settings — not just this repair. The worker reads it too,
-  // and a worker ahead of the migration fails the sweep for every account. Deploy order
-  // migration → API → worker, 0107's reasoning exactly.
-  ["account_settings", "gate_release_done_at"],
   // mail 0110_resurface_time — one column on `account_settings`: the wall clock a person's
   // resurfaced mail comes back at. Probed on 0109's door and for 0109's reason — `consentSettings`
   // selects this table whole on every `GET /consent`, the settings read every client makes at
@@ -760,7 +707,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // API ahead of the migration fails every ingest and every search on a missing relation — the
   // marker names the migration instead. Deploy order migration → API → worker.
   ["message_search", "terms"],
-  ["account_settings", "search_index_built_at"],
   // mail 0126_mailbox_erasure_done — when a per-mailbox erasure finished. The LOUD kind: `GET
   // /mailboxes` filters on it on every poll, so an API ahead of the migration 42703s the list and
   // every pane that reads it goes blank; the worker's erasure pass reads it too. Deploy order
@@ -802,10 +748,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // candidate statement and the undo both name the column, so a host ahead of the migration 42703s
   // both. Deploy order migration → API → worker.
   ["folder_state", "auto_filing_undone_at"],
-  // mail 0141_screener_floor_version — the auto-apply pass's floor verdict. The held page and the
-  // mark write name the column, so a worker ahead of the migration 42703s. Deploy order migration →
-  // API → worker.
-  ["folder_state", "screener_floor_version"],
   // mail 0145_press_decided_at — when a decision about a message's placement, read state or triage
   // was placed. The state verbs write all three and the stale-press floor reads them, so an API
   // ahead of the migration 42703s every move, delete, read and triage. Deploy order migration → API.
@@ -826,7 +768,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // tail reads it per account), so a worker ahead of the migration fails both reads. Deploy order
   // migration → API → worker.
   ["list_addresses", "consented_brands"],
-  ["account_settings", "list_addresses_scanned_at"],
   // mail 0151_mailboxes_gap_since — the gap window and its offer, one transaction. LOUD: every
   // mailbox read names the columns. Deploy order migration → API → worker.
   ["mailboxes", "gap_since"],
@@ -846,10 +787,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `select().from(rules)`, so an API ahead of the migration 42703s the rules surface and a worker
   // stops filing mail. Deploy order migration → API → worker.
   ["rules", "settled_press_at"],
-  // mail 0160_folder_state_outstanding — the message's account on an outstanding filing, which the
-  // mailbox poll's filing statement binds; an API ahead of the migration 42703s on every poll.
-  // Deploy order setup → migration → API.
-  ["folder_state", "outstanding_account_id"],
   // mail 0162_outbound_sends_offer_state — whether a send attempt may have offered its message;
   // `send()` writes it at the reservation, so an API ahead of the migration 42703s every send.
   // Deploy order migration → API → worker.
@@ -875,9 +812,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["mailboxes", "organized_through"],
   // mail 0170_outbound_sent_copies — a delivered send's Sent copy, owed by the local engine until filed.
   ["outbound_sent_copies", "send_id"],
-  // mail 0172_html_words_backfill — the html-words backfill's stamp and cursor, one facet. LOUD: the
-  // settings reads select `account_settings` whole. Deploy order migration → API → worker.
-  ["account_settings", "html_words_backfill_at"],
   // mail 0176_messages_unconfirmed_hold — a letter held because nothing confirmed a company's own
   // address. LOUD: `select().from(messages)` on every read surface and in the ingest's insert. Deploy
   // order migration → API → worker.
@@ -894,13 +828,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // LOUD: the schedule route writes it and the pass reads it on every letter with files. Deploy order
   // migration → API → worker.
   ["scheduled_send_files", "dek_enc"],
-  // mail 0181_reconcile_pending_queue — the message's account on a pending read mark, which the
-  // worker's `\Seen` poll binds; a worker ahead of the migration 42703s on every cycle. Deploy order
-  // setup → migration → API → worker.
-  ["flag_state", "pending_account_id"],
-  // mail 0182_mailboxes_legacy_news_clean — when a full read found no pre-0.22 News spelling. LOUD:
-  // the mailbox reads select the row whole. Deploy order migration → API → worker.
-  ["mailboxes", "legacy_news_clean_at"],
   // mail 0183_outbound_sent_copies_staged_parts — a Cloud copy kept without its uploaded files, until when
   // and when next (`files_until`, `files_next_attempt_at`, the same migration's twins). LOUD: the send door
   // writes all three and the late pass reads them on every claim. Deploy order migration → API → worker.
@@ -908,6 +835,70 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0184_account_settings_impersonation_filing — the switch for filing a held impersonation to Spam.
   // LOUD: the export and the settings reads select the row whole. Deploy order migration → API → worker.
   ["account_settings", "impersonation_filing_off_at"],
+  // mail 0210_account_settings_subject_heading — where a conversation's subject stands, with the instant it
+  // was stated. LOUD: the consent read, the export and the organizer's settings copy select the row, so a host
+  // ahead of the migration fails at each. The marker probes the second column, so both are there. Deploy order
+  // migration → API → worker.
+  ["account_settings", "subject_heading_at"],
+  // mail 0201_account_on_borrowers — the account on the six tables that borrowed their parent's.
+  // LOUD: every insert into them names the column and the two reconcile polls bind it, so a
+  // worker or an API ahead of the migration 42703s on every write and every cycle. Deploy order
+  // migration → API → worker.
+  ["message_bodies", "account_id"],
+  ["folder_state", "account_id"],
+  ["flag_state", "account_id"],
+  ["mailbox_credentials", "account_id"],
+  ["mailbox_folders", "account_id"],
+  ["pairing_tokens", "account_id"],
+  // mail 0203_pass_progress — where each one-time pass stands, one row per pass and subject (the
+  // fourteen marks that stood on `mailboxes` and `account_settings`). LOUD: the kickstart's mark
+  // rides the mailbox read of every sync visit, search asks the search pass's mark with every
+  // answer, and each pass reads its own before it starts, so a worker or an API ahead of the
+  // migration 42P01s on all three. Deploy order migration → API → worker.
+  ["pass_progress", "job"],
+  // mail 0204_message_invitations — the identity of an invitation a letter carried, one row per
+  // letter, with the answer on record. LOUD: ingest writes it in the letter's transaction and every
+  // message read joins it, so a host ahead of the migration fails on both. The marker probes the
+  // last column the entry gained, so a store that ran the entry before it had the letter's stamp
+  // reads red. Deploy order migration → API → worker.
+  ["message_invitations", "stamped_at"],
+  // mail 0205_calendar — the calendar's ten tables, one probe each. LOUD in one place: the key
+  // rotation's census counts `cal_credentials` with every other sealed column, at each start of
+  // the worker and under `/health`, so a host ahead of the migration 42P01s there. The other nine
+  // are the SILENT kind until the calendar's store is built; their markers say the entry ran.
+  ["cal_connections", "provider"],
+  ["cal_credentials", "secret_enc"],
+  ["cal_calendars", "provider_id"],
+  ["cal_events", "uid"],
+  ["cal_attendees", "address"],
+  ["cal_alarms", "minutes_before"],
+  ["cal_writes", "idempotency_key"],
+  ["cal_links", "uid"],
+  ["cal_suggestions", "evidence"],
+  ["cal_settings", "enabled_at"],
+  // mail 0208_recipient_keys_column — the recipients' key, stored: a column the database generates
+  // from mail 0154's function. LOUD: the schema declares it, so every read of whole letters names it
+  // (the list, the single read, the delta feed, the snapshot, the ingest's insert) and the search's
+  // recipient filter reads it; a host ahead of the migration 42703s on all of them. Deploy order
+  // migration → API → worker, which the 2.0 transition's closed window keeps.
+  ["messages", "recipient_keys"],
+  // mail 0209_app_handoff — a phone app's handoff of its sign-in to its sibling. LOUD: the handoff's mint writes
+  // both binding columns and every redeem of the grant asks for them, and a device's take-back reads the lineage,
+  // so a host ahead of the migration fails at each. Deploy order migration, then the API.
+  ["pairing_tokens", "handoff_from_device_id"],
+  ["devices", "handed_off_from"],
+  // mail 0212_devices_revoked_at — when a named device was taken back in Devices. LOUD: the settings record counts
+  // the column at every read (`materializeSettings`: the snapshot's first page and every settings change of the
+  // feed), so a host ahead of the migration 42703s on each. Deploy order migration, then the API.
+  ["devices", "revoked_at"],
+  // The calendar feed and export read this column to keep availability identities stable.
+  ["cal_calendars", "availability_key"],
+  // The invitation reader and calendar feed require these fields on the rows they serve.
+  ["message_invitations", "proposal"],
+  ["cal_events", "removed_occurrences"],
+  ["cal_calendars", "native_move"],
+  ["cal_events", "portable_copy"],
+  ["message_invitations", "hosted_details"],
 ] as const;
 
 /**
@@ -975,25 +966,22 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   // and a second entry for one index is never found.
   ["message_search_head_tsv_idx", "ON public.message_search USING gin (head_tsv) WITH (gin_pending_list_limit='256')"],
   ["message_search_text_tsv_idx", "ON public.message_search USING gin (text_tsv) WITH (gin_pending_list_limit='256')"],
-  // mail 0154_messages_recipient_keys. NOT silent: the address search's `to` and `any` name its
-  // function, so an API ahead of the migration answers them 42883. Deploy order migration → API.
-  ["messages_recipient_keys_idx", "ON public.messages USING gin (messages_recipient_keys(account_id, to_addresses, cc_addresses))"],
+  // mail 0208_recipient_keys_column, which dropped mail 0154's expression index for this one. The
+  // SILENT kind: without it a search by recipient reads every letter of the account, nothing raises
+  // and the page stops answering in milliseconds. The needle carries the bounded pending list.
+  ["messages_recipient_keys_column_idx", "ON public.messages USING gin (recipient_keys) WITH (gin_pending_list_limit='256')"],
   // mail 0018_login_email_identity, listed last because it was found last. The SILENT kind: the
   // registration's check reads before it inserts, so only this index serializes two registrations
   // of one address, and `register` catches its 23505. Absent, both commit and a login opens
   // whichever row Postgres returns first. `invites.revoked_at` vouched for it while both halves
   // were one migration; since the split they run in separate transactions.
   ["users_email_unique_idx", "ON public.users USING btree (email)"],
-  // mail 0136_screener_probe_indexes. The SILENT kind: the Screener auto-apply candidate statement
-  // asks each of the three once per held row, and without them it re-filters the account's rules
-  // and scans approvals and drafts under every page — no query is wrong, every test stays green.
-  ["rules_account_match_key_idx", "ON public.rules USING btree (account_id, TRIM(BOTH FROM lower(match))) WHERE enabled"],
+  // mail 0136_screener_probe_indexes. The SILENT kind: the Screener passes ask each once per held
+  // row, and without them scan approvals and drafts under every page — no query is wrong, every
+  // test stays green. (The third, `rules_account_match_key_idx`, repeated `rules_account_key_idx`
+  // for enabled rules alone and left with mail 0202.)
   ["approvals_account_message_idx", "ON public.approvals USING btree (account_id, message_id) WHERE (message_id IS NOT NULL)"],
   ["drafts_account_reply_idx", "ON public.drafts USING btree (account_id, in_reply_to_message_id) WHERE (in_reply_to_message_id IS NOT NULL)"],
-  // mail 0139_messages_arrival_order. The SILENT kind: every list, History and snapshot page walks
-  // the arrival key, and without it each page sorts the account's living set. The needle is the
-  // key's clamp arm, which renders the same in every session zone (the epoch literal does not).
-  ["messages_account_arrival_order_idx", "WHEN (((date - arrived_at) <= '48:00:00'::interval) AND ((arrived_at - date) <= '48:00:00'::interval)) THEN date"],
   // mail 0144_rule_person_decided_backfill. The SILENT kind: the one read of a graduation asks, per
   // learned sender the pipeline meets, whether a person decided under its key, paused rows included,
   // and without this index that is a scan of the account's rules. Committed with 0144's two backfill
@@ -1002,19 +990,23 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   // mail 0157_messages_sender_date. The SILENT kind: the Screener cutline probe dates each held
   // sender's mail by this key, and without it reads every message of the sender from the heap.
   ["messages_account_sender_date_idx", "ON public.messages USING btree (account_id, lower(from_address), COALESCE(date, created_at))"],
-  // mail 0160_folder_state_outstanding. The SILENT kind: without it the poll's filing statement reads
-  // every outstanding filing of every account.
-  ["folder_state_outstanding_idx", "ON public.folder_state USING btree (outstanding_account_id, message_id) WHERE ((reconcile_status = 'pending'::text) AND (last_set_by = 'us'::text) AND (desired_folder <> observed_folder))"],
+  // mail 0160_folder_state_outstanding, on the account's own column since mail 0201. The SILENT
+  // kind: without it the poll's filing statement reads every outstanding filing of every account.
+  ["folder_state_outstanding_idx", "ON public.folder_state USING btree (account_id, message_id) WHERE ((reconcile_status = 'pending'::text) AND (last_set_by = 'us'::text) AND (desired_folder <> observed_folder))"],
   // mail 0161_mailboxes_account_idx. The SILENT kind: without it the list read walks every mailbox.
   ["mailboxes_account_idx", "ON public.mailboxes USING btree (account_id, id)"],
   // mail 0171_messages_arrival_key. The SILENT kind, 0139's on the key every page walks since: a
   // header after its arrival no longer decides. The needle is that clamp arm.
   ["messages_account_arrival_key_idx", "WHEN ((date <= arrived_at) AND ((arrived_at - date) <= '48:00:00'::interval)) THEN date"],
-  // mail 0181_reconcile_pending_queue. The SILENT kind: without them each reconcile poll reads the
-  // whole of folder_state or flag_state. Keyed by the account, so no reader walks another account's
-  // queue.
-  ["folder_state_pending_queue_idx", "ON public.folder_state USING btree (outstanding_account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)"],
-  ["flag_state_pending_queue_idx", "ON public.flag_state USING btree (pending_account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)"],
+  // mail 0181_reconcile_pending_queue, on the account's own column since mail 0201. The SILENT
+  // kind: without them each reconcile poll reads the whole of folder_state or flag_state. Keyed by
+  // the account, so no reader walks another account's queue.
+  ["folder_state_pending_queue_idx", "ON public.folder_state USING btree (account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)"],
+  ["flag_state_pending_queue_idx", "ON public.flag_state USING btree (account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)"],
+  // mail 0200_search_one_generation. The SILENT kind: the mailbox's counts read `messages` by
+  // account and mailbox, and without it each is a walk of the account's letters. The entry's other
+  // statements are drops, which no class probes.
+  ["messages_account_mailbox_idx", "ON public.messages USING btree (account_id, mailbox_id)"],
 ];
 
 /**
@@ -1029,22 +1021,21 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
  */
 export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   "message_bodies_html_cap",       // mail 0022_message_body_html_cap
-  // mail 0027_organizer_lease — the closed set behind `mailboxes.disabled_reason`. It gets its
-  // own marker rather than riding on the column's, because the column and the constraint fail
-  // DIFFERENTLY and only one of them is loud: a missing column raises 42703 on the first read,
-  // while a column present WITHOUT its CHECK accepts anything the write site lets through and
-  // says nothing. That is the same shape as an unconstrained `error_detail`, and it is precisely
-  // what a probe over `information_schema.columns` cannot see.
-  "mailboxes_disabled_reason_closed",
-  // mail 0029_mailbox_sync_block — the closed set behind `mailboxes.sync_blocked_reason`, for the
-  // same reason as the line above, and with one more consumer that makes it sharper. This set is
-  // what the operator-console isolation test relies on when it classifies the column as
-  // REFUSED_BY_CONSTRAINT rather than tainting it: the argument "no value a mail server chose can
-  // reach an operator's screen through this field" is an argument ABOUT THE CHECK. A column
-  // present without it silently converts a closed set into free text that the worker's own writes
+  // mail 0202_retired — the shape behind `mailboxes.disabled_reason` (mail 0027's member list until
+  // then). It gets its own marker rather than riding on the column's, because the column and the
+  // constraint fail DIFFERENTLY and only one of them is loud: a missing column raises 42703 on the
+  // first read, while a column present WITHOUT its CHECK accepts anything the write site lets
+  // through and says nothing.
+  "mailboxes_disabled_reason_shape",
+  // mail 0202_retired — the shape behind `mailboxes.sync_blocked_reason` (mail 0029's member list
+  // until then), for the same reason as the line above, and with one more consumer that makes it
+  // sharper. The shape is what the operator-console isolation test relies on when it classifies
+  // the column as REFUSED_BY_CONSTRAINT rather than tainting it: the argument "no value a mail
+  // server chose can reach an operator's screen through this field" is an argument ABOUT THE
+  // CHECK. A column present without it silently becomes free text that the worker's own writes
   // would keep filling correctly — so nothing in the product misbehaves, no test notices, and the
   // isolation claim quietly rests on nothing.
-  "mailboxes_sync_blocked_reason_closed",
+  "mailboxes_sync_blocked_reason_shape",
   // mail 0037_draft_html — the 256 KiB ceiling on `drafts.html`. It is listed for
   // `message_bodies_html_cap`'s reason with one difference that argues FOR it rather than
   // against: this is the only column on `drafts` whose size a hostile client chooses directly.
@@ -1099,18 +1090,24 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // work" leaves no error in any log. The service validates the same set with a 400, but that
   // is code and can regress; the CHECK holds for a hand-run UPDATE and any importer.
   "account_settings_theme_face_supported",
+  // mail 0210_account_settings_subject_heading — the pair behind `account_settings.subject_heading`, and the
+  // rule that the word and its instant are stated together. SILENT without them: a word outside the pair is
+  // read as nothing stated everywhere, and a word without its instant never travels. The one writer holds both;
+  // the CHECKs hold for a hand-run UPDATE and any importer.
+  "account_settings_subject_heading_closed",
+  "account_settings_subject_heading_stated",
   // mail 0083_organizer_role — the four closed sets this migration adds, listed on 0027's rule
   // (the column and the CHECK fail differently, only one loud). `mailboxes_organizer_role_closed`
   // is the strongest here: the state it makes unrepresentable is two organizers on one mailbox —
   // a value outside the set is read as `reader` (fail-safe), but nothing stops a hand-run UPDATE,
-  // and the CHECK holds when the code does not. `mailboxes_organized_by_kind_closed` closes a
-  // value derived from another install's claim — a header a foreign writer chose, read by the
-  // account's own user (`organized_by_name` deliberately has no CHECK: free text closes no set;
-  // its bound is at the write site). The other two are 0053's silent-degradation shape: a value
+  // and the CHECK holds when the code does not. `mailboxes_organized_by_kind_shape` (a member
+  // list until mail 0202) holds a value derived from another install's claim — a header a foreign
+  // writer chose, read by the account's own user — to one lower-case word (`organized_by_name`
+  // deliberately has no CHECK: free text closes no set; its bound is at the write site). The other two are 0053's silent-degradation shape: a value
   // outside either set renders as "we have not looked" / the default window — a setting that does
   // not work, with nothing to grep for.
   "mailboxes_organizer_role_closed",
-  "mailboxes_organized_by_kind_closed",
+  "mailboxes_organized_by_kind_shape",
   "mailboxes_organizer_state_closed",
   "account_settings_screening_scope_closed",
   // mail 0063_smtp_size_probe_stamp — the closed set behind `mailboxes.smtp_size_probe_code`, and
@@ -1221,6 +1218,10 @@ export const SCHEMA_FK_MARKERS: ReadonlyArray<ForeignKeyMarker> = [
   // Mail 0153_rule_revoke_keeps_its_decisions — the rule key drops its pointer on a revoke. Against
   // a 0152 database the revoke of a rule that filed a gap batch is refused 23503 and answers 500.
   ["routing_decisions_matched_rule_id_account_fk", "ON DELETE SET NULL (matched_rule_id)"],
+  // Mail 0201_account_on_borrowers — a letter's body and its filing hang off the letter's own
+  // account. Without the keys a row under another account's letter is accepted.
+  ["message_bodies_message_id_account_fk", "FOREIGN KEY (message_id, account_id) REFERENCES messages(id, account_id)"],
+  ["folder_state_message_id_account_fk", "FOREIGN KEY (message_id, account_id) REFERENCES messages(id, account_id)"],
 ] as const;
 
 /* `EXPECTED_MARKERS` — the BOTH-HALVES count — moved to `./health-cloud.js` with the list it
@@ -1240,8 +1241,7 @@ export const SCHEMA_FK_MARKERS: ReadonlyArray<ForeignKeyMarker> = [
  * The MAIL constraints probed by definition — see {@link CheckDefinitionMarker}.
  * `away_responders_piles_closed` was created by 0096 over two members and replaced by 0101 over
  * four; the name is identical on both databases, so a name probe certifies a 0096 host while the
- * constraint refuses every scope the settings pane offers. `mailboxes_sync_blocked_reason_closed`
- * is the same shape from 0102 and again from 0105. The needle in both is the vocabulary the
+ * constraint refuses every scope the settings pane offers. The needle is the vocabulary the
  * migration adds, and it moves with each replacement — the newest is strictly the stronger probe,
  * since a database carrying it carries every earlier member too.
  */
@@ -1252,22 +1252,13 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
      on a settings pane somebody is using. A database carrying `ohmail/News` carries every
      earlier member too. */
   ["away_responders_piles_closed", "ohmail/News"],
-  /* Mail 0185_sync_blocked_reason_mailbox_full — `mailbox_full` (the needle MOVED from mail 0143's
-     `meta_undeletable`, 0142's `meta_folder_full`, 0130's `provider_unavailable`, 0124's
-     `account_closed`, 0105's `clock_off` and 0102's `read_limited`: one constraint, one definition,
-     and a database carrying the newest member carries every earlier one). Against a 0184 database
-     the worker's write for a claim refused for room is refused by the old CHECK, and the row keeps
-     what it said before. */
-  ["mailboxes_sync_blocked_reason_closed", "mailbox_full"],
-  /* Mail 0103 — `mobile` joins the organizer kinds. TWO entries, because the kind reaches this
-     table twice and the migration replaces BOTH constraints under their existing names, so a
-     name-presence probe cannot tell an 0102 database from an 0103 one. What a missing entry costs
-     here is the loud direction rather than the silent one, and it is worse for it: certified
-     healthy against an 0102 database, an install reads a live phone's claim and the write that
-     records it is REFUSED by the old CHECK — on a mailbox somebody is using. The needles are the
-     vocabulary each definition gains and its predecessor cannot contain. */
-  ["mailboxes_organized_by_kind_closed", "mobile"],
-  ["mailboxes_disabled_reason_closed", "organized_elsewhere:mobile"],
+  /* Mail 0202_retired — the three lists that grow keep a SHAPE, not their members: the needle is
+     the shape itself. Against a 0201 database a new reason word is refused by the old member
+     list, on a mailbox somebody is using; a name probe alone would not tell the two apart had the
+     constraints kept their names, and it costs nothing to say what the definition is. */
+  ["mailboxes_sync_blocked_reason_shape", "^[a-z][a-z0-9_:]{0,47}$"],
+  ["mailboxes_organized_by_kind_shape", "^[a-z][a-z0-9_:]{0,47}$"],
+  ["mailboxes_disabled_reason_shape", "^[a-z][a-z0-9_:]{0,47}$"],
   /* Mail 0134_withheld_too_large — `too_large` joins the withheld reasons (0065's constraint,
      replaced under its name). Against a 0133 database every message over the download ceiling is
      refused at ingest by the old CHECK and stays a failure row: invisible, the state it fixes. */
@@ -1276,15 +1267,22 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
   // replaced under its name). Against a 0139 database a message past a store limit cannot be
   // recorded as written off, so the cursor of its folder holds and the cycle fails every pass.
   ["message_failures_code_closed", "data_too_large"],
-  // Mail 0145_press_decided_at — `superseded` joins the request refusals (0094's constraint,
-  // replaced under its name). Against a 0144 database the organizer's ack of an aged move behind a
-  // newer placement is refused by the old CHECK and the reader's row never settles.
-  ["organizer_requests_refused_reason_closed", "superseded"],
   // Mail 0164_messages_server_missing — `stale_locator` and `unconfirmed` join the filing classes on
   // both tables (0097's and 0117's constraints, replaced under their names). Against a 0163 database
   // the worker's deferral of a letter it lost track of is refused by the old CHECK.
   ["folder_state_last_error_class_check", "stale_locator"],
   ["junk_rescues_error_class_check", "stale_locator"],
+  // Mail 0207_request_folder_moves — `message.file` joins the request kinds (0094's constraint) and
+  // `no_such_folder` the refusals (0145's), each replaced under its name. The refusal needle MOVED
+  // from 0145's `superseded`; a database carrying `no_such_folder` carries every earlier member too.
+  // Against a 0205 database a reader's move into a person's own folder is refused at its door by the
+  // old kind CHECK, and an organizer's refusal of one cannot be recorded, so the reader's row never
+  // settles.
+  ["organizer_requests_kind_closed", "message.file"],
+  ["organizer_requests_refused_reason_closed", "no_such_folder"],
+  // Mail 0209_app_handoff — `app-handoff` joins the pairing grants (0059's constraint, replaced under its name);
+  // against an older database the handoff's mint is refused by the old CHECK.
+  ["pairing_tokens_grant_check", "app-handoff"],
 ];
 
 /**
@@ -1292,23 +1290,13 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
  * like the CHECK-definition list: a local engine runs this journal too.
  */
 export const MAIL_FUNCTION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
-  // Mail 0140_body_tsv_bounded — the body vector over the first 65,536 characters. Against a 0139
-  // database `body_tsv` is still generated over the whole text, and a long body of distinct words
-  // fails its ingest with 54000.
-  ["message_bodies_body_tsv_bounded", "left(coalesce(NEW.text, ''), 65536)"],
-  // Mail 0160_folder_state_outstanding — the trigger function that keeps `outstanding_account_id`.
-  // The prebuild adds the column and the index ahead of the migrator, so this is the marker that
-  // says the migration itself ran: without it the column fills no further and the poll under-counts.
-  ["folder_state_outstanding_account", "NEW.outstanding_account_id := (SELECT m.account_id FROM public.messages m WHERE m.id = NEW.message_id)"],
   // Mail 0163_folder_state_fresh_intent — a new filing's schedule reset. Without it a message filed
   // somewhere new keeps the old refusal's sleep and reason.
   ["folder_state_fresh_intent", "NEW.last_error_class := NULL"],
-  // Mail 0181_reconcile_pending_queue — the trigger function that keeps `flag_state.pending_account_id`.
-  // The prebuild adds the column and both queue indexes ahead of the migrator, so this is the marker
-  // that says the migration itself ran (its triggers and backfills commit with it): without it a
-  // pending row carries no account and the poll, which binds one, never sends it. The newest entry:
-  // the sentence about the tag moves with it.
-  ["flag_state_pending_account", "NEW.pending_account_id := (SELECT m.account_id FROM public.messages m WHERE m.id = NEW.message_id)"],
+  // Mail 0154_messages_recipient_keys — the recipients' key function. Since mail 0208 dropped its
+  // expression index this body is the one object 0154 leaves, and `messages.recipient_keys` is
+  // generated from it (0208's own markers probe the column and its index).
+  ["messages_recipient_keys", "account_id::text || ':' || lower(e.addr)"],
 ];
 
 /**
@@ -1348,7 +1336,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0184_account_settings_impersonation_filing";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0219_hosted_invitation_details";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

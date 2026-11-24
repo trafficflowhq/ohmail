@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -13,7 +14,7 @@ import type { Change } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   MemoryMirrorStore, consentIndex, consentPartition, decidedDestination, presentationReader,
-  screenerSegments, type EngineMessage, type Folder, type RuleDTO, type SyncChange,
+  screenerSegments, type SyncChange,
 } from "@ohmail/client-engine";
 import { ScreenerService, type ServiceContext } from "../src/index.js";
 import { cutlineCounts } from "../src/consent-cutline.js";
@@ -255,7 +256,7 @@ describe.skipIf(!PG_UP)("a rule is applied to the mail that arrived after it", (
 
   /**
    * INGEST THEN RULE — today's behaviour, kept. Gate-held mail that predates the rule is the
-   * backlog, and no ingest path re-files it: `apps/worker/src/rule-retro.ts` empties it, on the
+   * backlog, and no ingest path re-files it: `packages/organizer/src/rule-retro.ts` empties it, on the
    * press `applyRuleRequest` stamps or on the licence `gate-release.ts` arms.
    *
    * WHAT CHANGED IN 0.19.0 IS THE LISTING, NOT THE MAIL. The queue no longer ASKS about a sender

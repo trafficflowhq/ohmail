@@ -1,8 +1,11 @@
 import { and, eq, gt, inArray, isNotNull, lt, lte, notInArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, outboundSends, recordChange, type Tx } from "@trafficflow/db";
-import { createLogger, type Logger, type OpenSendAdapter, type StorageCap } from "@trafficflow/core/mail";
-import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
+import { createLogger, type Logger, type StorageCap } from "@trafficflow/core/mail";
+import {
+  bridgeTx, assertPassWalk, bridgeDb, rosterAccountDb, passContext, type Db, type PassRoster, type PassRosterRow, type OpenPassSendAdapter, type PassContext, type ServiceContext,
+  type UnboundDb,
+} from "./context.js";
 import { ServiceError } from "./errors.js";
 import {
   readScheduledFiles, SCHEDULE_FILES_MAX_AHEAD_MS, SCHEDULED_FILES_UNREADABLE, SCHEDULED_FILES_UNREADABLE_KEPT,
@@ -68,6 +71,7 @@ export const SCHEDULED_FILES_TIDY_BATCH = 100;
 const defaultLog = createLogger({ service: "scheduled-send" });
 
 export interface ScheduledSendPassDeps {
+  roster?: PassRoster;
   /**
    * STOP BEFORE THE NEXT DELIVERY — consulted between rows. A pass that has begun is not entitled
    * to finish: on the desktop the mailbox can change hands MID-PASS (the socket dies, a re-dial
@@ -84,8 +88,12 @@ export interface ScheduledSendPassDeps {
    */
   budgetMs?: number;
 
-  /** The send transport — `makeSendAdapter` on the API host, the local dial on the desktop. */
-  openSendAdapter: OpenSendAdapter;
+  /**
+   * The send transport — `makeSendAdapter` on the API host, the local dial on the desktop. Opened
+   * for one appointment, on that appointment's own handle: a server reads the mailbox's credential
+   * under the appointment's account, never on the handle the pass walks on.
+   */
+  openSendAdapter: OpenPassSendAdapter;
   /** The sent-copy projection's cap — absent means the projection refuses (`SendDeps`' rule). */
   resolveStorageCap?: (ctx: ServiceContext) => Promise<StorageCap>;
   /**
@@ -152,19 +160,37 @@ interface ClaimedRow {
   sendFiles: number;
 }
 
-/** One bounded pass. Never throws for a per-row fault — one broken appointment must not stop the rest. */
+/**
+ * One bounded pass. Never throws for a per-row fault — one broken appointment must not stop the rest.
+ *
+ * THE WALK AND THE ROWS. `walk` is the handle the pass walks on: it names no account, and only what
+ * reads or claims across accounts runs on it (the tidy's read of overdue appointments, the claim,
+ * the sweeps of files no appointment carries). Everything done FOR ONE APPOINTMENT runs on that
+ * appointment's own context ({@link passContext}): its handle is bound to the account of the row
+ * the claim just read, and the code that works on a row ({@link sendOne}, {@link rearm},
+ * {@link closeAppointment}) is handed that context and never the walk.
+ */
 export async function runScheduledSendPass(
-  db: Db, deps: ScheduledSendPassDeps,
+  walk: UnboundDb, deps: ScheduledSendPassDeps,
 ): Promise<ScheduledSendPassResult> {
+  assertPassWalk(walk);
   const log = deps.log ?? defaultLog;
   const now = deps.now ?? ((): Date => new Date());
   const batch = deps.batch ?? SCHEDULED_SEND_BATCH;
   const sends = deps.sends ?? sendService;
   const result: ScheduledSendPassResult = { claimed: 0, sent: 0, unverified: 0, failed: 0, deferred: 0 };
+  /** One appointment's context: the account is the claimed row's own, and the handle is bound to it. */
+  const contextOf = (row: ClaimedRow): PassContext =>
+    passContext(walk, row.accountId, { userId: null, now, requestId: `sched:${row.id}` });
 
   const startedAt = now().getTime();
-  if (deps.files?.tidy) await tidyKeptFiles(db, now(), log);
-  const rows = await claimDue(db, now(), batch, deps.accountEligible, log, deps.mailboxIds);
+  const readRoster = deps.roster;
+  const roster = await readRoster?.(SCHEDULED_SEND_SCAN_ACCOUNTS * SCHEDULED_SEND_SCAN_FACTOR);
+  if (deps.files?.tidy) await tidyKeptFiles(walk, now(), log, roster);
+  const rows = readRoster && roster
+    ? await claimFromRoster(walk, now(), batch, deps, log, roster,
+      await readRoster(batch * SCHEDULED_SEND_SCAN_FACTOR, 0, "recovery"))
+    : await claimDue(walk, now(), batch, deps.accountEligible, log, deps.mailboxIds);
   result.claimed = rows.length;
 
   for (const [i, row] of rows.entries()) {
@@ -174,156 +200,164 @@ export async function runScheduledSendPass(
     // Out of time: the rows not started are appointments again under their own keys (a recovered
     // `sending` row stays the recovery arm's).
     if (deps.budgetMs !== undefined && now().getTime() - startedAt + SCHEDULED_SEND_ROW_MS > deps.budgetMs) {
-      for (const left of rows.slice(i)) {
-        await bridgeTx(db).update(drafts).set({ status: "scheduled", updatedAt: now() })
-          .where(and(eq(drafts.id, left.id), eq(drafts.status, "draft"), eq(drafts.sendKey, left.sendKey)));
-      }
+      for (const left of rows.slice(i)) await rearm(contextOf(left), left);
       result.deferred += rows.length - i;
       log.info("scheduled_send_budget_spent", { left: rows.length - i });
       break;
     }
-    const ctx: ServiceContext = {
-      db, accountId: row.accountId, userId: null, now, requestId: `sched:${row.id}`,
-    };
-    // TOO LATE IS ITS OWN ANSWER, decided BEFORE anything dials — see the constant. Only for a
-    // row with no reservation; a recovered 'sending' row runs the send below regardless of age,
-    // because verify-by-Sent is what resolves its reservation terminally.
-    if (!row.mayHaveReservation
-      && now().getTime() - row.sendAt.getTime() > SCHEDULED_SEND_EXPIRY_MS) {
-      await closeAppointment(db, ctx, row, SCHEDULED_SEND_EXPIRED_SENTENCE, log);
-      result.failed += 1;
-      log.warn("scheduled_send_expired", { draftId: row.id, accountId: row.accountId });
-      continue;
-    }
-    // THE FILES, WHOLE OR NOT AT ALL: a letter that carries files never leaves without them. Only
-    // files that are not whole close it; a failed statement re-arms it as the transient arm below
-    // does (a recovered `sending` row is left as found), so a busy pool never cancels a letter.
-    let files: ScheduledFile[] | null = [];
-    if (row.sendFiles > 0) {
-      try {
-        files = await readScheduledFiles(db, row.accountId, row.id, row.sendKey, row.sendFiles, deps.files?.open);
-      } catch (err) {
-        await bridgeTx(db).update(drafts).set({ status: "scheduled", updatedAt: now() })
-          .where(and(eq(drafts.id, row.id), eq(drafts.status, "draft"), eq(drafts.sendKey, row.sendKey)));
-        result.deferred += 1;
-        log.warn("scheduled_send_files_read_failed", { draftId: row.id, accountId: row.accountId, count: row.sendFiles, err });
-        continue;
-      }
-    }
-    if (files === null) {
-      const closed = await closeAppointment(db, ctx, row, deps.files ? SCHEDULED_FILES_UNREADABLE_KEPT : SCHEDULED_FILES_UNREADABLE, log);
-      if (closed) result.failed += 1;
-      else result.deferred += 1;
-      log.warn("scheduled_send_files_unreadable", { draftId: row.id, accountId: row.accountId, count: row.sendFiles });
-      continue;
-    }
-    try {
-      const sendDeps: SendDeps = {
-        openSendAdapter: deps.openSendAdapter,
-        ...(deps.resolveStorageCap ? { resolveStorageCap: deps.resolveStorageCap } : {}),
-        // No request pipeline carries bytes at send time — the files, if any, were read from this
-        // store and the adapter dials from this process — so the truthful surface is the local engine's.
-        surfaceMaxTotalBytes: null,
-        ...(deps.keepOwedCopy !== undefined && deps.keepOwedCopy !== false ? { keepOwedCopy: deps.keepOwedCopy } : {}),
-        log,
-      };
-      const res = files.length > 0
-        ? await sends.send(ctx, row.id, row.sendKey, sendDeps, { attachments: files })
-        : await sends.send(ctx, row.id, row.sendKey, sendDeps);
-      if (res.status === "sent") {
-        result.sent += 1;
-        log.info("scheduled_send_sent", { draftId: row.id, accountId: row.accountId });
-      } else if (res.status === "unverified") {
-        result.unverified += 1;
-        log.warn("scheduled_send_unverified", { draftId: row.id, accountId: row.accountId });
-      } else if (res.status === "failed") {
-        // A terminally-failed prior reservation under this key. The appointment is over — and
-        // `includeSending` is TRUE here alone, because "failed" is the reservation machinery's
-        // own word that the reservation is terminal, which is exactly the proof the close's
-        // 'sending' exclusion exists to demand.
-        await closeAppointment(db, ctx, row,
-          "A prior send attempt under this schedule failed and was not delivered.", log,
-          { includeSending: true });
-        result.failed += 1;
-      } else {
-        // `in_flight` OR `queued` — both defer, from opposite ends. `in_flight`: a live
-        // invocation already owns this key (two pokes overlapping in the one window SKIP LOCKED
-        // cannot arbitrate — after the claim committed). `queued`: this call's own submission
-        // passed the attempt ceiling and was abandoned mid-flight, fate unknown — in-process it
-        // may still land and finalize itself; if not, the row is a `sending` draft with its key
-        // standing, exactly what the recovery arm claims once provably stale. Nothing is written
-        // either way: closing here writes an ending this pass cannot prove; re-arming offers a
-        // second envelope for a message that may already be gone.
-        result.deferred += 1;
-      }
-    } catch (err) {
-      if (err instanceof ServiceError) {
-        // Deterministic refusal. When `reserve` itself threw, it rolled back — the row is an
-        // ordinary 'draft' with the key standing; the close lands. When the refusal came AFTER
-        // the reservation committed, the close DECLINES and the reservation is consulted:
-        // `failed` — the pre-SMTP window finalized terminally and cleared `send_key`; nothing
-        // retries — count FAILED. `pending` — the envelope went out and the Sent probe threw;
-        // recovery replays once provably stale — count DEFERRED ("failed" would write an ending
-        // this pass cannot prove). A RETRYABLE refusal is not deterministic: the case today is a
-        // duplicate refused while the FIRST attempt is still `pending` — closing on it lost the
-        // send. So a retryable refusal DEFERS: appointment and key stand, the row comes due
-        // again.
-        if (err.retryable === true) {
-          // RE-ARM, exactly as the transient arm below does and guarded the same way: status still
-          // 'draft' (the claim window's own state) and the SAME key. That matches only a row this
-          // pass claimed and did not move past, so a row the reservation already advanced is left
-          // alone. Leaving it at 'draft' would also come back — the recovery arm claims a keyed row
-          // once it is provably stale — but not for ten minutes, and there is nothing to wait for
-          // here: the appointment is still due and the next pass can judge it again.
-          await bridgeTx(db).update(drafts)
-            .set({ status: "scheduled", updatedAt: now() })
-            .where(and(
-              eq(drafts.id, row.id), eq(drafts.status, "draft"), eq(drafts.sendKey, row.sendKey),
-            ));
-          result.deferred += 1;
-          log.warn("scheduled_send_deferred_retryable", {
-            draftId: row.id, accountId: row.accountId, code: err.code,
-          });
-          continue;
-        }
-        const closed = await closeAppointment(db, ctx, row, err.message, log);
-        if (closed || await reservationFailed(db, ctx, row)) result.failed += 1;
-        else result.deferred += 1;
-        log.warn("scheduled_send_refused", { draftId: row.id, accountId: row.accountId, code: err.code });
-      } else {
-        // TRANSIENT — and where the fault landed decides who owns the retry. Re-arm, guarded
-        // on the claim window (status still 'draft', the SAME key): that matches only a fault
-        // BEFORE the reservation existed, and the row simply comes due again next pass.
-        //
-        // A row the reservation already moved past matches nothing here ON PURPOSE, and there
-        // are now two such rows, distinguished by the reservation exactly as the typed branch
-        // above distinguishes them. A `failed` reservation is a definite non-delivery the
-        // pre-SMTP window already finalized and explained; re-arming it would resend a message
-        // whose refusal is recorded, and the guard on `send_key` is what stops that — the key is
-        // already NULL. A `pending` one is the unknown-fate case the recovery arm owns.
-        await bridgeTx(db).update(drafts)
-          .set({ status: "scheduled", updatedAt: now() })
-          .where(and(
-            eq(drafts.id, row.id), eq(drafts.status, "draft"),
-            eq(drafts.sendKey, row.sendKey),
-          ));
-        if (await reservationFailed(db, ctx, row)) {
-          result.failed += 1;
-          log.warn("scheduled_send_failed", { draftId: row.id, accountId: row.accountId, err });
-        } else {
-          result.deferred += 1;
-          log.warn("scheduled_send_deferred", { draftId: row.id, accountId: row.accountId, err });
-        }
-      }
-    }
+    result[await sendOne(contextOf(row), row, deps, sends, log)] += 1;
   }
 
   // Files of appointments that ended here (sent, closed or expired) go now, not at the next drain.
   if (rows.some((r) => r.sendFiles > 0)) {
-    await sweepScheduledSendFiles(db, { ...(deps.mailboxIds ? { mailboxIds: deps.mailboxIds } : {}), vacuum: !deps.files })
-      .catch((err: unknown) => log.warn("scheduled_send_files_sweep_failed", { err }));
+    const opts = { ...(deps.mailboxIds ? { mailboxIds: deps.mailboxIds } : {}), vacuum: !deps.files };
+    try {
+      if (roster) {
+        for (const accountId of new Set(rows.filter((row) => row.sendFiles > 0).map((row) => row.accountId))) {
+          await sweepScheduledSendFiles(rosterAccountDb(walk, { accountId }), opts, accountId);
+        }
+      } else {
+        await sweepScheduledSendFiles(walk, opts);
+      }
+    } catch (err) {
+      log.warn("scheduled_send_files_sweep_failed", { err });
+    }
   }
   return result;
+}
+
+/**
+ * Make a claimed row an appointment again: guarded on the claim window (status still 'draft', the
+ * SAME key), so it matches only a row this pass claimed and did not move past.
+ */
+async function rearm(ctx: PassContext, row: ClaimedRow): Promise<void> {
+  await bridgeTx(ctx.db).update(drafts).set({ status: "scheduled", updatedAt: ctx.now() })
+    .where(and(eq(drafts.id, row.id), eq(drafts.status, "draft"), eq(drafts.sendKey, row.sendKey)));
+}
+
+/**
+ * ONE CLAIMED APPOINTMENT, on its own context and nothing else: every statement here runs on
+ * `ctx.db`, bound to the account of the row. Answers which counter the row ends in.
+ */
+async function sendOne(
+  ctx: PassContext, row: ClaimedRow, deps: ScheduledSendPassDeps, sends: SendService, log: Logger,
+): Promise<"sent" | "unverified" | "failed" | "deferred"> {
+  // TOO LATE IS ITS OWN ANSWER, decided BEFORE anything dials — see the constant. Only for a
+  // row with no reservation; a recovered 'sending' row runs the send below regardless of age,
+  // because verify-by-Sent is what resolves its reservation terminally.
+  if (!row.mayHaveReservation
+    && ctx.now().getTime() - row.sendAt.getTime() > SCHEDULED_SEND_EXPIRY_MS) {
+    await closeAppointment(ctx, row, SCHEDULED_SEND_EXPIRED_SENTENCE, log);
+    log.warn("scheduled_send_expired", { draftId: row.id, accountId: row.accountId });
+    return "failed";
+  }
+  // THE FILES, WHOLE OR NOT AT ALL: a letter that carries files never leaves without them. Only
+  // files that are not whole close it; a failed statement re-arms it as the transient arm below
+  // does (a recovered `sending` row is left as found), so a busy pool never cancels a letter.
+  let files: ScheduledFile[] | null = [];
+  if (row.sendFiles > 0) {
+    try {
+      files = await readScheduledFiles(ctx.db, row.accountId, row.id, row.sendKey, row.sendFiles, deps.files?.open);
+    } catch (err) {
+      await rearm(ctx, row);
+      log.warn("scheduled_send_files_read_failed", { draftId: row.id, accountId: row.accountId, count: row.sendFiles, err });
+      return "deferred";
+    }
+  }
+  if (files === null) {
+    const closed = await closeAppointment(ctx, row, deps.files ? SCHEDULED_FILES_UNREADABLE_KEPT : SCHEDULED_FILES_UNREADABLE, log);
+    log.warn("scheduled_send_files_unreadable", { draftId: row.id, accountId: row.accountId, count: row.sendFiles });
+    return closed ? "failed" : "deferred";
+  }
+  try {
+    const sendDeps: SendDeps = {
+      // The appointment's own dial: whatever the opening reads, it reads on this row's handle.
+      openSendAdapter: (mailboxId) => deps.openSendAdapter(mailboxId, ctx.db),
+      ...(deps.resolveStorageCap ? { resolveStorageCap: deps.resolveStorageCap } : {}),
+      // No request pipeline carries bytes at send time — the files, if any, were read from this
+      // store and the adapter dials from this process — so the truthful surface is the local engine's.
+      surfaceMaxTotalBytes: null,
+      ...(deps.keepOwedCopy !== undefined && deps.keepOwedCopy !== false ? { keepOwedCopy: deps.keepOwedCopy } : {}),
+      log,
+    };
+    const res = files.length > 0
+      ? await sends.send(ctx, row.id, row.sendKey, sendDeps, { attachments: files })
+      : await sends.send(ctx, row.id, row.sendKey, sendDeps);
+    if (res.status === "sent") {
+      log.info("scheduled_send_sent", { draftId: row.id, accountId: row.accountId });
+      return "sent";
+    }
+    if (res.status === "unverified") {
+      log.warn("scheduled_send_unverified", { draftId: row.id, accountId: row.accountId });
+      return "unverified";
+    }
+    if (res.status === "failed") {
+      // A terminally-failed prior reservation under this key. The appointment is over — and
+      // `includeSending` is TRUE here alone, because "failed" is the reservation machinery's
+      // own word that the reservation is terminal, which is exactly the proof the close's
+      // 'sending' exclusion exists to demand.
+      await closeAppointment(ctx, row,
+        "A prior send attempt under this schedule failed and was not delivered.", log,
+        { includeSending: true });
+      return "failed";
+    }
+    // `in_flight` OR `queued` — both defer, from opposite ends. `in_flight`: a live
+    // invocation already owns this key (two pokes overlapping in the one window SKIP LOCKED
+    // cannot arbitrate — after the claim committed). `queued`: this call's own submission
+    // passed the attempt ceiling and was abandoned mid-flight, fate unknown — in-process it
+    // may still land and finalize itself; if not, the row is a `sending` draft with its key
+    // standing, exactly what the recovery arm claims once provably stale. Nothing is written
+    // either way: closing here writes an ending this pass cannot prove; re-arming offers a
+    // second envelope for a message that may already be gone.
+    return "deferred";
+  } catch (err) {
+    if (err instanceof ServiceError) {
+      // Deterministic refusal. When `reserve` itself threw, it rolled back — the row is an
+      // ordinary 'draft' with the key standing; the close lands. When the refusal came AFTER
+      // the reservation committed, the close DECLINES and the reservation is consulted:
+      // `failed` — the pre-SMTP window finalized terminally and cleared `send_key`; nothing
+      // retries — count FAILED. `pending` — the envelope went out and the Sent probe threw;
+      // recovery replays once provably stale — count DEFERRED ("failed" would write an ending
+      // this pass cannot prove). A RETRYABLE refusal is not deterministic: the case today is a
+      // duplicate refused while the FIRST attempt is still `pending` — closing on it lost the
+      // send. So a retryable refusal DEFERS: appointment and key stand, the row comes due
+      // again.
+      if (err.retryable === true) {
+        // RE-ARM, exactly as the transient arm below does and guarded the same way: status still
+        // 'draft' (the claim window's own state) and the SAME key. That matches only a row this
+        // pass claimed and did not move past, so a row the reservation already advanced is left
+        // alone. Leaving it at 'draft' would also come back — the recovery arm claims a keyed row
+        // once it is provably stale — but not for ten minutes, and there is nothing to wait for
+        // here: the appointment is still due and the next pass can judge it again.
+        await rearm(ctx, row);
+        log.warn("scheduled_send_deferred_retryable", {
+          draftId: row.id, accountId: row.accountId, code: err.code,
+        });
+        return "deferred";
+      }
+      const closed = await closeAppointment(ctx, row, err.message, log);
+      const failed = closed || await reservationFailed(ctx, row);
+      log.warn("scheduled_send_refused", { draftId: row.id, accountId: row.accountId, code: err.code });
+      return failed ? "failed" : "deferred";
+    }
+    // TRANSIENT — and where the fault landed decides who owns the retry. Re-arm, guarded
+    // on the claim window (status still 'draft', the SAME key): that matches only a fault
+    // BEFORE the reservation existed, and the row simply comes due again next pass.
+    //
+    // A row the reservation already moved past matches nothing here ON PURPOSE, and there
+    // are now two such rows, distinguished by the reservation exactly as the typed branch
+    // above distinguishes them. A `failed` reservation is a definite non-delivery the
+    // pre-SMTP window already finalized and explained; re-arming it would resend a message
+    // whose refusal is recorded, and the guard on `send_key` is what stops that — the key is
+    // already NULL. A `pending` one is the unknown-fate case the recovery arm owns.
+    await rearm(ctx, row);
+    if (await reservationFailed(ctx, row)) {
+      log.warn("scheduled_send_failed", { draftId: row.id, accountId: row.accountId, err });
+      return "failed";
+    }
+    log.warn("scheduled_send_deferred", { draftId: row.id, accountId: row.accountId, err });
+    return "deferred";
+  }
 }
 
 /**
@@ -334,16 +368,20 @@ export async function runScheduledSendPass(
  * statements: account deletion locks files and then drafts, so no transaction here holds both. A
  * draft in the claim window or `sending` is never closed here. Never throws.
  */
-async function tidyKeptFiles(db: Db, now: Date, log: Logger): Promise<void> {
+async function tidyKeptFiles(walk: UnboundDb, now: Date, log: Logger, roster?: PassRosterRow[]): Promise<void> {
+  const closedAccounts = new Set<string>();
   try {
-    const overdue = await bridgeTx(db).select({ id: drafts.id, accountId: drafts.accountId }).from(drafts)
+    const overdue = roster?.slice(0, SCHEDULED_FILES_TIDY_BATCH) ?? await bridgeTx(walk).select({ id: drafts.id, accountId: drafts.accountId }).from(drafts)
       .where(and(
         eq(drafts.status, "scheduled"), gt(drafts.sendFiles, 0),
         lt(drafts.sendAt, new Date(now.getTime() - SCHEDULED_FILES_OVERDUE_MS)),
       ))
       .limit(SCHEDULED_FILES_TIDY_BATCH);
+    let closedCount = 0;
     for (const row of overdue) {
-      await bridgeTx(db).transaction(async (tx) => {
+      // One appointment's close, on its own account's handle: the account is the row's, read above.
+      const ctx = passContext(walk, row.accountId, { userId: null, now: () => now, requestId: `sched-tidy:${row.id}` });
+      await bridgeTx(ctx.db).transaction(async (tx) => {
         // scoped-by: the row's own (id, account_id), read above; the status predicate is the race guard
         const closed = await tx.update(drafts)
           .set({ status: "draft", sendAt: null, sendKey: null, sendError: SCHEDULED_SEND_EXPIRED_SENTENCE, updatedAt: now })
@@ -353,17 +391,28 @@ async function tidyKeptFiles(db: Db, now: Date, log: Logger): Promise<void> {
           ))
           .returning({ id: drafts.id });
         if (closed.length > 0) {
+          closedCount += 1;
+          closedAccounts.add(row.accountId);
           await recordChange(tx, { accountId: row.accountId, entityType: "draft", entityId: row.id, op: "update", meta: null });
         }
       });
     }
-    if (overdue.length > 0) log.warn("scheduled_files_overdue_closed", { count: overdue.length });
+    if (closedCount > 0) log.warn("scheduled_files_overdue_closed", { count: closedCount });
   } catch (err) {
     log.warn("scheduled_files_tidy_failed", { err });
   }
   try {
-    const swept = await sweepScheduledSendFiles(db, { vacuum: false })
-      + await sweepAgedScheduledFiles(db, new Date(now.getTime() - SCHEDULED_FILES_MAX_AGE_MS));
+    let swept = 0;
+    const before = new Date(now.getTime() - SCHEDULED_FILES_MAX_AGE_MS);
+    if (roster) {
+      for (const accountId of closedAccounts) {
+        const db = rosterAccountDb(walk, { accountId });
+        swept += await sweepScheduledSendFiles(db, { vacuum: false }, accountId)
+          + await sweepAgedScheduledFiles(db, before, accountId);
+      }
+    } else {
+      swept = await sweepScheduledSendFiles(walk, { vacuum: false }) + await sweepAgedScheduledFiles(walk, before);
+    }
     if (swept > 0) log.info("scheduled_files_swept", { rows: swept });
   } catch (err) {
     log.warn("scheduled_send_files_sweep_failed", { err });
@@ -399,19 +448,60 @@ export const SCHEDULED_SEND_SCAN_ACCOUNTS = 200;
  * answers "already being sent". The ELIGIBILITY GATE runs inside the transaction, before the
  * flip, per distinct account: an ineligible account's rows stay `'scheduled'`, dialled the cycle
  * after the suspension lifts, never counted toward the batch.
+ *
+ * ON THE WALK, whole: one transaction reads and flips the due rows of every account, so it names
+ * none, and the eligibility read rides inside it.
  */
+async function claimFromRoster(
+  walk: UnboundDb, now: Date, batch: number, deps: ScheduledSendPassDeps, log: Logger,
+  roster: PassRosterRow[], recovery: PassRosterRow[],
+): Promise<ClaimedRow[]> {
+  const out: ClaimedRow[] = [];
+  const verdicts = new Map<string, boolean>();
+  const eligible = async (accountId: string, db: Db) => {
+    const answer = verdicts.get(accountId) ?? (await deps.accountEligible?.(accountId, db) ?? true);
+    verdicts.set(accountId, answer);
+    return answer;
+  };
+  const attemptedRecovery = new Set<string>();
+  const claim = async (rows: PassRosterRow[], through: number, phase: "scheduled" | "recovery") => {
+    const accounts = new Set<string>();
+    for (const row of rows) {
+      if (out.length >= through || accounts.size >= SCHEDULED_SEND_SCAN_ACCOUNTS) break;
+      if (verdicts.get(row.accountId) === false) continue;
+      if (phase === "recovery") {
+        if (attemptedRecovery.has(row.id)) continue;
+        attemptedRecovery.add(row.id);
+      }
+      accounts.add(row.accountId);
+      const scoped = rosterAccountDb(walk, row);
+      const claimed = await claimDue(scoped, now, 1, eligible, log, deps.mailboxIds, row, phase);
+      if (phase === "scheduled" && claimed.length > 0) attemptedRecovery.add(row.id);
+      out.push(...claimed);
+    }
+    if (out.length < through && accounts.size >= SCHEDULED_SEND_SCAN_ACCOUNTS) {
+      log.error("scheduled_send_scan_saturated", { count: accounts.size });
+    }
+  };
+  // Reserve the first opportunity for a stranded send even when every scheduled slot is due.
+  await claim(recovery, Math.min(1, batch), "recovery");
+  await claim(roster, batch, "scheduled");
+  await claim(recovery, batch, "recovery");
+  return out;
+}
+
 async function claimDue(
-  db: Db, now: Date, batch: number,
+  walk: Db, now: Date, batch: number,
   accountEligible: ((accountId: string, db: Db) => Promise<boolean>) | undefined,
   log: Logger,
-  mailboxIds: readonly string[] | undefined,
+  mailboxIds: readonly string[] | undefined, candidate?: PassRosterRow, phase?: "scheduled" | "recovery",
 ): Promise<ClaimedRow[]> {
-  const d = dialect(db);
+  const d = dialect(walk);
   /* NONE MEANS NONE, decided before a transaction is opened. See the field's own note: an empty
      list is a caller saying it has no mailboxes to claim for, and `inArray(col, [])` is not a
      reliable way to say that across drivers. */
   if (mailboxIds !== undefined && mailboxIds.length === 0) return [];
-  return bridgeTx(db).transaction(async (tx) => {
+  return bridgeTx(walk).transaction(async (tx) => {
     // One eligibility read per distinct account this claim touches, memoised for both arms —
     // and run ON THIS TRANSACTION's handle, never a captured outer one (the deadlock rule on
     // `ScheduledSendPassDeps.accountEligible`).
@@ -455,6 +545,7 @@ async function claimDue(
         }).from(drafts)
           .where(and(
             base(),
+            ...(candidate ? [eq(drafts.id, candidate.id), eq(drafts.accountId, candidate.accountId)] : []),
             /* THE MAILBOX NARROWING, in the scan rather than in either arm's `base()`, so the
                due arm and the stale-recovery arm cannot drift apart about it. A recovered
                'sending' row belongs to exactly the same mailbox its appointment did. */
@@ -487,13 +578,13 @@ async function claimDue(
       return taken;
     };
 
-    const due = await pagedScan(
+    const due = phase === "recovery" ? [] : await pagedScan(
       () => and(eq(drafts.status, "scheduled"), lte(drafts.sendAt, now), isNotNull(drafts.sendKey)),
       batch,
     );
 
     const staleBefore = new Date(now.getTime() - SEND_STALE_AFTER_MS);
-    const recovery = due.length >= batch ? [] : await pagedScan(
+    const recovery = phase === "scheduled" || due.length >= batch ? [] : await pagedScan(
       () => and(
         isNotNull(drafts.sendKey),
         lte(drafts.sendAt, staleBefore),
@@ -546,9 +637,9 @@ async function claimDue(
  * the row to DEFERRED: the conservative direction — recovery re-examines the row rather than an
  * operator being told an ending never proven.
  */
-async function reservationFailed(db: Db, ctx: ServiceContext, row: ClaimedRow): Promise<boolean> {
+async function reservationFailed(ctx: PassContext, row: ClaimedRow): Promise<boolean> {
   try {
-    const found = await bridgeTx(db).select({ status: outboundSends.status })
+    const found = await bridgeTx(ctx.db).select({ status: outboundSends.status })
       .from(outboundSends)
       .where(and(
         eq(outboundSends.accountId, ctx.accountId),
@@ -562,11 +653,11 @@ async function reservationFailed(db: Db, ctx: ServiceContext, row: ClaimedRow): 
 }
 
 async function closeAppointment(
-  db: Db, ctx: ServiceContext, row: ClaimedRow, sentence: string, log: Logger,
+  ctx: PassContext, row: ClaimedRow, sentence: string, log: Logger,
   opts: { includeSending?: boolean } = {},
 ): Promise<boolean> {
   try {
-    return await bridgeTx(db).transaction(async (tx) => {
+    return await bridgeTx(ctx.db).transaction(async (tx) => {
       const closed = await tx.update(drafts)
         .set({ status: "draft", sendAt: null, sendKey: null, sendError: sentence, updatedAt: ctx.now() })
         .where(and(

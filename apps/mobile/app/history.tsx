@@ -6,6 +6,7 @@
  * mirror's rows painting first until page one replaces them in place. Nothing has moved: every row
  * states its server folder.
  */
+import { MailAppearance } from "../src/theme/mail";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 
@@ -15,7 +16,7 @@ import { unansweredSaid } from "../src/state/live";
 import { usePullToSync } from "../src/state/pull";
 import { useStoreHistory } from "../src/state/store-views";
 import { useWorld } from "../src/state/world";
-import { Empty, Screen, Tail, Tap, Txt } from "../src/ui/base";
+import { Empty, Screen, Tail, Tap, Txt, ViewHead } from "../src/ui/base";
 import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { ListDetail, useListDetail } from "../src/ui/list-detail";
 import { MailList } from "../src/ui/MailList";
@@ -35,9 +36,11 @@ export default function HistoryScreen({ inPane = false }: { inPane?: boolean }) 
   useLocale();
   return (
     <SurfaceBoundary surface="history">
-      <Gated>
-        <HistoryBody inPane={inPane} />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <HistoryBody inPane={inPane} />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }
@@ -118,7 +121,7 @@ function HistoryBody({ inPane }: { inPane: boolean }) {
   const list = (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back (one title). */}
-      {inPane ? <PaneTop /> : <DetailBar />}
+      {inPane ? <PaneTop /> : <DetailBar backCapsule={t.mail} />}
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1, paddingRight: historyListGutter(rail ? railWidth : null) }}>
         <MailList
@@ -159,11 +162,13 @@ function HistoryBody({ inPane }: { inPane: boolean }) {
           refresh={pull}
           head={
             <View style={{ paddingHorizontal: HISTORY_HEAD_PAD, paddingTop: 8, paddingBottom: 4 }}>
-              <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
-                <Txt variant="h1" numberOfLines={1} style={{ flexShrink: 1 }}>{Copy.history}</Txt>
-                <Txt variant="meta" tone="ink3" tabular>{meta}</Txt>
-              </View>
-              <Txt variant="note" tone="ink3" style={{ marginTop: 8 }}>{Copy.historyExplainer}</Txt>
+              {t.mail ? <ViewHead title={Copy.history} meta={meta} /> : (
+                <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
+                  <Txt variant="h1" numberOfLines={1} style={{ flexShrink: 1 }}>{Copy.history}</Txt>
+                  <Txt variant="meta" tone="ink3" tabular>{meta}</Txt>
+                </View>
+              )}
+              {!t.mail || more ? <Txt variant="note" tone="ink3" style={{ marginTop: 8 }}>{Copy.historyExplainer}</Txt> : null}
               <Tap
                 onPress={() => setMore((v) => !v)}
                 accessibilityRole="button"

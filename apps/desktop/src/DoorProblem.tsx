@@ -16,7 +16,7 @@
  */
 import { Button } from "@ohmail/ui";
 
-import { useRefusalAtThePress } from "../../webapp/app/shell/refusal-at-the-press";
+import { useRefusalAtThePress } from "@ohmail/app-logic/press/refusal-at-the-press";
 import { updateAnswerSentence, updateVerbLabel } from "../../webapp/app/shell/update-answer";
 import { useUpdateOffer } from "../../webapp/app/shell/UpdateLine";
 import { DOOR_COPY } from "./door-copy.js";

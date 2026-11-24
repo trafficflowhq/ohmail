@@ -7,7 +7,7 @@ import type {
 import { ScreenerService } from "../src/index.js";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 
 /*
  * THE SCREENER'S USAGE RIDES ITS RELEASE: one line per purchased sender, attributed to the account
@@ -39,7 +39,7 @@ function reporting(throws = false): ClassifierPort & { calls: unknown[][] } {
 }
 
 async function world() {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "screener-usage" });
   await seedMessage(w.db, w.accountId, w.mailboxId, { from: "alice@ex.example" });
   const [m] = await w.db.select().from(messages).where(eq(messages.fromAddress, "alice@ex.example"));
@@ -91,7 +91,7 @@ describe("the Screener's usage rides its release", () => {
     const classifier = reporting();
     const svc = new ScreenerService({ adapter: new FakeAdapter(), classifier, credits: w.credits, pricing: PLANE_PRICING });
     await svc.suggest(w.ctx, { senders: ["alice@ex.example"] });
-    expect(classifier.calls).toEqual([[expect.anything()]]);
+    expect(classifier.calls).toEqual([[expect.anything(), { beforeDispatch: expect.any(Function) }]]);
     expect(w.credits.releases).toHaveLength(1);
     expect("usage" in w.credits.releases[0]!).toBe(false);
   });

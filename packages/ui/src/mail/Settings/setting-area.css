@@ -1,0 +1,11 @@
+/* A setting written in words: the label over a field of several lines, a step from the lines around it. */
+@layer oh {
+  .oh-settingarea {
+    padding: var(--s2) 0;
+  }
+
+  /* The label stands a step further from its field than a field's own label. */
+  .oh-settingarea > .oh-field > .oh-field-label {
+    padding-bottom: var(--s2);
+  }
+}

@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { sql } from "drizzle-orm";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
-import { SearchService } from "@trafficflow/services";
+import { upsertMessageSearch } from "@trafficflow/core/mail";
+import { SearchService, dbFor } from "@trafficflow/services";
+import { statementSeam } from "./helpers/statement-seam.js";
 import type { ServiceContext } from "@trafficflow/services";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 
@@ -34,8 +34,11 @@ import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing"
  * count under the box described the noise. Case (1) below is that corpus.
  */
 const URL = pgTestUrl(import.meta.url);
+// The factory's handle: the binder takes a server handle only from the factory that registered its
+// door. `client` is the raw client the page's plan is read on.
 const client = postgres(URL, { max: 5 });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+const owned = makeOwnedDb(URL);
+const db = owned.db;
 const svc = new SearchService();
 
 const NOW = new Date("2026-08-20T12:00:00.000Z");
@@ -43,7 +46,7 @@ const A = randomUUID();
 const ids: Record<string, string> = {};
 
 function ctx(): ServiceContext {
-  return { db, accountId: A, userId: null, now: () => NOW, requestId: "search-tiers" };
+  return { db: dbFor(db, A), accountId: A, userId: null, now: () => NOW, requestId: "search-tiers" };
 }
 
 async function seed(o: {
@@ -69,9 +72,14 @@ async function seed(o: {
       nativeLocator: { folder: "INBOX", ref: "1:1" },
     })
     .returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: o.body });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: o.body });
+  // As every writer of a body does: the letter's search document with it.
+  await upsertMessageSearch(db as never, m!.id, {
+    accountId: A, subject: o.subject, from: { name: null, address: o.from }, to: [], cc: [],
+    attachmentNames: [], bodyText: o.body, source: "text",
+  });
   await db.insert(folderState).values({
-    messageId: m!.id,
+    messageId: m!.id, accountId: m!.accountId,
     desiredFolder: "INBOX",
     observedFolder: "INBOX",
     lastSetBy: "us",
@@ -136,10 +144,12 @@ describe("the hosted search ranking table (real Postgres, pg_trgm)", () => {
   afterAll(async () => {
     // FK order: the children first. The :5433 database is shared and long-lived, so a file that
     // leaves rows behind poisons the next run's counts rather than its own.
+    await db.execute(sql`delete from message_search where account_id = ${A}`);
     await db.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${A})`);
     await db.execute(sql`delete from message_bodies where message_id in (select id from messages where account_id = ${A})`);
     await db.execute(sql`delete from messages where account_id = ${A}`);
     await db.execute(sql`delete from mailboxes where account_id = ${A}`);
+    await owned.close();
     await client.end({ timeout: 5 });
   });
 
@@ -170,8 +180,8 @@ describe("the hosted search ranking table (real Postgres, pg_trgm)", () => {
       select count(*)::int as n
       from messages m left join message_bodies b on b.message_id = m.id
       where m.account_id = ${A}
-        and (m.subject_tsv @@ websearch_to_tsquery('english', 'grrat')
-             or b.body_tsv @@ websearch_to_tsquery('english', 'grrat'))`);
+        and (to_tsvector('english', coalesce(m.subject, '') || ' ' || coalesce(m.from_address, '')) @@ websearch_to_tsquery('english', 'grrat')
+             or to_tsvector('english', left(coalesce(b.text, ''), 65536)) @@ websearch_to_tsquery('english', 'grrat'))`);
     const rows = Array.isArray(lex) ? lex : (lex as { rows: Array<{ n: number }> }).rows;
     expect((rows as Array<{ n: number }>)[0]!.n).toBe(0);
 
@@ -221,7 +231,9 @@ describe("the hosted search ranking table (real Postgres, pg_trgm)", () => {
    */
   it("(7) a first page's typo arms run only when the exact tier is empty", async () => {
     const logged: Array<{ q: string; p: unknown[] }> = [];
-    const traced = brandDialect(drizzle(client, { schema, logger: { logQuery: (q, p) => { logged.push({ q, p }); } } }), "pg");
+    // The census rides the context's own handle: a seam at the drizzle builder of the account's handle
+    // sees the page statement, text and parameters, as a logger on a raw handle saw it.
+    const traced = statementSeam(dbFor(owned.db, A), (q, p) => { logged.push({ q, p }); return null; });
     const trigramLoops = async (q: string): Promise<number[]> => {
       logged.length = 0;
       await svc.search({ ...ctx(), db: traced }, { q, parts: "page" });

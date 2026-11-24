@@ -1,29 +1,33 @@
 /**
- * The view-switch harness's page (`scripts/perf/view-switch.mjs` bundles and drives it): the real
- * AppShell over a generated mirror, mounted the desktop's way (an engine prop, a FixturesAdapter that
- * also serves html bodies). Local fixtures only; nothing here reaches a network.
+ * The view-switch harness's page (`scripts/perf/view-switch.mjs` bundles and drives it): today's views
+ * in the frame over a generated mirror, mounted as the demo mounts them (`DemoFrame`: the frame over the
+ * engine handed to `EngineProvider`, every wire none; here a FixturesAdapter that also serves html
+ * bodies). Local fixtures only; nothing here reaches a network.
  *
  * Query: ?n=Ohbox rows &nr=News rows &nc=Receipts rows &heavy=1 (50 KB newsletters) &bodyMs=body
  * latency &demo=0 &store=full|windowed &ns=screened-out senders &nsh=letters each &np=spam senders
  * &nph=letters each (without ns/np the demo world's few)
  */
+import type { MessageBodyWire } from "@ohmail/wire";
 import "../../apps/webapp/app/app.css";
 import "../../apps/webapp/app/zero-layout.css";
 import { createRoot } from "react-dom/client";
 import { IntlProvider } from "use-intl";
 import en from "../../apps/webapp/messages/en.json";
-import { AppShell } from "../../apps/webapp/app/shell/AppShell";
+import { DemoFrame } from "../../apps/webapp/app/(product)/demo/DemoShell";
+import { EngineProvider } from "../../apps/webapp/app/shell/engine";
 import { setActiveCatalog } from "../../apps/webapp/app/shell/locale";
-import { resetUiVitalsForTest, takeUiVitals } from "../../apps/webapp/app/shell/ui-vitals";
+import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui-vitals";
 import { ThemeProvider, ToastHost } from "../../packages/ui/src/index";
 import { localStorageDoor } from "../../packages/client-engine/src/durable";
 import { OhmailEngine } from "../../packages/client-engine/src/index";
-import { FixturesAdapter } from "../../packages/client-engine/src/adapters/fixtures-adapter";
-import type { MessageBodyWire } from "../../packages/client-engine/src/index";
-import { getFixtures } from "../../packages/fixtures/src/index";
-import type { Address, Fixtures, HeldMailFixture, MessageFixture, Folder } from "../../packages/fixtures/src/types";
+import { FixturesAdapter } from "../../packages/testing/src/adapters/fixtures-adapter";
+import { getFixtures } from "../../packages/testing/src/index";
+import type { Address, Fixtures, HeldMailFixture, MessageFixture, Folder } from "../../packages/testing/src/types";
 
 const THEME_DOOR = localStorageDoor("theme");
+/** What the page says of itself, as the demo's does: the managed service, a strict send ceiling. */
+const SAYS = { service: "managed", sendCeiling: "strict" } as const;
 const params = new URLSearchParams(window.location.search);
 const NO = Number(params.get("n") ?? "3000");
 const NR = Number(params.get("nr") ?? "2000");
@@ -169,7 +173,6 @@ function world(): Fixtures {
     ohbox: [...base.ohbox, ...gen(NO, "ohbox", 7)],
     reads,
     readsWaterline: { ...base.readsWaterline, newestSeenId: reads[Math.min(10, reads.length - 1)]!.id },
-    readsAiChip: { ...base.readsAiChip, afterId: reads[0]!.id },
     receipts,
     receiptsGroups: [],
   };
@@ -185,7 +188,9 @@ createRoot(document.getElementById("root")!).render(
   <IntlProvider locale="en" messages={en as never} timeZone="UTC" now={new Date("2026-08-02T09:00:00.000Z")}>
     <ThemeProvider storageKey="ohmail.theme" faces={true} storage={THEME_DOOR}>
       <ToastHost>
-        <AppShell demo={DEMO} engine={engine} />
+        <EngineProvider demo={DEMO} engine={engine}>
+          <DemoFrame says={SAYS} />
+        </EngineProvider>
       </ToastHost>
     </ThemeProvider>
   </IntlProvider>,

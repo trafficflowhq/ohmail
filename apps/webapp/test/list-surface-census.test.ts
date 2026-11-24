@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
@@ -14,46 +14,39 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * and a view that decides on `settled` by hand is refused by name.
  */
 
-const VIEWS = join(__dirname, "..", "app", "views");
+const PACKAGES = join(__dirname, "../../../packages");
+const read = (path: string): string => readFileSync(join(PACKAGES, path), "utf8");
 
-/**
- * The mirror lists — every view whose rows come out of the local mirror and whose emptiness is
- * therefore a claim about the account's own mail. Each one renders through the shared reading.
- */
-const GUARDED: Record<string, string> = {
-  "OhboxView.tsx": "the empty pane, the unread count, the doorbell and the older-mail tail; its reading column is the shell's (`shell-open-state.ts` ohboxGone), not the list surface's (gap row OHBOX-COLUMN-ON-THE-LIST-SURFACE)",
-  "ScreenerView.tsx": "the per-segment empty state and the waiting count",
-  "HistoryView.tsx": "the empty pane, the message count and the reading column, through `useListView`",
-  "ReadsView.tsx": "the 'N new since you were here' count and the end-of-pile line",
-  "ReceiptsView.tsx": "the same pair, on the receipts pile",
-  "DraftsView.tsx": "the empty pane, through `ListEmpty`",
-  "TagView.tsx": "the empty pane and the reading column, through `useListView`",
-  "TriageView.tsx": "the per-pile empty pane and the reading column, through `useListView`",
-  "FolderView.tsx": "the empty pane over the server's pages and the reading column, through `useListView`",
-  "TrashView.tsx": "the empty pane over the server's pages and the reading column, through `useListView`",
+const models = {
+  ohbox: "app-logic/src/ohbox/groups.ts",
+  screener: "app-logic/src/screener/empty.ts",
+  history: "app-logic/src/history/model.ts",
+  news: "app-logic/src/streams/use-stream.ts",
+  receipts: "app-logic/src/streams/use-stream.ts",
+  drafts: "app-logic/src/drafts/model.ts",
+  tags: "app-logic/src/tags/model.ts",
+  later: "app-logic/src/piles/use-piles.ts",
+  parked: "app-logic/src/piles/use-piles.ts",
+  resurface: "app-logic/src/piles/use-piles.ts",
+  folder: "app-logic/src/folder/model.ts",
+  trash: "app-logic/src/trash/model.ts",
 };
 
-/**
- * THE VIEWS ON THE LIST SURFACE (`shell/list-view.tsx`): their empty pane, their gone notice and the
- * narrow-width question come from it and from nowhere else, so each of the three is refused by hand.
- */
-const ON_LIST_SURFACE = ["HistoryView.tsx", "DraftsView.tsx", "TagView.tsx", "TriageView.tsx", "FolderView.tsx", "TrashView.tsx"];
+const columns: Partial<Record<keyof typeof models, string>> = {
+  history: "app/src/history/HistoryList.tsx",
+  drafts: "app/src/drafts/DraftsList.tsx",
+  tags: "app/src/tags/TagsList.tsx",
+  later: "app/src/piles/PilesList.tsx",
+  parked: "app/src/piles/PilesList.tsx",
+  resurface: "app/src/piles/PilesList.tsx",
+  folder: "app/src/folder/FolderList.tsx",
+  trash: "app/src/trash/TrashList.tsx",
+};
 
-/**
- * And the views this rule does NOT reach, each with the reason — a list as load-bearing as the
- * one above, because a census that cannot say what it did not cover has covered nothing.
- */
-const OUT_OF_SCOPE: Record<string, string> = {
-  "AddressView.tsx": "results of an address search, not a pile — its emptiness is the query's",
-  "ComposeView.tsx": "an editor; it has no list",
-  "HistoryRail.tsx": "History's month rail — buttons over the store's timeline; no list, no emptiness",
-  "RulesView.tsx": "rules are account rows, not mail; no mirror claim",
-  "SearchView.tsx": "results of a query, with its own indexing and scope-failure states",
-  "SeedReviewView.tsx": "a review screen that takes the stage; no pile",
-  "SettingsView.tsx": "panes, not a list",
-  "ohbox-groups.ts": "a selector, not a view",
-  "rules-standing.ts": "the Rules page's pure derivations over rules and the waiting list; no mail, no pile",
-  "settings-panes.ts": "the settings tab list — one source for the nav and the palette; no mirror claim",
+const OUT_OF_SCOPE = {
+  address: "results of a contact query",
+  search: "results of a search query",
+  write: "the editor",
 };
 
 /**
@@ -87,31 +80,26 @@ export function offTheListSurface(name: string, source: string): string[] {
 }
 
 describe("every mirror list states its emptiness through one reading", () => {
-  const files = readdirSync(VIEWS).filter((f) => f.endsWith(".tsx") || f.endsWith(".ts"));
-
   it("names every view in exactly one of the two tables", () => {
-    // A new view must be classified rather than silently uncovered — the census's own
-    // completeness, asked both ways so neither table can rot.
-    const named = new Set([...Object.keys(GUARDED), ...Object.keys(OUT_OF_SCOPE)]);
-    expect([...files].filter((f) => !named.has(f)), "a view in neither table").toEqual([]);
-    expect([...named].filter((n) => !files.includes(n)), "a table row for no view").toEqual([]);
-    expect(Object.keys(GUARDED).some((k) => Object.keys(OUT_OF_SCOPE).includes(k))).toBe(false);
+    const registry = withoutComments(read("app/src/mail/places.ts")) as string;
+    const block = /^const SEATED: MailPlaces = \{([\s\S]*?)^\};/m.exec(registry);
+    expect(block, "the registered mail places").not.toBeNull();
+    const files = [...block![1]!.matchAll(/^\s+(\w+):/gm)].map((match) => match[1]!);
+    const guarded = Object.keys(models);
+    const excluded = Object.keys(OUT_OF_SCOPE);
+    const named = new Set([...guarded, ...excluded]);
+    expect(files.filter((id) => !named.has(id)), "a place in neither table").toEqual([]);
+    expect([...named].filter((id) => !files.includes(id)), "a table row for no place").toEqual([]);
+    expect(guarded.some((id) => excluded.includes(id))).toBe(false);
   });
 
   it("refuses a guarded view that decides for itself", () => {
-    const found: string[] = [];
-    for (const name of Object.keys(GUARDED)) {
-      found.push(...handGatedIn(name, readFileSync(join(VIEWS, name), "utf8")));
-    }
-    expect(found, "a view outside the shared reading").toEqual([]);
+    const found = [...new Set(Object.values(models))].flatMap((path) => handGatedIn(path, read(path)));
+    expect(found, "a model outside the shared reading").toEqual([]);
   });
 
   it("refuses a list-surface view that writes its empty pane, width question or gone notice itself", () => {
-    const found: string[] = [];
-    for (const name of ON_LIST_SURFACE) {
-      expect(Object.keys(GUARDED), `${name} is on the surface but not guarded`).toContain(name);
-      found.push(...offTheListSurface(name, readFileSync(join(VIEWS, name), "utf8")));
-    }
+    const found = [...new Set(Object.values(columns))].flatMap((path) => offTheListSurface(path, read(path)));
     expect(found, "a list view deciding for itself").toEqual([]);
   });
 

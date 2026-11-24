@@ -23,20 +23,20 @@
  * ceiling exempts the codes it uses, because eight unreadable answers are eight unknowns rather
  * than eight pieces of evidence about the verb.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
   HttpAdapter,
   IndexedDbMirrorStore,
   MutationRejectedError,
-  FixturesAdapter,
   OhmailEngine,
   OUTBOX_ABANDONED_TYPE,
   OUTBOX_BACKOFF_CAP_MS,
   OUTBOX_MAX_SERVER_FAILURES,
   OUTBOX_UNREACHABLE_CEILING_MS,
-  type EngineMutation,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** A response whose body is not JSON, at a status that says the server ACTED. */
 const unreadable = (status: number): Response =>

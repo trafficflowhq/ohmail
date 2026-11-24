@@ -1,3 +1,4 @@
+import type { Db } from "@trafficflow/services";
 import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
@@ -50,7 +51,7 @@ const patch = (token: string, id: string, body: unknown, key?: string): Request 
     bearer: token, body: JSON.stringify(body), headers: key ? { "idempotency-key": key } : {},
   });
 
-const changesFor = (db: ApiDeps["db"], accountId: string, entityId: string, op: string) =>
+const changesFor = (db: Db, accountId: string, entityId: string, op: string) =>
   db.select().from(changeLog).where(and(
     eq(changeLog.accountId, accountId), eq(changeLog.entityId, entityId), eq(changeLog.op, op),
   ));
@@ -259,7 +260,7 @@ describe("PATCH /rules/:id replays its first outcome under a key", () => {
  */
 
 /** Make every live mailbox on this account one another install holds — the queued world. */
-async function heldElsewhere(db: ApiDeps["db"], accountId: string, mailboxId: string): Promise<void> {
+async function heldElsewhere(db: Db, accountId: string, mailboxId: string): Promise<void> {
   await db.update(mailboxesTbl).set({
     organizerRole: "reader",
     organizerState: "held",
@@ -270,7 +271,7 @@ async function heldElsewhere(db: ApiDeps["db"], accountId: string, mailboxId: st
 }
 
 /** An organizer mailbox, so the rule can be created locally before the account becomes a reader. */
-async function organizerMailbox(db: ApiDeps["db"], accountId: string): Promise<string> {
+async function organizerMailbox(db: Db, accountId: string): Promise<string> {
   const [mb] = await db.insert(mailboxesTbl).values({
     accountId, provider: "imap",
     address: `replay-${crypto.randomUUID().slice(0, 8)}@lichtgrat.example`,
@@ -379,7 +380,7 @@ describe("a replay answers what the original answered", () => {
 
 describe("a published rule changed by its key replays its 202", () => {
   /** The organizer's copy of the account's one mailbox lists two rules; this install holds none. */
-  async function readerOnly(db: ApiDeps["db"], accountId: string): Promise<void> {
+  async function readerOnly(db: Db, accountId: string): Promise<void> {
     const mailboxId = await organizerMailbox(db, accountId);
     await heldElsewhere(db, accountId, mailboxId);
     await db.insert(mailboxProfileMirror).values({

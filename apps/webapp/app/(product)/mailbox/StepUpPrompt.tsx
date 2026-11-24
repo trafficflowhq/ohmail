@@ -11,17 +11,17 @@
 
 /**
  * No sign-out, no new session, no cookie changes — the server re-stamps the session the browser holds, and a census
- * holds its response to nothing else. The factor set comes from `GET /auth/session` (`twofaEnrolled`) at mount, the
- * read `SecuritySection` trusts, so the prompt never offers a ceremony the account cannot finish.
+ * holds its response to nothing else. The factor set, the verify bodies and the refusal's word are the web's step-up
+ * door (`web-step-up.ts`); this prompt says them in its own sentences.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
-import { auth, assertPasskey, webauthnAvailable } from "../../api-client";
-import { isOwnerAbsent } from "../approve/settle-owner";
-import { useCeremonyGeneration } from "../ceremony-generation";
-import { serverAnswered, useRefusalSentence } from "../refusal-sentence";
+import type { StepUpFactors, StepUpRefusal } from "@ohmail/app/doors/step-up";
+import { useCeremonyGeneration } from "@ohmail/app/doors/step-up/ceremony-generation";
+import { useRefusalSentence } from "../refusal-sentence";
+import { webStepUp } from "./web-step-up";
 
 interface Props {
   /** The re-verification succeeded — retry the verb that was refused. */
@@ -44,30 +44,30 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
   const t = useTranslations("devices");
   const refusalSentence = useRefusalSentence();
 
+  /** The web's step-up door: the factor set, the three verify bodies, and the refusal as a word. */
+  const door = useMemo(() => webStepUp(refusalSentence), [refusalSentence]);
+
   /**
-   * The refusal, in the reader's language. A server answer is never shown as written: the step-up
-   * doors answer in lowercase English diagnostics ("two-factor verification failed"), so each maps
-   * to this prompt's sentence — a 401 by the factor `tried`, the lockout with its `retryAfter`
-   * ("too many attempts" without "for how long" reads as for ever), the throttle, and one sentence
-   * for anything else. Client-raised refusals go through the one renderer.
+   * The refusal, in the reader's language. A server answer is never shown as written: the door
+   * hands a word — a 401 by the factor tried, the lockout with its minutes ("too many attempts"
+   * without "for how long" reads as for ever), the throttle, and one sentence for anything else.
+   * Client-raised refusals come said by the one renderer.
    */
   const refusalText = useCallback(
-    (err: unknown, tried?: "code" | "passkey" | "recovery"): string => {
-      if (!serverAnswered(err)) return refusalSentence(err);
-      if (err.code === "account_locked") {
-        const retryAfter = (err.details as { retryAfter?: unknown } | undefined)?.retryAfter;
-        const seconds = typeof retryAfter === "number" && retryAfter > 0 ? retryAfter : 15 * 60;
-        return t("stepUpLocked", { minutes: Math.max(1, Math.ceil(seconds / 60)) });
+    (refusal: StepUpRefusal): string => {
+      switch (refusal.word) {
+        case "said": case "owner_absent": return refusal.said;
+        case "locked": return t("stepUpLocked", { minutes: refusal.minutes });
+        case "slowed": return t("stepUpSlowed");
+        case "bad_code": return t("stepUpBadCode");
+        case "bad_passkey": return t("stepUpBadPasskey");
+        case "bad_recovery": return t("stepUpBadRecoveryCode");
+        case "refused": return t("stepUpRefused");
       }
-      if (err.code === "sign_in_slowed") return t("stepUpSlowed");
-      if (err.status === 401 && tried) {
-        return t(tried === "code" ? "stepUpBadCode" : tried === "passkey" ? "stepUpBadPasskey" : "stepUpBadRecoveryCode");
-      }
-      return t("stepUpRefused");
     },
-    [t, refusalSentence],
+    [t],
   );
-  const [enrolled, setEnrolled] = useState<{ webauthn: boolean; totp: boolean; recoveryCodes: boolean } | null>(null);
+  const [enrolled, setEnrolled] = useState<StepUpFactors | null>(null);
   const [method, setMethod] = useState<"webauthn" | "totp" | "recovery">("totp");
   const [code, setCode] = useState("");
   /** A recovery code, for somebody whose authenticator is gone. Kept apart from the six digits. */
@@ -88,35 +88,32 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
 
   useEffect(() => {
     void (async () => {
-      try {
-        const { user } = await auth.session();
-        const e = {
-          webauthn: user.twofaEnrolled.webauthn, totp: user.twofaEnrolled.totp,
-          recoveryCodes: user.twofaEnrolled.recoveryCodes === true,
-        };
-        setEnrolled(e);
+      const read = await door.factors();
+      if (read.ok) {
+        setEnrolled(read.factors);
         // The sign-in screen's preference verbatim: a passkey when one exists AND this
         // browser can run the ceremony; the code otherwise.
-        setMethod(e.webauthn && webauthnAvailable() ? "webauthn" : "totp");
-      } catch (err) {
-        // The ceremony ends first, so a factor already on its way runs nothing the page parked.
-        if (isOwnerAbsent(err) && onOwnerAbsent) { ceremony.end(); onOwnerAbsent(); return; }
-        setError(refusalText(err));
+        setMethod(read.factors.passkey ? "webauthn" : "totp");
+        return;
       }
+      // The ceremony ends first, so a factor already on its way runs nothing the page parked.
+      if (read.refusal.word === "owner_absent" && onOwnerAbsent) { ceremony.end(); onOwnerAbsent(); return; }
+      setError(refusalText(read.refusal));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one read, at mount
   }, []);
 
   const finish = useCallback(
-    (tried: "code" | "passkey" | "recovery", fn: () => Promise<void>) => {
+    (tried: "code" | "passkey" | "recovery", typed: string, verified: () => void) => {
       setBusy(true);
       setError(null);
       // BEFORE the first await: this closure's identity is the ceremony it started in, never
       // whichever one is current when its response happens to land.
       const gen = ceremony.begin();
       void (async () => {
-        try {
-          await fn();
+        const out = await door.verify(tried, typed);
+        if (out.ok) {
+          verified();
           // THE ONE DOOR. A factor that lands after Cancel runs no parked verb and says so.
           if (!ceremony.claim(gen)) {
             setBusy(false);
@@ -124,41 +121,30 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
             return;
           }
           onVerified();
-        } catch (err) {
-          // A failed ceremony is over: end it, so a second response cannot act either.
-          ceremony.end();
-          setBusy(false);
-          if (isOwnerAbsent(err) && onOwnerAbsent) { onOwnerAbsent(); return; }
-          setError(refusalText(err, tried));
+          return;
         }
+        // A failed ceremony is over: end it, so a second response cannot act either.
+        ceremony.end();
+        setBusy(false);
+        if (out.refusal.word === "owner_absent" && onOwnerAbsent) { onOwnerAbsent(); return; }
+        setError(refusalText(out.refusal));
       })();
     },
-    [ceremony, onDiscarded, onOwnerAbsent, onVerified, refusalText],
+    [ceremony, door, onDiscarded, onOwnerAbsent, onVerified, refusalText],
   );
 
-  const withPasskey = () =>
-    finish("passkey", async () => {
-      const { options } = await auth.stepUpWebauthnOptions();
-      const credential = await assertPasskey(options);
-      await auth.stepUpWebauthnVerify({ credential });
-    });
+  const withPasskey = () => finish("passkey", "", () => {});
 
   const withCode = (e: React.FormEvent) => {
     e.preventDefault();
     if (busy || code.trim().length === 0) return;
-    finish("code", async () => {
-      await auth.stepUpTotp({ code: code.trim() });
-      setCode("");
-    });
+    finish("code", code, () => setCode(""));
   };
 
   const withRecovery = (e: React.FormEvent) => {
     e.preventDefault();
     if (busy || recovery.trim().length === 0) return;
-    finish("recovery", async () => {
-      await auth.stepUpRecoveryCode({ code: recovery.trim() });
-      setRecovery("");
-    });
+    finish("recovery", recovery, () => setRecovery(""));
   };
 
   const choose = (next: "webauthn" | "totp" | "recovery") => {
@@ -166,7 +152,7 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
     setError(null);
   };
   /** The way to a recovery code, offered beside either factor when the account has a sheet. */
-  const recoveryToggle = enrolled?.recoveryCodes ? (
+  const recoveryToggle = enrolled?.recovery ? (
     <button type="button" className="join-alt" onClick={() => choose("recovery")}>
       {t("stepUpRecoveryToggle")}
     </button>
@@ -193,7 +179,7 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
               {t("cancel")}
             </Button>
           </div>
-          {enrolled?.totp ? (
+          {enrolled?.code ? (
             <button type="button" className="join-alt" onClick={() => choose("totp")}>
               {t("stepUpTotpToggle")}
             </button>
@@ -227,12 +213,12 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
               </span>
             </div>
           </form>
-          {enrolled?.totp ? (
+          {enrolled?.code ? (
             <button type="button" className="join-alt" onClick={() => choose("totp")}>
               {t("stepUpTotpToggle")}
             </button>
           ) : null}
-          {enrolled?.webauthn && webauthnAvailable() ? (
+          {enrolled?.passkey ? (
             <button type="button" className="join-alt" onClick={() => choose("webauthn")}>
               {t("stepUpPasskeyToggle")}
             </button>
@@ -269,7 +255,7 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
                 here, before it happens, because the refusal itself may not explain. */}
             <p className="set-note-inline">{t("stepUpCodeHint")}</p>
           </form>
-          {enrolled?.webauthn && webauthnAvailable() ? (
+          {enrolled?.passkey ? (
             <button type="button" className="join-alt" onClick={() => choose("webauthn")}>
               {t("stepUpPasskeyToggle")}
             </button>

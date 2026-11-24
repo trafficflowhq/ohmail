@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { accounts, routingDecisions, UNPRICED } from "@trafficflow/db";
 import type { ClassifierInput, ClassifierPort, ClassifierResult } from "@trafficflow/core";
 import { ScreenerService } from "../src/index.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 import { PLANE_PRICES, planePricing } from "./helpers/plane-pricing.js";
 
@@ -28,7 +28,7 @@ class Yes implements ClassifierPort {
 }
 
 async function seeded() {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "pricing-port" });
   for (const from of SENDERS) await seedMessage(w.db, w.accountId, w.mailboxId, { from });
   const stored = () => w.db.select().from(routingDecisions).where(eq(routingDecisions.accountId, w.accountId));

@@ -61,31 +61,34 @@ import {
   appPasswordPresetFor, authHintPreset, authHintWantsLinks, hostsFor, providerById, providerLabel,
   type AuthHint, type ProviderPreset,
 } from "../../shell/providers";
-import { probeCopyKey, refusalAuthHint, refusalTransport } from "../../shell/local-server-host";
+import { probeCopyKey, refusalAuthHint, refusalTransport } from "@ohmail/app-logic/doors/local-server-host";
 import { ProviderHelpLinks, ProviderPicker } from "../../shell/ProviderPicker";
 import { DiscoveredHostsOffer, hostFieldOf, useAddressFirst } from "../../shell/address-first";
 import {
   noPortProbeSentence, plaintextOfferOf, probeReasonOf, probeTlsOf, type ProbeTlsInfo,
 } from "../../shell/probe-refusal";
 import { splitHostPort } from "../host-port";
+import { imapPatchOf, smtpPatchOf, validPort, type EditForm } from "@ohmail/app-logic/mailboxes/connect/body";
+import { sameVanityParent } from "@ohmail/app-logic/mailboxes/connect/hosts";
 import { AGO_COPY, agoStamp, dayStamp, waterlineStamp } from "../../shell/format";
 import {
   claimLeftBehind, filerKey, isSyncBlockReason, readerHolderLapsed, readerStandDown, showInboundQuiet,
   standDownKey, webFiler, type WebFiler,
-} from "../../shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
-import { useMailState } from "../../shell/MailStateProvider";
-import { useEngineOrNull } from "../../shell/engine";
-import { displayAddress } from "../../shell/idn";
+import { useMailState } from "@ohmail/app-logic/mail-state/mail-state-binding";
+import { useEngineOrNull } from "@ohmail/app-logic/engine/context";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { activeFormatLocale } from "../../shell/locale";
-/* WHICH BUILD THIS IS, at compile time — the same constant `AccountSection` and `LoginScreen`
+/* WHICH BUILD THIS IS, at compile time — the same constant the delete page and `LoginScreen`
    read for the same kind of question. It decides one word of copy below and nothing else. */
 import { SELF_HOST_BUILD } from "../../hello";
 import { StepUpPrompt } from "./StepUpPrompt";
 import { gatedRefusal } from "./gated-refusal";
-import { mailboxErrorKey, storeRefusalsFigure } from "../../shell/mailbox-error-key";
+import { mailboxErrorKey } from "@ohmail/app-logic/mail-state/mailbox-error-key";
+import { storeRefusalsFigure } from "../../shell/store-refusals-figure";
 import { PlaintextConsent, sameServerHost } from "../../shell/PlaintextConsent";
-import { sendingLine, sendingPlaintextOffered, type ProbeSending } from "../../shell/onboarding";
+import { sendingLine, sendingPlaintextOffered, type ProbeSending } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * `list` → the pane at rest. `form` → typing credentials for a NEW mailbox. `edit` → changing the
@@ -105,28 +108,6 @@ type Stage = "list" | "form" | "edit" | "remove" | "stepup" | "saving";
 type TakeoverVerdict = "settled" | "behind" | "step_up" | "refused";
 
 /**
- * What the edit form holds. Separate from the connect form's {@link Typed} on purpose: an edit is a
- * PATCH of stored settings, so every field is a correction that may be omitted, and the server
- * merges what is sent over what it has. The ports are strings because they are input values, parsed
- * once on submit; everything is held across the ceremony so a refused probe returns to a form that
- * still has it. `smtpHost`/`smtpPort` are the sending half (SET-M3): `PATCH /mailboxes/:id` has
- * always accepted an `smtp` block — probed before it is stored — but the edit form patched IMAP
- * only, so a mistyped or migrated SMTP host had no correction path.
- */
-interface EditForm {
-  host: string;
-  port: string;
-  user: string;
-  pass: string;
-  smtpHost: string;
-  smtpPort: string;
-  /** The plaintext opt-in — rendered only after the server reported `tls_unavailable`. */
-  allowInsecure: boolean;
-  /** The SMTP server's own opt-in, on the same rule. */
-  allowInsecureSmtp: boolean;
-}
-
-/**
  * DOES THIS MAILBOX SIGN IN WITH A GOOGLE APP PASSWORD — its stored preset, else its address. A
  * refused password on it is said as an App Password ended by a Google password change.
  */
@@ -137,55 +118,6 @@ function signsInWithAppPassword(m: { provider: string; address: string }): boole
 const emptyEdit = (): EditForm => ({
   host: "", port: "", user: "", pass: "", smtpHost: "", smtpPort: "", allowInsecure: false, allowInsecureSmtp: false,
 });
-
-/** A port is optional; if given it has to be one a server could actually listen on. */
-function validPort(raw: string): boolean {
-  if (!/^\d+$/.test(raw)) return false;
-  const n = Number(raw);
-  return n >= 1 && n <= 65535;
-}
-
-/**
- * Turn the typed corrections into a PATCH body. Blank fields are DROPPED rather than sent empty —
- * an omitted field means "keep the stored value", which is what makes "rotate only the password"
- * a one-field edit. The password is the one field always sent: its presence is what makes the
- * server re-try the login before it stores anything.
- */
-function imapPatchOf(e: EditForm): NonNullable<UpdateMailboxBody["imap"]> {
-  const imap: NonNullable<UpdateMailboxBody["imap"]> = { pass: e.pass };
-  const host = e.host.trim();
-  const user = e.user.trim();
-  const port = e.port.trim();
-  if (host) imap.host = host;
-  if (user) imap.user = user;
-  if (port) imap.port = Number(port);
-  // Sent only when checked — the server re-proves TLS is absent before honoring it, so a stray
-  // flag costs nothing, but omitting a false keeps the wire identical to the pre-consent shape.
-  if (e.allowInsecure) imap.allowInsecure = true;
-  return imap;
-}
-
-/**
- * The SMTP half of the same PATCH — or `undefined` when no SMTP field was touched, so an edit that
- * only rotates the password dials no SMTP server at all: the server probes the `smtp` block
- * whenever one arrives with a `pass`, and an unasked-for dial against a working submission server
- * is a way to fail a save about something else. When a field WAS touched, `pass` rides along
- * because the server re-tries the SMTP login before storing anything, and a typed username
- * correction rides into both transports. Blank fields are dropped; the server merges over the
- * stored `smtp` meta, so a host-only correction keeps the stored port.
- */
-function smtpPatchOf(e: EditForm): UpdateMailboxBody["smtp"] {
-  const host = e.smtpHost.trim();
-  const port = e.smtpPort.trim();
-  if (!host && !port) return undefined;
-  const smtp: NonNullable<UpdateMailboxBody["smtp"]> = { pass: e.pass };
-  if (host) smtp.host = host;
-  if (port) smtp.port = Number(port);
-  const user = e.user.trim();
-  if (user) smtp.user = user;
-  if (e.allowInsecureSmtp) smtp.allowInsecure = true;
-  return smtp;
-}
 
 /** Everything the user typed, held across the ceremony so a 403 never discards it. */
 interface Typed {
@@ -217,33 +149,19 @@ const emptyTyped = (): Typed => ({
 type PlaintextOffer = { imap: boolean; smtp: boolean };
 const NO_OFFER: PlaintextOffer = { imap: false, smtp: false };
 
-/**
- * What the row is allowed to call this mailbox — and why it is not just `status`. `mailboxes.status` DEFAULTS
- * to `'connected'` and `MailboxService.create` inserts without setting it, so the column says `connected`
- * before the host resolves, the password is offered, or one message arrives — measured on a live iCloud
- * mailbox, where a typed Apple ID password (instead of the mandatory app-specific one) produced a row reading
- * "connected" until the worker's first attach failed. No fourth status value, deliberately: the fact is already
- * in the row — `lastSyncAt` is NULL until a cycle completes, already on the wire, already read for the
- * timestamp; a `pending` member would be a second source of truth that can disagree with it. The rule is
- * one-directional, which keeps it honest: it can only ever WEAKEN the claim.
- */
-export function statusKey(m: Pick<MailboxDTO, "status" | "lastSyncAt">): string {
-  return m.status === "connected" && m.lastSyncAt === null ? "status_connecting" : `status_${m.status}`;
-}
+/* The pane's rules over its rows moved beside the pane's other rules; re-exported for this pane's importers. */
+import {
+  TICK_MS, WRITE_SETTLE_MS, connectBlock, groupByAddress, statusKey, useLatestWins,
+  type ConnectBlock, type ConnectFacts, type LatestWins,
+} from "@ohmail/app-logic/mailboxes/pane/rows";
+export {
+  WRITE_SETTLE_MS, connectBlock, groupByAddress, statusKey, useLatestWins,
+  type ConnectBlock, type ConnectFacts, type LatestWins,
+};
 
 // The forwarding-detection notice's show rule is `showInboundQuiet` in `shell/mail-state.ts` —
 // the SHARED shell, because the desktop's Mailboxes pane renders the same notice and
 // `(product)` is denied from the Desktop mirror. This pane imports it beside `isSyncBlockReason`.
-
-/**
- * One address, one row. `delete` is a SOFT delete and mail 0021's unique index is PARTIAL (`WHERE status <>
- * 'disabled'`, on `lower(address)`), so a disabled row is not a conflict and connecting the same address again
- * legally inserts a second one — the intended schema: a tombstone must not lock its own address out for ever. The
- * pane rendered the consequence verbatim: the dead row sat beside the live one, same address, indistinguishable, for
- * ever. Not rare — it is what the only available remedy produces: a mailbox the organizer lease stood down is off the
- * worker's roster (`loadEnabledMailboxes` filters `status <> 'disabled'`) and this pane offers no re-enable, so
- * connecting the address again is the only move a Cloud customer has.
- */
 
 /**
  * The key itself moved: `addressKey` now lives at `app/shell/address-key.ts` — `lower()` only,
@@ -258,161 +176,15 @@ export function statusKey(m: Pick<MailboxDTO, "status" | "lastSyncAt">): string 
 /* IMPORTED as well as re-exported, and the difference is a caught defect rather than a style
  * choice: `export { x } from "..."` re-exports without binding `x` in THIS module's scope, so the
  * call below became `Cannot find name` — typecheck and 43 tests, immediately and loudly. */
-import { addressKey } from "../../shell/address-key";
-import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
+import { addressKey } from "@ohmail/app-logic/mail-state/address-key";
+import { durableSessionRemove, durableSessionSet } from "@ohmail/app-logic/storage/durable";
 export { addressKey };
-
-/**
- * Why the connect button is not always there. Walked end to end on a live Cloud account: someone not entitled to
- * another mailbox was offered "Connect a mailbox" and walked through every screen this pane has — provider,
- * credentials, the ohmail account password, and a FRESH SECOND FACTOR — and only then did `POST /mailboxes` refuse.
- * The most annoying step sat in front of the refusal. Every fact this needs was already on the wire: `GET
- * /account/access` is `cost: "read"` with no `stepUp` and answers the entitlements port's own verdict — the same port
- * `readMailboxAllowance` consults inside the create's transaction; `emailVerified` rides on `GET /auth/session`,
- * already called; the slot count is the list this pane holds, filtered exactly as the gate counts it (`status <>
- * 'disabled'`).
- */
-
-/**
- * The precedence is the server's pipeline, in order: `withStepUp` → `withSpendGate` → handler
- * (`packages/api/src/app.ts`), so an unverified address is refused BEFORE the allowance gate — a pane naming a limit
- * to an unverified account would name a refusal that never fires. Then `decideMailboxAllowance`'s own order:
- * `canAddMailbox` first, the count second — an account that may not add another must be told THAT, not that it is
- * full. And it may only ever withhold an offer it can prove is dead: the read is a snapshot, the gate is `SELECT …
- * FOR UPDATE` inside the create's transaction, they can disagree — so every unknown fails OPEN (an unreadable
- * verdict, an unreadable session, a list not arrived) and `connect()`'s catch is untouched. Withholding a connect the
- * server would have allowed is worse than the defect being fixed.
- */
-
-/**
- * The two subscription-shaped blocks are gone, and not because they were wrong: they named
- * states this pane can no longer be in. An account the service has REFUSED does not reach a
- * settings pane at all — every door answers 402 and the client swaps the whole surface for the
- * lock screen, where the way back to paying now lives. What is left for this gate to describe
- * is what an ACTIVE account can be: may it add another mailbox, and has it filled the ones it
- * has. A sentence about choosing a plan would name a refusal that cannot fire here.
- */
-export type ConnectBlock = "email_unverified" | "cannot_add" | "at_limit";
-
-/** Everything the decision is made from. Every field is nullable, and null means UNKNOWN. */
-export interface ConnectFacts {
-  /** `GET /auth/session` → `user.emailVerified`. */
-  emailVerified: boolean | null;
-  /**
-   * `GET /account/access` — the entitlements port's verdict, or `null` while unread.
-   *
-   * `mailboxes: null` is UNBOUNDED (the port's convention), which an unmetered host also
-   * reaches by answering `canAddMailbox: true` with no number. Both mean "the count cannot
-   * block", so the count test below is skipped rather than compared against a made-up ceiling.
-   */
-  access: { canAddMailbox: boolean; mailboxes: number | null } | null;
-  /** Mailboxes occupying a slot: `status <> 'disabled'`, exactly as the gate counts. */
-  enabledCount: number | null;
-}
-
-/** Why the connect button is withheld, or `null` when it is offered. Pure, and total. */
-export function connectBlock(f: ConnectFacts): ConnectBlock | null {
-  if (f.emailVerified === false) return "email_unverified";
-  const a = f.access;
-  if (!a) return null;
-  // `canAddMailbox` FIRST, the count second — `decideMailboxAllowance`'s own order. An account
-  // forbidden another mailbox must be told that, not that it is full: the two are separate
-  // questions and the port carries them separately for exactly this reason.
-  if (!a.canAddMailbox) return "cannot_add";
-  // An unread count fails OPEN, like every other unknown here, and `?? 0` is what that means
-  // for a `>=` test: it can only ever offer a connect the server may still refuse, never
-  // withhold one it would have allowed. An UNBOUNDED limit skips the test outright — there is
-  // no number to reach, and comparing against one would invent a ceiling.
-  if (a.mailboxes !== null && (f.enabledCount ?? 0) >= a.mailboxes) return "at_limit";
-  return null;
-}
-
-/** One address: the row that is shown, and how many disabled ones it stands in front of. */
-interface AddressGroup {
-  shown: MailboxDTO;
-  superseded: number;
-}
-
-/**
- * Collapse the list to one entry per address. THE SHOWN ROW IS THE LIVE ONE when there is a live one, and the FIRST
- * otherwise. `list` returns the whole account ordered by `id` and the index guarantees at most one non-disabled row
- * per address, so "the live one" is unambiguous whenever it exists. A group of disabled rows with no live sibling is
- * NOT collapsed to a footnote — it keeps a real row. An account whose only mailbox was stood down must still see it,
- * with its reason; that is the state the one-row rule was written for, and hiding it would be the same defect from
- * the other side.
- */
-export function groupByAddress(items: MailboxDTO[]): AddressGroup[] {
-  const order: string[] = [];
-  const byKey = new Map<string, MailboxDTO[]>();
-  for (const m of items) {
-    const key = addressKey(m.address);
-    const bucket = byKey.get(key);
-    if (bucket) bucket.push(m);
-    else { byKey.set(key, [m]); order.push(key); }
-  }
-  return order.map((key) => {
-    const rows = byKey.get(key)!;
-    const live = rows.find((m) => m.status !== "disabled");
-    return {
-      shown: live ?? rows[0]!,
-      // Counted against the SHOWN row, so a group of one disabled mailbox reports zero — it is
-      // not superseded by anything, it is simply the mailbox.
-      superseded: rows.filter((m) => m !== (live ?? rows[0]!) && m.status === "disabled").length,
-    };
-  });
-}
 
 /* The readers moved to `shell/probe-refusal.ts`, shared with /join; re-exported for this pane's importers. */
 export { probeReasonOf, probeTlsOf, type ProbeTlsInfo };
 
-/**
- * "Fix both fields in one press" — should applying a canonical-host suggestion to the failing
- * transport's field also correct the OTHER one? Yes exactly when both current values are the
- * same name one label deeper (mail.example.com / smtp.example.com): the vanity pair that points
- * at one provider server. Comparing the values MINUS their first label, rather than a public-
- * suffix heuristic, is what keeps `mail.foo.co.uk` from dragging `smtp.bar.co.uk` along.
- */
-export function sameVanityParent(a: string, b: string): boolean {
-  const parent = (h: string): string => h.trim().toLowerCase().split(".").slice(1).join(".");
-  const pa = parent(a);
-  return pa.length > 0 && pa.includes(".") && pa === parent(b);
-}
-
-/**
- * ONE ASYNCHRONOUS ANSWER'S CLAIM ON THE SCREEN — the pane's ordering rule, in one place.
- *
- * Every read takes a sequence BEFORE its `await` and applies only if nothing newer has been
- * displayed since; every press takes one too, so its own answer is always told and every read
- * issued before it is retired. A dead pane answers `false` to both, which is what lets the two
- * verbs replace the `alive.current` guard at every call site rather than sit beside it.
- */
-export interface LatestWins {
-  /** A READ's answer: applied only if it is the newest thing issued. */
-  claim(): boolean;
-  /** A PRESS's own answer: always applied, and it retires every read issued before the press. */
-  publish(): boolean;
-}
-
-/** A channel of the rule above — one per group of state a late answer can contradict. */
-export function useLatestWins(alive: { current: boolean }): () => LatestWins {
-  const issued = useRef(0);
-  const applied = useRef(0);
-  return useCallback((): LatestWins => {
-    const seq = ++issued.current;
-    return {
-      claim: () => {
-        if (!alive.current || seq <= applied.current) return false;
-        applied.current = seq;
-        return true;
-      },
-      publish: () => {
-        if (!alive.current) return false;
-        if (seq > applied.current) applied.current = seq;
-        return true;
-      },
-    };
-  }, [alive]);
-}
+/* Moved to the connect form's rules; re-exported for this pane's importers. */
+export { sameVanityParent };
 
 /**
  * `subscriptionPane`: does Settings list the Subscription pane beside this one? The connect
@@ -714,9 +486,9 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
          */
 
         /**
-         * The real `MailStateProvider` memoizes its binding (`shell/MailStateProvider.tsx`) so the cycle does not
-         * close in the product; a test that stands in for it with a fresh closure per render closes it, and then the
-         * loop only needs a state update that never bails out. This is that update, so this is where it is fixed.
+         * The real `MailStateProvider` memoizes its binding (`@ohmail/app-logic/mail-state/mail-state-binding`) so the
+         * cycle does not close in the product; a test that stands in for it with a fresh closure per render closes it, and
+         * then the loop only needs a state update that never bails out. This is that update, so this is where it is fixed.
          */
         setItems((prev) => {
           if (prev === null) return got;
@@ -3075,8 +2847,6 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
             </Button>
             {/* The press removes. On a closed step-up window the account asks for a fresh second
                 factor first, and the removal runs the moment it verifies. */}
-            {/* `primary danger` — the account section's own convention for a destructive
-                confirm (`AccountSection.tsx`), so the two read as one product. */}
             <Button
               variant="primary" className="danger"
               disabled={eraseChosen && eraseTyped.trim() === ""}
@@ -3225,23 +2995,6 @@ function errorTitle(
   if (m.errorDetail) parts.push(m.errorDetail);
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
-
-/**
- * How often the pane re-reads `GET /mailboxes` while it is open.
- *
- * A freshly connected mailbox reports `lastSyncAt: null` until the worker's next cycle, which
- * is up to sixty seconds away. Without polling the pane says "Not synced yet" and stays that
- * way until the user reloads — which is exactly what a fresh connect runs into thirty seconds
- * in: a true statement that looks like a failure because nothing ever changes it.
- */
-const TICK_MS = 10_000;
-
-/**
- * How long an answered write waits for the read that shows it — the first-run flow's `SETTLE_MS`,
- * so the two surfaces keep one bound. Past it the pane stays where it is and says so; the poll's
- * next answer finishes the move.
- */
-export const WRITE_SETTLE_MS = 4_000;
 
 /**
  * The FLOOR under a device-flow poll's delay — five seconds, matching the interval Microsoft

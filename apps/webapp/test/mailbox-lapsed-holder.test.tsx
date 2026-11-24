@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO, OrganizerPeek, SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A MAILBOX WHOSE ONLY ORGANIZER STOPPED IS ORGANIZED BY NOBODY, ON THE MAILBOXES PANE TOO.
@@ -41,7 +41,7 @@ vi.mock("../app/api-client", async () => {
     mailboxes: { list: async () => ({ items: mockListed }), organizer: async () => mockPeek },
   };
 });
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
 
 /** A reader row whose holder is named; `organizerState` says whether it still renews. */
 const reader = (state: "held" | "stopped"): MailboxDTO => ({

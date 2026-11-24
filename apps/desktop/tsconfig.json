@@ -43,6 +43,8 @@
       "@tiptap/starter-kit": ["./node_modules/@tiptap/starter-kit"],
       "@tiptap/extension-link": ["./node_modules/@tiptap/extension-link"],
       "@tiptap/extension-code": ["./node_modules/@tiptap/extension-code"],
+      "@tiptap/extension-heading": ["./node_modules/@tiptap/extension-heading"],
+      "@tiptap/extension-horizontal-rule": ["./node_modules/@tiptap/extension-horizontal-rule"],
       /* The ProseMirror surface under the editor — the line-scoped block commands in
          RichEditor.tsx import `NodeSelection`/`TextSelection` and the position/node types
          from these two subpaths. Same story as `/ics` and `/folder-name` below, third
@@ -58,12 +60,15 @@
       "@tiptap/pm/model": ["./node_modules/@tiptap/pm/model"],
       "@tiptap/pm/transform": ["./node_modules/@tiptap/pm/transform"],
       "@tiptap/pm/view": ["./node_modules/@tiptap/pm/view"],
+      "@tiptap/pm/history": ["./node_modules/@tiptap/pm/history"],
       "@ohmail/tokens/omarchy-rule": ["../../packages/tokens/omarchy/rule.ts"],
+      "@ohmail/tokens/design": ["../../packages/tokens/src/design/tokens.ts"],
       "@ohmail/tokens": ["../../packages/tokens/src/index.ts"],
-      "@ohmail/fixtures": ["../../packages/fixtures/src/index.ts"],
+      "@ohmail/testing/adapter": ["../../packages/testing/src/adapter.ts"],
+      "@ohmail/testing": ["../../packages/testing/src/index.ts"],
       /* The durable-write door as a LEAF, and it must be listed BEFORE nothing in particular
          here (TypeScript matches the longest pattern) but it MUST be listed: the published
-         mirror has no node_modules beside `apps/webapp/app/shell/durable.ts`, which re-exports
+         mirror has no node_modules beside `packages/app-logic/src/storage/durable.ts`, which re-exports
          this specifier, so this map and `vite.config.ts`'s alias table are its only resolvers.
          Three earlier slices each paid a release CI that died at `tsc --noEmit` on all three
          platforms for exactly this omission; `test/desktop-shell.test.ts` holds both
@@ -71,8 +76,82 @@
       "@ohmail/client-engine/durable": ["../../packages/client-engine/src/durable.ts"],
       "@ohmail/client-engine/send-fingerprint": ["../../packages/client-engine/src/send-fingerprint.ts"],
       "@ohmail/client-engine/html-tree-budget": ["../../packages/client-engine/src/html-tree-budget.ts"],
+      "@ohmail/client-engine/calendar-acts": ["../../packages/client-engine/src/calendar-acts.ts"],
+      "@ohmail/client-engine/calendar-writes": ["../../packages/client-engine/src/calendar-writes.ts"],
+      "@ohmail/client-engine/providers": ["../../packages/client-engine/src/providers.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
+      "@ohmail/ui/body-parts": ["../../packages/ui/src/body-parts.ts"],
+      "@ohmail/ui/file-size": ["../../packages/ui/src/format/file-size.ts"],
+      "@ohmail/ui/sender-sheet": ["../../packages/ui/src/sender-sheet.ts"],
+      "@ohmail/ui/viewport": ["../../packages/ui/src/ui-zoom.ts"],
+      "@ohmail/ui/text-field": ["../../packages/ui/src/primitives/TextField.tsx"],
+      "@ohmail/ui/date-picker-view": ["../../packages/ui/src/primitives/DatePicker.tsx"],
+      "@ohmail/ui/toast": ["../../packages/ui/src/primitives/toast-context.ts"],
+      "@ohmail/ui/base": ["../../packages/ui/src/base/index.ts"],
+      "@ohmail/ui/mail": ["../../packages/ui/src/mail/index.ts"],
+      "@ohmail/ui/squares-window": ["../../packages/ui/src/squares-window.ts"],
+      "@ohmail/ui/stream-estimate": ["../../packages/ui/src/composites/stream-estimate.ts"],
+      "@ohmail/ui/portal-renderer": ["../../packages/ui/src/base/Overlays/portal-renderer.ts"],
+      "@ohmail/ui/calendar": ["../../packages/ui/src/calendar/index.ts"],
+      "@ohmail/ui/theme": ["../../packages/ui/src/theme/ThemeProvider.tsx"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
+      /* Behaviour without a screen, and the host contract. Same story as the leaves above: in the
+         published tree this map and `vite.config.ts`'s alias table are their only resolvers. A
+         folder's door resolves as the folder; a moved file by its own name. */
+      "@ohmail/app-logic/*": ["../../packages/app-logic/src/*"],
+      "@ohmail/letter-body/links": ["../../packages/letter-body/src/rendered-links.ts"],
+      "@ohmail/letter-body/cache": ["../../packages/letter-body/src/mail-doc-cache.ts"],
+      "@ohmail/letter-body/words": ["../../packages/letter-body/src/words.ts"],
+      "@ohmail/letter-body": ["../../packages/letter-body/src/index.ts"],
+      "@ohmail/app/calendar": ["../../packages/app/src/calendar/index.ts"],
+      "@ohmail/app/account/way-out": ["../../packages/app/src/account/way-out/index.ts"],
+      "@ohmail/app/doors/signed-out": ["../../packages/app/src/doors/signed-out/index.ts"],
+      "@ohmail/app/doors/stage": ["../../packages/app/src/doors/stage/index.ts"],
+      "@ohmail/app/host/browser": ["../../packages/app/src/host/browser/index.ts"],
+      "@ohmail/app/host": ["../../packages/app/src/host/index.ts"],
+      "@ohmail/app/keys/sheet": ["../../packages/app/src/keys/sheet/index.ts"],
+      "@ohmail/app/mail-state": ["../../packages/app/src/mail-state/index.ts"],
+      "@ohmail/app/settings/browser": ["../../packages/app/src/settings/browser/index.ts"],
+      "@ohmail/app/mail": ["../../packages/app/src/mail/index.ts"],
+      "@ohmail/app/mailboxes/connect": ["../../packages/app/src/mailboxes/connect/index.ts"],
+      "@ohmail/app/mailboxes": ["../../packages/app/src/mailboxes/index.ts"],
+      "@ohmail/app/mailboxes/connect": ["../../packages/app/src/mailboxes/connect/index.ts"],
+      "@ohmail/app/ohbox": ["../../packages/app/src/ohbox/index.ts"],
+      "@ohmail/app/profile-import": ["../../packages/app/src/profile-import/index.ts"],
+      "@ohmail/app/reader/body": ["../../packages/app/src/reader/body/index.ts"],
+      "@ohmail/app/reader": ["../../packages/app/src/reader/index.ts"],
+      "@ohmail/app/write/editor/schema": ["../../packages/app/src/write/editor/schema.ts"],
+      "@ohmail/app/write/editor/commands": ["../../packages/app/src/write/editor/commands.ts"],
+      "@ohmail/app/write/editor/marks": ["../../packages/app/src/write/editor/marks.ts"],
+      "@ohmail/app/write": ["../../packages/app/src/write/index.ts"],
+      "@ohmail/app/settings/ai/budget": ["../../packages/app/src/settings/ai/budget.ts"],
+      "@ohmail/app/settings/ai": ["../../packages/app/src/settings/ai/index.ts"],
+      "@ohmail/app/settings/browser": ["../../packages/app/src/settings/browser/index.ts"],
+      "@ohmail/app/settings/away": ["../../packages/app/src/settings/away/index.ts"],
+      "@ohmail/app/settings/folders": ["../../packages/app/src/settings/folders/index.ts"],
+      "@ohmail/app/settings/general": ["../../packages/app/src/settings/general/index.ts"],
+      "@ohmail/app/settings/help": ["../../packages/app/src/settings/help/index.ts"],
+      "@ohmail/app/settings/notifications": ["../../packages/app/src/settings/notifications/index.ts"],
+      "@ohmail/app/settings/rules": ["../../packages/app/src/settings/rules/index.ts"],
+      "@ohmail/app/settings/screener": ["../../packages/app/src/settings/screener/index.ts"],
+      "@ohmail/app/settings/signatures": ["../../packages/app/src/settings/signatures/index.ts"],
+      "@ohmail/app/settings/tags": ["../../packages/app/src/settings/tags/index.ts"],
+      "@ohmail/app/screener": ["../../packages/app/src/screener/index.ts"],
+      "@ohmail/app/settings": ["../../packages/app/src/settings/index.ts"],
+      "@ohmail/app/search": ["../../packages/app/src/search/index.ts"],
+      "@ohmail/app/palette": ["../../packages/app/src/palette/index.ts"],
+      "@ohmail/app/text/fill": ["../../packages/app/src/text/fill.ts"],
+      "@ohmail/app/frame/boot": ["../../packages/app/src/frame/boot-stamp.ts"],
+      "@ohmail/app/settings/travelled-change": ["../../packages/app/src/settings/browser/TravelledChangeLine.tsx"],
+      "@ohmail/app/frame/scope": ["../../packages/app/src/frame/scope.tsx"],
+      "@ohmail/app/frame": ["../../packages/app/src/frame/index.ts"],
+      "@ohmail/app/text": ["../../packages/app/src/text/index.ts"],
+      "use-intl/core": ["./node_modules/use-intl/core.d.ts"],
+      /* The calendar's core: the zone rules and the series' expansion the shell's calendar alerts are made with. */
+      "@ohmail/cal-core": ["../../packages/cal-core/src/index.ts"],
+      /* The wire's vocabulary: types only, imported by the client engine and erased at build. This
+         install links no workspace package, so this line is what resolves it for `tsc --noEmit`. */
+      "@ohmail/wire": ["../../packages/wire/src/index.ts"],
       /* The calendar reader — one of the two `@trafficflow/*` specifiers the desktop program
          compiles, read by the client engine and by the attachment strip and event card. Same
          fallback argument as the dompurify/tiptap block above: in this tree the workspace
@@ -137,10 +216,11 @@
       /* The one matcher that decides whether a configured model is on the endpoint's list —
          imported by `AiProviderForm.tsx` and by the engine's Ollama probe, so the picker and
          the verdict cannot disagree. Same story as the leaves above in the mirror. */
+      "@trafficflow/core/suggestion-consent": ["../../packages/core/src/suggestion-consent.ts"],
       "@trafficflow/core/model-name": ["../../packages/core/src/model-name.ts"],
       /* The diagnostic file's builder, shared with the phone (Settings → About). */
       "@trafficflow/core/diagnostics": ["../../packages/core/src/diagnostics/index.ts"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "../paired-page/src", "vite.config.ts"]
 }

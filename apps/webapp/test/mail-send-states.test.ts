@@ -1,13 +1,16 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { settleEditor } from "./_first-paint.js";
-import { SENT_BEAT_MS } from "../app/shell/mail-send";
-import type { SendState } from "../app/shell/mail-send";
+import { screen, within } from "@testing-library/react";
+import { mountWriting, rounds, unmountWritings, type WritingWorld } from "./_write-1-writing.js";
+import { GROUND_CATALOGUE } from "./_write-1-send-text.js";
+import { SENDING_LONG_MS, SENT_BEAT_MS } from "@ohmail/app-logic/writing/mail-send";
+import type { SendState } from "@ohmail/app-logic/writing/mail-send";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
 
@@ -58,7 +61,14 @@ const message: EngineMessage = {
 
 /** What the held reply's two verbs reported, newest last — reset by every `mount`. */
 let heldAnswers: string[] = [];
+/** Write's reply, as the reader's slot draws it over the composition (`_write-1-writing.tsx`). */
+let world: WritingWorld | null = null;
 
+/**
+ * WRITE's REPLY TO `m1`, handed the send machine's state for its lane (`replySend`) and, for a held send, the row
+ * it holds: Write's own derivation (`writingOf`) reads them where it reads the machine's, as today's editor was
+ * handed its `SendState` prop. The reply's words are typed into the composition (`onReplyBody`).
+ */
 async function mount(
   send: SendState,
   text = "Donnerstag passt.",
@@ -66,32 +76,29 @@ async function mount(
 ): Promise<void> {
   heldAnswers = [];
   await unmount();
-  const { InlineReply } = await import("../app/shell/InlineReply.js");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(InlineReply as never, {
-          // No `context` and no `now` since that change: the editor renders no mail, so it needs
-          // neither the conversation nor a clock to format one with.
-          // The editor holds BOTH halves now. Plain text with no markup — `html: ""` is what
-          // a message nobody formatted looks like, and it is the shape every assertion below
-          // is about.
-          message, value: { text, html: "" }, send,
-          onChange: () => {}, onClose: () => {}, onSend: () => {},
-          /* THE HELD REPLY'S WAY OUT, handed in the way the shell hands it: the row the hold is
-             about, and the callback that dispatches the reader's answer. `null` is every mount
-             that is not about a held row, which is every other case in this file. */
-          ...(heldResolve === null ? {} : { heldResolve }),
-        } as never),
-      }),
-    );
+  world = await mountWriting({
+    messages: [message],
+    hash: "#/ohbox",
+    sheet: ["m1"],
+    replySend: send,
+    ...(heldResolve === null ? {} : { heldReply: heldResolve.draftId }),
   });
-  // The reply's editor is behind `RichEditorLazy` — one seam, one helper.
-  await settleEditor();
+  await act(async () => { world!.now().openReply("m1"); });
+  await act(async () => { world!.now().onReplyBody({ text, html: "" }); });
+  await rounds(2);
+  host = world.el as HTMLDivElement;
+  /* THE HELD REPLY'S WAY OUT: what Write reported is handed on to the case's own callback. */
+  if (heldResolve !== null) {
+    const resolved = world.resolved;
+    const push = resolved.push.bind(resolved);
+    resolved.push = (...items: string[]) => {
+      for (const item of items) {
+        const at = item.lastIndexOf(":");
+        heldResolve.onResolve(item.slice(0, at), item.slice(at + 1));
+      }
+      return push(...items);
+    };
+  }
 }
 
 async function unmount(): Promise<void> {
@@ -99,24 +106,33 @@ async function unmount(): Promise<void> {
   host?.remove();
   root = null;
   host = null;
+  world = null;
+  await unmountWritings();
 }
 
 afterEach(unmount);
 
 /**
- * The send verb, found by its VARIANT rather than by its label.
- *
- * The label used to be the locator (`/^(Send|Sending)/`) and that stopped working the moment the
- * button gained its own states: a `queued` send says "Queued" and a delivered one says "Sent", so
- * a label-matched finder returned `undefined` and the case died reading `.disabled` of nothing —
- * which reads as a crash in the editor rather than as a stale locator. The primary variant is the
- * one durable fact about this control; Cancel beside it is a ghost.
+ * The send verb, found by its role and name in the panel the reply hands its verbs to (the reading sheet's one
+ * panel, "Send or discard"): Write's Send keeps its name in every phase; whether it may be pressed is the claim.
  */
 const sendBtn = (): HTMLButtonElement =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .btn.primary")!;
-const status = (): HTMLElement | null => host!.querySelector<HTMLElement>(".send-status");
-/** The editable surface of the rich editor — `.reply-editor` is the frame around it now. */
-const surface = (): HTMLElement => host!.querySelector<HTMLElement>(".reply-editor .rte-surface")!;
+  within(screen.getByRole("toolbar", { name: GROUND_CATALOGUE("write.verbs") }))
+    .getByRole<HTMLButtonElement>("button", { name: GROUND_CATALOGUE("write.send") });
+/** The reply's send line, by its role. */
+const status = (): HTMLElement | null => host!.querySelector<HTMLElement>("[role=status]");
+/** The reply's formatting buttons: the marks of its strip ("Formatting"), by role. */
+const marks = (): HTMLButtonElement[] => {
+  const strip = screen.queryByRole("toolbar", { name: GROUND_CATALOGUE("write.marks.bar") });
+  return strip === null ? [] : within(strip).queryAllByRole<HTMLButtonElement>("button");
+};
+/** The held send's way out: the send line that carries its answers, by role. */
+const resolveBox = (): HTMLElement | null => {
+  const line = status();
+  return line !== null && within(line).queryAllByRole("button").length > 0 ? line : null;
+};
+/** The reply's text box, by its role and name. */
+const surface = (): Promise<HTMLElement> => screen.findByRole("textbox", { name: GROUND_CATALOGUE("write.reply.text") });
 
 /**
  * No phase may produce copy a hurried reader takes for a delivery.
@@ -135,24 +151,31 @@ const CLAIMS_DELIVERY = /(?<!\bnot (?:sure (?:this|it) was )?)\b(sent(?!\s+folde
 describe("the reply editor's send states", () => {
   it("idle — nothing to report, and Send is live", async () => {
     await mount({ phase: "idle" });
+    await surface(); // the reply's editor arrives with its own code; idle is read once it can be typed in
     expect(status()).toBeNull();
     expect(sendBtn().disabled).toBe(false);
     expect(sendBtn().textContent).toContain("Send");
   });
 
   it("sending — locked, busy, and the text is not editable out from under the request", async () => {
-    await mount({ phase: "sending" });
+    await mount({ phase: "sending", since: Date.now() - SENDING_LONG_MS });
     expect(sendBtn().disabled).toBe(true);
-    expect(sendBtn().getAttribute("aria-busy")).toBe("true");
     // `readOnly` is a textarea's word for it; a `contenteditable` says `contenteditable="false"`,
     // which is what `RichEditor`'s `editable` prop sets. The claim is unchanged: mid-send the
     // text is still on screen and still cannot be edited out from under the request.
-    expect(surface().getAttribute("contenteditable")).toBe("false");
+    expect((await surface()).getAttribute("contenteditable")).toBe("false");
     // And the toolbar goes with it — a live formatting button would edit a document the caret
     // cannot reach.
-    expect([...host!.querySelectorAll<HTMLButtonElement>(".rte-b")].every((b) => b.disabled))
+    expect(marks().length, "the reply draws no formatting control to check").toBeGreaterThan(0);
+    expect(marks().every((b) => b.disabled))
       .toBe(true);
-    expect(status()!.textContent).toContain("Sending your reply");
+    expect(status()!.textContent).toBe("Still sending.");
+  });
+
+  // While a send is pending, the send action reports its busy state to a screen reader.
+  it("sending — the Send verb says it is busy", async () => {
+    await mount({ phase: "sending" });
+    expect(sendBtn().getAttribute("aria-busy")).toBe("true");
   });
 
   it("queued — says NOT sent, keeps the text, and stays locked", async () => {
@@ -162,32 +185,7 @@ describe("the reply editor's send states", () => {
     expect(sendBtn().disabled).toBe(true);
     expect(status()!.textContent).toContain("Not sent yet");
     expect(status()!.textContent).not.toMatch(CLAIMS_DELIVERY);
-    expect(surface().textContent).toContain("Donnerstag passt.");
-  });
-
-  it("the button carries the phase the stylesheet paints — and only for the phases it paints", async () => {
-    // `data-send` is the whole hand-off to `packages/ui`: it keeps the accent fill while the
-    // control is natively disabled and runs the band along its foot. Written from the lane's
-    // phase, never inferred from `disabled`, because "locked" is true of states that must look
-    // completely different — mid-send and refused-because-empty are both disabled buttons.
-    await mount({ phase: "sending" });
-    expect(sendBtn().getAttribute("data-send")).toBe("sending");
-    expect(sendBtn().textContent).toContain("Sending");
-
-    await mount({ phase: "sent" });
-    expect(sendBtn().getAttribute("data-send")).toBe("sent");
-    expect(sendBtn().textContent).toContain("Sent");
-
-    await mount({ phase: "queued" });
-    expect(sendBtn().getAttribute("data-send")).toBe("queued");
-    expect(sendBtn().textContent).toContain("Queued");
-
-    // Back to rest: Send is the retry, and an attribute the stylesheet has no rule for would be
-    // a claim in the DOM that nothing is making.
-    await mount({ phase: "failed" });
-    expect(sendBtn().getAttribute("data-send")).toBeNull();
-    await mount({ phase: "idle" });
-    expect(sendBtn().getAttribute("data-send")).toBeNull();
+    expect((await surface()).textContent).toContain("Donnerstag passt.");
   });
 
   it("the server's accepted-pending send says the product HAS it; the transport's does not", async () => {
@@ -223,7 +221,6 @@ describe("the reply editor's send states", () => {
     expect(sendBtn().disabled).toBe(true);
     expect(status()!.textContent).toContain("not sure this was sent");
     expect(status()!.textContent).toContain("Sent folder");
-    expect(status()!.className).toContain("warn");
   });
 
   it("failed — the plain sentence, never the server's wire, and Send is live again", async () => {
@@ -235,18 +232,18 @@ describe("the reply editor's send states", () => {
     // `send-status-copy.test.tsx` pins the never-the-wire half per class of reason.
     await mount({ phase: "failed", reason: "A prior send under this key failed and was not delivered." });
     expect(sendBtn().disabled).toBe(false);
-    expect(status()!.textContent).toContain("Sending didn't work");
+    expect(status()!.textContent).toContain(messages.write.status.failed);
     expect(status()!.textContent, "the wire leaked into the sentence").not.toContain("was not delivered");
-    expect(status()!.className).toContain("error");
   });
 
   it("every non-delivered phase is announced, and none of them claims delivery", async () => {
     for (const phase of ["sending", "queued", "unverified", "failed"] as const) {
-      await mount({ phase });
+      await mount(phase === "sending" ? { phase, since: Date.now() - SENDING_LONG_MS } : { phase });
       const line = status()!;
       // Out-of-band outcomes: a retry can resolve minutes after focus moved on.
       expect(line.getAttribute("role")).toBe("status");
-      expect(line.getAttribute("aria-live")).toBe("polite");
+      // `role="status"` is a polite live region by its role (WAI-ARIA); an explicit attribute may only restate it.
+      expect(line.getAttribute("aria-live") ?? "polite").toBe("polite");
       expect(line.textContent, phase).not.toMatch(CLAIMS_DELIVERY);
     }
   });
@@ -280,12 +277,12 @@ describe("phaseFor", () => {
     ({ id: "i", key: "k", seq: null, ...over }) as never;
 
   it("confirmed ⇒ idle (the editor is done and closes)", async () => {
-    const { phaseFor } = await import("../app/shell/mail-send.js");
+    const { phaseFor } = await import("@ohmail/app-logic/writing/mail-send");
     expect(phaseFor(result({ status: "confirmed" })).phase).toBe("idle");
   });
 
   it("queued ⇒ queued, NEVER idle", async () => {
-    const { phaseFor } = await import("../app/shell/mail-send.js");
+    const { phaseFor } = await import("@ohmail/app-logic/writing/mail-send");
     const err = { code: "send_in_flight", message: "already in progress", retryable: true };
     expect(phaseFor(result({ status: "queued", error: err })).phase).toBe("queued");
   });
@@ -293,13 +290,13 @@ describe("phaseFor", () => {
   it("rolled_back + send_unverified ⇒ its OWN phase, not `failed`", async () => {
     // The distinction is the point: `failed` means "definitely not delivered" and invites a
     // retry; `unverified` means "we cannot tell" and must say so instead.
-    const { phaseFor } = await import("../app/shell/mail-send.js");
+    const { phaseFor } = await import("@ohmail/app-logic/writing/mail-send");
     const err = { code: "send_unverified", message: "We couldn't confirm this send.", retryable: false };
     expect(phaseFor(result({ status: "rolled_back", error: err })).phase).toBe("unverified");
   });
 
   it("any other rejection ⇒ failed, carrying the server's own words", async () => {
-    const { phaseFor } = await import("../app/shell/mail-send.js");
+    const { phaseFor } = await import("@ohmail/app-logic/writing/mail-send");
     const err = { code: "send_failed", message: "A prior send under this key failed.", retryable: false };
     const next = phaseFor(result({ status: "rolled_back", error: err }));
     expect(next.phase).toBe("failed");
@@ -315,7 +312,7 @@ describe("phaseFor", () => {
    * and only the server knows which of the three states applies.
    */
   it("duplicate_send ⇒ its OWN phase, carrying the first send's state", async () => {
-    const { phaseFor } = await import("../app/shell/mail-send.js");
+    const { phaseFor } = await import("@ohmail/app-logic/writing/mail-send");
     const err = {
       code: "duplicate_send",
       message: "This exact message was already sent from this mailbox at 2026-07-28T12:00:00.000Z.",
@@ -338,7 +335,7 @@ describe("phaseFor", () => {
    * Settling on `duplicate` here is how the message is lost while the screen looks calm.
    */
   it("a duplicate whose first attempt is still RUNNING reads as queued, not as a settled duplicate", async () => {
-    const { phaseFor } = await import("../app/shell/mail-send.js");
+    const { phaseFor } = await import("@ohmail/app-logic/writing/mail-send");
     const err = {
       code: "duplicate_send", message: "…already being sent…", retryable: true,
       details: { firstSend: { status: "pending" } },
@@ -349,7 +346,7 @@ describe("phaseFor", () => {
   });
 
   it("duplicate_send with an unconfirmed first send says so, not `sent`", async () => {
-    const { phaseFor } = await import("../app/shell/mail-send.js");
+    const { phaseFor } = await import("@ohmail/app-logic/writing/mail-send");
     const err = {
       code: "duplicate_send", message: "…", retryable: false,
       details: { firstSend: { status: "unverified", at: "2026-07-28T12:00:00.000Z" } },
@@ -360,7 +357,7 @@ describe("phaseFor", () => {
   it("duplicate_send with a state this build does not know DROPS it rather than guessing", async () => {
     // A newer server may name a fourth state. The surface then says the one sentence true of all
     // of them; rendering a stranger's token, or throwing, are both worse than degrading.
-    const { phaseFor } = await import("../app/shell/mail-send.js");
+    const { phaseFor } = await import("@ohmail/app-logic/writing/mail-send");
     for (const details of [
       { firstSend: { status: "teleported" } },
       { firstSend: null },
@@ -401,7 +398,7 @@ describe("canSend — the reply's rows", () => {
 
   for (const [phase, body, expected, why] of cases) {
     it(`${phase} + ${JSON.stringify(body)} ⇒ ${expected} — ${why}`, async () => {
-      const { canSend } = await import("../app/shell/mail-send.js");
+      const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
       // A reply carries no recipient of its own: `Engine.enrich` derives it from the parent, so
       // `inReplyTo` + `body` IS the whole mutation the button judges.
       expect(canSend({ phase }, { kind: "mail_send", inReplyTo: "m1", body })).toBe(expected);
@@ -434,14 +431,14 @@ describe("canSend — the compose rows", () => {
 
   for (const [name, over, expected, why] of cases) {
     it(`${name} ⇒ ${expected} — ${why}`, async () => {
-      const { canSend } = await import("../app/shell/mail-send.js");
+      const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
       const m = { kind: "mail_send", inReplyTo: null, body: "hello", subject: "s", ...over };
       expect(canSend({ phase: "idle" }, m as never)).toBe(expected);
     });
   }
 
   it("an empty body is refused for a compose too", async () => {
-    const { canSend } = await import("../app/shell/mail-send.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
     expect(canSend({ phase: "idle" }, {
       kind: "mail_send", inReplyTo: null, body: "  ", to: ADDR, mailboxId: "mb",
     })).toBe(false);
@@ -459,28 +456,28 @@ describe("canSend — an attachment is content", () => {
   const FILE = { filename: "shot.png", contentType: "image/png", contentBase64: "aGk=" };
 
   it("a reply with an attachment and no words sends", async () => {
-    const { canSend } = await import("../app/shell/mail-send.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
     expect(canSend({ phase: "idle" }, {
       kind: "mail_send", inReplyTo: "m1", body: "  ", attachments: [FILE],
     })).toBe(true);
   });
 
   it("a compose with an attachment and no words sends", async () => {
-    const { canSend } = await import("../app/shell/mail-send.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
     expect(canSend({ phase: "idle" }, {
       kind: "mail_send", inReplyTo: null, body: "", to: ADDR, mailboxId: "mb", attachments: [FILE],
     })).toBe(true);
   });
 
   it("an EXPLICITLY EMPTY attachments list is not content — the two spellings of none agree", async () => {
-    const { canSend } = await import("../app/shell/mail-send.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
     expect(canSend({ phase: "idle" }, {
       kind: "mail_send", inReplyTo: null, body: "", to: ADDR, mailboxId: "mb", attachments: [],
     })).toBe(false);
   });
 
   it("sendRefusal names the reason, and a stronger lock outranks the missing word", async () => {
-    const { sendRefusal } = await import("../app/shell/mail-send.js");
+    const { sendRefusal } = await import("@ohmail/app-logic/writing/mail-send");
     // Nothing to send, and that is the stated reason…
     expect(sendRefusal({ phase: "idle" }, {
       kind: "mail_send", inReplyTo: null, body: " ", to: ADDR, mailboxId: "mb",
@@ -500,7 +497,7 @@ describe("canSend — an attachment is content", () => {
   });
 
   it("past the draft limit is its own refusal: one UTF-8 byte over, never at it, and the plain half only", async () => {
-    const { sendRefusal } = await import("../app/shell/mail-send.js");
+    const { sendRefusal } = await import("@ohmail/app-logic/writing/mail-send");
     const { DRAFT_BODY_MAX_BYTES } = await import("@trafficflow/core/outbound-text");
     const at = "é".repeat(DRAFT_BODY_MAX_BYTES / 2);
     const m = (body: string, html?: string) => ({ kind: "mail_send", inReplyTo: "m1", body, ...(html ? { html } : {}) }) as never;
@@ -512,7 +509,7 @@ describe("canSend — an attachment is content", () => {
   });
 
   it("a forward never needs content — its content is the forwarded message", async () => {
-    const { sendNeedsContent } = await import("../app/shell/mail-send.js");
+    const { sendNeedsContent } = await import("@ohmail/app-logic/writing/mail-send");
     expect(sendNeedsContent({ kind: "mail_send", inReplyTo: null, body: "", forwardOf: "m9" })).toBe(false);
     // …and `forwardOf: null` is NOT a forward: the wordless, fileless case still refuses.
     expect(sendNeedsContent({ kind: "mail_send", inReplyTo: null, body: "", forwardOf: null })).toBe(true);
@@ -582,16 +579,18 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     to: [{ name: null, address: "lena@atelier.example" }], mailboxId: "mb",
   });
 
-  /** Mount a probe that exposes the hook's `send`. */
-  async function probe(rec: Recorder): Promise<(m: Mut) => boolean> {
+  /** Mount a probe that exposes the hook's `send`; `handed` is the scope it mounts with (absent: the storage owner). */
+  async function probe(rec: Recorder, handed?: { scope: string | null }): Promise<(m: Mut) => boolean> {
     await unmount();
-    const { useMailSend } = await import("../app/shell/mail-send.js");
+    const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { useMailSendText } = await import("./_write-1-send-text.js");
     let send!: (m: Mut) => boolean;
     const Probe = (): null => {
       const api = useMailSend(
         rec.engine as never,
+        handed ? handed.scope : storageOwner(),
         ((m: string) => rec.toasts.push(m)) as never,
-        ((key: string, m?: Record<string, unknown>) => {
+        useMailSendText(), ((key: string, m?: Record<string, unknown>) => {
           rec.settled.push(key);
           rec.settledWith.push(m);
         }) as never,
@@ -657,8 +656,9 @@ describe("useMailSend refuses on its own, not only via the button", () => {
 
   it("an ending says whether a surface showed its lane, and a withdrawn send ends with nothing to say", async () => {
     await unmount();
-    const { useMailSend } = await import("../app/shell/mail-send.js");
-    const { sendLine } = await import("../app/shell/SendStatus.js");
+    const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { useMailSendText } = await import("./_write-1-send-text.js");
+    const { sendLine } = await import("@ohmail/app-logic/writing/send-line");
     const { OUTBOX_WITHDRAWN_CODE } = await import("@ohmail/client-engine");
     const rec = recorder();
     let code = "send_unreachable";
@@ -670,7 +670,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     let api!: { send: (m: Mut) => void; showing: (lane: string) => () => void };
     const Probe = (): null => {
       api = useMailSend(
-        rec.engine as never, (() => {}) as never, (() => {}) as never,
+        rec.engine as never, storageOwner(), (() => {}) as never, useMailSendText(), (() => {}) as never,
         ((_k: string, _m: unknown, _ok: boolean, _p: unknown, d?: { shown?: boolean; ended?: SendState }) => {
           endings.push({ shown: d?.shown, phase: d?.ended?.phase, line: d?.ended ? sendLine(d.ended, false)?.key ?? null : null });
           return false;
@@ -710,7 +710,8 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     goOnline: () => void;
   }> {
     await unmount();
-    const { useMailSend } = await import("../app/shell/mail-send.js");
+    const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { useMailSendText } = await import("./_write-1-send-text.js");
     const settled: string[] = [];
     let api!: { send: (m: Mut) => void; stateOf: (k: string) => { phase: string; accepted?: true } };
     // The FIRST answer is the send route's own 202 (`send_queued`); every later one is the 409
@@ -738,8 +739,9 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     const Probe = (): null => {
       api = useMailSend(
         engine as never,
+        storageOwner(),
         (() => { /* toasts are another case */ }) as never,
-        ((key: string) => { settled.push(key); }) as never,
+        useMailSendText(), ((key: string) => { settled.push(key); }) as never,
       ) as never;
       return null;
     };
@@ -807,7 +809,8 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       await unmount();
-      const { useMailSend } = await import("../app/shell/mail-send.js");
+      const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+      const { useMailSendText } = await import("./_write-1-send-text.js");
       const said: string[] = []; const keys: string[] = []; let flushes = 0;
       const engine = {
         mutate: async () => ({ id: "i", key: "k1", seq: 1, status: "queued", error: { code: "network", retryable: true } }),
@@ -817,7 +820,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
       };
       let send!: (m: Mut) => void;
       const Probe = ({ toast }: { toast: (m: string) => void }): null => {
-        const api = useMailSend(engine as never, toast as never, (() => {}) as never);
+        const api = useMailSend(engine as never, storageOwner(), toast as never, useMailSendText(), (() => {}) as never);
         send = api.send as unknown as (m: Mut) => void;
         return null;
       };
@@ -838,7 +841,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
       await tick(0); await tick(0);
       await render();
       await tick(6_000);
-      expect({ flushes, keys, said }).toEqual({ flushes: 1, keys: ["k1"], said: ["Reply sent."] });
+      expect({ flushes, keys, said }).toEqual({ flushes: 1, keys: ["k1"], said: [messages.reply.toastSent] });
       await unmount();
     } finally {
       vi.useRealTimers();
@@ -923,7 +926,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     await drain();
     expect(rec.mutations.map((m) => m.kind)).toEqual(["mail_send", "triage_set"]);
     expect(rec.mutations[1]).toMatchObject({ messageId: "m1", state: "none" });
-    expect(rec.toasts).toContain("Reply sent.");
+    expect(rec.toasts).toContain(messages.reply.toastSent);
     await beat();
     expect(rec.settled).toEqual(["m1"]);
   });
@@ -1006,9 +1009,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     expect(rec.mutations.map((m) => m.kind)).toEqual(["mail_send"]);
     await beat();
     expect(rec.settled).toEqual(["compose"]);
-    expect(rec.toasts).toContain("Message sent.");
-    // …and it does not claim to have sent a REPLY.
-    expect(rec.toasts).not.toContain("Reply sent.");
+    expect(rec.toasts.filter((line) => line === messages.compose.toastSent)).toHaveLength(1);
   });
 
   /**
@@ -1052,16 +1053,55 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     await drain();
     expect(rec.mutations.filter((m) => m.kind === "mail_send")).toHaveLength(2);
   });
+  it("a send answered after its mount went keeps to the scope it was pressed under", async () => {
+    const { setStorageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
+    const { claimSendLock, sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
+    const { composeDraftKey, writeComposeDraft, EMPTY_COMPOSE } = await import("@ohmail/app-logic/writing/compose");
+    const { sentCopyNotesKey } = await import("@ohmail/app-logic/writing/mail-send");
+    const A = "mailbox-aaaa1111";
+    const B = "mailbox-bbbb2222";
+    window.localStorage.clear();
+    try {
+      claimSendLock({ v: 1, lane: "m9", key: "idem-b", at: Date.now(), draftId: null, subject: "reply:m9", session: "s-b", fp: "fp-b" }, () => true, B);
+      writeComposeDraft({ ...EMPTY_COMPOSE, to: "b@example.test", subject: "B's letter", body: "B's words" }, B);
+      const bytesOfB = (): Array<string | null> => [sendLocksKey(B), composeDraftKey(B), sentCopyNotesKey(B)]
+        .map((k) => window.localStorage.getItem(k));
+      const before = bytesOfB();
+      setStorageOwner(B);
+
+      const rec = recorder();
+      let answer!: () => void;
+      const gate = new Promise<void>((r) => { answer = r; });
+      const mutate = (rec.engine as { mutate: (m: Record<string, unknown>) => Promise<unknown> }).mutate;
+      (rec.engine as { mutate: unknown }).mutate = async (m: Record<string, unknown>) => { await gate; return mutate(m); };
+      writeComposeDraft({ ...EMPTY_COMPOSE, to: "lena@atelier.example", subject: "Hallo", body: "A's words" }, A);
+      const send = await probe(rec, { scope: A });
+      expect(send(compose("A's words")), "the press did not go").toBe(true);
+      await drain();
+      expect(window.localStorage.getItem(sendLocksKey(A)), "the press took no lock under its own mailbox").toContain("compose");
+
+      await unmount();
+      await act(async () => { answer(); });
+      await drain();
+      expect(rec.mutations.filter((m) => m.kind === "mail_send"), "the press did not reach the engine").toHaveLength(1);
+      // This engine never reports the key settled, so the record is still owed: it stays, under its own mailbox.
+      expect(window.localStorage.getItem(sendLocksKey(A)), "the answered send's record left its own mailbox").toContain("compose");
+      expect(bytesOfB(), "another mailbox's lock, letter or notes changed").toEqual(before);
+    } finally {
+      setStorageOwner(null);
+      window.localStorage.clear();
+    }
+  });
 });
 
 describe("clearsTriage", () => {
   it("a delivered reply discharges Answer Later", async () => {
-    const { clearsTriage } = await import("../app/shell/mail-send.js");
+    const { clearsTriage } = await import("@ohmail/app-logic/writing/mail-send");
     expect(clearsTriage("reply_later")).toBe(true);
   });
 
   it("…and leaves a booking, a pin, Parked, Muted and no-state alone", async () => {
-    const { clearsTriage } = await import("../app/shell/mail-send.js");
+    const { clearsTriage } = await import("@ohmail/app-logic/writing/mail-send");
     expect(clearsTriage("bubbled_up")).toBe(false);
     expect(clearsTriage("resurfaced")).toBe(false);
     expect(clearsTriage("set_aside")).toBe(false);
@@ -1087,11 +1127,16 @@ describe("no path mints a fresh key after an unverified send", () => {
   it("Send is locked, the key is not released, and the compose keeps its draft", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const send = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/mail-send.ts"), "utf8");
-    const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
+    const send = readFileSync(resolve(process.cwd(), "packages/app-logic/src/writing/mail-send.ts"), "utf8");
+    /* The composer the new shell stands (re-pointed by path, share write-1): today's AppShell held it; the ground's
+       Write mount (`WritingMount.tsx`) stands `useShellCompose` of `shell-compose.ts`, which every host reaches. */
+    const shell = [
+      "packages/app-logic/src/writing/shell-compose.ts",
+      "packages/app/src/mail/ground/WritingMount.tsx",
+    ].map((at) => readFileSync(resolve(process.cwd(), at), "utf8")).join("\n");
 
     // 1. the button
-    const { canSend } = await import("../app/shell/mail-send.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
     expect(canSend({ phase: "unverified" } as never, { body: "text" } as never)).toBe(false);
 
     // 2. the durable key survives the terminal outcome, so a retry can reuse it
@@ -1132,7 +1177,7 @@ describe("an unverified send survives every way back to it", () => {
 
   it("the lock is not dropped by the age limit", async () => {
     const { claimSendLock, markSendLockUnverified, readSendLock, SEND_LOCK_TTL_MS } =
-      await import("../app/shell/send-lock.js");
+      await import("@ohmail/app-logic/writing/send-lock");
     const at = 1_000_000;
     claimSendLock({ v: 1, lane: LANE, key: "K1", at, draftId: "d1", fp: "fp-a", subject: "draft:d1", session: "sess-1" }, NONE_OWED, OWNER);
     markSendLockUnverified(LANE, "fp-a", OWNER);
@@ -1159,7 +1204,7 @@ describe("an unverified send survives every way back to it", () => {
      * liveness predicate, and this is the assertion that holds them together.
      */
     const { claimSendLock, markSendLockUnverified, allSendLocks, unverifiedSendIntents, SEND_LOCK_TTL_MS } =
-      await import("../app/shell/send-lock.js");
+      await import("@ohmail/app-logic/writing/send-lock");
     const at = 1_000_000;
     claimSendLock({ v: 1, lane: LANE, key: "K1", at, draftId: "d1", fp: "fp-a", subject: "draft:d1", session: "sess-1" }, NONE_OWED, OWNER);
     claimSendLock({ v: 1, lane: "other", key: "K2", at, draftId: "d2", fp: "fp-b", subject: "draft:d2" }, NONE_OWED, OWNER);
@@ -1181,7 +1226,7 @@ describe("an unverified send survives every way back to it", () => {
 
   it("the lock is not deleted when the draft is edited", async () => {
     const { claimSendLock, markSendLockUnverified, readSendLock, unverifiedSendIntents } =
-      await import("../app/shell/send-lock.js");
+      await import("@ohmail/app-logic/writing/send-lock");
     claimSendLock({ v: 1, lane: LANE, key: "K1", at: 1_000, draftId: "d1", fp: "fp-a", subject: "draft:d1", session: "sess-1" }, NONE_OWED, OWNER);
     markSendLockUnverified(LANE, "fp-a", OWNER);
 
@@ -1204,7 +1249,7 @@ describe("an unverified send survives every way back to it", () => {
      */
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const src = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/mail-send.ts"), "utf8");
+    const src = readFileSync(resolve(process.cwd(), "packages/app-logic/src/writing/mail-send.ts"), "utf8");
     expect(
       src,
       "the unverified terminal branch does not record the fact durably, so reopening the draft "
@@ -1218,7 +1263,7 @@ describe("an unverified send survives every way back to it", () => {
 
   it("a remounted composer starts parked, not idle", async () => {
     const { claimSendLock, markSendLockUnverified, unverifiedSendIntents } =
-      await import("../app/shell/send-lock.js");
+      await import("@ohmail/app-logic/writing/send-lock");
     claimSendLock({ v: 1, lane: LANE, key: "K1", at: 1_000, draftId: "d1", fp: "fp-a", subject: "draft:d1", session: "sess-1" }, NONE_OWED, OWNER);
     markSendLockUnverified(LANE, "fp-a", OWNER);
 
@@ -1228,7 +1273,7 @@ describe("an unverified send survives every way back to it", () => {
       "a fresh mount has no memory of the unverified send, so Send comes back live",
     ).toEqual(["fp-a"]);
 
-    const { canSend } = await import("../app/shell/mail-send.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
     expect(
       canSend({ phase: "unverified" } as never, { body: "text" } as never),
       "and the phase that fact produces still refuses to send",
@@ -1256,15 +1301,15 @@ describe("the unverified lock names a message, and refuses when nobody named one
   } as never);
 
   it("an `unverified` state with nothing named still refuses — fail closed", async () => {
-    const { canSend } = await import("../app/shell/mail-send.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
     expect(canSend({ phase: "unverified" } as SendState, msg())).toBe(false);
     // And an EMPTY list is the answered case: the record was read and holds nothing.
     expect(canSend({ phase: "unverified", unresolved: [] } as SendState, msg())).toBe(true);
   });
 
   it("the parked SUBJECT is refused and a different subject is admitted", async () => {
-    const { canSend } = await import("../app/shell/mail-send.js");
-    const { sendFingerprint } = await import("../app/shell/send-lock.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { sendFingerprint } = await import("@ohmail/app-logic/writing/send-lock");
     const ambiguous = msg({ inReplyTo: "giulia", body: "the reply that may already have gone" });
     const state = {
       phase: "unverified",
@@ -1284,8 +1329,8 @@ describe("the unverified lock names a message, and refuses when nobody named one
      * whose outcome nobody knows, press Send, and a fresh key went out for a message that may
      * already have been delivered. The subject is what an edit does not change.
      */
-    const { canSend } = await import("../app/shell/mail-send.js");
-    const { sendFingerprint } = await import("../app/shell/send-lock.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { sendFingerprint } = await import("@ohmail/app-logic/writing/send-lock");
     const first = msg({ inReplyTo: "giulia", body: "as first written" });
     const state = {
       phase: "unverified",
@@ -1304,8 +1349,8 @@ describe("the unverified lock names a message, and refuses when nobody named one
   });
 
   it("a draft row is a subject, and a compose whose subject cannot be named FAILS CLOSED", async () => {
-    const { canSend } = await import("../app/shell/mail-send.js");
-    const { sendFingerprint } = await import("../app/shell/send-lock.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { sendFingerprint } = await import("@ohmail/app-logic/writing/send-lock");
     const sent = msg({ draftId: "d-9", body: "as first written" });
     const state = {
       phase: "unverified",
@@ -1334,8 +1379,8 @@ describe("the unverified lock names a message, and refuses when nobody named one
   });
 
   it("the compose session is the subject before a draft row exists", async () => {
-    const { canSend } = await import("../app/shell/mail-send.js");
-    const { sendFingerprint, sendSubject } = await import("../app/shell/send-lock.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { sendFingerprint, sendSubject } = await import("@ohmail/app-logic/writing/send-lock");
     const first = msg({ body: "the new message that may already have gone" });
     expect(sendSubject(first, "sess-1"), "the session is not the subject").toBe("compose:sess-1");
     expect(sendSubject(first, null), "an unnameable compose must not answer a subject").toBeUndefined();
@@ -1364,7 +1409,7 @@ describe("the unverified lock names a message, and refuses when nobody named one
      */
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const src = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/mail-send.ts"), "utf8");
+    const src = readFileSync(resolve(process.cwd(), "packages/app-logic/src/writing/mail-send.ts"), "utf8");
     // `sendRefusal` is `canSend` with its reason kept (the surfaces read the same one), so a refusal
     // past the draft limit can be said on the lane.
     expect(
@@ -1402,8 +1447,8 @@ describe("the warn sentence is about the message on screen", () => {
   } as never);
 
   it("the parked message keeps the warning, and a different one is not given it", async () => {
-    const { sendStateFor, sendVerb } = await import("../app/shell/mail-send.js");
-    const { sendFingerprint } = await import("../app/shell/send-lock.js");
+    const { sendStateFor, sendVerb } = await import("@ohmail/app-logic/writing/mail-send");
+    const { sendFingerprint } = await import("@ohmail/app-logic/writing/send-lock");
     const ambiguous = msg({ inReplyTo: "giulia", body: "the reply that may already have gone" });
     const state = {
       phase: "unverified",
@@ -1417,18 +1462,18 @@ describe("the warn sentence is about the message on screen", () => {
     ).toBe("idle");
     // Narrowed for the sentence, NOT for the rule: a `canSend` reading the narrowed state must
     // answer exactly what one reading the original answers.
-    const { canSend } = await import("../app/shell/mail-send.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
     expect(canSend(sendStateFor(state, ambiguous), ambiguous)).toBe(false);
     expect(sendVerb(sendStateFor(state, ambiguous), "compose").key).toBe("send");
   });
 
   it("a phase nobody named intents for keeps its warning — fail closed", async () => {
-    const { sendStateFor } = await import("../app/shell/mail-send.js");
+    const { sendStateFor } = await import("@ohmail/app-logic/writing/mail-send");
     expect(sendStateFor({ phase: "unverified" } as SendState, msg()).phase).toBe("unverified");
   });
 
   it("every other phase passes through untouched", async () => {
-    const { sendStateFor } = await import("../app/shell/mail-send.js");
+    const { sendStateFor } = await import("@ohmail/app-logic/writing/mail-send");
     for (const phase of ["idle", "sending", "queued", "sent", "failed"] as const) {
       const state = { phase } as SendState;
       expect(sendStateFor(state, msg()), `the ${phase} phase was rewritten`).toBe(state);
@@ -1436,31 +1481,40 @@ describe("the warn sentence is about the message on screen", () => {
   });
 
   it("both surfaces render the narrowed state, and judge the unnarrowed one", async () => {
+    /* RE-POINTED BY PATH (share write-1): today's two surfaces were ComposeView and InlineReply; Write's are the letter
+       and the reply, whose send state each surface renders is derived in `writing-of.ts` (the letter's `composeSend`)
+       and `writing-reply.ts` (the reply's `send`), and whose sentence and held answers are drawn by ONE part,
+       `write/status/Status.tsx`, off the state it is handed. */
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const compose = readFileSync(resolve(process.cwd(), "apps/webapp/app/views/ComposeView.tsx"), "utf8");
-    const reply = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/InlineReply.tsx"), "utf8");
+    const compose = readFileSync(resolve(process.cwd(), "packages/app-logic/src/writing/writing-of.ts"), "utf8");
+    const reply = readFileSync(resolve(process.cwd(), "packages/app-logic/src/writing/writing-reply.ts"), "utf8");
+    const status = readFileSync(resolve(process.cwd(), "packages/app/src/write/status/Status.tsx"), "utf8");
     expect(
       compose,
       "the compose surface renders the lane's phase, so an unresolved send warns about mail the "
         + "reader is not writing",
-    ).toMatch(/<SendStatus send=\{shown\}/);
+    ).toMatch(/\bsendStateFor\(/);
     expect(
       reply,
       "the inline reply renders the lane's phase, same defect",
-    ).toMatch(/<SendStatus send=\{sendStateFor\(send, wouldSend\)\}/);
+    ).toMatch(/\bsendStateFor\(/);
     /* ── AND THE WAY OUT, ON BOTH OF THEM, OFF THE SAME NARROWED STATE ──────────────────────
        A surface that states the hold and offers nothing to do about it sends the reader to
        another screen to answer a question this one asked. Both doors gate the verbs on the
-       phase the SENTENCE renders from, so a hold that says nothing here offers nothing either. */
+       phase the SENTENCE renders from, so a hold that says nothing here offers nothing either.
+       Write draws both doors' sentence and answers in one part, off the one `send` it is handed. */
+    const replyView = readFileSync(resolve(process.cwd(), "packages/app/src/write/Reply.tsx"), "utf8");
+    expect(status, "the held answers are not gated on the phase the sentence renders from")
+      .toMatch(/held !== null && send\.phase === "unverified"/);
     expect(
-      compose,
+      status,
       "the composer states the hold and offers no way to answer it",
-    ).toMatch(/heldResolve !== null && shown\.phase === "unverified"/);
+    ).toMatch(/const said = \{\s+send: w\.composeSend,\s+held,\s+locked,\s+showShortSending: w\.composeReopenedSending,\s+onResolve: w\.resolveHeldSend,\s+\}/);
     expect(
-      reply,
+      replyView,
       "the reply editor states the hold and offers no way to answer it",
-    ).toMatch(/heldResolve !== null && sendStateFor\(send, wouldSend\)\.phase === "unverified"/);
+    ).toMatch(/<Status\s+at="one"\s+send=\{reply\.send\}\s+held=\{reply\.held\}\s+locked=\{null\}\s+onResolve=\{w\.resolveHeldSend\}\s+\/>/);
   });
 });
 
@@ -1480,8 +1534,8 @@ describe("a record written before the subject existed still parks something", ()
   } as never);
 
   it("it refuses its own content and admits a different message", async () => {
-    const { canSend } = await import("../app/shell/mail-send.js");
-    const { sendFingerprint } = await import("../app/shell/send-lock.js");
+    const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { sendFingerprint } = await import("@ohmail/app-logic/writing/send-lock");
     const stored = msg({ body: "written under the earlier rule" });
     const state = {
       phase: "unverified", session: "sess-1",
@@ -1537,8 +1591,8 @@ describe("the row the composer is holding decides too, not only the jar", () => 
    * makes them a check on the seam rather than on a hand-built enum.
    */
   const holdFor = async (rowId: string | null, session: string | null) => {
-    const { holdOf } = await import("../app/shell/send-lock.js");
-    return holdOf(mirror, { lane: "compose", draftId: rowId, session });
+    const { holdOf } = await import("@ohmail/app-logic/writing/send-lock");
+    return holdOf(mirror, { lane: "compose", draftId: rowId, session }, storageOwner());
   };
 
   /**
@@ -1547,7 +1601,7 @@ describe("the row the composer is holding decides too, not only the jar", () => 
    * one press is a second copy: expected true to be false
    */
   it("a held row the server marked unverified refuses the press, and says why", async () => {
-    const { heldRowUnverified, canSend, sendStateFor } = await import("../app/shell/mail-send.js");
+    const { heldRowUnverified, canSend, sendStateFor } = await import("@ohmail/app-logic/writing/mail-send");
     const held = heldRowUnverified(IDLE, "A", await holdFor("A", "s1"), "s1");
     expect(
       canSend(held, msg()),
@@ -1581,9 +1635,9 @@ describe("the row the composer is holding decides too, not only the jar", () => 
    *   is a second copy of it
    */
   it("a held REPLY row refuses the press for its own message and nobody else's", async () => {
-    const { heldRowUnverified, canSend, sendStateFor } = await import("../app/shell/mail-send.js");
-    const { holdOf } = await import("../app/shell/send-lock.js");
-    const replyHold = holdOf(mirror, { lane: "m1", draftId: "A", session: null });
+    const { heldRowUnverified, canSend, sendStateFor } = await import("@ohmail/app-logic/writing/mail-send");
+    const { holdOf } = await import("@ohmail/app-logic/writing/send-lock");
+    const replyHold = holdOf(mirror, { lane: "m1", draftId: "A", session: null }, storageOwner());
     const held = heldRowUnverified(IDLE, "A", replyHold, null, "m1");
 
     expect(
@@ -1611,19 +1665,19 @@ describe("the row the composer is holding decides too, not only the jar", () => 
    * surface a reader goes to and had nothing but a refused Send. Same component on both doors, so
    * the words and the outcomes cannot fall apart.
    *
-   * Mutation: drop the `heldResolve` block from `InlineReply`. Real failure text:
+   * Mutation: remove the held-reply actions from the shared Write reply. Real failure text:
    *   AssertionError: a held reply's editor offers no way to answer the question its own sentence
    *   asks: expected null not to be null
    */
   it("a held reply's editor carries the two verbs, and Send stays refused", async () => {
-    const { heldRowUnverified } = await import("../app/shell/mail-send.js");
-    const { holdOf } = await import("../app/shell/send-lock.js");
+    const { heldRowUnverified } = await import("@ohmail/app-logic/writing/mail-send");
+    const { holdOf } = await import("@ohmail/app-logic/writing/send-lock");
     const held = heldRowUnverified(
       { phase: "idle" } as SendState,
       "r1",
       holdOf(
         { read: () => ({ get: <T,>(): T => ({ status: "unverified" } as T) }) },
-        { lane: "m1", draftId: "r1", session: null },
+        { lane: "m1", draftId: "r1", session: null }, storageOwner(),
       ),
       null,
       "m1",
@@ -1634,7 +1688,7 @@ describe("the row the composer is holding decides too, not only the jar", () => 
     });
 
     expect(
-      host!.querySelector(".draft-resolve"),
+      resolveBox(),
       "a held reply's editor offers no way to answer the question its own sentence asks",
     ).not.toBeNull();
     expect(
@@ -1643,14 +1697,12 @@ describe("the row the composer is holding decides too, not only the jar", () => 
       + "have been delivered",
     ).toBe(true);
 
-    const verbs = Array.from(host!.querySelectorAll<HTMLElement>(".draft-resolve button"));
-    const arrived = verbs.find((b) => (b.textContent ?? "").trim() === "It was sent — dismiss");
-    const not = verbs.find((b) => (b.textContent ?? "").trim() === "Send again");
-    expect(arrived, "the editor lost the arrived verb").toBeDefined();
-    expect(not, "the editor lost the did-not-arrive verb").toBeDefined();
+    const choices = within(resolveBox()!);
+    const arrived = choices.getByRole("button", { name: messages.write.held.itWasSent });
+    const not = choices.getByRole("button", { name: messages.drafts.sendAgain });
 
-    await act(async () => { not!.click(); });
-    await act(async () => { arrived!.click(); });
+    await act(async () => { not.click(); });
+    await act(async () => { arrived.click(); });
     expect(
       heldAnswers,
       "the editor's verbs report the wrong row or the wrong outcome — the reader's answer is "
@@ -1668,7 +1720,7 @@ describe("the row the composer is holding decides too, not only the jar", () => 
       onResolve: (id, outcome) => { heldAnswers.push(`${id}:${outcome}`); },
     });
     expect(
-      host!.querySelector(".draft-resolve"),
+      resolveBox(),
       "an ordinary reply is asked whether it arrived, which is a question about a send that was "
       + "never attempted",
     ).toBeNull();
@@ -1680,7 +1732,7 @@ describe("the row the composer is holding decides too, not only the jar", () => 
    * compose in the account.
    */
   it("an ordinary draft, a sent row and no row at all are left alone", async () => {
-    const { heldRowUnverified, canSend } = await import("../app/shell/mail-send.js");
+    const { heldRowUnverified, canSend } = await import("@ohmail/app-logic/writing/mail-send");
     for (const [row, why] of [
       ["B", "an ordinary saved draft is refused — every reopened draft becomes unsendable"],
       /* A row the mirror cannot NAME is `unknown`, not `parked`: a mirror that has not finished
@@ -1730,7 +1782,7 @@ describe("the row the composer is holding decides too, not only the jar", () => 
      *
      * Mutation: drop `hold.status === "sent"` from `heldRowUnverified`.
      */
-    const { heldRowUnverified, canSend } = await import("../app/shell/mail-send.js");
+    const { heldRowUnverified, canSend } = await import("@ohmail/app-logic/writing/mail-send");
     expect(
       canSend(heldRowUnverified(IDLE, "S", await holdFor("S", "s1"), "s1"), msg()),
       "a send that died without a verdict stopped being held — one press is a second copy",

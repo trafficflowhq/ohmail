@@ -1,19 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   accounts, contacts, folderState, mailboxes, messageBodies, messages, rules,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { planChange } from "@trafficflow/core/mail";
 import { organizeDecisionCount, screenUnscreened, unscreenedSummary } from "@trafficflow/services/mail";
-import { ScreenerService, type Db, type ServiceContext } from "@trafficflow/services";
+import { ScreenerService, type Db, type ServiceContext, dbFor } from "@trafficflow/services";
 
 /**
  * THE PRESS HANDS THE MAIL TO THE ORGANIZER — and to nothing else.
@@ -37,12 +35,13 @@ const ARRIVED = new Date("2026-09-17T08:00:00.000Z");
 const OLD = new Date("2024-03-01T08:00:00.000Z");
 
 let sql: ReturnType<typeof postgres>;
+let owned: OwnedDb;
 let db: Db;
 
 interface World { accountId: string; mailboxId: string }
 
 const ctxOf = (w: World): ServiceContext => ({
-  db: db as never, accountId: w.accountId, userId: null,
+  db: dbFor(db, w.accountId), accountId: w.accountId, userId: null,
   now: () => NOW, requestId: `oup-${randomUUID().slice(0, 8)}`,
 });
 
@@ -66,28 +65,28 @@ async function seedOhbox(w: World, from: string, arrivedAt = ARRIVED): Promise<s
     date: arrivedAt, createdAt: arrivedAt, arrivedAt, unread: false,
     nativeLocator: { folder: OHBOX, ref: `1:${i}` },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX,
     lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
 }
 
 /** A letter a pass or an old release placed in News, nobody's decision. */
-async function seedNews(w: World, from: string, arrivedAt: Date | null): Promise<string> {
+async function seedNews(w: World, from: string, arrivedAt: Date | null, date = ARRIVED): Promise<string> {
   const i = n++;
   const [m] = await db.insert(messages).values({
     accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `h${i}`,
     dedupKey: `oup:${randomUUID()}`, subject: `Letter ${i}`, fromAddress: from,
-    date: arrivedAt ?? OLD, createdAt: arrivedAt ?? OLD, arrivedAt, unread: true,
+    date, createdAt: arrivedAt ?? date, arrivedAt, unread: true,
     nativeLocator: { folder: NEWS, ref: `2:${i}` },
   }).returning();
   await db.insert(messageBodies).values({
-    messageId: m!.id, text: "", html: null, headers: { "list-unsubscribe": ["<https://x.test/u>"] },
+    messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: { "list-unsubscribe": ["<https://x.test/u>"] },
   });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: NEWS, observedFolder: NEWS,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: NEWS, observedFolder: NEWS,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
@@ -99,9 +98,10 @@ describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     sql = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(sql, { schema }), "pg") as unknown as Db;
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db as unknown as Db;
   }, 120_000);
-  afterAll(async () => { await sql?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); await sql?.end({ timeout: 5 }); });
 
   it("the press queues exactly the offered messages, and nothing else", async () => {
     const w = await newWorld();
@@ -170,6 +170,9 @@ describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue
     const w = await newWorld();
     await db.insert(contacts).values({ accountId: w.accountId, address: "pal@x.test" });
     const fresh = await seedNews(w, "stranger@x.test", ARRIVED);
+    const second = await seedNews(w, "stranger@x.test", ARRIVED);
+    // The pile uses the same window as the Ohbox and requires a recorded arrival.
+    const imported = await seedNews(w, "stranger@x.test", ARRIVED, OLD);
     const undated = await seedNews(w, "stranger@x.test", null);
     const pal = await seedNews(w, "pal@x.test", ARRIVED);
     const door = await seedOhbox(w, "door@x.test");
@@ -180,14 +183,14 @@ describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue
     expect(await screenUnscreened(ctxOf(w), { pile: "news" })).toMatchObject({ total: 2 });
 
     const owed = await repo.listPendingFolderStates(w.mailboxId);
-    expect(owed.map((r) => r.messageId).sort()).toEqual([fresh, undated].sort());
+    expect(owed.map((r) => r.messageId).sort()).toEqual([fresh, second].sort());
     for (const row of owed) {
       expect(row.desiredFolder).toBe(GATE);
       expect(row.observedFolder).toBe(NEWS);
       expect(row.lastSetBy).toBe("us");
       expect(row.nativeLocator).toMatchObject({ folder: NEWS });
     }
-    for (const [id, at] of [[pal, NEWS], [door, OHBOX]] as const) {
+    for (const [id, at] of [[imported, NEWS], [undated, NEWS], [pal, NEWS], [door, OHBOX]] as const) {
       const [still] = await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id));
       expect(still!.d).toBe(at);
     }

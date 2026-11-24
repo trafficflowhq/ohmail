@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { deleteAddress, deleteButton } from "./fixtures/delete-account-controls";
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -8,14 +10,14 @@ import { ToastHost } from "@ohmail/ui";
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
 import en from "../messages/en.json";
 import type { MailboxDTO } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A CONFIRMATION IS A STEP-UP, NOT A SIGN-IN. Every "Confirm it is you" in Settings →
  * Mailboxes, the account erase and the desktop link ran `POST /auth/login` and a factor, so one
  * browser gathered a new web session per confirmation. Each pane now tries its write, parks it on
  * 403 `step_up_required`, runs `StepUpPrompt` (which re-stamps the session the browser holds) and
- * re-runs the write once with the same body. Driven through the real panes; the API doors are
+ * re-runs the write once with the same body. The dedicated delete page asks before the first write. The API doors are
  * stand-ins that record every call.
  */
 
@@ -28,7 +30,7 @@ const sec = en.security as unknown as Record<string, string>;
 const inv = en.invites as unknown as Record<string, string>;
 const link = en.linkDesktop as unknown as Record<string, string>;
 const dev = en.devices as unknown as Record<string, string>;
-const acct = en.account as unknown as Record<string, string>;
+const eraseWords = en.deleteAccount;
 const picker = en.providerPicker as unknown as Record<string, string>;
 
 const EMAIL = "person@example.test";
@@ -45,7 +47,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {}, replace: () => {} }),
 }));
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({
     state: { mailboxes: null, mirrored: 0, freshness: { state: "unknown", asOf: null } } as unknown as MailState,
     refresh: () => {},
@@ -57,7 +59,8 @@ vi.mock("../app/hello", () => ({
   serverHello: async () => ({ flavor: "managed", features: { pairing: true } }),
 }));
 
-vi.mock("../app/sign-out", () => ({
+vi.mock("../app/sign-out", async (original) => ({
+  ...await original<typeof import("../app/sign-out")>(),
   forgetThisBrowser: async () => ({ remaining: [], inventoryComplete: true }),
   signOut: async () => ({ cleared: true, inventoryComplete: true, serverRefused: null, remaining: [] }),
 }));
@@ -189,14 +192,17 @@ async function submit(form: Element | null): Promise<void> {
   await settle();
 }
 
-const prompt = (el: HTMLElement): Element | null => el.querySelector('[data-testid="step-up-prompt"]');
+/** The pane's step-up: today's prompt, or the one dialog where a page stands on it. */
+const prompt = (el: HTMLElement): Element | null => el.querySelector('[data-testid="step-up-prompt"], [role="dialog"]');
+const codeField = (el: HTMLElement): HTMLInputElement | null =>
+  el.querySelector<HTMLInputElement>('#stepup-code, [role="dialog"] input');
 const called = (name: string) => rig.calls.filter((c) => c.name === name);
 
 /** The prompt's code path, the one a fresh-code person takes. */
 async function verifyCode(el: HTMLElement): Promise<void> {
-  await waitFor(() => el.querySelector("#stepup-code") != null, "the prompt's code field");
-  await typeInto(el.querySelector("#stepup-code"), "123456");
-  await submit(el.querySelector("#stepup-code")!.closest("form"));
+  await waitFor(() => codeField(el) != null, "the prompt's code field");
+  await typeInto(codeField(el), "123456");
+  await submit(codeField(el)!.closest("form"));
 }
 
 const row = (over: Partial<MailboxDTO> = {}): MailboxDTO => ({
@@ -290,17 +296,6 @@ const PANES: Pane[] = [
     },
   },
   {
-    name: "AccountSection: erase", verb: "account.erase", signIn: dev.stepUpExpired!,
-    walk: async () => {
-      const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
-      const el = await render(h(AccountSection));
-      await waitFor(() => el.querySelector("#acct-typed") != null, "the facts step");
-      await typeInto(el.querySelector("#acct-typed"), EMAIL);
-      await submit(el.querySelector("form.acct-confirm"));
-      return el;
-    },
-  },
-  {
     name: "SecuritySection: recovery codes", verb: "auth.recoveryCodes", signIn: sec.stepUpExpired!,
     walk: async () => {
       const { SecuritySection } = await import("../app/(product)/mailbox/SecuritySection.js");
@@ -315,16 +310,16 @@ const PANES: Pane[] = [
     name: "InvitesSection: mint", verb: "pair.mint", signIn: inv.stepUpExpired!,
     walk: async () => {
       const { InvitesSection } = await import("../app/(product)/mailbox/InvitesSection.js");
-      const el = await render(h(InvitesSection));
+      const el = await render(h(WithReport, { view: InvitesSection }));
       await click(press(el, inv.mintAction!));
       return el;
     },
   },
   {
-    name: "LinkDesktopScreen: mint", verb: "auth.desktopLink", signIn: link.signInFirst!,
+    name: "LinkDesktopRoute: mint", verb: "auth.desktopLink", signIn: link.signInFirst!,
     walk: async () => {
-      const { LinkDesktopScreen } = await import("../app/(product)/link-desktop/LinkDesktopScreen.js");
-      const el = await render(h(LinkDesktopScreen, { challenge: CHALLENGE }));
+      const { LinkDesktopRoute } = await import("../app/(product)/link-desktop/LinkDesktopRoute.js");
+      const el = await render(h(LinkDesktopRoute, { challenge: CHALLENGE }));
       await click(press(el, link.mint!));
       return el;
     },
@@ -397,32 +392,78 @@ describe("each confirm is a step-up on the session this browser holds", () => {
     rig.script["auth.desktopLink"] = ["unauthorized"];
     const el = await PANES.find((p) => p.verb === "auth.desktopLink")!.walk();
     await waitFor(() => (el.textContent ?? "").includes(link.signInFirst!), "the sign-in sentence");
-    const door = [...el.querySelectorAll("a")].find((a) => a.getAttribute("href") === "/login");
+    const door = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === en.login.title);
     expect(door, "no way to the sign-in").toBeTruthy();
-    expect(el.querySelector("#link-pw"), "the page asked for a password itself").toBeNull();
+    expect(el.querySelector('input[type="password"]'), "the page asked for a password itself").toBeNull();
     expect(prompt(el)).toBeNull();
   }, 20000);
 
+
+});
+
+describe("deleting an account confirms the held session before sending the erase", () => {
+  async function openDelete(): Promise<HTMLElement> {
+    const { DeleteAccountRoute } = await import("../app/(product)/account/delete/DeleteAccountRoute.js");
+    const el = await render(h(DeleteAccountRoute));
+    await waitFor(() => deleteAddress(el) !== null, "the facts step");
+    return el;
+  }
+
+  async function toFactor(el: HTMLElement): Promise<void> {
+    await typeInto(deleteAddress(el), EMAIL);
+    await click(deleteButton(el, eraseWords.begin)!);
+    await waitFor(() => prompt(el) !== null, "the step-up prompt");
+  }
+
+  it("the factor runs one erase with the same body and never signs in", async () => {
+    const el = await openDelete();
+    await toFactor(el);
+    expect(called("account.erase")).toHaveLength(0);
+    await verifyCode(el);
+    await waitFor(() => called("account.erase").length === 1, "the verified erase");
+    expect(called("account.erase").map((call) => call.args)).toEqual([[]]);
+    expect(called("auth.stepUpTotp")).toHaveLength(1);
+    expect(called("auth.login")).toHaveLength(0);
+    expect(called("auth.totpVerify")).toHaveLength(0);
+    expect(prompt(el)).toBeNull();
+  }, 20000);
+
+  for (const refusal of ["enrollment", "step_up"]) {
+    it(`${refusal} after the verified factor says sign in and never opens a second prompt`, async () => {
+      rig.script["account.erase"] = [refusal];
+      const el = await openDelete();
+      await toFactor(el);
+      await verifyCode(el);
+      await waitFor(() => (el.textContent ?? "").includes(dev.stepUpExpired!), "the sign-in sentence");
+      expect(prompt(el)).toBeNull();
+      expect(called("account.erase")).toHaveLength(1);
+      expect(called("auth.stepUpTotp")).toHaveLength(1);
+      expect(called("auth.login")).toHaveLength(0);
+    }, 20000);
+  }
+
   it("the erase's submit refuses a mistyped address itself: no DELETE leaves", async () => {
-    const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
-    const el = await render(h(AccountSection));
-    await waitFor(() => el.querySelector("#acct-typed") != null, "the facts step");
-    await typeInto(el.querySelector("#acct-typed"), "someone-else@example.test");
-    await submit(el.querySelector("form.acct-confirm"));
-    expect(called("account.erase"), "a submit past the disabled button erased the account").toHaveLength(0);
-    await typeInto(el.querySelector("#acct-typed"), EMAIL);
-    await submit(el.querySelector("form.acct-confirm"));
+    const el = await openDelete();
+    const blank = deleteAddress(el)!;
+    await typeInto(blank, "someone-else@example.test");
+    await act(async () => {
+      blank.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(prompt(el)).toBeNull();
+    expect(called("account.erase"), "Enter past the disabled button erased the account").toHaveLength(0);
+    await toFactor(el);
+    await verifyCode(el);
     await waitFor(() => called("account.erase").length === 1, "CONTROL: the typed address erases");
   }, 20000);
 
   it("the erase names what the factor does, and the typed address is kept across Cancel", async () => {
-    rig.script["account.erase"] = ["step_up"];
-    const el = await PANES.find((p) => p.verb === "account.erase")!.walk();
-    await waitFor(() => prompt(el) != null, "the step-up prompt");
-    expect(el.textContent).toContain(acct.factorBody!.replace("{email}", EMAIL));
-    await click(press(el, dev.cancel!));
-    expect(el.querySelector<HTMLInputElement>("#acct-typed")?.value, "Cancel threw the typed address away").toBe(EMAIL);
-    expect(called("account.erase")).toHaveLength(1);
+    const el = await openDelete();
+    await toFactor(el);
+    expect(el.textContent).toContain(eraseWords.factorBody.replace("{email}", EMAIL));
+    const dialog = el.querySelector<HTMLElement>('[role="dialog"]')!;
+    await click(press(dialog, en.stepUp.cancel));
+    expect(deleteAddress(el)?.value, "Cancel threw the typed address away").toBe(EMAIL);
+    expect(called("account.erase")).toHaveLength(0);
   }, 20000);
 });
 
@@ -479,6 +520,6 @@ describe("the census of sign-ins under (product)", () => {
       .map((abs) => ({ file: abs.slice(PRODUCT.length + 1), n: loginCalls(readFileSync(abs, "utf8")) }))
       .filter((f) => f.n > 0)
       .map((f) => f.file);
-    expect(hits, "a confirmation that signs in mints a web session per press").toEqual(["login/LoginScreen.tsx"]);
+    expect(hits, "a confirmation that signs in mints a web session per press").toEqual(["login/use-sign-in-door.ts"]);
   });
 });

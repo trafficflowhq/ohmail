@@ -21,8 +21,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   BACKLOG_PAGE_LIMIT,
   LAST_DRAIN_AT_META,
+  NAMED_FEED_KINDS,
   STALE_RESUME_MS,
-  SYNC_ENTITY_TYPES,
   SqlMirrorStore,
   decodeSeqCursor,
   encodeSeqCursor,
@@ -193,6 +193,10 @@ function fakeServer(opts: { accountId?: string; sessionRoute?: boolean } = {}) {
       json(200, { user: { accountId: account }, scope: "full" });
       return;
     }
+    if (url.pathname === "/calendar/settings") {
+      json(200, { newEventsCalendarId: "studio-calendar" });
+      return;
+    }
     if (url.pathname === "/sync/pull" && req.method === "POST") {
       pullRings += 1;
       json(202, {
@@ -325,7 +329,11 @@ describe("engine boot on the mobile composition", () => {
        `mailbox`, so the phone never asked for the receipt a removal emits. A guard that cannot
        name a wrong answer has no right one. */
     expect(fake.typesSeen.length).toBeGreaterThan(0);
-    for (const t of fake.typesSeen) expect(t).toBe([...SYNC_ENTITY_TYPES].join(","));
+    for (const t of fake.typesSeen) expect(t).toBe([...NAMED_FEED_KINDS].join(","));
+    /* The settings record, by its wire name: it carries the calendar's switch, and a server sends
+       the calendar only to a device that names it, so a phone without it would hold nothing of the
+       calendar, and before that rule held what the switch and an erasure had taken away. */
+    expect(MOBILE_SYNC_TYPES).toContain("settings");
     /* And the member the copy lost, by its WIRE name: the receipt that takes a removed mailbox
        off a phone. Spelled out rather than read from the declaration, because reading it from
        the thing under test is the tautology above wearing a different name. */
@@ -696,4 +704,19 @@ describe("a mailbox removed on the paired server leaves this phone", () => {
       server.server.close();
     }
   });
+});
+
+
+it("exposes the paired server's calendar doors only after checking the account", async () => {
+  const boot = await bootEngine(deps, { origin, token: "tok-123", accountId: "acct-1" });
+  expect(boot.kind).toBe("ready");
+  if (boot.kind !== "ready") return;
+  try {
+    const transport = boot.engine.calendarTransport();
+    expect(transport).not.toBeNull();
+    await expect(transport!.calendarSettings()).rejects.toMatchObject({ code: "sync_held_pre_identity" });
+    expect((await boot.verifyIdentity()).kind).toBe("verified");
+    await expect(transport!.calendarSettings()).resolves.toMatchObject({ newEventsCalendarId: "studio-calendar" });
+    expect(typeof transport!.setSuggestionDismissed).toBe("function");
+  } finally { boot.store.close(); }
 });

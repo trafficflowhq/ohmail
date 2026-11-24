@@ -1,5 +1,6 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import { ruleFingerprint, type RuleDTO, type ScreenIntent } from "@ohmail/client-engine";
+import { ruleFingerprint, type ScreenIntent } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { DECKS } from "../src/copy";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";

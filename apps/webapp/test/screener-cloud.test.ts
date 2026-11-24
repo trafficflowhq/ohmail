@@ -1,93 +1,35 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { EngineMessage, EngineMutation, Folder, MessageBodyWire, SyncResponse } from "@ohmail/wire";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import {
   OhmailEngine,
   MemoryMirrorStore,
-  MutationRejectedError,
-  consentPartition,
   mutationEffects,
-  presentationReader,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type MessageBodyWire,
   type SyncChange,
 } from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { settleFirstPaint } from "./_first-paint.js";
-import { COMMIT_MS } from "../app/shell/screener-state";
+import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
+import {
+  ACCOUNT, ISO, installConfirmEnv, mountCloudShell, refresh204, rememberOwner,
+  scriptRefresh, scriptSession, scriptSync, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
+} from "./fixtures/cloud-confirm-shell";
 
-/**
- * THE SCREENER ON A CLOUD ACCOUNT — what the surface dispatches for a DERIVED
- * row, which is every row on a live account.
- *
- * `POST /screener/:id` takes `{ decision, dest, scope }` and resolves `:id` only against mail
- * still held in `ohmail/Screener`. All five destinations come out of that one call; only the
- * "& read" modifier is composed on top, as a `mark_seen` batch, because it is a flag and not a
- * folder. These assertions are on the MUTATIONS the engine's adapter receives, i.e. on what the
- * server would actually be asked to do.
- *
- * ── THIS HEADER USED TO DESCRIBE THE DEFECT AS THE DESIGN (SCR-READ) ─────────────────────
- *
- * It read: *"it takes `{ decision, scope }`, files a yes to INBOX and a no to
- * `ohmail/Screened` … so the surface composes the remainder out of `move`"*. That composition
- * did not survive contact with the server: `decide` reads its held rows outside its
- * transaction and writes `desired_folder` inside it, so a `move` landing in that window was
- * stamped back to the default. In use it left four `promoted → INBOX` rules and dozens of
- * bulletins in the Ohbox for senders admitted with **Reads**, under a toast that said their
- * mail was filed to Reads and that future mail would follow.
- *
- * Get this wrong in the obvious way — reuse the old "yes unless screened" mapping — and
- * marking a sender spam files their mail into the Ohbox on a paying account.
- */
-
-// See `sync-liveness-shell.test.ts` for why React is published as a global.
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-
+// Gate-held mail sends a Screener decision. Mail already in INBOX needs a rule instead.
 const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-/**
- * jsdom implements neither scroll method, and `ScreenerView` calls both — the preview
- * scrolls to top when the selection changes, and `j`/`k` scroll the cursor into view.
- * Stubbed rather than guarded around in the product: they are real browser APIs and the
- * view is right to call them. Same reasoning as the `CSS.escape` shim in
- * `shell-screening-bulk.test.ts`.
- */
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-/** Desktop viewport: `selectRow` consults this to decide whether to go full-screen. */
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null,
-    addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {},
-    dispatchEvent() { return false; },
-  })) as never;
-
+const { act } = React;
 const NOW = new Date("2026-08-02T12:00:00.000Z");
-/*
- * `COMMIT_MS` — the undo window before a decision reaches the wire — is IMPORTED at the top of
- * this file, not declared here. It used to be `const COMMIT_MS = 6200`, a hand-transcribed
- * duplicate of a number `screener-state.ts` owns. A later change moved the real one to 8400 and this file
- * noticed by going red, which is the good case. The bad case is a copy that drifts DOWN: a test
- * advancing 6200 ms against a 9000 ms commit asserts "nothing has reached the wire yet" and
- * passes for the wrong reason, for ever.
- */
-
 let seq = 0;
 
 function msg(id: string, from: string, folder: Folder, name: string | null = null): EngineMessage {
   return {
     id,
-    accountId: "acct",
-    mailboxId: "mb",
+    accountId: ACCOUNT,
+    mailboxId: "mb_1",
     threadId: null,
     messageIdHeader: null,
     subject: `Subject ${id}`,
@@ -173,13 +115,13 @@ async function engineWith(held: EngineMessage[]): Promise<OhmailEngine> {
 
 /** Mount a probe that runs the real hook and hands its state back to the test. */
 async function mountState(engine: OhmailEngine): Promise<{ get: () => ScreenerStateLike }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   let latest: ScreenerStateLike | null = null;
 
   function Probe(): null {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    latest = useScreenerState(engine, v, (() => {}) as never) as unknown as ScreenerStateLike;
+    latest = useScreenerState(engine, null, v, (() => {}) as never, useScreenerWords()) as unknown as ScreenerStateLike;
     return null;
   }
 
@@ -188,103 +130,16 @@ async function mountState(engine: OhmailEngine): Promise<{ get: () => ScreenerSt
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      h(NextIntlClientProvider, {
+      h(TextProvider, {
         locale: "en",
         messages,
         timeZone: "UTC",
-        now: NOW,
         children: h(Probe),
       }),
     );
   });
-  await settleFirstPaint();
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
   return { get: () => latest! };
-}
-
-/**
- * Mount the hook with the PROJECTED reader — the live-account wiring `AppShell` uses (#116).
- *
- * `mountState` above builds the queue from the raw mirror, so its rows are always gate-physical.
- * This one hands `useScreenerState` the same `presentationReader(engine.read(), consentPartition(…))`
- * the shell does, so an active-undecided sender whose mail is physically in the INBOX PRESENTS in
- * the Screener as a `gatePhysical:false` waiting row — the exact bulk-moved shape the bug is about.
- * The toast is captured so the past-the-gate branch's sentence can be read.
- */
-async function mountProjected(
-  engine: OhmailEngine,
-  toastFn: (message: string) => void = () => {},
-): Promise<{ get: () => ScreenerStateLike }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  let latest: ScreenerStateLike | null = null;
-
-  function Probe(): null {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const reader = engine.read();
-    const presented = presentationReader(reader, consentPartition(reader, { now: NOW }));
-    latest = useScreenerState(
-      engine, v, toastFn as never, undefined, presented,
-    ) as unknown as ScreenerStateLike;
-    return null;
-  }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe),
-      }),
-    );
-  });
-  await settleFirstPaint();
-  return { get: () => latest! };
-}
-
-/**
- * An engine whose adapter REFUSES `rule_create` (403, non-retryable) and echoes everything else —
- * the shape a live 403 takes. `Engine.mutate` turns a non-retryable rejection into `rolled_back`,
- * which is what makes `dispatchScreeningChange` pick the failure sentence rather than "Ruled".
- */
-async function engineRefusing(messages: EngineMessage[]): Promise<OhmailEngine> {
-  const store = new MemoryMirrorStore();
-  await store.load();
-  await store.applyChanges(
-    messages.map((m): SyncChange => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })),
-  );
-  return new OhmailEngine({
-    store,
-    now: () => NOW,
-    adapter: {
-      sync: async () => ({
-        changes: { creates: [], updates: [], moves: [], deletes: [] },
-        cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
-      }),
-      mutate: async (m) => {
-        sent.push(m);
-        if (m.kind === "rule_create") {
-          throw new MutationRejectedError("rule refused", { status: 403, retryable: false });
-        }
-        const changes: SyncChange[] = mutationEffects(store, m, { now: () => NOW, uuid: () => `id-${++seq}` }).map((e) => ({
-          type: e.type, op: e.move ? "move" : "update", id: e.id, seq: ++seq,
-          updatedAt: NOW.toISOString(), entity: e.entity, ...(e.move ? { move: e.move } : {}),
-        }));
-        await store.applyChanges(changes);
-        return { changes, seq: changes[changes.length - 1]?.seq ?? null };
-      },
-      withdrawSend: async () => ({ outcome: "unsupported" as const }),
-      fetchBody: async (id): Promise<MessageBodyWire> => ({
-        text: `FULL BODY of ${id}`, html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
-      }),
-    },
-  });
-}
-
-/** `settle()`, then extra microtask turns for the AWAITED past-the-gate dispatch + its toast. */
-async function settleAwaited(): Promise<void> {
-  await settle();
-  for (let i = 0; i < 16; i++) await act(async () => { await Promise.resolve(); });
 }
 
 interface ScreenerStateLike {
@@ -302,72 +157,6 @@ interface ScreenerStateLike {
   applyAll: (scopeOf: (s: unknown) => string) => void;
   markAllSpam: (scopeOf: (s: unknown) => string) => void;
   flush: () => void;
-}
-
-/**
- * Mount the REAL `ScreenerView` over a derived engine — the live-account shape.
- *
- * The state-level guards below prove `applyAll` does nothing; this proves the user is
- * never invited to press it in the first place. `KeymapProvider` is required because the
- * view registers its own bindings (`a`, Enter, o/r/c/n/x) through the registry.
- */
-async function mountView(
-  engine: OhmailEngine,
-  segment: "waiting" | "screened" | "spam" = "waiting",
-): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap.js");
-
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    // AppShell's `?`, in miniature — without it the pane-foot `ShortcutHint` correctly
-    // renders nothing (`useBinding`: no `?` in the registry means no hint to advertise).
-    useKeyBindings(
-      [{ chord: "?", group: "app", label: "Keyboard shortcuts", run: () => {} }],
-      "global",
-    );
-    const state = useScreenerState(engine, v, (() => {}) as never);
-    const [sel, setSel] = React.useState<Record<string, string | null>>({
-      waiting: null, screened: null, spam: null,
-    });
-    return h(ScreenerView, {
-      owed: false,
-      state,
-      segment,
-      selection: sel as never,
-      onSelect: (seg: string, id: string | null) => setSel((m) => ({ ...m, [seg]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {},
-      full: false,
-      onFull: () => {},
-    } as never);
-  }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: h(KeymapProvider, { children: h(Probe) }),
-        }),
-      }),
-    );
-  });
-  for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
-  await settleFirstPaint();
-}
-
-/** Let the undo window close and every dispatched promise settle. */
-async function settle(): Promise<void> {
-  await act(async () => {
-    vi.advanceTimersByTime(COMMIT_MS + 50);
-  });
-  for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
 }
 
 /** `screener-state.ts` BULK_STEP_MS — a bulk decides one sender every 240 ms. */
@@ -393,8 +182,15 @@ const HELD = [
   msg("m3", "win@jackpot.example", "ohmail/Screener"),
 ];
 
+beforeAll(warmCloudShell);
+let webMounted = false;
+
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.setSystemTime(NOW);
+  Element.prototype.animate ??= (() => ({
+    cancel() {}, finished: Promise.resolve(),
+  })) as unknown as Element["animate"];
   sent = [];
   bodiesFetched = [];
 });
@@ -404,8 +200,127 @@ afterEach(async () => {
   host?.remove();
   root = null;
   host = null;
+  if (webMounted) await teardownConfirmEnv();
+  webMounted = false;
   vi.useRealTimers();
 });
+
+async function click(button: HTMLElement): Promise<void> {
+  await act(async () => { button.click(); });
+  await tick(50);
+}
+
+type WebWrite = { method: string; path: string; body: unknown };
+async function mountWeb(
+  mail: readonly EngineMessage[],
+  { section = "", refuse = false, advice = false }: {
+    section?: string; refuse?: boolean; advice?: boolean;
+  } = {},
+) {
+  installConfirmEnv();
+  webMounted = true;
+  window.localStorage.clear();
+  rememberOwner();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  const creates: SyncResponse["changes"]["creates"] = mail.map((entity, index) => ({
+    type: "message", op: "create", id: entity.id, seq: index + 1, updatedAt: ISO, entity,
+  }));
+  scriptSync(() => Response.json({
+    changes: { creates, updates: [], moves: [], deletes: [] },
+    cursor: String(creates.at(-1)?.seq ?? 0), hasMore: false, serverTime: ISO,
+  } satisfies SyncResponse));
+  const reply = (body: unknown, init?: ResponseInit) => {
+    const headers = new Headers(init?.headers);
+    headers.set("X-Ohmail-Account", ACCOUNT);
+    return Response.json(body, { ...init, headers });
+  };
+  const fetchForAccount = globalThis.fetch;
+  const writes: WebWrite[] = [];
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input), window.location.origin).pathname;
+    const method = init?.method ?? "GET";
+    if (method === "GET" && path === "/api/mailboxes") {
+      return reply({ items: [{
+        id: "mb_1", address: ["mailbox", "example.invalid"].join("@"), status: "connected",
+        organizerRole: "organizer", initialImportCompletedAt: ISO, organizeConsentedAt: ISO,
+        lastSyncAt: ISO, createdAt: ISO,
+      }] });
+    }
+    if (advice && method === "GET" && path === "/api/screener") {
+      const seed = mail[0]!;
+      return reply({
+        items: [{
+          id: seed.id, messageId: seed.id, sender: seed.from, subject: seed.subject,
+          snippet: seed.snippet, receivedAt: seed.date, aiSuggestion: {
+            decision: "yes", destination: "ohmail/News", confidence: 0.88,
+            rationale: "a studio newsletter you have kept before",
+          },
+        }],
+        nextCursor: null, suggestable: { senders: [], maxPerRequest: 50 },
+      });
+    }
+    if (method === "GET" && path.endsWith("/body")) {
+      return new Response(null, { status: 503 });
+    }
+    if (method === "GET" || !/^\/api\/(rules|messages|screener)(?:\/|$)/.test(path)) {
+      return fetchForAccount(input, init);
+    }
+    const body = init?.body === undefined ? null : JSON.parse(String(init.body));
+    writes.push({ method, path, body });
+    if (method === "POST" && path === "/api/rules") {
+      if (refuse) {
+        return reply({
+          error: { code: "forbidden", message: "rule refused", retryable: false },
+        }, { status: 403 });
+      }
+      const entity = {
+        id: "new-rule", kind: body.kind, match: body.match, destination: body.destination,
+        priority: 0, enabled: true, provenance: "manual",
+        stats: { hits: 0, lastHitAt: null, demotions: 0 }, createdAt: ISO, updatedAt: ISO,
+      };
+      const seq = creates.length + 1;
+      creates.push({ type: "rule", op: "create", id: entity.id, seq, updatedAt: ISO, entity });
+      return reply(entity, { status: 201, headers: { "x-sync-seq": String(seq) } });
+    }
+    if (method === "POST" && /^\/api\/screener\/[^/]+$/.test(path)) {
+      return reply({ messageId: path.split("/").at(-1), appliedFolder: body.dest, createdRuleId: null });
+    }
+    return reply({ error: { code: "not_found", message: "unexpected write", retryable: false } }, { status: 404 });
+  };
+  window.location.hash = advice ? "#/ohbox" : `#/screener${section ? `/${section}` : ""}`;
+  const shell = await mountCloudShell();
+  await tick(3000);
+  const frame = within(shell);
+  if (advice) {
+    const rail = within(frame.getByRole("navigation", { name: "Places" }));
+    await click(rail.getByRole("button", { name: /^Screener/ }));
+    await tick(1000);
+  }
+  const copy = messages.screener;
+  const list = () => within(frame.getByRole("listbox", { name: copy.title }));
+  const rows = () => list().getAllByRole("option");
+  const panel = () => within(frame.getByRole("toolbar", { name: copy.place.panel }));
+  const open = async (address?: string) => {
+    const row = rows().find((node) => !address || (node.textContent ?? "").includes(address));
+    expect(row, "the sender is on the Screener list").toBeTruthy();
+    await click(row!);
+    return row!;
+  };
+  return { shell, frame, panel, rows, open, writes };
+}
+
+function reports(): string[] {
+  return [...document.querySelectorAll('.fr-report [role="status"]')].map((node) => node.textContent ?? "");
+}
+
+const copy = messages.screener;
+const page = () => within(document.body);
+async function pressOhbox(s: Awaited<ReturnType<typeof mountWeb>>, address: string) {
+  await s.open(address);
+  await click(s.panel().getByRole("button", { name: /^Ohbox/ }));
+  await tick(COMMIT_MS + 800);
+}
 
 const kinds = (k: string) => sent.filter((m) => m.kind === k);
 
@@ -461,49 +376,51 @@ describe("the Screener may not offer a suggestion it does not have", () => {
     expect(kinds("mark_seen")).toEqual([]);
     // And the queue is untouched — nobody was silently let in.
     expect(get().waitingCount).toBe(2);
+
+    const s = await mountWeb(HELD);
+    const row = s.rows()[0]!;
+    await act(async () => {
+      row.focus();
+      row.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    });
+    await tick(COMMIT_MS + 800);
+    const tools = within(s.frame.getByRole("group", { name: copy.bulkAria }));
+    expect(tools.queryByRole("button", { name: /^Apply/ })).toBeNull();
+    expect(s.writes).toEqual([]);
+    expect(s.rows()).toHaveLength(2);
   });
 
   it("`Mark all spam` still works — it never claimed to apply a suggestion", async () => {
     // The fix must not sedate the honest control next to the dishonest one. `markAllSpam`
     // says what it does and stays available.
-    const engine = await engineWith(HELD);
-    await engine.start();
-    const { get } = await mountState(engine);
-
-    await act(async () => { get().markAllSpam(() => "sender"); });
-    await settleBulk(2);
-
-    expect(kinds("screener_decide")).toHaveLength(2);
-    expect(kinds("screener_decide").every((m) => (m as { decision: string }).decision === "no")).toBe(true);
+    const s = await mountWeb(HELD);
+    const tools = within(s.frame.getByRole("group", { name: copy.bulkAria }));
+    await click(tools.getByRole("button", { name: copy.place.listMenu }));
+    const menu = page().getByRole("menu", { name: copy.place.listMenu });
+    await click(within(menu).getByRole("menuitem", { name: copy.markAllSpam }));
+    const ask = page().getByRole("dialog");
+    expect(s.writes).toEqual([]);
+    await click(within(ask).getByRole("button", { name: /^Mark.*spam/i }));
+    await tick(COMMIT_MS + 2 * BULK_STEP_MS + 800);
+    const decisions = s.writes.filter(({ path }) => path.startsWith("/api/screener/"));
+    expect(decisions).toHaveLength(2);
+    expect(decisions.every(({ body }) => (body as { decision: string }).decision === "no")).toBe(true);
   });
 
   it("the button is NOT RENDERED, and the preview says why there is nothing to apply", async () => {
     /**
      * Red by gating the control on `state.waitingCount > 0` again (its shipped condition):
-     * "Apply …" reappears over an empty set. Red the other way by deleting the
-     * `scn-why-none` branch: the preview goes back to saying nothing at all, which is the
-     * state reported — a bulk control referring to something the surface never
-     * mentions.
+     * "Apply …" reappears over an empty set. The sender's place slot stays open to a choice.
      */
-    const engine = await engineWith(HELD);
-    await engine.start();
-    await mountView(engine);
-
-    const bulk = host!.querySelector(".scn-bulk")!;
-    expect(bulk, "the bulk row should still exist for Mark all spam").toBeTruthy();
-    const labels = [...bulk.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim());
-    expect(labels.some((l) => /suggestion/i.test(l)), labels.join(" · ")).toBe(false);
-    expect(labels.some((l) => /Mark all spam/.test(l)), labels.join(" · ")).toBe(true);
-
-    // The absence is STATED, in the preview where the AI rationale would have been.
-    const why = host!.querySelector(".scn-why-none");
-    expect(why?.textContent ?? "").toContain("No suggestion");
-
-    // And the hint bar no longer advertises an accept key. `y` was never bound in this app
-    // at all — `DecisionBar` owns that chord behind a `keyboard` prop this view stopped
-    // passing — so the old hint named a key that did nothing, for a suggestion that did not
-    // exist. Red by restoring the unconditional `<Kbd>y</Kbd> accept suggestion` span.
-    expect(host!.textContent ?? "").not.toContain("accept suggestion");
+    const s = await mountWeb(HELD);
+    await s.open();
+    const tools = within(s.frame.getByRole("group", { name: copy.bulkAria }));
+    expect(tools.queryByRole("button", { name: /^Apply/ })).toBeNull();
+    await click(tools.getByRole("button", { name: copy.place.listMenu }));
+    expect(page().getByRole("menuitem", { name: copy.markAllSpam })).toBeTruthy();
+    expect(s.frame.getByText(copy.place.nowhere, { exact: true })).toBeTruthy();
+    expect(s.frame.queryByText(/No suggestion/)).toBeNull();
+    expect(s.shell.textContent).not.toContain("accept suggestion");
   });
 
   /**
@@ -519,75 +436,18 @@ describe("the Screener may not offer a suggestion it does not have", () => {
    * shape a persisted suggestion will arrive in.
    */
   it("a row that HAS a suggestion shows it — destination, confidence and why", async () => {
-    const engine = await engineWith(HELD);
-    await engine.start();
-    await engine.store.applyChanges([
-      {
-        type: "screener_sender",
-        op: "create",
-        id: "s-lena",
-        seq: ++seq,
-        updatedAt: NOW.toISOString(),
-        entity: {
-          id: "m1",
-          segment: "waiting",
-          from: { name: "Lena", address: "lena@atelier.example" },
-          initial: "L",
-          time: "08:12",
-          scope: "sender",
-          ai: { dest: "reads", confidence: 0.88, rationale: "a studio newsletter you have kept before" },
-          held: [{ id: "m1", subject: "Spring hours", time: "08:12", body: "…", bodyState: "full" }],
-          updatedAt: NOW.toISOString(),
-        },
-      },
-    ]);
-    await mountView(engine);
-
-    // The bulk control is back, and it STATES THE SIZE of what pressing it accepts —
-    // one, not "all", because "all" is what let an empty set hide behind a label.
-    const bulk = host!.querySelector(".scn-bulk")!;
-    const labels = [...bulk.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim());
-    // NB the trailing "a" in the rendered label is the `kbdHint` keycap, not a plural.
-    // …and it NAMES THE PILE as well as the count, so the consequence is legible before the
-    // press: this one sender's suggestion is News, and the label says News.
-    expect(labels.some((l) => /Apply 1 — News/.test(l)), labels.join(" · ")).toBe(true);
-
-    // The row itself carries the chip. Scoped to `.row .badge.ai` on purpose: asserting
-    // that the view merely CONTAINS "Reads" would pass on `DecisionBar`'s own destination
-    // button, which is present for every sender whether suggested or not.
-    const chip = host!.querySelector(".view-screener .row .badge.ai")!;
-    expect(chip, "the suggested row has no AI chip").toBeTruthy();
-    expect(chip.textContent).toContain("News");
-    expect(chip.textContent).toContain("0.88");
-
-    // …and the preview gives the reason in the sender's own terms, not a score alone.
-    // Selected explicitly: the two senders share a timestamp, so which row the cursor
-    // lands on by default is an ordering detail this claim must not depend on.
-    const lenaRow = host!.querySelector('.view-screener .row[data-id="m1"]')!;
-    expect(lenaRow, "the suggested sender has no row").toBeTruthy();
-    await act(async () => {
-      lenaRow.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-
-    const why = host!.querySelector(".scn-why")!;
-    expect(why.className).not.toContain("scn-why-none");
-    expect(why.textContent).toContain("AI suggests");
-    expect(why.textContent).toContain("0.88");
-    expect(why.textContent).toContain("a studio newsletter you have kept before");
-    expect(chip).toBeTruthy();
+    const s = await mountWeb(HELD, { advice: true });
+    const row = await s.open(HELD[0]!.from.address);
+    const tools = within(s.frame.getByRole("group", { name: copy.bulkAria }));
+    expect(tools.getByRole("button", { name: "Apply 1" })).toBeTruthy();
+    expect(row.textContent).toContain("News");
+    const reading = within(s.frame.getByRole("region", { name: "Reading" }));
+    expect(reading.getByText(/0\.88|88%/)).toBeTruthy();
+    expect(reading.getByText(/a studio newsletter you have kept before/)).toBeTruthy();
   });
 });
 
 describe("a derived Screener row decides over the real wire vocabulary", () => {
-  it("the queue is there at all — 2 senders, 3 held, from the mirror alone", async () => {
-    const engine = await engineWith(HELD);
-    await engine.start();
-    const { get } = await mountState(engine);
-    expect(get().waitingCount).toBe(2);
-    expect(get().waiting.every((s) => s.derived)).toBe(true);
-    expect(get().waiting.flatMap((s) => s.held)).toHaveLength(3);
-  });
-
   it("held mail starts as a SNIPPET and says so — it does not pass as the whole message", async () => {
     /**
      * The state this slice found, asserted so it cannot be mistaken for the fixed one.
@@ -612,186 +472,6 @@ describe("a derived Screener row decides over the real wire vocabulary", () => {
     // surface somebody is looking at, not a side effect of deriving a queue.
     expect(bodiesFetched).toEqual([]);
   });
-
-  it("hydrating one held message makes it FULL, and touches no other row", async () => {
-    /**
-     * The "Demo/public content" invariant, made true rather than claimed: `ScreenerSenderDTO.held` promises "every held
-     * message, in full", and on a live account — where every row is derived — it was the
-     * snippet. This is the same live shape, hydrated.
-     *
-     * Red two ways, both of which were the shipped state: have `bodyOf` skip the
-     * `message_body` record (the body stays `snippet m1`), or have `heldOf` go back to
-     * `m.body ?? m.snippet` (`bodyState` disappears and every row claims `full`).
-     */
-    const engine = await engineWith(HELD);
-    await engine.start();
-    await engine.hydrateBody("m1");
-    const { get } = await mountState(engine);
-
-    const held = get().waiting.flatMap((s) => s.held);
-    const m1 = held.find((h) => h.id === "m1")!;
-    expect(bodiesFetched).toEqual(["m1"]);
-    expect(m1.bodyState).toBe("full");
-    expect(m1.body).toBe("FULL BODY of m1\nsecond paragraph");
-    // Bounded: the sibling in the SAME sender's held list is untouched, so nothing here is
-    // quietly fetching a pile.
-    expect(held.find((h) => h.id === "m2")!.bodyState).toBe("snippet");
-    expect(held.find((h) => h.id === "m3")!.bodyState).toBe("snippet");
-  });
-
-  it("A DELTA FOR THE SAME MESSAGE DOES NOT WIPE THE HYDRATED BODY (Risk 1)", async () => {
-    /**
-     * THE RULING'S FIRST RISK, in the surface it would have hurt most.
-     *
-     * `applyToRecords` REPLACES the entity on `create|update` (`apply.ts:56-58`), and the
-     * server's DTO has `snippet` and no `body`. So if the fetched text lived on the message
-     * row, any update for that id would erase it — and the Screener is where such an update
-     * is guaranteed to arrive, because deciding a sender moves its held mail and the worker's
-     * `\Seen` write lands as another one.
-     *
-     * Red by storing the body on the message record instead of in `message_body`: the update
-     * below carries a server-shaped DTO and the assertion falls back to `snippet m1`.
-     */
-    const engine = await engineWith(HELD);
-    await engine.start();
-    await engine.hydrateBody("m1");
-
-    const before = engine.read().get<EngineMessage>("message", "m1")!;
-    await engine.store.applyChanges([
-      {
-        type: "message",
-        op: "update",
-        id: "m1",
-        seq: ++seq,
-        updatedAt: NOW.toISOString(),
-        // Exactly what the wire sends: `snippet`, never `body`. This is the echo of the
-        // `mark_seen` that reading a message emits.
-        entity: { ...before, unread: false },
-      },
-    ]);
-
-    const { get } = await mountState(engine);
-    const m1 = get().waiting.flatMap((s) => s.held).find((h) => h.id === "m1")!;
-    expect(m1.bodyState).toBe("full");
-    expect(m1.body).toBe("FULL BODY of m1\nsecond paragraph");
-    // The delta DID land — otherwise this test would pass by the update having been dropped.
-    expect(engine.read().get<EngineMessage>("message", "m1")!.unread).toBe(false);
-  });
-
-  it("Ohbox is one call: the endpoint's own yes, no follow-up move", async () => {
-    const engine = await engineWith(HELD);
-    await engine.start();
-    const { get } = await mountState(engine);
-    const lena = get().waiting.find((s) => s.from.address === "lena@atelier.example")!;
-
-    await act(async () => { get().decide(lena, "ohbox", { read: false, scope: "sender" }); });
-    await settle();
-
-    expect(kinds("screener_decide")).toEqual([
-      expect.objectContaining({ senderId: lena.id, decision: "yes", scope: "sender" }),
-    ]);
-    expect(kinds("move")).toEqual([]);
-    expect(kinds("mark_seen")).toEqual([]);
-  });
-
-  /**
-   * ── SCR-READ: READS IS ONE CALL TOO, AND THIS TEST USED TO ASSERT THE DEFECT ─────────────
-   *
-   * It was called *"Reads adds a move, because the endpoint has no such destination"* and it
-   * asserted the follow-up `move` fan-out as the intended design, with a note warning that
-   * honouring `m.dest` locally would desync the overlay from the wire. The premise was true
-   * and the design was wrong: the two requests write the same `folder_state.desired_folder`,
-   * `decide` reads its held rows outside its transaction, and the `move` lost that race often
-   * enough to leave dozens of bulletins in the Ohbox in use behind four `promoted → INBOX`
-   * rules for senders admitted with Reads.
-   *
-   * So the assertion is not relaxed, it is INVERTED and tightened: the destination is named on
-   * the decide itself, and there is no second request whose landing order could change the
-   * answer. The overlay/wire agreement the old note was protecting still holds — both sides now
-   * compute the folder from `decideFolder(m)`.
-   */
-  it("Reads is ONE call: the destination rides the decide, with no follow-up move", async () => {
-    const engine = await engineWith(HELD);
-    await engine.start();
-    const { get } = await mountState(engine);
-    const lena = get().waiting.find((s) => s.from.address === "lena@atelier.example")!;
-
-    await act(async () => { get().decide(lena, "reads", { read: false, scope: "sender" }); });
-    await settle();
-
-    expect(kinds("screener_decide")).toEqual([
-      expect.objectContaining({ decision: "yes", dest: "reads" }),
-    ]);
-    // THE GUARD. Restore the composition in `screener-state.ts#commit` and this goes red on
-    // the first line; drop `dest` from the mutation and it goes red on the assertion above,
-    // which is the half that decides where the SERVER files it.
-    expect(kinds("move")).toEqual([]);
-    // …and the mirror agrees once the echoes land: BOTH held messages, not just the
-    // representative, and in Reads rather than the Ohbox.
-    for (const id of ["m1", "m2"]) {
-      expect(engine.store.get<EngineMessage>("message", id)?.folder).toBe("ohmail/News");
-    }
-  });
-
-  it("SPAM RIDES THE NO BRANCH — a yes would file spam into the Ohbox", async () => {
-    // The endpoint's yes ADMITS a sender, and the server refuses `{decision:"yes",
-    // dest:"ohmail/Quarantine"}` with a 400. The pre-C1 mapping was `dest === "screened" ?
-    // "no" : "yes"`, so on a live account "Mark spam" would have asked the server to put that
-    // sender in the Ohbox AND promoted a rule sending their future mail there. Flip the
-    // mapping back and this goes red.
-    //
-    // SCR-READ: `dest` now rides the NO branch too. Before it did not, so a spam press asked
-    // for `ohmail/Screened` and a follow-up `move` was supposed to carry it the rest of the
-    // way to Quarantine — the same losing race as Reads. Both halves are on the one call now.
-    const engine = await engineWith(HELD);
-    await engine.start();
-    const { get } = await mountState(engine);
-    const jackpot = get().waiting.find((s) => s.from.address === "win@jackpot.example")!;
-
-    await act(async () => { get().decide(jackpot, "spam", { read: false, scope: "sender" }); });
-    await settle();
-
-    expect(kinds("screener_decide")).toEqual([
-      expect.objectContaining({ decision: "no", dest: "spam" }),
-    ]);
-    expect(kinds("move")).toEqual([]);
-    expect(engine.store.get<EngineMessage>("message", "m3")?.folder).toBe("ohmail/Quarantine");
-  });
-
-  it("a spam-pinned sender is listed ONCE, not beside their own derived row", async () => {
-    // The pin is this session's memory of the decision; the derived row is the same
-    // sender read back out of `ohmail/Quarantine`. Drop the address filter on
-    // `segments.spam` and the sender appears twice the moment the move lands.
-    const engine = await engineWith(HELD);
-    await engine.start();
-    const { get } = await mountState(engine);
-    const jackpot = get().waiting.find((s) => s.from.address === "win@jackpot.example")!;
-
-    await act(async () => { get().decide(jackpot, "spam", { read: false, scope: "sender" }); });
-    await settle();
-
-    expect(get().spam.map((r) => r.sender.from.address)).toEqual(["win@jackpot.example"]);
-  });
-
-  it("'& read' is its own mark_seen — the decide endpoint has no read field", async () => {
-    // The toast says "· marked read". Without this the copy is false on every Cloud
-    // account: the mail files, and stays bold.
-    const engine = await engineWith(HELD);
-    await engine.start();
-    const { get } = await mountState(engine);
-    const lena = get().waiting.find((s) => s.from.address === "lena@atelier.example")!;
-
-    await act(async () => { get().decide(lena, "ohbox", { read: true, scope: "sender" }); });
-    await settle();
-
-    expect(kinds("mark_seen")).toEqual([
-      expect.objectContaining({ messageIds: ["m1", "m2"], unread: false }),
-    ]);
-    for (const id of ["m1", "m2"]) {
-      expect(engine.store.get<EngineMessage>("message", id)?.unread).toBe(false);
-      expect(engine.store.get<EngineMessage>("message", id)?.folder).toBe("INBOX");
-    }
-  });
 });
 
 /**
@@ -814,74 +494,39 @@ describe("#116 — an active-undecided INBOX sender commits a rule, not a dead d
     msg("c2", "blasz.caroline@gmail.test", "INBOX"),
   ];
 
+  const address = CAROLINE[0]!.from.address;
+
   it("presents as a waiting row over the projected reader — the row that used to vanish", async () => {
-    const engine = await engineWith(CAROLINE);
-    await engine.start();
-    const { get } = await mountProjected(engine);
-    // Over the RAW mirror this sender is in the Ohbox, not the queue; the projection is what
-    // surfaces them, and before A.i even the projection minted no row.
-    expect(get().waiting.map((s) => s.from.address)).toContain("blasz.caroline@gmail.test");
+    const s = await mountWeb(CAROLINE);
+    expect(s.rows().map((row) => row.textContent).join(" ")).toContain(address);
   });
 
   it("committing it dispatches rule_create → INBOX (no past-mail answer), and NO screener_decide", async () => {
-    const engine = await engineWith(CAROLINE);
-    await engine.start();
-    const { get } = await mountProjected(engine);
-    const caroline = get().waiting.find((s) => s.from.address === "blasz.caroline@gmail.test")!;
-
-    await act(async () => { get().decide(caroline, "ohbox", { read: false, scope: "sender" }); });
-    await settleAwaited();
-
-    // THE GUARD. Swap the commit branch back to `screener_decide` for a non-gate rep and this
-    // goes red on BOTH counts: the decide's effects are empty (the rep is in INBOX, not the
-    // gate), so `Engine.mutate` rolls it back WITHOUT sending — `sent` holds neither a decide
-    // nor a rule, and the message stays presented in the Screener for ever.
-    expect(kinds("screener_decide")).toEqual([]);
-    expect(kinds("rule_create")).toEqual([
-      expect.objectContaining({
-        ruleKind: "sender",
-        match: "blasz.caroline@gmail.test",
-        destination: "INBOX",
-        applyRetro: false,
-      }),
-    ]);
-    // …and no held-mail move, because the mail is already physically in the INBOX. The rule alone
-    // flips its presentation to the Ohbox.
-    expect(kinds("move")).toEqual([]);
+    const s = await mountWeb(CAROLINE);
+    await pressOhbox(s, address);
+    expect(s.writes).toEqual([{
+      method: "POST", path: "/api/rules",
+      body: { kind: "sender", match: address, destination: "INBOX", applyRetro: false },
+    }]);
   });
 
   it("the sender's bag presents in the Ohbox once the rule echoes back — zero server moves", async () => {
-    const engine = await engineWith(CAROLINE);
-    await engine.start();
-    const { get } = await mountProjected(engine);
-    const caroline = get().waiting.find((s) => s.from.address === "blasz.caroline@gmail.test")!;
-
-    await act(async () => { get().decide(caroline, "ohbox", { read: false, scope: "sender" }); });
-    await settleAwaited();
-
-    // The rule is now in the mirror, so the cutline decides INBOX and the sender leaves the queue.
-    expect(get().waiting.map((s) => s.from.address)).not.toContain("blasz.caroline@gmail.test");
-    // Nothing moved on the server — both messages are still physically in the INBOX.
-    for (const id of ["c1", "c2"]) {
-      expect(engine.store.get<EngineMessage>("message", id)?.folder).toBe("INBOX");
-    }
+    const s = await mountWeb(CAROLINE);
+    await pressOhbox(s, address);
+    expect(s.writes.filter(({ path }) => path.endsWith("/move"))).toEqual([]);
+    expect(s.frame.queryAllByRole("option").map((row) => row.textContent).join(" ")).not.toContain(address);
+    const rail = within(s.frame.getByRole("navigation", { name: "Places" }));
+    await click(rail.getByRole("button", { name: /^Ohbox/ }));
+    expect(s.frame.getByRole("option", { name: /Subject c1/ })).toBeTruthy();
+    expect(s.frame.getByRole("option", { name: /Subject c2/ })).toBeTruthy();
   });
 
   it("a refused rule says the rule couldn't be made — never 'Ruled' over nothing", async () => {
-    // The awaited-dispatch half: with a 403 on `rule_create`, the sentence is the failure one, not
-    // the shipped "Ruled/files there too" claimed over a mutation that never landed. Return the
-    // unawaited void pattern (drop the await / toast the success key on click) and this goes red.
-    const toasts: string[] = [];
-    const engine = await engineRefusing(CAROLINE);
-    await engine.start();
-    const { get } = await mountProjected(engine, (m) => toasts.push(m));
-    const caroline = get().waiting.find((s) => s.from.address === "blasz.caroline@gmail.test")!;
-
-    await act(async () => { get().decide(caroline, "ohbox", { read: false, scope: "sender" }); });
-    await settleAwaited();
-
-    expect(toasts.some((s) => /couldn.t be made/i.test(s)), toasts.join(" | ")).toBe(true);
-    expect(toasts.some((s) => /files there too/i.test(s)), toasts.join(" | ")).toBe(false);
+    const s = await mountWeb(CAROLINE, { refuse: true });
+    await pressOhbox(s, address);
+    expect(s.writes.filter(({ path }) => path === "/api/rules")).toHaveLength(1);
+    expect(reports().some((text) => /couldn.t be made/i.test(text))).toBe(true);
+    expect(reports().some((text) => /files there too/i.test(text))).toBe(false);
   });
 });
 
@@ -921,19 +566,13 @@ describe("the Screener sheet says what it does", () => {
        * what keeps that judgement spoof-safe. A surface that shows one and hides the other
        * is asking for consent on half the evidence.
        */
-      const engine = await engineWith(NAMED);
-      await engine.start();
-      await mountView(engine, segment);
-
-      const row = host!.querySelector(".view-screener .row")!;
-      expect(row, `no ${segment} row`).toBeTruthy();
-      expect(row.textContent, `${segment} row dropped the name`).toContain(name);
-      expect(row.textContent, `${segment} row dropped the address`).toContain(address);
-
-      const held = host!.querySelector(".view-screener .hmail .hm-line")!;
-      expect(held, `no held mail in the ${segment} preview`).toBeTruthy();
-      expect(held.textContent, `${segment} held mail dropped the name`).toContain(name);
-      expect(held.textContent, `${segment} held mail dropped the address`).toContain(address);
+      const s = await mountWeb(NAMED, { section: segment === "waiting" ? "" : segment });
+      const row = await s.open(address);
+      expect(row.textContent).toContain(name);
+      expect(row.textContent).toContain(address);
+      const held = s.frame.getByRole("button", { name: `${name} ${address}` });
+      expect(held.textContent).toContain(name);
+      expect(held.textContent).toContain(address);
     },
   );
 
@@ -941,95 +580,74 @@ describe("the Screener sheet says what it does", () => {
     // The other half of the contract: `HELD`'s senders have `name: null`, which is the shape
     // every fixture account has. `MessageRow`/`HeldMail` are given the address as `from` and
     // no `address` at all, so nothing renders twice and nothing renders blank.
-    const engine = await engineWith(HELD);
-    await engine.start();
-    await mountView(engine);
-
-    // Whichever sender the cursor lands on — which row that is is an ordering detail this
-    // claim must not depend on, the same care the AI-chip test above takes.
-    const line = host!.querySelector(".view-screener .hmail .hm-line")!;
-    expect(line.textContent).toMatch(/(lena@atelier|win@jackpot)\.example/);
-    expect(line.querySelector(".addr"), "the address was printed twice").toBeNull();
+    const s = await mountWeb(HELD);
+    const address = HELD[0]!.from.address;
+    await s.open(address);
+    const reading = within(s.frame.getByRole("region", { name: "Reading" }));
+    const held = reading.getAllByRole("button", { name: address })
+      .find((button) => button.hasAttribute("data-sender-line"));
+    const who = held?.querySelector(".oh-messagehead-who");
+    expect(who?.textContent?.trim()).toBe(address);
+    expect(who?.querySelector(".oh-messagehead-address")).toBeNull();
   });
 
-  it("every destination capsule carries its own key, and the mail piles carry the ✓ twin", async () => {
+  it("decision buttons show their keys and More offers only the three read variants", async () => {
     // the rule, reaching the surface it had missed: the key is on the verb it fires.
     // Before this, `o`/`r`/`c`/`n`/`x` existed only inside `title` attributes. The demoting
     // destinations (Screen out `n`, Spam `x`) file but carry NO ✓ — you don't read what you
     // triage out — so their capsule has the letter and no shifted twin. SCR-READBOX.
-    const engine = await engineWith(HELD);
-    await engine.start();
-    await mountView(engine);
-
-    const capsules = [...host!.querySelectorAll(".view-screener .dbtn")];
-    const caps = capsules.map((c) => [
-      c.querySelector(".d-main kbd")?.textContent ?? null,
-      c.querySelector(".d-read kbd")?.textContent ?? null,
-    ]);
-    expect(caps).toEqual([
-      ["o", "⇧O"], ["r", "⇧R"], ["c", "⇧C"], ["n", null], ["x", null],
-    ]);
-    // The null on the last two is the ✓ button's ABSENCE, not an unlabelled cap.
-    for (const c of capsules.slice(3)) expect(c.querySelector(".d-read")).toBeNull();
+    const s = await mountWeb(HELD);
+    await s.open();
+    const caps = (element: HTMLElement) => [...element.querySelectorAll("kbd")].map((key) => key.textContent);
+    const buttons = s.panel().getAllByRole("button");
+    expect(buttons.flatMap(caps)).toEqual(["o", "r", "c", "n", "x"]);
+    await click(s.panel().getByRole("button", { name: copy.place.more }));
+    const menu = page().getByRole("menu", { name: copy.place.more });
+    const read = within(menu).getAllByRole("menuitem").filter((item) => /mark read/i.test(item.textContent ?? ""));
+    expect(read.flatMap(caps)).toEqual(["⇧O", "⇧R", "⇧C"]);
   });
 
-  it("the pane foot carries the ? affordance and GENERATED movement hints — never a verb legend", async () => {
-    /**
-     * The HAND-TYPED legend left in two steps, and this test has guarded both. First the
-     * filing keys went (`o r c n x file`, `⇧ +key marks read` — five keycaps naming
-     * capsules in the other pane), then the whole typed strip: clamped to one line, it
-     * CLIPPED mid-word in the split layout, and it was a second copy of bindings the `?`
-     * sheet derives from the registry.
-     *
-     * The ohmarchy hint foot (Phase 1) brought a teaching line back — GENERATED, never
-     * typed: `ShortcutHint` renders the movement winners the registry itself would run
-     * (↑↓ the section's own next/prev, ←→ the zone step) beside the `?` affordance, per
-     * the ruling that a statusline foot carries navigation and scope hints only,
-     * never a verb that owns a visible button. So the keycap set is exactly the arrows
-     * plus `?` — a VERB letter (the o/r/c/n/x legend, a ⇧ twin) appearing here is the
-     * regression this test exists to catch, and the hand-typed words stay banned.
-     */
-    const engine = await engineWith(HELD);
-    await engine.start();
-    await mountView(engine);
-
-    const hints = host!.querySelector(".view-screener .list-hints")!;
-    expect(hints, "the hint strip slot vanished entirely").toBeTruthy();
-    const btn = hints.querySelector("button.key-hint");
-    expect(btn, "the ? affordance is missing from the pane foot").toBeTruthy();
-    const caps = [...hints.querySelectorAll("kbd")].map((k) => k.textContent);
-    // Edge-honest: with no sender selected yet the cursor stands before the list, so only
-    // ↓ is live vertically; laterally only ← (the menu) — the Screener declares no reading
-    // column, so → is nobody's. A printed arrow is a key that will do something right now.
-    expect(caps).toEqual(["↓", "←", "?"]);
-    expect(hints.textContent).not.toContain("marks read");
-    expect(hints.textContent).not.toContain("file");
+  it("the keyboard sheet shows the registered sender navigation", async () => {
+    const s = await mountWeb(HELD);
+    const key = async (target: HTMLElement, name: string) => {
+      await act(async () => {
+        target.focus();
+        target.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true }));
+      });
+      await tick(50);
+    };
+    const [first, last] = s.rows();
+    await click(first!);
+    await key(first!, "?");
+    const sheet = () => page().getByRole("dialog", { name: "Keyboard shortcuts" });
+    expect(within(sheet()).getByText("Next sender")).toBeTruthy();
+    await key(sheet(), "Escape");
+    await click(last!);
+    await key(last!, "?");
+    expect(within(sheet()).getByText("Previous sender")).toBeTruthy();
   });
+
 
   it("nothing in the sheet is called a door", async () => {
     // "Pick a door." was the whole of the no-suggestion line's instruction, and the sheet
     // never calls anything a door — the capsules beside it say Ohbox, Reads, Receipts,
     // Screen out, Spam. The marketing page keeps the metaphor, where its hero establishes it.
-    const engine = await engineWith(HELD);
-    await engine.start();
-    await mountView(engine);
-
-    const why = host!.querySelector(".scn-why-none")!;
-    expect(why, "the no-suggestion line is missing").toBeTruthy();
-    expect(why.textContent).toContain("No suggestion");
-    expect(host!.textContent ?? "").not.toMatch(/\bdoor\b/i);
+    const s = await mountWeb(HELD);
+    await s.open();
+    expect(s.frame.getByText(copy.place.nowhere, { exact: true })).toBeTruthy();
+    expect(s.frame.queryByText(/No suggestion/)).toBeNull();
+    expect(s.shell.textContent).not.toMatch(/\bdoor\b/i);
   });
 
   it("the rule disclosure still leads the note, and both halves are now named", async () => {
-    // An earlier change put the consequence BEFORE the click because screening a sender out arms
-    // auto-unsubscribe. A legibility pass must not cost that sentence its place.
-    const engine = await engineWith(HELD);
-    await engine.start();
-    await mountView(engine);
-
-    const note = host!.querySelector(".view-screener .d-note")!.textContent ?? "";
-    expect(note.startsWith("Becomes a rule")).toBe(true);
-    expect(note).toContain("files the mail waiting here");
-    expect(note).toContain("marks it read");
+    const s = await mountWeb(HELD);
+    const sender = HELD[0]!.from;
+    await s.open(sender.address);
+    expect(s.frame.getByRole("heading", { name: `${sender.name ?? sender.address} goes to a place` })).toBeTruthy();
+    const panel = s.panel();
+    expect(panel.getByRole("button", { name: "Ohbox" })).toBeTruthy();
+    await click(panel.getByRole("button", { name: "More" }));
+    const other = within(document.body).getByRole("menu", { name: "More" });
+    expect(within(other).getByRole("menuitem", { name: "Ohbox, mark read" })).toBeTruthy();
   });
 });

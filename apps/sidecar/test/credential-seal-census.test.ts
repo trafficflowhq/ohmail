@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -45,6 +46,10 @@ const ROOTS = [
     url: new URL("../../../packages/services/src/mailbox-service.ts", import.meta.url),
   },
 ] as const;
+
+/** A root's text; the engine's is its whole unit, read as one. */
+const textOf = (root: (typeof ROOTS)[number]): string =>
+  root.name === "apps/sidecar/src/engine.ts" ? readEngineAsOneText() : readFileSync(fileURLToPath(root.url), "utf8");
 
 type Site = { at: number; secret: boolean; gated: boolean; erasureGated: boolean };
 
@@ -143,7 +148,7 @@ describe("every credential writer reads the sign-out stamp", () => {
 
   for (const root of ROOTS) {
     it(`${root.name} seals no password without the fence`, () => {
-      const found = sites(readFileSync(fileURLToPath(root.url), "utf8"));
+      const found = sites(textOf(root));
       expect(found.length, "no credential write found — the detector stopped matching")
         .toBeGreaterThan(0);
       const ungated = found.filter((s) => s.secret && !s.gated);
@@ -168,7 +173,7 @@ describe("every credential writer reads the sign-out stamp", () => {
     // A COUNT PIN, because a writer added without the fence is caught above while a writer added
     // WITH it is a new door into somebody's mailbox password that nobody looked at.
     const counts = ROOTS.map((r) => {
-      const found = sites(readFileSync(fileURLToPath(r.url), "utf8"));
+      const found = sites(textOf(r));
       return `${r.name}: ${found.filter((s) => s.secret).length} secret, ` +
         `${found.filter((s) => !s.secret).length} meta`;
     });

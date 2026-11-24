@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { accounts, users } from "@trafficflow/db";
+import { accounts, bindDb, users } from "@trafficflow/db";
 import { authThrottle, invites } from "@trafficflow/db/cloud";
 import { eq } from "drizzle-orm";
 import {
@@ -72,8 +72,9 @@ async function harness(
     deps,
     spy,
     svc: new AuthService(deps),
+    // Registration runs before any session: its handle is bound to nothing.
     ctx: (o: Partial<ServiceContext> = {}): ServiceContext => ({
-      db, accountId: "", userId: null, now: () => NOW, requestId: "r", ip: "1.2.3.4", ...o,
+      db: bindDb(db, { account: null }), accountId: "", userId: null, now: () => NOW, requestId: "r", ip: "1.2.3.4", ...o,
     }),
   };
 }

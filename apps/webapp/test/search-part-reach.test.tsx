@@ -1,20 +1,18 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import { enterSearchRoute, RegisteredSearch, findSearchField, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
 
 /**
  * SEARCH SAYS WHERE A PART INSIDE A WORD IS LOOKED FOR (SEARCH-PART-WORD-INSIDE-A-BODY-WORD). The
@@ -24,7 +22,6 @@ import { KeymapProvider } from "../app/shell/keymap";
  * store still indexes, whose older rows are read by subject and sender alone.
  */
 (globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -68,8 +65,10 @@ function adapterOver(parts: Parts): EngineAdapter {
 
 let host: HTMLDivElement;
 let root: Root;
+let leaveSearch: () => void;
 beforeEach(() => {
   window.localStorage.clear();
+  leaveSearch = enterSearchRoute();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -77,36 +76,39 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  leaveSearch();
 });
 
 async function reach(query: string, parts: Parts, locale: "en" | "de" = "en"): Promise<string[]> {
   const store = new MemoryMirrorStore();
   await store.load();
   const engine = new OhmailEngine({ adapter: adapterOver(parts), store, now: () => NOW });
+  const catalogue = locale === "en" ? en : de;
   await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale, messages: locale === "en" ? en : de, timeZone: "UTC", now: NOW,
-      children: h(KeymapProvider, {
-        children: h(SearchView, { engine, version: 1, now: NOW, query, onQuery: () => {}, onOpen: () => {} }),
-      }),
-    }));
+    root.render(<RegisteredSearch engine={engine} now={NOW} locale={locale} catalogue={catalogue} />);
   });
+  await findSearchField(host);
+  await act(async () => { typeSearch(host, query); });
   await act(async () => { await new Promise((r) => setTimeout(r, 320)); });
-  return [...host.querySelectorAll('[data-testid="search-part-reach"]')].map((e) => (e.textContent ?? "").trim());
+  return within(host).queryAllByText(catalogue.search.saidPart).map((e) => e.textContent!.trim());
 }
 
-const SAID = en.search.partReach;
+const SAID = en.search.saidPart;
 
 describe("the store's empty and closest-words answers say where a part inside a word is looked for", () => {
   it("an empty answer for a part: the sentence, in the empty state, in both catalogues", async () => {
     expect(await reach("levation", NOTHING)).toEqual([SAID]);
-    expect(host.querySelector(".empty")?.textContent).toContain(SAID);
-    expect(await reach("levation", NOTHING, "de")).toEqual([de.search.partReach]);
+    const shown = within(host);
+    const verdict = shown.getByText((_, node) => node?.textContent === "Nothing matched", { selector: ".oh-empty-label" });
+    expect(verdict.compareDocumentPosition(shown.getByText(SAID))
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(await reach("levation", NOTHING, "de")).toEqual([de.search.saidPart]);
   });
 
   it("a closest-words answer for a part: the sentence under the Similar head", async () => {
     expect(await reach("levation", CLOSEST)).toEqual([SAID]);
-    expect(host.querySelector('[data-similar="head"]')?.textContent).toContain(SAID);
+    expect(within(host).getByText("Similar").compareDocumentPosition(within(host).getByText(SAID))
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("a part beside an excluded word: the words asked are looked for inside words as they are alone", async () => {

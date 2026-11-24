@@ -8,7 +8,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { memoryImapServer, type MemoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
-import { driveOutstandingRequests } from "../src/request-drain.js";
+import { driveOutstandingRequests } from "@ohmail/organizer/request-drain";
 
 const META = "INBOX.ohmail._meta";
 const toServer = (c: string): string => c.replace(/\//g, ".");

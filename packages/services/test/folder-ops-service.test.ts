@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -5,7 +6,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, changeLog, folderOps, folderState, idempotencyKeys, mailboxFolders, mailboxes, messages } from "@trafficflow/db";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
-  FolderOpsService, ServiceError, setFoldersEnabled, userFolderById,
+  FolderOpsService, ServiceError, dbFor, setFoldersEnabled, userFolderById,
   type ServiceContext,
 } from "../src/index.js";
 
@@ -28,7 +29,7 @@ async function setup(opts: { enabled?: boolean } = {}) {
     .values({ accountId, provider: "imap", address: "own@example.com", trashFolder: "Trash" })
     .returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-08-26T00:00:00.000Z"), requestId: "r",
   };
   if (opts.enabled !== false) await setFoldersEnabled(ctx, true);
@@ -37,7 +38,7 @@ async function setup(opts: { enabled?: boolean } = {}) {
 
 async function addFolder(db: Db, mailboxId: string, folder: string): Promise<string> {
   const [row] = await db.insert(mailboxFolders)
-    .values({ mailboxId, folder, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
+    .values({ mailboxId, accountId: accountOfMailbox(mailboxId), folder, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
     .returning();
   return row.id;
 }
@@ -197,7 +198,7 @@ describe("summary", () => {
       });
       if (opts.desired) {
         await db.insert(folderState).values({
-          messageId: mid, desiredFolder: opts.desired, observedFolder: folder, lastSetBy: "us",
+          messageId: mid, accountId: accountOfMessage(mid), desiredFolder: opts.desired, observedFolder: folder, lastSetBy: "us",
         });
       }
     };

@@ -67,7 +67,7 @@ const RELATED_EML = [
  *
  * The bar for all of them is the same: `normalizeMime` returns a usable result, or rejects with
  * one of THIS module's typed errors. It never throws something the caller cannot classify,
- * because `apps/worker/src/sync.ts` has no per-message catch and advances the folder cursor only
+ * because `packages/organizer/src/sync.ts` has no per-message catch and advances the folder cursor only
  * after a whole batch commits — so an unclassifiable throw is a permanently wedged mailbox.
  */
 const NUL = String.fromCharCode(0);

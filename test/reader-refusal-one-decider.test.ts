@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bracketSpan, withoutComments, withoutCommentsAndLiterals } from "../scripts/lib/source-scan.mjs";
+import { isEnginePart, readAsUnit } from "./support/engine-unit.js";
 
 /**
  * ONE DECIDER FOR WHY A READER'S PRESS HAS NOWHERE TO GO. Six server sites and the client's
@@ -24,7 +26,9 @@ function sources(): { file: string; raw: string }[] {
       if (SKIP.has(e) || e.startsWith(".")) continue;
       const p = join(dir, e);
       if (statSync(p).isDirectory()) walk(p);
-      else if (/\.(ts|tsx|mts)$/.test(e) && !/\.(test|spec)\.tsx?$/.test(e)) out.push({ file: relative(REPO, p), raw: readFileSync(p, "utf8") });
+      else if (/\.(ts|tsx|mts)$/.test(e) && !/\.(test|spec)\.tsx?$/.test(e) && !isEnginePart(p)) {
+        out.push({ file: relative(REPO, p), raw: readAsUnit(p) });
+      }
     }
   };
   for (const r of ROOTS) walk(join(REPO, r));
@@ -89,7 +93,7 @@ describe("the reason a reader's press is refused has one decider, and every refu
   it("the fan-out's per-mailbox refusal and the client's Screener read the same leaf", () => {
     const fanOut = withoutCommentsAndLiterals(readFileSync(join(REPO, "packages/services/src/reader-request.ts"), "utf8"));
     expect(fanOut).toMatch(/refused\.push\(\{\s*mailboxId: id, holder: e\.by, reason: requestRefusalReason\(e\) \}\)/);
-    const client = readFileSync(join(REPO, "apps/webapp/app/shell/mail-state.ts"), "utf8");
+    const client = readFileSync(join(REPO, "packages/app-logic/src/mail-state/mail-state.ts"), "utf8");
     expect(withoutComments(client)).toMatch(/from "@trafficflow\/core\/reader-refusal"/);
     const at = withoutCommentsAndLiterals(client).indexOf("export function screenerMode(");
     expect(at).toBeGreaterThan(-1);
@@ -111,12 +115,17 @@ describe("the reason a reader's press is refused has one decider, and every refu
 
 type SourceFile = { file: string; raw: string };
 
-const MAIL_STATE = "apps/webapp/app/shell/mail-state.ts";
-const SCREENER_STATE = "apps/webapp/app/shell/screener-state.ts";
-const SHELL_DISPATCH = "apps/webapp/app/shell/shell-dispatch.ts";
-const APP_SHELL = "apps/webapp/app/shell/AppShell.tsx";
+const MAIL_STATE = "packages/app-logic/src/mail-state/mail-state.ts";
+const SCREENER_STATE = "packages/app-logic/src/screener/screener-state.ts";
+const SHELL_DISPATCH = "packages/app-logic/src/press/shell-dispatch.ts";
+const CONTACT_SCREENING = "packages/app/src/reader/contact/Screening.tsx";
+const FIRST_RUN_LIVE = "packages/app-logic/src/mailboxes/first-run/live.ts";
+const FIRST_RUN_AGREE = "packages/app-logic/src/mailboxes/first-run/use-agree.ts";
+const MAILBOX_STEP = "packages/app/src/mailboxes/first-run/MailboxStep.tsx";
+const ELSEWHERE_STEP = "packages/app/src/mailboxes/first-run/Elsewhere.tsx";
+const ORGANIZER_NOTICES = "packages/app-logic/src/mailboxes/pane/notices.ts";
 const PHONE_FORM = "apps/mobile/src/ui/standalone-form.ts";
-const READER_HOLDER = "apps/webapp/app/shell/reader-holder.ts";
+const READER_HOLDER = "packages/app-logic/src/reading/reader-holder.ts";
 const PHONE_LIVE = "apps/mobile/src/state/live.ts";
 
 /** A door is a function a holder sentence is chosen from; `asks` is read in its body. */
@@ -126,9 +135,9 @@ const DOORS: { file: string; fn: string; asks: RegExp; literals?: true }[] = [
   // The role's `reason` is `screenerMode`'s decider answer: read, never re-derived.
   { file: MAIL_STATE, fn: "readerHolder", asks: /\brole\.reason === "no_organizer"/, literals: true },
   { file: MAIL_STATE, fn: "readerMoveRefusal", asks: /\bholderIsLive\(/ },
-  { file: "apps/webapp/app/shell/first-run-subject.ts", fn: "accountOrganizer", asks: /\bholderIsLive\(/ },
+  { file: "packages/app-logic/src/doors/first-run-subject.ts", fn: "accountOrganizer", asks: /\bholderIsLive\(/ },
   // A 409's reason is the server's decider answer (case 2 above pins the server side).
-  { file: "apps/webapp/app/shell/organizer-refusal.ts", fn: "organizerRefusalOf", asks: /\?\.reason === "no_organizer"/, literals: true },
+  { file: "packages/app-logic/src/press/organizer-refusal.ts", fn: "organizerRefusalOf", asks: /\?\.reason === "no_organizer"/, literals: true },
   { file: PHONE_FORM, fn: "claimFrom", asks: /\bholderIsLive\(/ },
   { file: PHONE_LIVE, fn: "phoneOrganizer", asks: /\bholderIsLive\(/ },
   // The stop is the decider's too: a named holder that is not live (READER-SENTENCES-STOPPED-ARMS).
@@ -148,12 +157,12 @@ const DOORS: { file: string; fn: string; asks: RegExp; literals?: true }[] = [
 
 /**
  * A SITE renders holder sentences (`keys`, a catalogue key as quoted or a copy member as read) in
- * `file`, inside `fn` when named; each of `calls` must appear as a call in its own file and
+ * `file`, inside each function named by `fn`; each of `calls` must appear as a call in its own file and
  * function — for a prop-driven sentence, the file that hands it its holder.
  */
 interface Site {
   file: string;
-  fn?: string;
+  fn?: string | readonly string[];
   keys: string[];
   calls: { file: string; fn?: string; call: RegExp }[];
 }
@@ -169,20 +178,39 @@ const SITES: Site[] = [
   { file: SHELL_DISPATCH, fn: "refusalSentence",
     keys: ['"ohbox.refusedOrganized"', '"ohbox.refusedOrganizedUnknown"', '"ohbox.refusedNobody"'],
     calls: [{ file: SHELL_DISPATCH, fn: "refusalSentence", call: /\borganizerRefusalOf\(err\)/ }] },
-  { file: "apps/webapp/app/views/ScreenerView.tsx",
-    keys: ['"moveBarWhy"', '"moveBarWhyUnknown"', '"moveBarWhyNobody"', '"readerBarWhy"', '"readerBarWhyUnknown"'],
-    calls: [{ file: "apps/webapp/app/views/ScreenerView.tsx", call: /reader=\{readerHolder\(state\.role\)\}/ }] },
-  { file: "apps/webapp/app/shell/SenderMenu.tsx", keys: ['"orgPending"', '"orgPendingUnnamed"', '"orgNobody"'],
-    calls: [{ file: APP_SHELL, call: /organizer=\{otherOrganizerOf\(/ }] },
-  { file: "apps/webapp/app/shell/SubjectRuleSheet.tsx", keys: ['"subjectOrgNobody"'],
-    calls: [{ file: APP_SHELL, call: /nobody=\{otherOrganizerOf\(/ }] },
+  { file: "packages/app/src/screener/sender/holder.ts", fn: "decidesNote",
+    keys: ['"place.decides"', '"place.decidesUnknown"'],
+    calls: [{ file: "packages/app/src/screener/sender/holder.ts", fn: "decidesNote", call: /\breaderHolder\(role\)/ }] },
+  { file: "packages/app-logic/src/press/sender-screening.ts", fn: "screeningOrganizerCopy",
+    keys: ['"orgPending"', '"orgPendingUnnamed"', '"orgNobody"'],
+    calls: [
+      { file: CONTACT_SCREENING, call: /const organizer = otherOrganizerOf\(facts, new Set\(sender\.messages\.map\(/ },
+      { file: CONTACT_SCREENING, call: /\bscreeningOrganizerCopy\(organizer\)/ },
+    ] },
+  { file: "packages/app-logic/src/press/subject-rule.ts", keys: ['"subjectOrgNobody"'],
+    calls: [
+      { file: CONTACT_SCREENING, call: /const nobody =\s*otherOrganizerOf\(facts, new Set\(subject\.messages\.map\(/ },
+      { file: CONTACT_SCREENING, call: /nobody=\{nobody\}/ },
+      { file: CONTACT_SCREENING, call: /nobody \? <p>\{t\(subjectOrganizerMissing\)\}/ },
+      { file: "apps/webapp/app/(product)/mailbox/WebScreenerSubjectRule.tsx",
+        call: /otherOrganizerOf\(\s*mailboxes, new Set\(context\.messages\.map\(/ },
+      { file: "apps/webapp/app/(product)/mailbox/WebScreenerSubjectRule.tsx", call: /t\(subjectOrganizerMissing\)/ },
+    ] },
   // The connect notice was exempt as "the connect's outcome at that moment" and outlived a hand-back
   // it is chosen over the live claim the strip reads now.
   { file: PHONE_FORM, fn: "readingAtConnectLine", keys: ["Copy.readingAtConnect", "Copy.readingAtConnectKept", "Copy.readingAtConnectJoinWaits"],
     calls: [{ file: "apps/mobile/app/(tabs)/index.tsx", call: /readingAtConnectNow\([^;]*\bclaim\)/ },
       { file: "apps/mobile/src/ui/OrganizerStrip.tsx", fn: "useStandaloneClaim", call: /\bclaimHere\(/ }] },
-  { file: "apps/webapp/app/shell/FirstRun.tsx", keys: ['"doorReaderWhy"', '"doorReaderWhyLegacy"'],
-    calls: [{ file: APP_SHELL, call: /accountOrganizer=\{accountOrganizer\(/ }] },
+  { file: MAILBOX_STEP, fn: ["Connect", "MailboxStep"], keys: ['"onboarding.readerTag"'],
+    calls: [
+      { file: FIRST_RUN_LIVE, fn: "useFirstRunLive", call: /const organizer = useMemo\(\(\) => accountOrganizer\(facts\)/ },
+      { file: FIRST_RUN_LIVE, fn: "useFirstRunLive", call: /accountOrganizer: organizer/ },
+      { file: MAILBOX_STEP, fn: "Connect", call: /run\.accountOrganizer \? <Tag>\{say\("onboarding\.readerTag"\)\}/ },
+      // Each mailbox row shows the role supplied by the server.
+      { file: FIRST_RUN_LIVE, fn: "useFirstRunLive", call: /facts\.flatMap\(\(m\) => rowOf\(m,/ },
+      { file: FIRST_RUN_LIVE, fn: "rowOf", call: /\borganizerRole: m\.organizerRole\b/ },
+      { file: MAILBOX_STEP, fn: "MailboxStep", call: /row\.organizerRole === "reader"\s*\? say\("onboarding\.readerTag"\)/ },
+    ] },
   { file: "apps/desktop/src/install-role.ts",
     keys: ["DOOR_COPY.mailboxWhyReadsNamed", "DOOR_COPY.mailboxWhyReads", "DOOR_COPY.mailboxWhyReadsNobody"],
     calls: ["DesktopAbout", "DesktopSettings"].map((pane) => ({
@@ -200,10 +228,20 @@ const SITES: Site[] = [
     calls: [{ file: "apps/mobile/src/state/world-projection.ts", call: /\bphoneOrganizer\(inp\.mailboxes\)/ }] },
   { file: READER_HOLDER, fn: "phoneHolderKey", keys: ['"readerHolderPhone"'],
     calls: [{ file: READER_HOLDER, fn: "phoneHolder", call: /\bholderIsLive\(/ }] },
-  { file: "apps/webapp/app/shell/OrganizerNotice.tsx", keys: ['"noticeElsewhere"'],
-    calls: [{ file: MAIL_STATE, fn: "noticeKind", call: /\borganizerSituation\(/ }] },
-  { file: "apps/webapp/app/shell/FirstRun.tsx", keys: ['"elsewhereChoiceReadWhy"'],
-    calls: [{ file: "apps/webapp/app/shell/FirstRun.tsx", call: /\bholderStopped\(facts\.mailbox\)/ }] },
+  { file: ORGANIZER_NOTICES, fn: "elsewhereNoticeTitle", keys: ['"noticeElsewhere"'],
+    calls: [
+      { file: ORGANIZER_NOTICES, fn: "titleOf", call: /\belsewhereNoticeTitle\(one\)/ },
+      { file: ORGANIZER_NOTICES, fn: "useOrganizerNotices", call: /\borganizerNotices\(input\.facts\)/ },
+      { file: MAIL_STATE, fn: "organizerNotices", call: /\bnoticeKind\(m\)/ },
+      { file: MAIL_STATE, fn: "noticeKind", call: /\borganizerSituation\(/ },
+    ] },
+  { file: ELSEWHERE_STEP, keys: ['"onboarding.elsewhereSay"', '"onboarding.elsewhereSayStopped"'],
+    calls: [
+      { file: FIRST_RUN_AGREE, fn: "useAgree", call: /const stopped = holderStopped\(facts\.mailbox\)/ },
+      { file: ELSEWHERE_STEP, call: /const stopped = run\.agree\.stopped/ },
+      { file: ELSEWHERE_STEP, fn: "holderLines", call: /\bholderSentence\(/ },
+      { file: ELSEWHERE_STEP, call: /const title = say\(stopped \? "onboarding\.elsewhereSayStopped" : "onboarding\.elsewhereSay", \{ name \}\)/ },
+    ] },
   { file: PHONE_FORM, fn: "scheduledNotHereSentence", keys: ["Copy.scheduledReaderHere"],
     calls: [{ file: PHONE_FORM, fn: "scheduledNotHereSentence", call: /\bholder\.stopped\b/ },
       { file: "apps/mobile/src/state/world-projection.ts", call: /\bphoneOrganizer\(inp\.mailboxes\)/ }] },
@@ -230,6 +268,15 @@ const EXEMPT: Record<string, string> = {
   "ohbox.whyRefused.outdated": "rendered only from an OrganizerRefusal, whose kind is organizerRefusalOf's or postureRefusal's",
   "ohbox.whyRefused.elsewhere": "rendered only from an OrganizerRefusal, whose kind is organizerRefusalOf's or postureRefusal's",
   "mailboxes.stopOrganizingSiblingLapseHost": "about this install's own copy on the paired computer, not a reader's holder",
+};
+
+/**
+ * Files that name a registered key as a declaration, never a render: a site's key quoted there is not "rendered
+ * outside its site". One row each, its reason in the row.
+ */
+const DECLARED: Record<string, string> = {
+  "apps/mobile/src/refusal-keys.ts": "the phone's list of every key refuse() takes, which the compiler reads and nothing renders; "
+    + "the one registry of those keys is the phone catalogue's phoneRefusal namespace, and @ohmail/app exports no catalogue for the phone to take them from",
 };
 
 /** Positions of the function `name`'s body, found in the literal-blanked text. */
@@ -281,30 +328,47 @@ function doorViolations(files: SourceFile[], doors: typeof DOORS): string[] {
 }
 
 /** Every reason a tree's holder sentences do not ask the decider — empty when every one does. */
-function holderSentenceViolations(files: SourceFile[], sites: Site[]): string[] {
+function holderSentenceViolations(files: SourceFile[], sites: Site[], declared: Record<string, string> = DECLARED): string[] {
   const out: string[] = [];
   const byFile = new Map(files.map((f) => [f.file, f.raw]));
   const commented = new Map(files.map((f) => [f.file, withoutComments(f.raw)]));
+  const scopeOf = (file: string, raw: string, fn: string | undefined) => {
+    if (fn === undefined) return { start: 0, end: raw.length };
+    if (!file.endsWith(".tsx")) return bodySpan(withoutCommentsAndLiterals(raw), fn);
+    // JSX closing tags are not understood by the scanner's bracket walk.
+    const source = ts.createSourceFile(file, raw, ts.ScriptTarget.Latest);
+    const declaration = source.statements.find(
+      (node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === fn,
+    );
+    return declaration?.body ? { start: declaration.body.getStart(source), end: declaration.body.end } : null;
+  };
   const inFn = (file: string, fn: string | undefined, at: number) => {
-    if (fn === undefined) return true;
-    const s = bodySpan(withoutCommentsAndLiterals(byFile.get(file) ?? ""), fn);
+    const s = scopeOf(file, byFile.get(file) ?? "", fn);
     return s !== null && at >= s.start && at < s.end;
   };
   for (const site of sites) {
     for (const key of site.keys) {
       const seen = keyUses(commented.get(site.file) ?? "", key);
-      if (seen.length === 0) out.push(`${site.file}: ${key} is not rendered where it is registered`);
-      for (const at of seen) if (!inFn(site.file, site.fn, at)) out.push(`${site.file}: ${key} outside ${site.fn}`);
+      const functions = typeof site.fn === "string" ? [site.fn] : site.fn ?? [undefined];
+      for (const fn of functions) {
+        if (!seen.some((at) => inFn(site.file, fn, at))) {
+          out.push(`${site.file}: ${key} is not rendered where it is registered${fn ? ` in ${fn}` : ""}`);
+        }
+      }
+      for (const at of seen) {
+        if (!functions.some((fn) => inFn(site.file, fn, at))) {
+          out.push(`${site.file}: ${key} outside ${functions.join(", ")}`);
+        }
+      }
       for (const [file, text] of commented) {
-        if (file !== site.file && text.includes(key.startsWith('"') ? key.slice(1, -1) : key)
+        if (file !== site.file && !(file in declared) && text.includes(key.startsWith('"') ? key.slice(1, -1) : key)
           && keyUses(text, key).length > 0) out.push(`${file}: ${key} rendered outside its site`);
       }
     }
     for (const c of site.calls) {
       const raw = byFile.get(c.file);
       if (raw === undefined) { out.push(`${c.file}: missing`); continue; }
-      const blank = withoutCommentsAndLiterals(raw);
-      const s = c.fn === undefined ? { start: 0, end: blank.length } : bodySpan(blank, c.fn);
+      const s = scopeOf(c.file, raw, c.fn);
       if (s === null) { out.push(`${c.file}: no function ${c.fn}`); continue; }
       if (!c.call.test(withoutComments(raw).slice(s.start, s.end))) {
         out.push(`${c.file}${c.fn ? ` ${c.fn}` : ""}: ${site.keys[0]} is chosen without ${c.call.source}`);
@@ -316,7 +380,7 @@ function holderSentenceViolations(files: SourceFile[], sites: Site[]): string[] 
 
 describe("every sentence that names who organizes a mailbox asks the same decider", () => {
   const all = sources();
-  const read = (file: string) => readFileSync(join(REPO, file), "utf8");
+  const read = (file: string) => readAsUnit(join(REPO, file));
 
   it("every door the sentences are chosen from calls the decider in its own body", () => {
     expect(doorViolations(all, DOORS)).toEqual([]);
@@ -334,7 +398,8 @@ describe("every sentence that names who organizes a mailbox asks the same decide
       for (const [k, v] of Object.entries(o)) {
         const path = at ? `${at}.${k}` : k;
         if (v && typeof v === "object") walk(v as Record<string, unknown>, path);
-        else if (typeof v === "string" && /\{name\}(?:,[^.—]*?)? (?:organizes|is organizing|keeps organizing)\b/.test(v)) found.push(path);
+        else if (typeof v === "string" && /\{name\}(?:,[^.—]*?)? (?:organizes|is organizing|keeps organizing)\b/.test(v))
+          found.push(path);
       }
     };
     walk(en, "");
@@ -344,7 +409,10 @@ describe("every sentence that names who organizes a mailbox asks the same decide
       if (/Organized by \$\{name\}|\$\{name\} (?:organizes|is organizing|keeps organizing)\b/.test(m[2]!)) found.push(`Copy.${m[1]}`);
     }
     // The reach first: a scan that found nothing classifies nothing.
-    expect(found.length).toBe(28);
+    // The setup mailbox sentence left with its view. The Reader badge is traced separately in SITES.
+    expect(found).not.toContain("onboarding.doorReaderWhy");
+    expect(found).toContain("onboarding.elsewhereSay");
+    expect(found.length).toBe(25);
     const registered = new Set(SITES.flatMap((s) => s.keys));
     const unclassified = found.filter((path) => {
       const leaf = path.slice(path.lastIndexOf(".") + 1);
@@ -379,6 +447,12 @@ describe("every sentence that names who organizes a mailbox asks the same decide
       { file: "apps/webapp/app/shell/elsewhere.ts", raw: `const s = t("plantedHolderNamed");\n` }];
     expect(holderSentenceViolations(twice, [site]))
       .toEqual(["apps/webapp/app/shell/elsewhere.ts: \"plantedHolderNamed\" rendered outside its site"]);
+    // …unless that file is a declared list, by its own row; a row for another file admits nothing.
+    expect(holderSentenceViolations(twice, [site], { "apps/webapp/app/shell/elsewhere.ts": "a planted list" })).toEqual([]);
+    expect(holderSentenceViolations(twice, [site], { "apps/webapp/app/shell/other.ts": "a planted list" }))
+      .toEqual(["apps/webapp/app/shell/elsewhere.ts: \"plantedHolderNamed\" rendered outside its site"]);
+    // Every declared file is one that stands, so a row outlives no list.
+    for (const file of Object.keys(DECLARED)) expect(existsSync(join(REPO, file)), `${file} is declared and missing`).toBe(true);
     // A door whose body names the decider only in a comment is refused; one that calls it is not.
     const door = (body: string): SourceFile[] => [{
       file: "apps/webapp/app/shell/planted-door.ts",

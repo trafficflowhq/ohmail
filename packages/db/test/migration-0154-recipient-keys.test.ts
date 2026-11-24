@@ -24,6 +24,9 @@ const long = (n: number) => `${"x".repeat(n - "@acme.test".length)}@acme.test`;
 describe("mail 0154: the recipient keys", () => {
   it("rows written before the index are found through it once 0154 applies, and 0154 replays", async () => {
     const db = await makeTestDb();
+    // The store as it stood before 0154: no index and no function, and so no column of mail 0208,
+    // which the database generates from the function (dropping it takes its index with it).
+    await db.execute(sql`alter table messages drop column if exists recipient_keys`);
     await db.execute(sql`drop index if exists messages_recipient_keys_idx`);
     await db.execute(sql`drop function if exists messages_recipient_keys(uuid, jsonb, jsonb)`);
     const a = randomUUID();
@@ -33,7 +36,7 @@ describe("mail 0154: the recipient keys", () => {
     const [mine] = await db.insert(messages).values({
       accountId: a, mailboxId: mbA!.id, bodyHash: "h", dedupKey: `d:${randomUUID()}`, fromAddress: "s@acme.test",
       toAddresses: [{ name: null, address: "Info@ACME.test" }], ccAddresses: [],
-    }).returning();
+    }).returning({ id: messages.id });
     await db.insert(messages).values({
       accountId: b, mailboxId: mbB!.id, bodyHash: "h", dedupKey: `d:${randomUUID()}`, fromAddress: "s@acme.test",
       toAddresses: [{ name: null, address: "info@acme.test" }], ccAddresses: [],
@@ -57,5 +60,13 @@ describe("mail 0154: the recipient keys", () => {
     expect((await keysOf(db, a, to, cc)).sort()).toEqual([`${a}:info@acme.test`, `${a}:${long(254)}`].sort());
     expect(await keysOf(db, a, "[]", "[]")).toEqual([]);
     expect(await keysOf(db, a, '{"address":"x@acme.test"}', '"x@acme.test"')).toEqual([]);
+  });
+
+  it("at the journal's head the function is still 0154's, body for body: every stored key was made by it (mail 0208)", async () => {
+    // An entry that gives the function another body leaves every letter written before it with a key the
+    // function no longer answers, and Postgres says nothing. Such an entry writes the column again, and this pin moves with it.
+    const db = await makeTestDb();
+    const [f] = rows<{ body: string }>(await db.execute(sql`select prosrc as body from pg_proc where proname = 'messages_recipient_keys'`));
+    expect(f!.body).toBe(/\$\$([\s\S]*)\$\$/.exec(STATEMENTS[0]!)![1]);
   });
 });

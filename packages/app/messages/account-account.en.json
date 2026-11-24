@@ -1,0 +1,17 @@
+{
+  "accountOwn": {
+    "signedInLabel": "Signed in as",
+    "managed": "ohmail Cloud",
+    "self": "Your own server",
+    "ownComputer": "This computer",
+    "signedIn": "Signed in",
+    "thisPhone": "This phone",
+    "signOutOnPhone": "Opens Servers to confirm signing out from this phone.",
+    "thisBrowser": "This browser",
+    "changeLabel": "Password",
+    "cancel": "Cancel",
+    "notRead": "Not read",
+    "stillHere": "Still here",
+    "notConfirmed": "Not confirmed"
+  }
+}

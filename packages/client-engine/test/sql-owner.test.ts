@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { FixturesAdapter, SqlMirrorStore, mirrorDbName } from "@ohmail/client-engine";
+import { SqlMirrorStore, mirrorDbName } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { newDb, nodeSqlExecutor, sqlWorld } from "./helpers/node-sql-executor.js";
 
 /**
@@ -137,6 +138,25 @@ describe("the sqlite mirror belongs to an account", () => {
     await a2.applyResponse(page);
     expect(a2.snapshot().size).toBeGreaterThan(0);
     a2.close();
+  });
+
+  it("the mail a re-bootstrap writes after its wipe is still the account's: another claimant reads none of it", async () => {
+    const world = sqlWorld();
+    const page = await seeded();
+    const s = new SqlMirrorStore({ owner: "acct-A", open: world.open });
+    await s.load();
+    await s.applyResponse(page);
+    await s.resetForBootstrap(); //   the 410 cursor-expired path
+    await s.applyResponse(page); //   …and the bootstrap that follows it, on the same open store
+    expect(s.snapshot().size).toBeGreaterThan(0);
+    s.close();
+
+    // The same bytes, another claimant: a database left unowned by the wipe would be claimed and read.
+    const b = new SqlMirrorStore({ owner: "acct-B", dbName: mirrorDbName("acct-A"), open: world.open });
+    await b.load();
+    expect(b.snapshot().size, "B read the mail A synced after its re-bootstrap").toBe(0);
+    expect(b.getCursor()).toBe("0");
+    b.close();
   });
 
   it("the wipe-then-claim is ONE atomic batch — a wipe cannot land unclaimed", async () => {

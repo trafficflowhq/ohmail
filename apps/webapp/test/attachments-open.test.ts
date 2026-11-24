@@ -79,7 +79,7 @@ function Harness({ engine, messageId, onFailed }: {
   messageId: string | null;
   onFailed: () => void;
 }) {
-  const att = useMessageAttachments(engine, messageId, { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: onFailed });
+  const att = useMessageAttachments(engine, messageId, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: onFailed });
   const id = messageId ?? "m1";
   // `itemsOf` answers with the LIST STATE since gap so "the items" is a question only a
   // `ready` list can answer. Everything else is zero items HERE and a rendered sentence in the

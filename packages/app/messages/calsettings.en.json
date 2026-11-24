@@ -1,0 +1,91 @@
+{
+  "calsettings": {
+    "unread": "The calendar cannot be read on this device.",
+    "noSettings": "Settings is not here on this device",
+    "notSaved": "Not saved.",
+    "notChecked": "Not checked.",
+    "notRemoved": "Not removed.",
+    "way": {
+      "icloud": "iCloud",
+      "caldav": "CalDAV",
+      "ics": "Subscription",
+      "google": "Google",
+      "microsoft": "Microsoft 365"
+    },
+    "accounts": {
+      "useCalendar": "Use ohcal",
+      "add": "Add a calendar account",
+      "addAccount": "Add account",
+      "none": "No calendar account",
+      "noneShort": "None",
+      "signInAgain": "Sign in again",
+      "state": {
+        "inStep": "In step",
+        "signedOut": "Signed out",
+        "failing": "Not checked",
+        "removing": "Removing"
+      },
+      "calendarCount": "{count, plural, one {# calendar} other {# calendars}}",
+      "checkedAt": "Checked {when}",
+      "calendars": "Calendars",
+      "show": "Show {name}",
+      "newEventsHere": "New events go here",
+      "viewOnly": "View only",
+      "checked": "Checked",
+      "never": "Not yet",
+      "checkNow": "Check now",
+      "connectedWith": "Connected with",
+      "remove": "Remove",
+      "removeAsk": "Remove {name}?",
+      "rename": "Rename here",
+      "nameHere": "Name here",
+      "save": "Save",
+      "title": "Calendar accounts"
+    },
+    "view": {
+      "opensIn": "Opens in",
+      "startsOn": "Week starts on",
+      "weekends": "Weekends",
+      "showDeclined": "Show declined events",
+      "deviceSummary": "{view} · {day}",
+      "opens": { "agenda": "Agenda", "day": "Day", "week": "Week", "month": "Month", "year": "Year" },
+      "starts": { "0": "Monday", "5": "Saturday", "6": "Sunday" },
+
+      "newEvents": "New events go to",
+      "noWritable": "No calendar to write to",
+      "week": "Week",
+      "weekNumbers": "Week numbers",
+      "on": "On",
+      "off": "Off",
+      "hours": "Hours in view",
+      "from": "From",
+      "to": "To",
+      "hourRange": "{from} – {to}",
+      "summary": "Week · Monday",
+      "scheduleSummary": "{hours} · {calendar}",
+      "hourEarlier": "An hour earlier",
+      "hourLater": "An hour later",
+      "time": "Time",
+      "zone": "Time zone",
+      "secondZone": "Second time zone",
+      "noSecondZone": "None",
+      "findZone": "Find a time zone",
+      "title": "View",
+      "followsDevice": "Follows this device"
+    },
+    "group": "Calendar",
+    "close": "Close Settings",
+    "mail": {
+      "readForEvents": "Read for events",
+      "noMailbox": "No mailbox",
+      "phoneOfferNote": "Choose which mailboxes show calendar offers on this phone.",
+      "offered": "Offered",
+      "evidence": { "calendar": "Calendar invitations", "data": "Dates in structured mail" },
+      "onCalendar": "On the calendar",
+
+      "title": "Mail and calendar",
+      "fromMail": "From mail",
+      "open": "Open"
+    }
+  }
+}

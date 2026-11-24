@@ -2,14 +2,14 @@
 /**
  * TWO PHONE-WIDTH DECISIONS THAT LIVE IN COMPONENTS, NOT STYLESHEETS (DESIGN-FOLD-WIDTHS §7).
  *
- *  · under 300px of To input the placeholder is the bare example address; the long hint was
- *    sliced mid-letter against Cc/Bcc at every phone width. `ComposeView` measures the input; with
- *    no measurement (no ResizeObserver, no layout) the long hint stays.
+ *  · Write's recipient field is labelled To, accepts multiple recipients and shows no
+ *    placeholder at narrow or wide widths, including before layout is measured.
  *  · "Original", the dark toggle, is a header control: a host that passes `adaptSlot` gets the
  *    toggle there, in flow beside its date, and the body's bar no longer carries it. The held
  *    Screener card is that host. The geometry of the slot is measured in
  *    `settings-polish-geometry.test.tsx`; this reads where the toggle is mounted.
  */
+import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -69,7 +69,7 @@ function stubResizeObserver(): void {
 }
 
 async function mountCompose(): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ToastHost } = await import("@ohmail/ui");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -77,7 +77,7 @@ async function mountCompose(): Promise<void> {
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-      children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, { children: h(AppShell, { demo: true }) }) }),
+      children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, { children: h(MailShell, { demo: true }) }) }),
     }));
   });
   for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
@@ -89,34 +89,44 @@ async function mountCompose(): Promise<void> {
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
 }
 
+const toInput = (): HTMLInputElement =>
+  within(within(host!).getByRole("region", { name: "New message" }))
+    .getByRole("combobox", { name: "To" }) as HTMLInputElement;
+
 /** Give the To input a laid-out width and let the observers read it. */
 async function toWidth(px: number): Promise<string> {
-  const input = host!.querySelector<HTMLInputElement>("#compose-to")!;
+  const input = toInput();
   input.getBoundingClientRect = () => ({ width: px, height: 30, top: 0, left: 0, right: px, bottom: 30, x: 0, y: 0, toJSON: () => ({}) });
   await act(async () => { for (const f of [...observers]) f(); });
   return input.placeholder;
 }
 
 describe("the To placeholder fits its field", () => {
-  it("under 300px the bare example address; from 300px the full hint", async () => {
+  it("narrow and wide fields omit the hint and accept multiple recipients", async () => {
     stubResizeObserver();
     await mountCompose();
-    expect(await toWidth(250), "a 250px field still carries the long hint").toBe(messages.compose.toPlaceholderShort);
-    expect(await toWidth(299)).toBe(messages.compose.toPlaceholderShort);
-    expect(await toWidth(300)).toBe(messages.compose.toPlaceholder);
-    expect(await toWidth(480)).toBe(messages.compose.toPlaceholder);
+    for (const width of [250, 299, 300, 480]) {
+      expect(await toWidth(width), "placeholder at " + width + "px").toBe("");
+    }
+    const input = toInput();
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "ada@example.invalid, lin@example.invalid, " } });
+    });
+    const letter = within(within(host!).getByRole("region", { name: "New message" }));
+    expect(letter.getByRole("button", { name: "Remove ada@example.invalid" })).toBeTruthy();
+    expect(letter.getByRole("button", { name: "Remove lin@example.invalid" })).toBeTruthy();
   });
 
-  it("with no measurement the long hint stands — nothing is assumed", async () => {
+  it("without a measurement the labelled To field has no hint", async () => {
     (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = undefined;
     await mountCompose();
-    expect(host!.querySelector<HTMLInputElement>("#compose-to")!.placeholder).toBe(messages.compose.toPlaceholder);
+    expect(toInput().placeholder).toBe("");
   });
 
-  it("a zero reading is not a width: the long hint stays", async () => {
+  it("a zero measurement leaves the labelled To field without a hint", async () => {
     stubResizeObserver();
     await mountCompose();
-    expect(await toWidth(0)).toBe(messages.compose.toPlaceholder);
+    expect(await toWidth(0)).toBe("");
   });
 
   it("the short hint is the address alone in both catalogues", async () => {
@@ -132,7 +142,7 @@ describe("the To placeholder fits its field", () => {
 const LIGHT_TABLE = '<body><table bgcolor="#ffffff" width="600"><tr><td>Newsletter</td></tr></table></body>';
 
 async function renderBody(props: Record<string, unknown>, withSlot: boolean): Promise<{ slot: HTMLElement | null }> {
-  const { MessageBody } = await import("../app/components/MessageBody.js");
+  const { MessageBody } = await import("../../../packages/letter-body/src/MessageBody.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   const slot = withSlot ? document.createElement("span") : null;
@@ -141,7 +151,7 @@ async function renderBody(props: Record<string, unknown>, withSlot: boolean): Pr
   await act(async () => {
     root!.render(h(ThemeProvider, {
       defaultPreference: "dark", storageKey: null,
-      children: h(MessageBody, { text: "fallback", html: LIGHT_TABLE, ...props, ...(withSlot ? { adaptSlot: slot } : {}) } as never),
+      children: h(MessageBody, { owner: null, text: "fallback", html: LIGHT_TABLE, ...props, ...(withSlot ? { adaptSlot: slot } : {}) } as never),
     }));
   });
   return { slot };
@@ -169,23 +179,25 @@ describe("the dark toggle stands in the host's header when the host offers a slo
     expect(toggleIn(host!.querySelector(".mb-bar"))).toBeTruthy();
   });
 
-  it("the mailbox row's verbs are ONE item of its state column", async () => {
-    /* The geometry file measures the shape over this markup; this holds that the component renders it. */
-    const { readFileSync, existsSync } = await import("node:fs");
-    const rel = "app/(product)/mailbox/MailboxSection.tsx";
-    const src = readFileSync(existsSync(`apps/webapp/${rel}`) ? `apps/webapp/${rel}` : rel, "utf8");
-    const verbs = /<span className="mbx-verbs">([\s\S]*?)<\/span>\s*\)\}\s*<\/div>/.exec(src)?.[1] ?? "";
-    expect(verbs, "the verbs are not wrapped in .mbx-verbs").not.toBe("");
-    expect(verbs).toContain('t("syncNow")');
-    expect(verbs).toContain('t("remove")');
+  it("Sync now stands on the Synced line and Edit and Remove share the row foot", async () => {
+    /* Sync now stays with the sync value; Edit and Remove share the actions at the foot of the same row. */
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("packages/app/src/mailboxes/pane/RowLines.tsx", "utf8");
+    const row = src.slice(src.indexOf('<div className="mbx-row-lines">'), src.indexOf("\n    </div>"));
+    const synced = row.match(/<SettingLine\s+label=\{say\(\{ key: "lineSynced" \}\)\}[\s\S]*?<\/SettingLine>/)?.[0];
+    expect(synced).toContain('say({ key: "syncNow" })');
+    const acts = [...row.matchAll(/<div className="mbx-pane-acts">([\s\S]*?)<\/div>/g)]
+      .map(([, content]) => content)
+      .find((content) => content?.includes('say({ key: "remove" })'));
+    expect(acts).toContain('say({ key: "edit" })');
+    expect(row.indexOf(synced!)).toBeLessThan(row.indexOf(acts!));
   });
 
   it("the held Screener card passes its header slot", async () => {
     const { readFileSync } = await import("node:fs");
-    const { existsSync } = await import("node:fs");
-    const rel = "app/views/ScreenerView.tsx";
-    const src = readFileSync(existsSync(`apps/webapp/${rel}`) ? `apps/webapp/${rel}` : rel, "utf8");
-    expect(src).toMatch(/<span className="t num">\{time \?\? ""\}<\/span>\s*<span className="hm-adapt" ref=\{setAdaptSlot\} \/>/);
-    expect(src).toContain("adaptSlot={adaptSlot}");
+    const src = readFileSync("packages/app/src/screener/held/HeldLetter.tsx", "utf8");
+    expect(src).toMatch(/<Body[\s\S]*?onNotice=\{setNotice\}[\s\S]*?onControls=\{setControls\}/);
+    expect(src).toMatch(/<HeldHead[\s\S]*?note=\{[\s\S]*?<BlockedImages/);
+    expect(src).toMatch(/lead=\{[\s\S]*?<LetterViews[\s\S]*?views=\{views\.map/);
   });
 });

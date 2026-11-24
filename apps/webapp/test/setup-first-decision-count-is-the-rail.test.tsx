@@ -1,13 +1,15 @@
 /** @vitest-environment jsdom */
+import { screen, within } from "@testing-library/react";
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import german from "../messages/de.json";
 import { NOW, S, act, consentTransport, engineOver, msg, setup, storeWith, teardown, waitFor } from "./_view-shell";
-import type { EngineMessage } from "@ohmail/client-engine";
-import type { MailboxFacts } from "../app/shell/mail-state";
-import type { FirstRunHost } from "../app/shell/first-run-host";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 
 /**
  * THE FIRST DECISION COUNTS WHAT THE RAIL COUNTS — the whole shell over a memory
@@ -51,8 +53,8 @@ function waiting(n: number): EngineMessage[] {
   return rows;
 }
 
-async function launch(n: number): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+async function launch(n: number, locale: "en" | "de" = "en"): Promise<HTMLElement> {
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const s = await storeWith(waiting(n));
   const engine = engineOver(s);
@@ -64,7 +66,7 @@ async function launch(n: number): Promise<HTMLElement> {
   S.roots.push(root);
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW,
+      locale, messages: locale === "de" ? german : messages, timeZone: "UTC", now: NOW,
       children: h(ThemeProvider, { children: h(ToastHost, {
         children: h(AppShell as never, {
           demo: false, engine, consentTransport, mailboxFacts: async () => [ORGANIZED], firstRun: host(),
@@ -75,15 +77,15 @@ async function launch(n: number): Promise<HTMLElement> {
   return container;
 }
 
-const stageHeading = (): string => (document.querySelector(".ob-stage h1")?.textContent ?? "").trim();
-const stageLead = (): string => (document.querySelector(".ob-stage .ob-card .sub")?.textContent ?? "").trim();
-/** The rail's Screener entry says its count in its title (`rail.screenerTitle`). */
-const railScreener = (): string | null => {
-  const hit = [...document.querySelectorAll<HTMLElement>("[title]")]
-    .map((el) => el.getAttribute("title") ?? "")
-    .find((title) => /^\d+ waiting$/.test(title));
-  return hit ?? null;
+const stageHeading = () => screen.queryByRole("heading", { name: (text) => text.includes(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim()), level: 1 });
+const stageLead = (lead: RegExp) => {
+  const dialog = within(screen.getByRole("dialog", { name: messages.frame.landmark.stage }));
+  expect(dialog.getByRole("heading", { name: (text) => text.includes(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim()), level: 1 })).toBeTruthy();
+  return dialog.getByText(lead);
 };
+/** The rail keeps the counted entry under the stage. */
+const railScreener = (count: number, label = messages.screener.title) =>
+  screen.queryByRole("button", { name: `${label} ${count}`, hidden: true });
 
 beforeEach(() => { setup(); });
 afterEach(teardown);
@@ -91,15 +93,26 @@ afterEach(teardown);
 describe("the first decision says the Screener's count, the one the rail reads", () => {
   it("three senders wait: the step and the rail both say three", async () => {
     await launch(3);
-    await waitFor(() => stageHeading() === t.decideTitle, "the first-decision step");
-    await waitFor(() => railScreener() === "3 waiting", `the rail to count 3 (read ${railScreener()})`);
-    expect(stageLead(), "the step and the rail disagree").toMatch(/^3 senders are waiting\. /);
+    await waitFor(() => stageHeading() !== null, "the first-decision step");
+    await waitFor(() => railScreener(3) !== null, "the rail to count 3");
+    expect(railScreener(3)?.getAttribute("title")).toBe("3 first-time senders waiting");
+    expect(stageLead(/^3 left$/)).toBeTruthy();
   });
 
   it("control: one sender waits, and the step keeps the singular", async () => {
     await launch(1);
-    await waitFor(() => stageHeading() === t.decideTitle, "the first-decision step");
-    await waitFor(() => railScreener() === "1 waiting", `the rail to count 1 (read ${railScreener()})`);
-    expect(stageLead()).toMatch(/^One sender is waiting\. /);
+    await waitFor(() => stageHeading() !== null, "the first-decision step");
+    await waitFor(() => railScreener(1) !== null, "the rail to count 1");
+    expect(railScreener(1)?.getAttribute("title")).toBe("1 first-time sender waiting");
+    expect(stageLead(/^1 left$/)).toBeTruthy();
   });
+});
+
+it.each([
+  [1, "1 neuer Absender wartet"],
+  [3, "3 neue Absender warten"],
+])("shows the German waiting title for %i senders", async (count, title) => {
+  await launch(count, "de");
+  await waitFor(() => railScreener(count, german.screener.title) !== null, `the German rail to count ${count}`);
+  expect(railScreener(count, german.screener.title)?.getAttribute("title")).toBe(title);
 });

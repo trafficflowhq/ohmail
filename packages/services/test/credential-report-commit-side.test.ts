@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { bindDb } from "@trafficflow/db";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -35,8 +36,9 @@ describe("a report made inside a transaction is forwarded only on commit", () =>
   async function ctxWithSink(): Promise<{ ctx: ServiceContext; seen: string[]; probe: Probe }> {
     const db = await makeTestDb();
     const seen: string[] = [];
+    // No account: the report's door runs before sign-in, bound to nothing.
     const ctx = {
-      db, accountId: "", userId: null, now: () => new Date("2026-07-28T12:00:00.000Z"),
+      db: bindDb(db, { account: null }), accountId: "", userId: null, now: () => new Date("2026-07-28T12:00:00.000Z"),
       requestId: "req-1",
       noteCredentialAccount: (id: string) => { seen.push(id); },
     } as unknown as ServiceContext;

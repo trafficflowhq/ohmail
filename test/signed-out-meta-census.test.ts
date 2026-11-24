@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { isEnginePart, readAsUnit } from "./support/engine-unit.js";
 
 /**
  * NOTHING BUT WHERE A MAILBOX LIVES IS WRITTEN INTO `mailboxes.signed_out_meta` (mail 0127).
@@ -76,11 +77,11 @@ function read(rel: string, text: string): Reading {
 describe("mailboxes.signed_out_meta takes nothing but the allow-list builder's value", () => {
   it("every write in the tree is null or signedOutMetaOf(...), and the SQL name stays declared", () => {
     const all: Reading = { admitted: [], refused: [] };
-    const files = sourceFiles();
+    const files = sourceFiles().filter((f) => !isEnginePart(f));
     expect(files.length, "the walk found no source").toBeGreaterThan(500);
     for (const f of files) {
       const rel = path.relative(REPO, f).split(path.sep).join("/");
-      const r = read(rel, readFileSync(f, "utf8"));
+      const r = read(rel, readAsUnit(f));
       all.admitted.push(...r.admitted);
       all.refused.push(...r.refused);
     }

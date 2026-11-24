@@ -1,0 +1,9 @@
+/* The preview build's mark: fixed in the window's lower corner at the shell's own edge gap, above
+   everything the shell layers, and out of the pointer's way. The capsule itself is the kit's. */
+.preview-mark {
+  position: fixed;
+  inset-block-end: var(--gap-edge);
+  inset-inline-end: var(--gap-edge);
+  z-index: var(--z-toast);
+  pointer-events: none;
+}

@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import {
   QUEUE_SETTLE_MS, QUEUE_SETTLE_START, firstRunImportOver, queueSettleNext, queueSettling,
   useFirstRunQueueSettle, type QueueSettleEvent, type QueueSettleState,
-} from "../app/shell/first-run-queue-settle";
+} from "@ohmail/app-logic/doors/first-run-queue-settle";
 
 /**
  * THE RUN'S PULL ENDS WHEN THE IMPORT IS OVER AND THE STORE HAS ANSWERED THE QUEUE SINCE. The stamp

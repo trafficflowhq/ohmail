@@ -21,7 +21,7 @@ import { relative, resolve } from "node:path";
  * defect that only a face nobody is looking at ever shows.
  */
 
-const ROOTS = ["apps/webapp/app", "packages/ui/src"];
+const ROOTS = ["apps/webapp/app", "packages/app/src", "packages/letter-body/src", "packages/ui/src"];
 
 /** Blank every comment, keeping the byte count so a reported offset still means something. */
 function stripComments(css: string): string {

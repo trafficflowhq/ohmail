@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "../src/dialect/index.js";
 import { sql } from "drizzle-orm";
 import {
-  runMigrations, readJournalOf, MAIL_JOURNAL, MAIL_MIGRATIONS_DIR,
+  runMigrations, migrateToOldHeads, readJournalOf, MAIL_JOURNAL, MAIL_MIGRATIONS_DIR,
 } from "../src/admin.js";
 import {
   findActiveAddressDuplicates, assertNoActiveAddressDuplicates,
@@ -165,7 +165,8 @@ describe.skipIf(!PG_UP)("duplicate active mailbox addresses, and 0021's rule for
     await admin.unsafe(`create database "${name}"`);
     created.push(name);
     const url = urlFor(name);
-    await runMigrations(url);
+    // The 1.0 road: 0021 is that road's, and the replay over it stops at its head.
+    await migrateToOldHeads(url);
     const client = postgres(url, { max: 2, onnotice: () => {} });
     const db = brandDialect(drizzle(client), "pg");
     await unapply0021(db);
@@ -283,12 +284,12 @@ describe.skipIf(!PG_UP)("duplicate active mailbox addresses, and 0021's rule for
       expect(await credCount(db, p.b)).toBe(2);
 
       // …and now the migration runs, builds the index, and the working mailbox is the one left.
-      await runMigrations(url);
+      await migrateToOldHeads(url);
       expect(await activeAddressIndexExists(db)).toBe(true);
       expect(await statusOf(db, p.b)).toBe("connected");
 
       // Re-running applies nothing and the guard is a no-op once the index exists.
-      await runMigrations(url);
+      await migrateToOldHeads(url);
       expect(await findActiveAddressDuplicates(db)).toEqual([]);
     } finally {
       await client.end({ timeout: 5 });

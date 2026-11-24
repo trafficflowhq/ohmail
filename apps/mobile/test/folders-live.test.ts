@@ -15,8 +15,9 @@
  *  · the pure tree arithmetic is the webapp's: parents before children, numeric-aware
  *    alphabetical siblings, the opened-set walk, roll-up counts on a collapsed parent.
  */
+import type { EngineMessage, FolderEntity } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { ohboxView, type EngineMessage } from "@ohmail/client-engine";
+import { ohboxView } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { readFoldersEnabled, writeFoldersEnabled } from "../src/net/consent";
 import type { ConnectedSession } from "../src/net/pairing";
@@ -26,7 +27,6 @@ import {
   liveFolderUnread,
   presentedOf,
   screeningAnswered,
-  type FolderEntity,
 } from "../src/state/live";
 import {
   FOLDER_FILTER_AT,

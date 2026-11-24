@@ -1,13 +1,15 @@
 /** @vitest-environment jsdom */
+import type { Editor as TiptapEditor } from "@tiptap/react";
+import { fireEvent, screen } from "@testing-library/react";
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EngineDraft, EngineMutation } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import {
   act, message, mountShell, press, replyDraft, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
 import {
   composeSend, composeSubject, composerOn, discards, drainRow, dropSendOverlay, footLine, holdTheWire, key, letter,
-  navigate, openDraftRow, replyOn, replySend, rounds, sends,
+  letterEditor, navigate, openDraftRow, replyOn, replySend, rounds, sends,
 } from "./_handoff-steps.js";
 
 /**
@@ -26,6 +28,54 @@ beforeEach(() => {
 });
 afterEach(async () => { await unmountAll(); });
 
+it("keeps the saved draft when a Restore started on another row answers late", async () => {
+  const quoted = (id: string, parent: string, subject: string, note: string, quote: string) => ({
+    ...letter(id, subject, note + "\n" + quote), forwardOfMessageId: parent,
+    html: `<p>${note}</p><blockquote data-quoted-history="edited"><p>${quote}</p></blockquote>`,
+  });
+  const first = quoted("first", "one", "First forward", "First note", "First edited quote");
+  const second = quoted("second", "two", "Second forward", "Second note", "Second edited quote");
+  const messages = [message("one", { body: "First original" }), message("two", { body: "Second original" })];
+  let finish!: () => void;
+  let started = false;
+  const pending = new Promise<void>((resolve) => { finish = resolve; });
+  const s = await mountShell("#/drafts", messages, [first, second], { prepareEngine: (engine) => {
+    const hydrate = engine.hydrateBodies.bind(engine);
+    engine.hydrateBodies = async (ids, options) => {
+      if (ids.includes("one")) { started = true; await pending; }
+      return hydrate(ids, options);
+    };
+  } });
+  const words = en.write.history;
+  await composerOn(s, first.id, first.subject);
+  fireEvent.click(await screen.findByRole("button", { name: words.show }));
+  fireEvent.click(await screen.findByRole("button", { name: words.restore }));
+  await waitFor(() => started, "the original is being read");
+  await composerOn(s, second.id, second.subject);
+  const surface = await screen.findByRole("textbox", { name: en.write.text }) as HTMLElement & { editor: TiptapEditor };
+  await act(async () => {
+    surface.editor.commands.setTextSelection(1);
+    surface.editor.commands.insertContent("Updated ");
+  });
+  await act(async () => { finish(); await pending; });
+  await waitFor(() => s.store.get<EngineDraft>("draft", second.id)?.html?.includes("Updated Second note") === true,
+    "the second draft has been saved");
+  const saved = s.store.get<EngineDraft>("draft", second.id);
+  expect(saved?.html).toContain("Second edited quote");
+  expect(saved?.html).not.toContain("First original");
+  expect(s.store.get<EngineDraft>("draft", first.id)?.html).toBe(first.html);
+  await unmountAll();
+  window.localStorage.clear();
+  window.sessionStorage.clear();
+
+  const reload = await mountShell("#/drafts", [], [], { store: s.store });
+  await composerOn(reload, second.id, second.subject);
+  expect(await screen.findByText("Updated Second note")).toBeTruthy();
+  fireEvent.click(await screen.findByRole("button", { name: words.show }));
+  expect(await screen.findByText("Second edited quote")).toBeTruthy();
+  expect(screen.queryByText("First original", { exact: false })).toBeNull();
+}, 30_000);
+
 const A = letter("d-a", "Plans for Friday", "Shall we meet at noon?");
 const B = letter("d-b", "Quarterly notes", "Three paragraphs I spent an hour on", { name: "Noor", address: "noor@example.invalid" });
 
@@ -34,10 +84,10 @@ async function sendA(s: DraftShell, handOff: boolean): Promise<() => void> {
   await composerOn(s, "d-a", "Plans for Friday");
   const release = holdTheWire(s);
   await press(composeSend(s.el)!, "Send A");
-  if (handOff) await waitFor(() => s.el.querySelector(".view-compose") == null, "the composer let go of A");
+  if (handOff) await waitFor(() => letterEditor(s.el) == null, "the composer let go of A");
   else await rounds(4);
   await navigate("#/drafts");
-  await waitFor(() => s.el.querySelector(".draft-row[data-id='d-b'] .draft-open") != null, "B in Drafts");
+  await waitFor(() => s.el.querySelector("[role=option][data-id='d-b']") != null, "B in Drafts");
   return release;
 }
 
@@ -78,7 +128,7 @@ describe("a compose send handed off, then the next draft opened as it finishes",
     let answer!: () => void;
     const held = new Promise<void>((r) => { answer = r; });
     const read = s.engine.readDraftBody.bind(s.engine);
-    (s.engine as unknown as { readDraftBody: (id: string) => Promise<string | null> }).readDraftBody =
+    s.engine.readDraftBody =
       async (id: string) => { if (id === "d-b") await held; return read(id); };
     const release = await sendA(s, true);
     await openDraftRow(s, "d-b");
@@ -132,7 +182,7 @@ describe("a compose send handed off, then the next draft opened as it finishes",
     await act(async () => { release(); });
     await waitFor(() => footLine().includes(en.sendingLine.sent), "Sent on the foot line");
     await navigate("#/compose");
-    await waitFor(() => s.el.querySelector(".view-compose") != null, "the composer");
+    await waitFor(() => letterEditor(s.el) != null, "the composer");
     expect(composeSubject(s.el), "the delivered message waited a beat in the composer").toBe("");
     expect(composeSend(s.el)?.textContent ?? "", "a Sent beat over an empty composer").not.toMatch(/^Sent/);
   }, 60_000);
@@ -143,7 +193,7 @@ describe("a compose send handed off, then the next draft opened as it finishes",
     await act(async () => { release(); });
     await rounds(48);
     await navigate("#/compose");
-    await waitFor(() => s.el.querySelector(".view-compose") != null, "the composer");
+    await waitFor(() => letterEditor(s.el) != null, "the composer");
     expect(composeSubject(s.el), "the delivered message still sat in the composer").toBe("");
     expect(discards(s), "a settled send deleted a row").toEqual([]);
   }, 60_000);
@@ -157,9 +207,8 @@ describe("a handed-off reply settles at its confirmation", () => {
     await waitFor(() => footLine().includes(en.sendingLine.sent), "Sent on the foot line");
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the dock again");
-    const label = ([...s.el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")]
-      .find((b) => /^Sen/.test(b.textContent ?? ""))?.textContent ?? "").trim();
-    expect(label, "the reopened dock stood on the last reply's Sent beat").toMatch(/^Send/);
+    const label = replySend(s.el)?.getAttribute("aria-label");
+    expect(label, "the reopened dock stood on the last reply's Sent beat").toBe("Send");
   }, 60_000);
 
   it("its own row leaving Drafts mid-flight, then Reply pressed again: the delivered reply's dock closes", async () => {

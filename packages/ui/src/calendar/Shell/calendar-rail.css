@@ -1,0 +1,56 @@
+/* The rail in the calendar: New event, the mini month, then the places; the calendars behind one line. */
+@layer oh {
+  /* New event stands where mail's rail has its way to write: at the head, over what scrolls. */
+  .oh-calrail-new {
+    display: flex;
+    flex: none;
+    align-self: flex-start;
+    margin-bottom: var(--s1);
+  }
+  /* Without the switch over it, it is the first control and stands on the sheets' top line. */
+  :root[data-face="ohmarchy"] .oh-rail:has(> .oh-calrail-new:first-child) {
+    --oh-rail-in: 10px 10px 10px;
+  }
+  :root[data-icons="1"] .oh-calrail-new > .oh-button {
+    --oh-button-pad: 0 var(--s5) 0 var(--s4);
+  }
+  :root[data-face="ohmarchy"] .oh-calrail-new {
+    align-self: stretch;
+    margin-bottom: 0;
+  }
+  :root[data-face="ohmarchy"] .oh-calrail-new > .oh-button {
+    --oh-button-pad: 0 var(--s2) 0 var(--s3);
+    flex: 1;
+    justify-content: flex-start;
+    height: 36px;
+  }
+  :root[data-face="ohmarchy"] .oh-calrail-new > .oh-button > .oh-key {
+    margin-left: auto;
+  }
+  /* The calendars lie under their line without a gap, an account's name over its own. */
+  .oh-calrail-cals,
+  .oh-calrail-account {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .oh-calrail-caption {
+    --oh-calrail-caption-pad: 0 var(--s2) 4px var(--s3);
+    display: flex;
+    align-items: flex-end;
+    height: 28px;
+    padding: var(--oh-calrail-caption-pad);
+    overflow: hidden;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .oh-calrail-account + .oh-calrail-account {
+    margin-top: var(--s2);
+  }
+  :root[data-face="ohmarchy"] .oh-calrail-caption {
+    --oh-calrail-caption-pad: 0 var(--s2) 4px var(--s4);
+  }
+}

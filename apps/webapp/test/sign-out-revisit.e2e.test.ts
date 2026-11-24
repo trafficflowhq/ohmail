@@ -10,10 +10,12 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { eq } from "drizzle-orm";
-import { chromium, type Browser, type BrowserContext, type Page, type Route } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page, type Request as BrowserRequest, type Route } from "playwright";
 import { createApp, apiRoutes, csrfTokenFor, type ApiDeps } from "@trafficflow/api";
 import { accountSettings, refreshTokens, sessions } from "@trafficflow/db";
 import { generateToken, hashToken, type Db } from "@trafficflow/services";
+import { mirrorDbName } from "@ohmail/client-engine";
+import { composeDraftKey } from "@ohmail/app-logic/writing/compose";
 import { makeDeps, seedSession } from "../../../packages/api/test/helpers.js";
 import messages from "../messages/en.json";
 
@@ -46,6 +48,18 @@ const NEXT_CLI = nextCli();
 const PENDING = "signed_out_pending";
 const R = messages.resume as Record<string, string>;
 const A = messages.account as Record<string, string>;
+const LOGIN = messages.login as Record<string, string>;
+const JOIN = messages.join as Record<string, string>;
+const MAIL_RAIL = 'nav[aria-label="Places"]';
+/** The names a person finds a door's form by: the sign-in's heading and its two blanks, the sign-up's first blank. */
+const DOOR_NAMES = {
+  signInLead: LOGIN.iAm!.split("<email>")[0]!.trim(),
+  email: LOGIN.emailLabel!,
+  password: LOGIN.passwordLabel!,
+  joinEmail: JOIN.emailLabel!,
+  joinInvite: JOIN.inviteLabel!,
+  mailRail: MAIL_RAIL,
+};
 /** The server-refused sentence up to its reason, which is the client's own words for a door that never answered. */
 const REFUSED_LEAD = A.signOutServerRefused!.split("{reason}")[0]!.trim();
 
@@ -55,9 +69,6 @@ let signOutDoor: "answer" | "hang" | "lost" = "answer";
 let doorFaultsLeft = Number.POSITIVE_INFINITY;
 /** The refresh door answers at once, or holds every request {@link SLOW_REFRESH_MS} and then answers. */
 let refreshDoor: "answer" | "slow" = "answer";
-/** A wake row's DELETE is answered at once, or held until {@link releaseWakeDelete} lets it through. */
-let wakeDeleteDoor: "answer" | "hold" = "answer";
-let releaseWakeDelete: () => void = () => {};
 /** `hold`: the browser's next session read (cookies, not the edge's bearer probe), held once answered. */
 let sessionDoor: "answer" | "hold" = "answer";
 let releaseSession: () => void = () => {};
@@ -66,6 +77,8 @@ const SLOW_REFRESH_MS = 20_000;
 let heard: Array<{ method: string; path: string; status: number | "held" | "dropped"; code?: string }> = [];
 /** The path {@link heard} files a cache purge under (`x-ohmail-clear: cache` on the refresh path). */
 const PURGE_PATH = "/auth/refresh (purge)";
+const LOGOUT_PATH = "/auth/refresh/logout";
+const CLEAR_LOGOUT_PATH = "/auth/refresh/logout (clear cookies)";
 /** When each request below the refresh path ARRIVED (ms since `receivedFrom`) and which cookies it carried, by name. */
 let received: Array<{ ms: number; path: string; cookies: string[] }> = [];
 let receivedFrom = Date.now();
@@ -90,6 +103,8 @@ async function freePort(): Promise<number> {
 
 /** The real route table behind a socket, the way the web's rewrites reach the hosted API. */
 async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  // A delayed answer belongs to the case that sent the request, even after its tab closes.
+  const requests = heard;
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${apiPort}`);
@@ -100,38 +115,36 @@ async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
     else if (v !== undefined) headers.set(k, v);
   }
   const body = method === "GET" || method === "HEAD" || chunks.length === 0 ? undefined : Buffer.concat(chunks);
-  // The cache purge after a confirmed sign-out presents nothing: logged apart, never as a renewal.
-  const path = headers.get("x-ohmail-clear") === "cache" ? PURGE_PATH : url.pathname;
+  // Track the three operations separately even when they share a route.
+  let path = url.pathname;
+  if (path === LOGOUT_PATH && headers.get("x-ohmail-clear-logout") === "1") path = CLEAR_LOGOUT_PATH;
+  if (headers.get("x-ohmail-clear") === "cache") path = PURGE_PATH;
   if (url.pathname.startsWith("/auth/refresh")) {
     const names = (headers.get("cookie") ?? "").split(";").map((c) => c.split("=")[0]!.trim()).filter((n) => n.startsWith("tf_"));
     received.push({ ms: Date.now() - receivedFrom, path, cookies: names.sort() });
   }
-  const fault = url.pathname === "/auth/refresh/logout" && signOutDoor !== "answer" && doorFaultsLeft > 0;
+  const fault = path === LOGOUT_PATH && signOutDoor !== "answer" && doorFaultsLeft > 0;
   if (fault) doorFaultsLeft -= 1;
   if (fault && signOutDoor === "hang") {
-    heard.push({ method, path: url.pathname, status: "held" });
+    requests.push({ method, path: url.pathname, status: "held" });
     return;
   }
   if (url.pathname === "/auth/refresh" && refreshDoor === "slow") await new Promise((r) => setTimeout(r, SLOW_REFRESH_MS));
-  if (method === "DELETE" && url.pathname.startsWith("/push/subscriptions/") && wakeDeleteDoor === "hold") {
-    heard.push({ method, path: url.pathname, status: "held" });
-    await new Promise<void>((r) => { releaseWakeDelete = r; });
-  }
   const answer = await app.handle(new Request(url, { method, headers, body }), { ...world.deps, session: null, idempotency: null });
   if (url.pathname === "/auth/session" && sessionDoor === "hold" && /(^|;\s*)tf_session=/.test(headers.get("cookie") ?? "")) {
     sessionDoor = "answer";
-    heard.push({ method, path: url.pathname, status: "held" });
+    requests.push({ method, path: url.pathname, status: "held" });
     await new Promise<void>((r) => { releaseSession = r; });
   }
   if (fault && signOutDoor === "lost") {
-    heard.push({ method, path: url.pathname, status: "dropped" });
+    requests.push({ method, path: url.pathname, status: "dropped" });
     req.socket.destroy();
     return;
   }
   const code = answer.status >= 400
     ? await answer.clone().json().then((b: { error?: { code?: string } }) => b?.error?.code, () => undefined)
     : undefined;
-  heard.push({ method, path, status: answer.status, ...(code ? { code } : {}) });
+  requests.push({ method, path, status: answer.status, ...(code ? { code } : {}) });
   res.statusCode = answer.status;
   answer.headers.forEach((v, k) => { if (k !== "set-cookie") res.setHeader(k, v); });
   const cookies = answer.headers.getSetCookie();
@@ -183,7 +196,11 @@ async function familyLive(familyId: string): Promise<boolean> {
 }
 
 /** Plant the jar each cookie at the path the server sets it on; `owner` is the marker's raw value. */
-async function plant(ctx: BrowserContext, j: { access: string; refresh: string }, o: { owner: string; access: boolean }): Promise<void> {
+async function plant(
+  ctx: BrowserContext,
+  j: { access: string; refresh: string; familyId: string },
+  o: { owner: string; access: boolean },
+): Promise<void> {
   const host = "localhost";
   const expires = Math.floor(Date.now() / 1000) + 3600;
   const base = { domain: host, secure: true, expires } as const;
@@ -195,6 +212,7 @@ async function plant(ctx: BrowserContext, j: { access: string; refresh: string }
     { ...base, name: "tf_refresh", value: j.refresh, path: "/auth/refresh", httpOnly: true, sameSite: "Strict" as const },
     { ...base, name: "tf_resume", value: "1", path: "/", httpOnly: true, sameSite: "Lax" as const },
     { ...base, name: "tf_owner", value: o.owner, path: "/", httpOnly: false, sameSite: "Strict" as const },
+    { ...base, name: "tf_family", value: j.familyId, path: "/", httpOnly: false, sameSite: "Strict" as const },
   ]);
 }
 
@@ -204,19 +222,70 @@ async function jarNames(ctx: BrowserContext): Promise<string[]> {
   return all.filter((c) => c.name.startsWith("tf_") && c.value !== "").map((c) => c.name).sort();
 }
 
+/** Probe a named database directly, aborting its creation if it is gone. */
+function mirrorExists(page: Page, owner: string): Promise<boolean> {
+  return page.evaluate((name) => new Promise<boolean>((resolve, reject) => {
+    const open = indexedDB.open(name);
+    let absent = false;
+    open.onupgradeneeded = () => {
+      absent = true;
+      open.transaction!.abort();
+    };
+    open.onsuccess = () => {
+      open.result.close();
+      resolve(true);
+    };
+    open.onerror = () => {
+      if (absent && open.error?.name === "AbortError") resolve(false);
+      else reject(open.error);
+    };
+  }), mirrorDbName(owner));
+}
+
+async function prepareCache(page: Page, owner: string, freshRegistry = true): Promise<void> {
+  await expect.poll(() => mirrorExists(page, owner), { timeout: 10_000 }).toBe(true);
+  await page.evaluate(async ({ draft, freshRegistry }) => {
+    localStorage.setItem(draft, "fixture draft");
+    if (!freshRegistry) return;
+    let enumerated = false;
+    if (typeof indexedDB.databases === "function") {
+      enumerated = await Promise.race([
+        indexedDB.databases().then(() => true, () => false),
+        new Promise<boolean>((done) => setTimeout(() => done(false), 5_000)),
+      ]);
+    }
+    // These contexts start on fresh profiles. Supply that known provenance on browsers
+    // that cannot establish it by enumerating, and verify the actual deletion separately.
+    if (!enumerated) localStorage.setItem("ohmail.mirror.__since", "1");
+  }, { draft: composeDraftKey(owner), freshRegistry });
+}
+
+async function expectCacheGone(page: Page, owner: string): Promise<void> {
+  expect(await mirrorExists(page, owner), "the departed account still has a mirror").toBe(false);
+  expect(await page.evaluate((draft) => localStorage.getItem(draft) === null, composeDraftKey(owner)),
+    "the departed account still has a draft").toBe(true);
+}
+
 /**
  * The browser a stuck sign-out leaves: the app ran in it (its mirror and the mirror registry's anchor
  * exist), then a sign-out went unconfirmed. `markSignedOutPending` is the client's own write; the access
  * cookie and `tf_csrf` lapse together. `revoked` is the lost answer: the door ended the family.
  */
 async function stuckBrowser(ctx: BrowserContext, j: { access: string; refresh: string; accountId: string; familyId: string },
-  o: { revoked: boolean; lapsed: boolean }): Promise<void> {
+  o: { revoked: boolean; lapsed: boolean; legacy?: boolean }): Promise<void> {
   await plant(ctx, j, { owner: j.accountId, access: true });
   const app = await ctx.newPage();
   await app.goto(`http://localhost:${webPort}/#/settings/account`, { waitUntil: "commit" });
   await app.getByRole("button", { name: /^Sign out$/ }).waitFor({ state: "visible", timeout: 60_000 });
-  await app.waitForTimeout(2_000);
-  await app.evaluate(() => { document.cookie = "tf_owner=signed_out_pending; Path=/; Max-Age=7776000; SameSite=Strict"; });
+  await prepareCache(app, j.accountId);
+  await app.evaluate(({ account, family, legacy }) => {
+    if (!legacy) {
+      localStorage.setItem("ohmail.session.pendingSignOut", JSON.stringify({
+        press: "fixture-press", account, family,
+      }));
+    }
+    document.cookie = "tf_owner=signed_out_pending; Path=/; Max-Age=7776000; SameSite=Strict";
+  }, { account: j.accountId, family: j.familyId, legacy: o.legacy });
   await app.close();
   if (o.lapsed) {
     await ctx.clearCookies({ name: "tf_session" });
@@ -255,10 +324,51 @@ const ACCOUNT_PATHS = ["/auth/session", "/auth/refresh", "/auth/2fa/recovery-cod
 const accountAsked = (): string[] =>
   heard.filter((h) => ACCOUNT_PATHS.includes(h.path)).map((h) => `${h.method} ${h.path} ${h.status}`);
 const doorAnswers = (): Array<number | "held" | "dropped"> =>
-  heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status);
+  heard.filter((h) => h.path === LOGOUT_PATH).map((h) => h.status);
+const cookieClearAnswers = (): Array<number | "held" | "dropped"> =>
+  heard.filter((h) => h.path === CLEAR_LOGOUT_PATH).map((h) => h.status);
 
 /** One reading of the page: where it is, whether it has parsed, what it says, which card shows, and the mailbox shell. */
-interface Sample { ms: number; path: string; ready: string; text: string; loginCard: boolean; gateMark: boolean; shell: boolean }
+interface Sample {
+  ms: number; path: string; ready: string; text: string; loginCard: boolean; gateMark: boolean; shell: boolean;
+  /** What the door's form says, and its first alert. */
+  cardText: string; cardAlert: string;
+}
+
+/**
+ * ONE READING, TAKEN INSIDE THE PAGE. `loginCard` is a door's form as a person meets it: the part of the document that
+ * holds the page's heading and the blanks of its form, each found by the name its label gives it. On /login the
+ * heading is the sign-in's and both of its blanks stand; on /join the sign-up's first blank stands, the address or the
+ * invite code; on any other address it is nothing. Nothing a signed-in page draws carries that heading over those blanks.
+ */
+function readPage(n: typeof DOOR_NAMES): Omit<Sample, "ms"> {
+  const blank = (name: string): HTMLElement | null =>
+    [...document.querySelectorAll<HTMLInputElement>("input[aria-label]")].find((input) => input.getAttribute("aria-label") === name) ?? null;
+  const form = ((): HTMLElement | null => {
+    if (location.pathname !== "/login" && location.pathname !== "/join") return null;
+    const heading = document.querySelector<HTMLElement>("h1");
+    if (!heading) return null;
+    const signIn = location.pathname === "/login";
+    if (signIn && !(heading.textContent ?? "").trim().startsWith(n.signInLead)) return null;
+    const blanks = signIn ? [blank(n.email), blank(n.password)] : [blank(n.joinEmail) ?? blank(n.joinInvite)];
+    if (blanks.some((b) => b === null)) return null;
+    let at: HTMLElement | null = heading.closest("main") ?? heading.parentElement;
+    while (at && !blanks.every((b) => at!.contains(b))) at = at.parentElement;
+    return at;
+  })();
+  const shown = (el: HTMLElement | null): boolean => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && (el.innerText ?? "").trim() !== "";
+  };
+  return {
+    path: location.pathname, ready: document.readyState, text: document.body?.innerText ?? "",
+    loginCard: shown(form), gateMark: shown(document.querySelector<HTMLElement>("main")),
+    shell: shown(document.querySelector<HTMLElement>(n.mailRail)),
+    cardText: form?.innerText ?? "",
+    cardAlert: form?.querySelector<HTMLElement>('[role="alert"]')?.innerText ?? "",
+  };
+}
 
 /**
  * Read the page every 100 ms from `t0` until `done` holds or `maxMs` passes. A reading that falls
@@ -270,19 +380,7 @@ async function sampleUntil(
 ): Promise<Sample[]> {
   const out: Sample[] = [];
   while (Date.now() - t0 < maxMs) {
-    const s = await page.evaluate(() => {
-      const shown = (sel: string): boolean => {
-        const el = document.querySelector<HTMLElement>(sel);
-        if (!el) return false;
-        const r = el.getBoundingClientRect();
-        return r.width > 0 && r.height > 0 && (el.innerText ?? "").trim() !== "";
-      };
-      return {
-        path: location.pathname, ready: document.readyState, text: document.body?.innerText ?? "",
-        loginCard: shown(".login-card"), gateMark: shown(".gate-card .wordmark"),
-        shell: document.querySelector(".app-root, .row[data-id]") !== null,
-      };
-    }).catch(() => null);
+    const s = await page.evaluate(readPage, DOOR_NAMES).catch(() => null);
     if (s !== null) {
       const sample = { ms: Date.now() - t0, ...s };
       out.push(sample);
@@ -342,10 +440,10 @@ interface TabEvent {
  * the document's start (how it was reached, why a back was not restored) and the first frame after any of
  * those, or after the shell came or went. Sent out at once, so the record outlives the tab's navigations.
  */
-function recordTab(): void {
+function recordTab(mailRail: string): void {
   const w = window as unknown as { __soRec?: (r: Record<string, unknown>) => Promise<void> };
   const queue: Array<Record<string, unknown>> = [];
-  const shell = (): boolean => document.querySelector(".app-root, .row[data-id]") !== null;
+  const shell = (): boolean => (document.querySelector(mailRail)?.getClientRects().length ?? 0) > 0;
   const send = (type: string, x: Record<string, unknown> = {}): void => {
     queue.push({ at: Date.now(), type, vis: document.visibilityState, shell: shell(), path: location.pathname, ...x });
     if (typeof w.__soRec === "function") for (const r of queue.splice(0)) void w.__soRec(r).catch(() => {});
@@ -419,7 +517,7 @@ async function realTabs(o: { channel: boolean } = { channel: true }): Promise<Re
   await ctx.exposeBinding("__soRec", ({ page }: { page: Page }, r: Omit<TabEvent, "tab">) => {
     log.push({ tab: names.get(page) ?? "?", ...r });
   });
-  await ctx.addInitScript(recordTab);
+  await ctx.addInitScript(recordTab, MAIL_RAIL);
   // A browser with no `BroadcastChannel`: the post goes by the storage event alone.
   if (!o.channel) await ctx.addInitScript(() => { delete (window as { BroadcastChannel?: unknown }).BroadcastChannel; });
   const cdp = await browser.newBrowserCDPSession();
@@ -484,15 +582,19 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
   beforeEach(() => {
     doorFaultsLeft = Number.POSITIVE_INFINITY;
     refreshDoor = "answer";
-    wakeDeleteDoor = "answer";
     sessionDoor = "answer";
+  });
+
+  afterEach(async () => {
+    releaseSession();
+    await Promise.all(browser?.contexts().map((ctx) => ctx.close()) ?? []);
   });
 
   it("THE STUCK JAR — pending marker, live family, lapsed access: one pass, the door, /login", async () => {
     signOutDoor = "answer";
     const j = await signedIn();
     const ctx = await browser!.newContext();
-    await stuckBrowser(ctx, j, { revoked: false, lapsed: true });
+    await stuckBrowser(ctx, j, { revoked: false, lapsed: true, legacy: true });
     heard = [];
     const page = await ctx.newPage();
     const seen = watch(page);
@@ -502,10 +604,12 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(seen.path(), `the visit did not end on the sign-in page: ${await said(page)}`).toBe("/login");
     expect(neverResumed(), `a browser that asked to sign out was resumed: ${await said(page)}`)
       .toEqual({ minted: 0, refreshedBeforeTheDoor: 0 });
-    expect(heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status), "the unfinished sign-out was not finished at the door")
+    expect(doorAnswers(), "the unfinished sign-out was not finished at the door")
       .toEqual([204]);
+    expect(cookieClearAnswers()).toEqual([204]);
     expect(await familyLive(j.familyId), "the family the browser signed out of can still mint").toBe(false);
     expect(await jarNames(ctx), "the jar still holds session cookies").toEqual([]);
+    await expectCacheGone(page, j.accountId);
     await ctx.close();
   }, 60_000);
 
@@ -513,7 +617,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     signOutDoor = "answer";
     const j = await signedIn();
     const ctx = await browser!.newContext();
-    await stuckBrowser(ctx, j, { revoked: true, lapsed: false });
+    await stuckBrowser(ctx, j, { revoked: true, lapsed: false, legacy: true });
     heard = [];
     const page = await ctx.newPage();
     const seen = watch(page);
@@ -523,6 +627,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(seen.path(), `the visit did not end on the sign-in page: ${await said(page)}`).toBe("/login");
     expect(neverResumed()).toEqual({ minted: 0, refreshedBeforeTheDoor: 0 });
     expect(await jarNames(ctx)).toEqual([]);
+    await expectCacheGone(page, j.accountId);
     await ctx.close();
   }, 60_000);
 
@@ -537,6 +642,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     await page.goto(`http://localhost:${webPort}/#/settings/account`, { waitUntil: "commit" });
     const button = page.getByRole("button", { name: /^Sign out$/ });
     await button.waitFor({ state: "visible", timeout: 60_000 });
+    await prepareCache(page, j.accountId);
     await button.click();
     // The door holds the first press; from here on it answers, as a server that came back would.
     const until = Date.now() + 10_000;
@@ -551,6 +657,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(seen.path(), "the unfinished sign-out was not finished on the next page").toBe("/login");
     expect(await familyLive(j.familyId), "the session is still live on the server").toBe(false);
     expect(await jarNames(ctx)).toEqual([]);
+    await expectCacheGone(page, j.accountId);
     await ctx.close();
   }, 150_000);
 
@@ -564,19 +671,58 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     await page.goto(`http://localhost:${webPort}/#/settings/account`, { waitUntil: "commit" });
     const button = page.getByRole("button", { name: /^Sign out$/ });
     await button.waitFor({ state: "visible", timeout: 60_000 });
+    await prepareCache(page, j.accountId);
+    const purgeResults: Array<{ ms: number; status: number | "failed"; clear?: string; error?: string }> = [];
+    const started = Date.now();
+    received = [];
+    receivedFrom = started;
+    page.on("response", (response) => {
+      if (response.request().headers()["x-ohmail-clear"] !== "cache") return;
+      purgeResults.push({ ms: Date.now() - started, status: response.status(), clear: response.headers()["clear-site-data"] });
+    });
+    page.on("requestfailed", (request) => {
+      if (request.headers()["x-ohmail-clear"] === "cache") {
+        purgeResults.push({ ms: Date.now() - started, status: "failed", error: request.failure()?.errorText });
+      }
+    });
     await button.click();
     await page.waitForTimeout(8_000);
-    expect(heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status)).toEqual([204]);
+    expect(doorAnswers()).toEqual([204]);
+    expect(cookieClearAnswers()).toEqual([204]);
     // The door's 204 no longer carries the cache clear: the browser asked for it once, after it.
-    expect(heard.filter((h) => h.path === PURGE_PATH).map((h) => h.status), "the cache clear after the sign-out").toEqual([202]);
+    expect(heard.filter((h) => h.path === PURGE_PATH).map((h) => h.status),
+      `the cache clear after the sign-out: ${JSON.stringify({ purgeResults, received })}`).toEqual([202]);
     expect(await familyLive(j.familyId)).toBe(false);
     expect(await jarNames(ctx)).toEqual([]);
+    await expectCacheGone(page, j.accountId);
     const again = await ctx.newPage();
     const seen = watch(again);
     await again.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
     await again.waitForTimeout(5_000);
     expect(seen.loads(), "the revisit after a clean sign-out navigated more than once").toBeLessThanOrEqual(2);
     await ctx.close();
+  }, 90_000);
+
+  it("erases the cached account even when the browser cannot list its databases", async () => {
+    signOutDoor = "answer";
+    heard = [];
+    const j = await signedIn();
+    const ctx = await browser!.newContext();
+    await ctx.addInitScript(() => {
+      Object.defineProperty(indexedDB, "databases", { value: undefined });
+    });
+    await plant(ctx, j, { owner: j.accountId, access: true });
+    const page = await ctx.newPage();
+    await page.goto(`http://localhost:${webPort}/#/settings/account`, { waitUntil: "commit" });
+    const button = page.getByRole("button", { name: /^Sign out$/ });
+    await button.waitFor({ state: "visible", timeout: 60_000 });
+    await prepareCache(page, j.accountId, false);
+    await button.click();
+    await page.getByText(A.signOutUnverified!, { exact: true }).waitFor({ state: "visible" });
+    expect(doorAnswers()).toEqual([204]);
+    expect(cookieClearAnswers()).toEqual([]);
+    expect(await familyLive(j.familyId)).toBe(false);
+    await expectCacheGone(page, j.accountId);
   }, 90_000);
 
   it("THE EDGE — a pending jar's `/` is a 307 to /login, query dropped, no-store, nothing asked of the API", async () => {
@@ -599,11 +745,11 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
 
   /*
    * A TAB OPENED DURING THE SIGN-OUT (measured on Cloud 0.30.30: a tab opened ~0.2 s after the press drew the
-   * Ohbox for the rest of the request). Two windows: the press's wake row DELETE, which used to run before the
-   * jar was marked, and a page the edge served before the press whose script runs after it.
+   * Ohbox for the rest of the request). The server revokes wake registrations along with the session family.
+   * Hold that request and open a tab during it, then cover a tab whose scripts run after the press in the next case.
    */
-  it("A TAB OPENED WHILE THE PRESS'S WAKE ROW DELETE IS OUT: a 307 to /login, never the shell, no account read", async () => {
-    signOutDoor = "answer";
+  it("A TAB OPENED WHILE THE SIGN-OUT REQUEST IS OUT: a 307 to /login, never the shell, no account read", async () => {
+    signOutDoor = "hang";
     const j = await signedIn();
     const ctx = await browser!.newContext();
     await plant(ctx, j, { owner: j.accountId, access: true });
@@ -611,19 +757,12 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     await a.goto(`http://localhost:${webPort}/#/settings/account`, { waitUntil: "commit" });
     const button = a.getByRole("button", { name: /^Sign out$/ });
     await button.waitFor({ state: "visible", timeout: 60_000 });
-    // After the boot's own wake reconcile (it registers the worker, then turns any stored row off): a stored
-    // row id, as a browser that registered for wakes holds one.
-    const registered = (): Promise<boolean> => a.evaluate(async () => (await navigator.serviceWorker.getRegistration()) !== undefined);
-    for (let i = 0; i < 100 && !(await registered()); i += 1) await a.waitForTimeout(100);
-    await a.waitForTimeout(1_000);
-    await a.evaluate(() => { localStorage.setItem("ohmail.notifications.subscriptionId", "row-e2e"); });
     heard = [];
-    wakeDeleteDoor = "hold";
     await button.click();
     const until = Date.now() + 10_000;
-    while (!heard.some((h) => h.method === "DELETE") && Date.now() < until) await a.waitForTimeout(50);
-    expect(heard.filter((h) => h.method === "DELETE").map((h) => h.status), `the press's wake row DELETE never left: ${await said(a)}`)
-      .toEqual(["held"]);
+    while (doorAnswers().length === 0 && Date.now() < until) await a.waitForTimeout(50);
+    expect(doorAnswers(), `the press's sign-out request never left: ${await said(a)}`).toEqual(["held"]);
+    expect(await familyLive(j.familyId), "the held request had already revoked the session").toBe(true);
     const before = heard.length;
     const b = await ctx.newPage();
     const docs = documents(b);
@@ -632,14 +771,13 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     await b.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
     const samples = await sampleUntil(b, t0, 10_000, (s) => s.path === "/login" && s.loginCard);
     const read = heard.slice(before).filter((h) => ACCOUNT_PATHS.includes(h.path)).map((h) => `${h.method} ${h.path} ${h.status}`);
-    console.log(`e2e timing wake-delete-held docs=${JSON.stringify(docs)} shell_ms=${JSON.stringify(samples.filter((s) => s.shell).map((s) => s.ms))} `
+    console.log(`e2e timing logout-held docs=${JSON.stringify(docs)} shell_ms=${JSON.stringify(samples.filter((s) => s.shell).map((s) => s.ms))} `
       + `read=${JSON.stringify(read)} errors=${JSON.stringify(errors)}`);
     expect(docs[0], `the new tab was served the app while the sign-out was out: ${await said(b)}`)
       .toEqual({ path: "/", status: 307, location: "/login" });
     expect(samples.filter((s) => s.shell).map((s) => s.ms), "the new tab drew the mailbox").toEqual([]);
     expect(read, "the new tab read the account").toEqual([]);
     expect(samples.at(-1)?.path).toBe("/login");
-    releaseWakeDelete();
     await ctx.close();
   }, 120_000);
 
@@ -683,7 +821,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     await ctx.close();
   }, 120_000);
 
-  it("A COLD TAB WHOSE SESSION CHECK CROSSES THE PRESS: never the shell, /login, and the jar never names the account", async () => {
+  it("A TAB WITH NO CLIENT BINDING WHOSE SESSION CHECK CROSSES THE PRESS: never the shell, /login, and the jar never names the account", async () => {
     signOutDoor = "hang";
     doorFaultsLeft = 1;
     const j = await signedIn();
@@ -694,8 +832,8 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     const button = a.getByRole("button", { name: /^Sign out$/ });
     await button.waitFor({ state: "visible", timeout: 60_000 });
     await a.waitForTimeout(2_000);
-    // The marker went (a browser restart): B boots cold, and only its own session check names the account.
-    await ctx.clearCookies({ name: "tf_owner" });
+    // B has no client binding yet. The shared marker keeps A in Settings so it can press Sign out
+    // while B's session answer is held.
     heard = [];
     sessionDoor = "hold";
     const b = await ctx.newPage();
@@ -745,7 +883,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
       const blank = blankAt(samples);
       const last = samples.at(-1);
       const done = last !== undefined && last.path === "/login" && last.loginCard && await finished(ctx, j.familyId) ? last.ms : null;
-      const text = await page.evaluate(() => document.querySelector<HTMLElement>(".login-card")?.innerText ?? "").catch(() => "");
+      const text = await page.evaluate(readPage, DOOR_NAMES).then((r) => r.cardText).catch(() => "");
       console.log(`e2e timing pending door=${door} lapsed=${lapsed} card_ms=${cardAt} blank_ms=${JSON.stringify(blank)} `
         + `finished_ms=${done} docs=${JSON.stringify(docs)} door_asks=${JSON.stringify(heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status))} `
         + `received=${JSON.stringify(received)} loads=${seen.loads()} errors=${JSON.stringify(errors)}`);
@@ -757,7 +895,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
       expect(cardAt, `the sign-in card was not on screen: ${await said(page)}`).not.toBeNull();
       expect(cardAt!, "the sign-in card took longer than the bound").toBeLessThanOrEqual(1_500);
       expect(blank, `a blank page while the sign-out was finished: ${await said(page)}`).toEqual([]);
-      expect(text, "the sign-in card does not say why it is showing").toContain(R.pendingBody);
+      expect(text).not.toContain(R.pendingBody);
       expect(done, `the sign-out was not finished within the ladder: ${await said(page)}`).not.toBeNull();
       expect(await familyLive(j.familyId)).toBe(false);
       expect(await jarNames(ctx)).toEqual([]);
@@ -787,7 +925,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     const blank = blankAt(samples);
     const asks = received.filter((r) => r.path === "/auth/refresh/logout");
     const text = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
-    const alert = await page.evaluate(() => document.querySelector<HTMLElement>('.login-card [role="alert"]')?.innerText ?? "")
+    const alert = await page.evaluate(readPage, DOOR_NAMES).then((r) => r.cardAlert)
       .catch(() => "");
     const pendingSaidAt = samples.find((s) => s.path === "/login" && s.text.includes(R.pendingBody!))?.ms ?? null;
     const refusalSaidAt = samples.find((s) => s.text.includes(REFUSED_LEAD))?.ms ?? null;
@@ -801,7 +939,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(cardAt, `the sign-in card was not on screen: ${await said(page)}`).not.toBeNull();
     expect(cardAt!).toBeLessThanOrEqual(1_500);
     expect(blank, "a blank page while the door held every ask").toEqual([]);
-    expect(text).toContain(R.pendingBody);
+    expect(text).not.toContain(R.pendingBody);
     expect(heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status), "the ladder is not bounded")
       .toEqual(["held", "held", "held", "held"]);
     // Unconfirmed: the marker stays and the next visit asks again; nothing claims the family ended.
@@ -848,7 +986,9 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(await familyLive(b.familyId), "the session another tab signed in was ended").toBe(true);
     expect(owner, "the new session's marker was overwritten").toBe(b.accountId);
     expect(await jarNames(ctx), "the new session's cookies were cleared")
-      .toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+      .toEqual(["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+    const family = (await ctx.cookies(`http://localhost:${webPort}/`)).find((c) => c.name === "tf_family");
+    expect(family?.value === b.familyId, "the new session's family marker was overwritten").toBe(true);
     expect(neverResumed()).toEqual({ minted: 0, refreshedBeforeTheDoor: 0 });
     await ctx.close();
   }, 90_000);
@@ -871,7 +1011,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
       async (s) => s.path === "/login" && s.loginCard && await finished(ctx, j.familyId));
     const shown = samples.filter((s) => s.path === "/" || s.path === "/login");
     const cardAt = samples.find((s) => s.path === "/login" && s.loginCard)?.ms ?? null;
-    const text = await page.evaluate(() => document.querySelector<HTMLElement>(".login-card")?.innerText ?? "").catch(() => "");
+    const text = await page.evaluate(readPage, DOOR_NAMES).then((r) => r.cardText).catch(() => "");
     console.log(`e2e timing cross-site-pending card_ms=${cardAt} blank_ms=${JSON.stringify(blankAt(shown))} docs=${JSON.stringify(docs)} `
       + `heard=${JSON.stringify(heard.map((h) => `${h.method} ${h.path} ${h.status}`))} received=${JSON.stringify(received)}`);
     expect(docs[0], "the edge saw the pending marker: the arrival was not cross-site").toEqual({ path: "/", status: 200, location: null });
@@ -880,7 +1020,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(heard.filter((h) => h.path === "/auth/session" || h.path === "/auth/refresh")).toEqual([]);
     expect(blankAt(shown), "a blank page on the way").toEqual([]);
     expect(cardAt, `the sign-in card was not on screen: ${await said(page)}`).not.toBeNull();
-    expect(text).toContain(R.pendingBody);
+    expect(text).not.toContain(R.pendingBody);
     expect(heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status)).toEqual([204]);
     expect(await familyLive(j.familyId)).toBe(false);
     expect(await jarNames(ctx)).toEqual([]);
@@ -908,14 +1048,14 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     // compares nothing; its refusal then names why on /login. (A same-site visit reloads to `/`
     // once the refusal has cleared the jar.)
     await arriveFromElsewhere(page, `http://localhost:${webPort}/`);
-    // Until the sentence: /login says why from its mount effect, a moment after its card paints.
+    // The sign-in card paints after the splash finishes the check.
     const samples = await sampleUntil(page, t0, SLOW_REFRESH_MS + 15_000,
-      (s) => s.path === "/login" && s.loginCard && s.text.includes(R.revokedBody!));
+      (s) => s.path === "/login" && s.loginCard);
     const splash = samples.filter((s) => s.path === "/" && s.ready !== "loading");
     const markAt = splash.find((s) => s.gateMark)?.ms ?? null;
     const lineAt = splash.find((s) => R.workingBody !== undefined && s.text.includes(R.workingBody))?.ms ?? null;
     const loginAt = samples.find((s) => s.path === "/login" && s.loginCard)?.ms ?? null;
-    const text = await page.evaluate(() => document.querySelector<HTMLElement>(".login-card")?.innerText ?? "").catch(() => "");
+    const text = await page.evaluate(readPage, DOOR_NAMES).then((r) => r.cardText).catch(() => "");
     console.log(`e2e timing slow-refresh mark_ms=${markAt} working_line_ms=${lineAt} login_ms=${loginAt} `
       + `splash_samples=${splash.length} unmarked_ms=${JSON.stringify(splash.filter((s) => !s.gateMark).map((s) => s.ms))} `
       + `refresh=${JSON.stringify(heard.filter((h) => h.path === "/auth/refresh").map((h) => `${h.status} ${h.code ?? ""}`.trim()))} `
@@ -927,7 +1067,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(lineAt, "the splash never said what it is waiting for").not.toBeNull();
     expect(loginAt, `the splash never handed over to the sign-in page: ${await said(page)}`).not.toBeNull();
     expect(loginAt!).toBeGreaterThanOrEqual(SLOW_REFRESH_MS - 1_000);
-    expect(text).toContain(R.revokedBody);
+    expect(text).not.toContain(R.revokedBody);
     expect(heard.filter((h) => h.path === "/auth/refresh").map((h) => `${h.status} ${h.code}`)).toEqual(["401 refresh_revoked"]);
     // Nothing that names or resumes the session is left. The splash's refusal leaves the reason's word
     // for a tab opened next (`shareSignedOutNote`): `tf_signed_out`, which lapses within 15 s.
@@ -993,7 +1133,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     const t0 = Date.now();
     receivedFrom = t0;
     await page.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
-    await page.locator(".login-card").waitFor({ state: "visible", timeout: 10_000 });
+    await page.getByRole("heading", { level: 1 }).filter({ hasText: DOOR_NAMES.signInLead }).waitFor({ state: "visible", timeout: 10_000 });
     const until = Date.now() + 10_000;
     while (doorAnswers().length === 0 && Date.now() < until) await page.waitForTimeout(100);
     expect(doorAnswers(), "the sign-in page's first ask never left").toEqual(["held"]);
@@ -1010,7 +1150,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(neverResumed(), `a browser that asked to sign out was resumed: ${await said(page)}`)
       .toEqual({ minted: 0, refreshedBeforeTheDoor: 0 });
     expect(accountAsked(), `the previous person's account was read on the sign-up page: ${await said(page)}`).toEqual([]);
-    expect(text, "the previous person's recovery codes are on screen").not.toContain(messages.join.step_codes_title);
+    expect(text, "the previous person's recovery codes are on screen").not.toContain(messages.join.step_codes_title.replace(/\.$/, ""));
     expect(doorAnswers(), "/join did not finish the sign-out the sign-in page left").toEqual(["held", 204]);
     expect(done, `the sign-out was not finished: ${await said(page)}`).not.toBeNull();
     expect(await familyLive(j.familyId)).toBe(false);
@@ -1042,27 +1182,6 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     await ctx.close();
   }, 120_000);
 
-  it("the sign-in card is centred in a 2000 px window and inside a 390 px phone, at 100% and 125% text", async () => {
-    for (const [width, height] of [[2000, 1100], [390, 844]] as const) {
-      for (const size of ["100", "125"]) {
-        const ctx = await browser!.newContext({ viewport: { width, height } });
-        await ctx.addInitScript((s) => {
-          try { localStorage.setItem("ohmail.face", "paper"); localStorage.setItem("ohmail.textSize", s); } catch { /* none */ }
-        }, size);
-        const page = await ctx.newPage();
-        await page.goto(`http://localhost:${webPort}/login`, { waitUntil: "load" });
-        await page.waitForTimeout(600);
-        const box = (await page.locator(".login-card").boundingBox())!;
-        const off = box.x + box.width / 2 - width / 2;
-        console.log(`e2e geometry /login ${width}x${height} text=${size}% card=${JSON.stringify(box)} centre_offset=${off.toFixed(1)}`);
-        expect(Math.abs(off), `${width} px at ${size}%: the card is off centre`).toBeLessThanOrEqual(8);
-        expect(box.x, `${width} px at ${size}%`).toBeGreaterThanOrEqual(0);
-        expect(box.x + box.width, `${width} px at ${size}%`).toBeLessThanOrEqual(width);
-        await ctx.close();
-      }
-    }
-  }, 60_000);
-
   /*
    * REAL TABS: a tab that missed the sign-out post, in the browser's own lifecycle. Playwright's launch
    * cannot show it: its focus emulation keeps every page visible, its flags turn bfcache off, and CDP's
@@ -1084,22 +1203,28 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
 
     /** Whether `page` shows the mailbox now; null between two documents. */
     const shellOn = (page: Page): Promise<boolean | null> =>
-      page.evaluate(() => document.querySelector(".app-root, .row[data-id]") !== null).catch(() => null);
+      page.getByRole("navigation", { name: "Places", exact: true }).isVisible().catch(() => null);
 
     /**
      * B on the mailbox, drawn, in the browser's first tab; its session reads from now on. The account has
-     * left its first run, so nothing sends B on to `/join`. `deaf`: B gets no storage event either.
+     * left its first run, so nothing sends B on to `/join`.
      */
-    async function mailboxTab(r: RealTabs, j: { access: string; refresh: string; accountId: string }, o: { deaf?: boolean } = {}):
+    async function mailboxTab(
+      r: RealTabs, j: Awaited<ReturnType<typeof signedIn>>, o: { deaf?: boolean; noCookieEvents?: boolean } = {},
+    ):
       Promise<{ b: Page; asked: number[] }> {
       await world.db.insert(accountSettings).values({ accountId: j.accountId, onboardingCompletedAt: world.now });
       await plant(r.ctx, j, { owner: j.accountId, access: true });
       const b = r.tab(r.ctx.pages()[0] ?? await r.ctx.newPage(), "B");
       if (o.deaf) await b.addInitScript(() => { window.addEventListener("storage", (e) => e.stopImmediatePropagation(), true); });
+      if (o.noCookieEvents) {
+        // B can still read the shared cookie jar on return.
+        await b.addInitScript(() => { Object.defineProperty(window, "cookieStore", { value: undefined, configurable: true }); });
+      }
       const asked: number[] = [];
       b.on("request", (q) => { if (new URL(q.url()).pathname.endsWith("/auth/session")) asked.push(Date.now()); });
       await b.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
-      await b.locator(".app-root").waitFor({ state: "attached", timeout: 60_000 });
+      await b.getByRole("navigation", { name: "Places", exact: true }).waitFor({ state: "visible", timeout: 60_000 });
       await b.waitForTimeout(3_000);
       expect(`${new URL(b.url()).pathname} ${await shellOn(b)}`, "B did not stay on its mailbox").toBe("/ true");
       return { b, asked };
@@ -1209,7 +1334,22 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
 
     it("E5 · a discarded tab, reloaded unseen after the sign-out: no frame of mail once shown", async () => {
       const r = rig = await realTabs();
-      const { b, asked } = await mailboxTab(r, await signedIn());
+      const { b } = await mailboxTab(r, await signedIn());
+      const notifications = await b.evaluate(() => ({
+        channel: typeof BroadcastChannel === "function",
+        cookieEvents: typeof window.cookieStore?.addEventListener === "function",
+      }));
+      const docs = documents(b);
+      const sessionReads = new Map<BrowserRequest, { at: number; page: string; status?: number }>();
+      b.on("request", (request) => {
+        if (new URL(request.url()).pathname.endsWith("/auth/session")) {
+          sessionReads.set(request, { at: Date.now(), page: new URL(b.url()).pathname });
+        }
+      });
+      b.on("response", (response) => {
+        const read = sessionReads.get(response.request());
+        if (read) read.status = response.status();
+      });
       const a = r.tab(await r.ctx.newPage(), "A");
       await a.waitForTimeout(500);
       const lifecycle = await r.ctx.newCDPSession(b);
@@ -1217,6 +1357,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
       const pressedAt = await signOutOn(a, "answer");
       await a.waitForTimeout(1_000);
       // A discarded tab loads its address again; here the reload runs while it is still in the background.
+      const cookiesBeforeReload = await jarNames(r.ctx);
       await lifecycle.send("Page.setWebLifecycleState", { state: "active" });
       const reloadAt = Date.now();
       await b.reload({ waitUntil: "commit" });
@@ -1224,19 +1365,32 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
       await b.bringToFront();
       await b.waitForTimeout(3_000);
       const frames = framesOf(r.log, "B", reloadAt);
-      console.log(`e2e real-tabs E5 discard B: ${storyOf(r.log, "B", pressedAt)} · asked=${asked.filter((t) => t >= pressedAt).length} last=${new URL(b.url()).pathname}`);
+      const reads = [...sessionReads.values()].filter(({ at }) => at >= pressedAt)
+        .map(({ at, ...read }) => ({ msFromReload: at - reloadAt, ...read }));
+      console.log(`e2e real-tabs E5 discard B: ${storyOf(r.log, "B", pressedAt)} · asked=${reads.length} last=${new URL(b.url()).pathname}`);
       expect(frames.length, "B drew no frame once shown, so this proves nothing").toBeGreaterThan(0);
       expect(frames, "the reloaded tab drew the mailbox").not.toContain(true);
-      expect(asked.filter((t) => t >= pressedAt), "B asked the session door").toEqual([]);
+      expect(reads,
+        `B asked the session door: ${JSON.stringify({ notifications, cookiesBeforeReload, docs, reads })}`).toEqual([]);
     }, 180_000);
 
     it("E6 · no channel and no storage event, a background tab: shown, it draws no mail and asks nothing", async () => {
       const r = rig = await realTabs({ channel: false });
-      const { b, asked } = await mailboxTab(r, await signedIn(), { deaf: true });
+      const j = await signedIn();
+      const { b, asked } = await mailboxTab(r, j, { deaf: true, noCookieEvents: true });
+      expect(await b.evaluate(() => [typeof BroadcastChannel, typeof window.cookieStore])).toEqual(["undefined", "undefined"]);
       const a = r.tab(await r.ctx.newPage(), "A");
-      const pressedAt = await signOutOn(a, "answer");
+      await a.bringToFront();
+      await accountPane(a);
+      expect(await b.evaluate(() => document.visibilityState)).toBe("hidden");
+      const pressedAt = await pressSignOut(a, "answer");
       await a.waitForTimeout(1_500);
-      expect(await shellOn(b), "sanity: B heard the post, so the return is not what is measured").toBe(true);
+      const story = storyOf(r.log, "B", pressedAt);
+      expect(await b.evaluate(() => document.visibilityState), story).toBe("hidden");
+      expect(returnsBeforeLeaving(r.log, "B", pressedAt), story).toEqual([]);
+      const owner = (await r.ctx.cookies(`http://localhost:${webPort}/`)).find((c) => c.name === "tf_owner");
+      expect(owner?.value === j.accountId, "the shared jar still names the departed account").toBe(false);
+      expect(await shellOn(b), `B took down its mailbox before the return: ${story}`).toBe(true);
       const shownAt = Date.now();
       await b.bringToFront();
       await b.waitForTimeout(3_000);

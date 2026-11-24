@@ -1,15 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl } from "@trafficflow/db/testing";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
-import { SearchService } from "@trafficflow/services";
+import { SearchService, dbFor } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 
 /**
@@ -18,12 +15,13 @@ import type { ServiceContext } from "@trafficflow/services";
  * same corpus, on this file's own random account.
  */
 const URL = pgTestUrl(import.meta.url);
-const client = postgres(URL, { max: 2 });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(URL);
+const db = owned.db;
 const NOW = new Date("2026-09-23T12:00:00.000Z");
 const A = randomUUID();
 const keyOf = new Map<string, string>();
-const ctx: ServiceContext = { db, accountId: A, userId: null, now: () => NOW, requestId: "search-eszett-fold" };
+const ctx: ServiceContext = { db: dbFor(db, A), accountId: A, userId: null, now: () => NOW, requestId: "search-eszett-fold" };
 
 const CORPUS: ReadonlyArray<readonly [key: string, subject: string, body: string]> = [
   ["eszett-body", "Fahrplan", "Die Straßenbahn fährt ab Montag später."],
@@ -48,8 +46,8 @@ describe("the ß/ss fold on the server (real Postgres)", () => {
         fromAddress: `s${i}@site.example`, date: new Date(NOW.getTime() - (i + 1) * 86_400_000),
         unread: false, hasAttachments: false, nativeLocator: { folder: "INBOX", ref: `1:${i + 1}` },
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: body });
-      await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: body });
+      await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
       keyOf.set(m!.id, key);
     }
     expect((await searchIndexBackfillPass({ db: db as never, accountId: A })).marked).toBe(true);
@@ -62,7 +60,7 @@ describe("the ß/ss fold on the server (real Postgres)", () => {
     await db.execute(sql`delete from message_bodies where message_id in (select id from messages where account_id = ${A}::uuid)`);
     await db.execute(sql`delete from messages where account_id = ${A}::uuid`);
     await db.execute(sql`delete from mailboxes where account_id = ${A}::uuid`);
-    await client.end({ timeout: 5 });
+    await owned.close();
   });
 
   it.each([

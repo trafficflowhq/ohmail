@@ -5,7 +5,7 @@ import {
   seedGrowth,
   type MailStateInputs,
   type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * `storeImportOpen` IS THE ACCOUNT'S OWN IMPORT FLOOR AND NOTHING ELSE. The Screener's queue is the
@@ -25,7 +25,7 @@ const inputs = (over: Partial<MailStateInputs> = {}): MailStateInputs => ({
   failureStreak: 3, mailboxes: [mailbox()], mirrored: 40, pulled: 40, growth: seedGrowth(40),
   freshness: { state: "current", asOf: new Date(NOW - 30_000).toISOString() },
   engineFreshness: { state: "current", asOf: new Date(NOW - 30_000).toISOString() },
-  now: NOW, demo: false, ...over,
+  now: NOW, demo: false, scope: null, ...over,
 });
 
 /** A mirror rising now — the growth episode `owed` reads. */

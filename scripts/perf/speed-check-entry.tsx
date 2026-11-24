@@ -1,6 +1,7 @@
 /**
  * The page of the two speed checks (`open-letter.mjs`, `search-first.mjs`; `speed-check.mjs` bundles
- * and drives it): the real AppShell over planted mail, mounted the desktop's way (an engine prop, a
+ * and drives it): today's views in the frame over planted mail, mounted as the demo mounts them
+ * (`DemoFrame`: the frame over the engine handed to `EngineProvider`, every wire none; here a
  * FixturesAdapter that also serves bodies). Planted mail only; nothing here reaches a network.
  *
  * Query: ?n=messages in the mirror (half Ohbox, a third News, a sixth Receipts, the view-switch
@@ -11,23 +12,26 @@
  * `designed` (a 50 KB newsletter of nested tables, fetched). Every fifteenth subject carries a rare
  * word and every letter a common one, so a search has both a short and a long answer.
  */
+import type { MessageBodyWire } from "@ohmail/wire";
 import "../../apps/webapp/app/app.css";
 import "../../apps/webapp/app/zero-layout.css";
 import { createRoot } from "react-dom/client";
 import { IntlProvider } from "use-intl";
 import en from "../../apps/webapp/messages/en.json";
-import { AppShell } from "../../apps/webapp/app/shell/AppShell";
+import { DemoFrame } from "../../apps/webapp/app/(product)/demo/DemoShell";
+import { EngineProvider } from "../../apps/webapp/app/shell/engine";
 import { setActiveCatalog } from "../../apps/webapp/app/shell/locale";
-import { resetUiVitalsForTest, takeUiVitals } from "../../apps/webapp/app/shell/ui-vitals";
+import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui-vitals";
 import { ThemeProvider, ToastHost } from "../../packages/ui/src/index";
 import { localStorageDoor } from "../../packages/client-engine/src/durable";
 import { OhmailEngine } from "../../packages/client-engine/src/index";
-import { FixturesAdapter } from "../../packages/client-engine/src/adapters/fixtures-adapter";
-import type { MessageBodyWire } from "../../packages/client-engine/src/index";
-import { getFixtures } from "../../packages/fixtures/src/index";
-import type { Address, Fixtures, Folder, MessageFixture } from "../../packages/fixtures/src/types";
+import { FixturesAdapter } from "../../packages/testing/src/adapters/fixtures-adapter";
+import { getFixtures } from "../../packages/testing/src/index";
+import type { Address, Fixtures, Folder, MessageFixture } from "../../packages/testing/src/types";
 
 const params = new URLSearchParams(window.location.search);
+/** What the page says of itself, as the demo's does: the managed service, a strict send ceiling. */
+const SAYS = { service: "managed", sendCeiling: "strict" } as const;
 const N = Math.max(60, Number(params.get("n") ?? "5000"));
 const BODY_MS = Number(params.get("bodyMs") ?? "0");
 const OHBOX = Math.round(N / 2);
@@ -129,7 +133,6 @@ function world(): Fixtures {
     ohbox: [...base.ohbox, ...plant(OHBOX, "ohbox")],
     reads,
     readsWaterline: { ...base.readsWaterline, newestSeenId: reads[Math.min(10, reads.length - 1)]!.id },
-    readsAiChip: { ...base.readsAiChip, afterId: reads[0]!.id },
     receipts: plant(RECEIPTS, "receipts"),
     receiptsGroups: [],
   };
@@ -142,7 +145,9 @@ createRoot(document.getElementById("root")!).render(
   <IntlProvider locale="en" messages={en as never} timeZone="UTC" now={new Date("2026-08-02T09:00:00.000Z")}>
     <ThemeProvider storageKey="ohmail.theme" faces={true} storage={localStorageDoor("theme")}>
       <ToastHost>
-        <AppShell demo={false} engine={engine} />
+        <EngineProvider demo={false} engine={engine}>
+          <DemoFrame says={SAYS} />
+        </EngineProvider>
       </ToastHost>
     </ThemeProvider>
   </IntlProvider>,

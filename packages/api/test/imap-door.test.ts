@@ -1,17 +1,20 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { createHash, randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { mailboxes, mailboxCredentials } from "@trafficflow/db";
 /* The counter lives in the HOSTED schema, whose barrel a local install never imports — so the
    table comes from `/cloud` beside the two functions that write it, not from the root. */
-import { acquireImapSlot, authThrottle, HOSTED_IMAP_ADMISSION, imapAdmissionKey, releaseImapSlot } from "@trafficflow/db/cloud";
+import {
+  accountCounters, acquireImapSlot, authThrottle, counterHome, familyOf, HOSTED_IMAP_ADMISSION, imapAdmissionKey, parentIdOf, releaseImapSlot,
+} from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { eq } from "drizzle-orm";
 import {
   IMAP_DOOR_DEADLINE_MS, isImapDoorTimeout, withinDoorBudget,
 } from "../src/imap-door.js";
 import { JUNK_READ_TIMEOUT_MS } from "../src/junk-window.js";
-import { MAX_PROBES_PER_ADDRESS, makeImapProbe, probeAdmissionKey } from "../src/imap-probe.js";
+import { MAX_PROBES_PER_ADDRESS, makeImapProbe, makeSmtpProbe, probeAdmissionKey } from "../src/imap-probe.js";
 import type { ApiDeps } from "../src/deps.js";
 import { ServiceError, StaticKeyProvider, throttleKeysFor } from "@trafficflow/services/mail";
 
@@ -40,7 +43,7 @@ async function seed(): Promise<{ deps: ApiDeps; db: Awaited<ReturnType<typeof ma
     accountId, provider: "imap", address: `door-${randomUUID().slice(0, 8)}@example.invalid`,
   }).returning({ id: mailboxes.id });
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+    mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: "imap.example.invalid", port: 993, secure: true, user: "u" },
   });
   const kek = StaticKeyProvider.fromSecret(Buffer.alloc(32, 3));
@@ -240,6 +243,34 @@ describe("the probe's admission slot", () => {
     expect(held).toEqual([{ key: imapAdmissionKey(slotOf(deps, accountId, address.toLowerCase())), failures: 1 }]);
     expect(held[0]!.key, "the slot is the plain SHA-256 an enumeration reverses").not.toContain(plain);
     expect(held[0]!.key.toLowerCase()).not.toContain(address.toLowerCase());
+  });
+
+  it("every row the two connect probes count is of one registered counter family, and names the account", async () => {
+    const { deps, db, accountId } = await seed();
+    // The hosted port: the slot in flight and the budget over time, as the hosted hosts count them.
+    (deps.services as unknown as { imapAdmission: unknown }).imapAdmission = HOSTED_IMAP_ADMISSION;
+    const address = `probe-${randomUUID().slice(0, 8)}@example.invalid`;
+    const verdicts = [
+      await makeImapProbe(deps, {
+        adapterFactory: () => ({ connect: async (): Promise<void> => { /* answers */ }, close: async (): Promise<void> => { /* polite */ } }),
+      })({ accountId, address, imap: { host: "imap.example.invalid", port: 993, secure: true, user: "u", pass: "p" } }),
+      await makeSmtpProbe(deps, { dial: async () => { /* answers */ } })(
+        { accountId, address, smtp: { host: "smtp.example.invalid", port: 465, secure: true, user: "u", pass: "p" } }),
+    ];
+    expect(verdicts.map((v) => v.verdict)).toEqual(["ok", "ok"]);
+
+    const keys = (await db.select({ key: authThrottle.key }).from(authThrottle)).map((r) => r.key);
+    // Two slots, the incoming server's and the submission server's, beside the budget's windows.
+    expect(keys.filter((k) => k.startsWith(imapAdmissionKey("probe:"))).length).toBe(2);
+    expect(keys.some((k) => k.startsWith("probe-rate:"))).toBe(true);
+    for (const key of keys) {
+      const family = familyOf(key);
+      expect(family, `a probe counted under a key nobody classed (${key.split(":").slice(0, 3).join(":")})`).not.toBeNull();
+      expect(family!.shape.test(key), `${family!.prefix} does not admit what the probe stores`).toBe(true);
+      // Each names the account in the clear, so the counters' door keeps it with that account's rows.
+      expect(parentIdOf(key)).toBe(accountId);
+      expect(counterHome(key, accountId).table).toBe(accountCounters);
+    }
   });
 
   it("with no key to key it by, the probe answers 503, dials nothing and counts nothing", async () => {

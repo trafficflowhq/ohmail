@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -5,14 +6,14 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   mailboxes, messages, folderState, organizerRequests, rules,
   capabilitiesColumn, hasCapability, readRequestEligibility, CAPABILITY_REQUESTS,
-  CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
+  CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE, CAPABILITY_FOLDER_MOVES,
 } from "@trafficflow/db";
 import {
   formatClaim, parseClaim, isMalformed, deriveRequestKey,
   REQUEST_KINDS, capabilityForKind,
 } from "@trafficflow/core/adapters/organizer-lease";
-import { ScreenerService, type ServiceContext } from "@trafficflow/services";
-import { ORGANIZER_CAPABILITIES, organizerCapabilitiesFor } from "../src/lease.js";
+import { dbFor, ScreenerService, type ServiceContext } from "@trafficflow/services";
+import { ORGANIZER_CAPABILITIES, organizerCapabilitiesFor } from "@ohmail/organizer/lease";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -88,14 +89,14 @@ async function seedHeld(db: TestDb, mailboxId: string, from: string): Promise<st
     subject: "s", fromAddress: from, unread: true,
   }).returning({ id: messages.id });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
 }
 
 const ctxFor = (db: TestDb): ServiceContext =>
-  ({ db, accountId: ACCT, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, ACCT), accountId: ACCT, userId: null, now: () => NOW, requestId: "r" });
 
 describe("an organizer with NO request key offers nothing, and says so honestly", () => {
   it("organizerCapabilitiesFor answers the empty set", () => {
@@ -168,12 +169,13 @@ describe("an organizer that HOLDS a key offers the channel, and a decision queue
        content of the promise: advertised first, a reader would read `capable: true`, write a
        record this organizer has no code to drain, and the person would watch a message sit pending
        until it expired — nothing to report, because the claim was true about a build that did not
-       exist yet. This literal is what makes the order reviewable. */
+       exist yet. This literal is what makes the order reviewable. `folder_moves` joined in the
+       commit that gave `message.file` its applier. */
     expect([...ORGANIZER_CAPABILITIES]).toEqual([
-      CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES,
+      CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, CAPABILITY_FOLDER_MOVES,
     ]);
     expect([...organizerCapabilitiesFor({ hasRequestKey: true })]).toEqual([
-      CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES,
+      CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, CAPABILITY_FOLDER_MOVES,
     ]);
   });
 
@@ -184,8 +186,9 @@ describe("an organizer that HOLDS a key offers the channel, and a decision queue
        So this compares the two sets rather than naming absences.
 
        `screener.decide` maps to `requests`, the three `rule.*` kinds share `rules` (one applier,
-       one table), `message.move` to `moves`, `profile.update` to `profile`. Four capabilities for
-       six kinds, and `capabilityForKind` is the map both sides read. */
+       one table), `message.move` to `moves`, `profile.update` to `profile`, `message.file` to
+       `folder_moves`. Five capabilities for seven kinds, and `capabilityForKind` is the map both
+       sides read. */
     const needed = new Set(REQUEST_KINDS.map((k) => capabilityForKind(k)));
     expect([...needed].sort(), "a request kind needs a capability this organizer does not advertise")
       .toEqual([...ORGANIZER_CAPABILITIES].sort());

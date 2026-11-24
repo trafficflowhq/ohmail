@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withoutCommentsAndLiterals, lineOf, span } from "../scripts/lib/source-scan.mjs";
+import { readSource } from "../apps/worker/test/_start-function.js";
+import { isEnginePart, readingTheUnit } from "./support/engine-unit.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -23,7 +25,7 @@ import { withoutCommentsAndLiterals, lineOf, span } from "../scripts/lib/source-
  */
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
-const ROOTS = ["apps/worker/src", "apps/sidecar/src"];
+const ROOTS = ["apps/worker/src", "packages/organizer/src", "apps/sidecar/src"];
 
 function sources(): { file: string; src: string }[] {
   const out: { file: string; src: string }[] = [];
@@ -32,7 +34,9 @@ function sources(): { file: string; src: string }[] {
       if (e === "node_modules" || e === "dist") continue;
       const p = join(dir, e);
       if (statSync(p).isDirectory()) walk(p);
-      else if (e.endsWith(".ts")) out.push({ file: relative(REPO, p), src: withoutCommentsAndLiterals(readFileSync(p, "utf8")) });
+      else if (e.endsWith(".ts") && !isEnginePart(p)) {
+        out.push({ file: relative(REPO, p), src: withoutCommentsAndLiterals(readingTheUnit(readSource)(p)) });
+      }
     }
   };
   for (const r of ROOTS) walk(join(REPO, r));
@@ -65,7 +69,7 @@ describe("the hosts of the bubble-up pass", () => {
     // The declaration proves the scan reaches the module it is about; the callers are the subject.
     expect(SITES.filter((s) => s.declaration).map((s) => s.file),
       "`bubbleUpPass` was not declared under the scanned roots — it was renamed or moved, and " +
-      "this census now measures nothing").toEqual(["apps/worker/src/bubble-up-pass.ts"]);
+      "this census now measures nothing").toEqual(["packages/organizer/src/bubble-up-pass.ts"]);
     const callers = SITES.filter((s) => !s.declaration);
     expect(callers.length,
       "no production caller of `bubbleUpPass` was found under " + ROOTS.join(", ")).toBeGreaterThan(2);

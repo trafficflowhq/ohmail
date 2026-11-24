@@ -309,15 +309,15 @@ describe("the window against a serving engine", () => {
         // rather than a microtask — so the render that answers it is one turn of the loop away.
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
-      /* The pane is lazy since the first-paint split (the packaged window inlines the chunk;
-         this harness pays real module I/O) — resolve the module, then let the boundary retry. */
-      await import("../../webapp/app/views/ComposeView.js");
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-      /* The composer's own draft note, whichever it is — this case is about the menu command
-         opening the view. The words changed once already (they said "in this browser" on a
-         desktop window, and they said the account was not written to when autosave writes it),
-         so the assertion reads the catalogue rather than restating a sentence. */
-      expect(el.textContent ?? "").toContain(messages.compose.draftNote);
+      /* Write's parts are lazy (the packaged window inlines the chunk; this harness pays real
+         module I/O): let the boundary retry until the composer stands, a few turns at most. */
+      const composer = (): Element | null => el.querySelector('[role="region"][aria-label="New message"]');
+      for (let i = 0; i < 40 && composer() === null; i++) {
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+      }
+      /* The composer itself, by its region's name: this case is about the menu command opening
+         it, not about any sentence it says. */
+      expect(composer(), "the menu's new message opened no composer").not.toBeNull();
     } finally {
       // The hash is per-document and this file renders more than once into it.
       window.location.hash = "";

@@ -70,3 +70,16 @@ fn the_threshold_never_touches_this_process() {
     apply_to_engine(&mut command);
     assert_eq!(std::env::var_os(MMAP_THRESHOLD_VAR), before);
 }
+
+#[test]
+fn the_linux_engine_collects_before_its_heap_grows_far_past_live_objects() {
+    let mut command = Command::new("node");
+    apply_to_engine(&mut command);
+    command.arg("ohmail-engine.mjs");
+    let args: Vec<_> = command.get_args().collect();
+    if cfg!(target_os = "linux") {
+        assert_eq!(args, ["--heap-growing-percent=15", "ohmail-engine.mjs"]);
+    } else {
+        assert_eq!(args, ["ohmail-engine.mjs"]);
+    }
+}

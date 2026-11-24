@@ -9,8 +9,7 @@
  * with this file in both. The mapping law is out of reach here - `omarchy-paint.ts` says why.
  */
 import { paintCachedOmarchyPalette } from "./omarchy-paint.js";
-import { applyDesktopTextSize } from "./text-zoom.js";
-import { readTextSize } from "../../webapp/app/shell/text-size.js";
+import { applyDesktopTextSize, readTextSize } from "./text-zoom.js";
 
 /* SETTINGS → TEXT SIZE. The shell already applied the size it kept before the window's first
    frame (`text_scale.rs`); this hands it the stored one, which is the setting — the two differ
@@ -53,6 +52,20 @@ try {
   let layout: string | null = null;
   try { layout = localStorage.getItem("ohmail.layout"); } catch { /* blocked */ }
   if (layout === "zero") document.documentElement.dataset.layout = "zero";
+}
+
+/* THE FRAME'S THREE STAMPS - the scheme, the device and the pointer - as `@ohmail/app/frame/boot` writes them,
+   written out here because this file may import no package (`first-frame-is-the-scheme.test.ts`). The frame owns
+   them once it mounts; this says the same thing before the first paint. */
+{
+  const root = document.documentElement;
+  const theme = root.getAttribute("data-theme");
+  const dark = theme === "dark" || (theme !== "light" && !!window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+  const coarse = !!window.matchMedia?.("(pointer: coarse)").matches;
+  const width = window.innerWidth;
+  root.setAttribute("data-scheme", dark ? "dark" : "light");
+  root.setAttribute("data-device", width < 700 ? "phone" : width < 840 || coarse ? "fold" : "desktop");
+  root.setAttribute("data-touch", coarse ? "1" : "0");
 }
 
 /* THE COLUMN WIDTHS ARE NOT HERE, and that is a measured boundary rather than an oversight:

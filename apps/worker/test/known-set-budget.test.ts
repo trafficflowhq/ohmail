@@ -1,14 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
 import type { KnownLocator, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ImapCursor } from "@trafficflow/core/adapters/imap";
-import { buildCursor } from "../src/sync.js";
+import { buildCursor } from "@ohmail/organizer/sync";
 import {
   KnownSetCache, KnownSetBudget, estimateRetainedBytes, watchKnownSet,
   KNOWN_SET_BUDGET_BYTES, KNOWN_SET_BUDGET_DIVISOR, knownSetBudgetBytes, processKnownSetBudget,
-} from "../src/known-set.js";
+} from "@ohmail/organizer/known-set";
+import { readSource } from "./_start-function.js";
 
 const MIB = 1024 * 1024;
 
@@ -254,7 +254,7 @@ describe("the locator budget: the refusals", () => {
    * rather than a comment about it.
    */
   it("the worker's detach path drops the memo, which is what releases the charge", () => {
-    const src = readFileSync(fileURLToPath(new URL("../src/index.ts", import.meta.url)), "utf8");
+    const src = readSource(fileURLToPath(new URL("../src/index.ts", import.meta.url)));
     expect(src).toContain("knownSet?.drop(`detached: ${reason}`)");
     expect(src).toContain('knownSet?.drop("leader lock lost")');
   });

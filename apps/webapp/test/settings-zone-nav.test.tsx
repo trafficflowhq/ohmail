@@ -1,168 +1,122 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import messages from "../messages/en.json";
-import { SettingsView } from "../app/views/SettingsView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
+import { READER_SCROLL_STEP } from "@ohmail/app-logic/keys";
+import { Frame } from "@ohmail/app/frame";
+import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { TextProvider } from "@ohmail/app/text";
+import { madeOf, SETTINGS } from "../../../packages/app/test/settings/frame/hosts.js";
+import { FRAME_WORDS } from "../../../packages/app/test/support/frame-words.js";
+import { fakeAddress, fakeWindow } from "../../../packages/app/test/support/fake-window.js";
+import settingsWords from "../../../packages/app/messages/settings.en.json";
+import menuWords from "../../../packages/app/messages/settings-menu.en.json";
 
-/**
- * "ONE COULD EVEN DIVE INTO THE SETTINGS LIKE THIS" — the zone model inside Settings.
- *
- * The same spatial grammar as the mail surface (`zone-nav.tsx`), with this view's own
- * geography: the settings NAV is the list zone (↓/↑ rove real focus over its buttons, Enter
- * is the browser's own button activation), the pane column is the reader zone (→ lands
- * focus on a named region, ↓/↑ scroll the view's scroller), Escape/← walk back — pane to
- * nav, nav to rail.
- *
- * Real focus is the mechanism AND the assertion: every move below is measured on
- * `document.activeElement`, which is exactly what a screen reader announces. The rail is
- * static DOM in the `.rail` vocabulary, as in `zone-nav.test.tsx` — the contract is the
- * selector, not the component.
- *
- * And the no-registry case is load-bearing, not hypothetical: every OTHER SettingsView
- * suite mounts this view with no `KeymapProvider` at all. Those suites passing is the proof
- * that the zone model degrades to absent rather than throwing — the contract
- * `useOptionalKeyBindings` (keymap.tsx) states.
- */
-
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-let host: HTMLDivElement | null = null;
-let root: Root | null = null;
-let rail: HTMLElement | null = null;
-
-function mountRail(): void {
-  rail = document.createElement("nav");
-  rail.className = "rail";
-  rail.innerHTML =
-    '<button type="button" class="ritem">Ohbox</button>' +
-    '<button type="button" class="ritem on">Settings</button>';
-  document.body.appendChild(rail);
-}
-
-const BASE: Parameters<typeof SettingsView>[0] = {
-  notifications: null,
-  tags: [],
-  tagCounts: {},
-};
-
-async function mount(): Promise<void> {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  mountRail();
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages,
-        timeZone: "UTC",
-        children: h(
-          ThemeProvider,
-          null,
-          h(ToastHost, null, h(KeymapProvider, null, h(SettingsView, BASE))),
-        ),
-      } as never),
-    );
-  });
-}
-
-const key = async (k: string): Promise<void> => {
-  await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
-  });
-};
-
-const focused = (): Element | null => document.activeElement;
-const navButtons = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".set-nav button")];
-
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  rail?.remove();
-  host = null;
-  root = null;
-  rail = null;
+beforeEach(() => {
+  localStorage.clear();
+  Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
 });
+afterEach(cleanup);
+
+function General() {
+  return <label>Display name<input /></label>;
+}
+const empty = () => null;
+const settings = mailSettings({
+  ...NO_PANE_PARTS,
+  general: General,
+  notifications: empty,
+  help: empty,
+  about: empty,
+});
+
+function AccountSettings({ host }: { host: Parameters<typeof Frame>[0]["host"] }) {
+  const consent = useConsentState(false, host.session.scope, "none");
+  return <ConsentContext.Provider value={consent}><Frame host={host} /></ConsentContext.Provider>;
+}
+
+async function mount() {
+  const { host } = madeOf(SETTINGS["W-d"]!, {
+    address: fakeAddress("#/settings/general"),
+    window: fakeWindow("desktop"),
+    places: { settings },
+  });
+  render(
+    <TextProvider locale="en" messages={{ ...FRAME_WORDS.en, ...settingsWords, ...menuWords }} timeZone="UTC">
+      <AccountSettings host={host} />
+    </TextProvider>,
+  );
+  await screen.findByRole("navigation", { name: "Settings sections" });
+  await screen.findByRole("region", { name: "General" });
+}
+
+const key = (word: string) => fireEvent.keyDown(document.activeElement ?? document.body, { key: word });
+const focused = () => document.activeElement;
+const navButtons = () => within(screen.getByRole("navigation", { name: "Settings sections" })).getAllByRole("button");
+const general = () => screen.getByRole("region", { name: "General" });
+const settingsRail = () => within(screen.getByRole("navigation", { name: "Places" })).getByRole("button", { name: "Settings" });
 
 describe("the zone model inside Settings", () => {
   it("↓ enters the nav on its active pane and ↓/↑ rove it, clamped at both ends", async () => {
     await mount();
     const items = navButtons();
     expect(items.length, "fixture: the nav must hold rows to rove").toBeGreaterThan(2);
-    expect(items[0]!.classList.contains("on"), "fixture: General is the resting pane").toBe(true);
+    expect(items[0]).toBe(within(screen.getByRole("navigation", { name: "Settings sections" })).getByRole("button", { name: "General" }));
+    expect(items[0]!.getAttribute("aria-current")).toBe("page");
 
-    await key("ArrowDown");
-    expect(focused(), "↓ did not enter the settings nav at the active pane").toBe(items[0]);
-    await key("ArrowDown");
-    expect(focused()).toBe(items[1]);
-    await key("ArrowUp");
+    key("ArrowDown");
     expect(focused()).toBe(items[0]);
-    await key("ArrowUp");
-    expect(focused(), "↑ at the top of the nav lost the row").toBe(items[0]);
+    key("ArrowDown");
+    expect(focused()).toBe(items[1]);
+    key("ArrowUp");
+    expect(focused()).toBe(items[0]);
+    key("ArrowUp");
+    expect(focused()).toBe(items[0]);
+    for (const _item of items) key("ArrowDown");
+    expect(focused()).toBe(items.at(-1));
+    key("ArrowDown");
+    expect(focused()).toBe(items.at(-1));
   });
 
   it("→ dives into the pane column — a named, focusable region — and ↓/↑ scroll the view", async () => {
     await mount();
-    await key("ArrowDown");
-    await key("ArrowRight");
+    key("ArrowDown");
+    key("ArrowRight");
 
-    const pane = host!.querySelector<HTMLElement>(".set-pane-col")!;
-    expect(focused(), "→ from the nav did not land on the pane column").toBe(pane);
-    expect(pane.getAttribute("role")).toBe("region");
-    expect(pane.getAttribute("tabindex")).toBe("-1");
-
-    const { READER_SCROLL_STEP } = await import("../app/shell/zone-nav.js");
-    const scroller = host!.querySelector<HTMLElement>(".view-settings .scroller")!;
-    expect(scroller.scrollTop).toBe(0);
-    await key("ArrowDown");
-    expect(scroller.scrollTop, "↓ in the pane did not scroll the settings scroller")
-      .toBe(READER_SCROLL_STEP);
-    await key("ArrowUp");
-    expect(scroller.scrollTop).toBe(0);
+    const pane = general();
+    expect(focused()).toBe(pane);
+    expect(pane.tabIndex).toBe(-1);
+    expect(pane.scrollTop).toBe(0);
+    key("ArrowDown");
+    expect(pane.scrollTop).toBe(READER_SCROLL_STEP);
+    key("ArrowUp");
+    expect(pane.scrollTop).toBe(0);
   });
 
   it("Escape walks back left: pane → nav → rail; ← from the nav reaches the rail too", async () => {
     await mount();
-    await key("ArrowDown");
-    await key("ArrowRight");
-    expect(focused()).toBe(host!.querySelector(".set-pane-col"));
+    const active = navButtons()[0];
+    key("ArrowDown");
+    key("ArrowRight");
+    expect(focused()).toBe(general());
 
-    await key("Escape");
-    expect(focused(), "Escape in the pane did not return to the active nav row")
-      .toBe(host!.querySelector(".set-nav button.on"));
+    key("Escape");
+    expect(focused()).toBe(active);
+    key("Escape");
+    expect(focused()).toBe(settingsRail());
 
-    await key("Escape");
-    expect(
-      (focused() as HTMLElement | null)?.closest?.(".rail"),
-      "Escape in the nav did not reach the rail",
-    ).toBeTruthy();
-    expect(focused(), "the rail entry did not land on the active rail row")
-      .toBe(rail!.querySelector(".ritem.on"));
-
-    // → returns from the rail; the nav's active row is where the list zone stands.
-    await key("ArrowRight");
-    expect(focused()).toBe(host!.querySelector(".set-nav button.on"));
-    await key("ArrowLeft");
-    expect((focused() as HTMLElement | null)?.closest?.(".rail")).toBeTruthy();
+    key("ArrowRight");
+    expect(focused()).toBe(active);
+    key("ArrowLeft");
+    expect(focused()).toBe(settingsRail());
   });
 
   it("arrows never touch a settings input", async () => {
     await mount();
-    const input = document.createElement("input");
-    host!.querySelector(".set-pane-col")!.appendChild(input);
+    const input = screen.getByRole("textbox", { name: "Display name" });
     input.focus();
-    await act(async () => {
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
-    });
-    expect(focused(), "↑ moved focus out of a text field inside a pane").toBe(input);
-    expect(host!.querySelector<HTMLElement>(".view-settings .scroller")!.scrollTop).toBe(0);
-    input.remove();
+    key("ArrowUp");
+    expect(focused()).toBe(input);
+    expect(general().scrollTop).toBe(0);
   });
 });

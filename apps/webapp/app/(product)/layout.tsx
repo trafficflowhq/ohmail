@@ -3,8 +3,11 @@ import type { ReactNode } from "react";
 import { headers } from "next/headers";
 import { getTranslations } from "next-intl/server";
 import { LocaleShell } from "./LocaleShell";
-import { Providers } from "./providers";
+import { AppearanceBoot, Providers } from "./providers";
 import { SELF_HOST_BUILD } from "../self-host-marketing";
+import { faceMirrorOwner } from "../shell/face-mirror";
+import { FIRST_PAGE_OWNER_HEADER, RESUME_COOKIE } from "../session-gate";
+import { cookieFromJar } from "@ohmail/app-logic/storage/cookie-jar";
 import { DEFAULT_LOCALE, localeFromCookieHeader } from "../shell/locale";
 import { loadCatalog } from "../../i18n/catalog";
 import { firstScreenCatalog } from "../../i18n/first-screen";
@@ -103,6 +106,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  interactiveWidget: "resizes-content",
   colorScheme: "light dark",
   /* the canvas tokens — the browser chrome matches the tile the icon sits on */
   themeColor: [
@@ -128,7 +132,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
      load, while the rest is a hashed chunk `LocaleShell` loads once and the browser keeps. */
   const messages = firstScreenCatalog(await loadCatalog(locale));
   /*
-   * The CSP nonce for the one inline script this group writes by hand. `middleware.ts` mints it, puts it on the
+   * The CSP nonce for the boot scripts this group writes by hand. `middleware.ts` mints it, puts it on the
    * response's CSP, the request's (so Next stamps its own RSC bootstrap scripts) and on `x-nonce` — which is this;
    * Next cannot reach a hand-written `<script>`, so the theme boot carries it explicitly or first paint is a blocked
    * script and a flash of the wrong theme. Reading `headers()` opts the whole group into dynamic rendering — the
@@ -138,11 +142,24 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
    * the baseline `'unsafe-inline'` covers the script — never `nonce=""`, which would match nothing.
    */
   const nonce = h.get("x-nonce") ?? undefined;
+  const firstPage = h.get("x-ohmail-first-page");
+  const deferLinuxFace = firstPage === "now" || firstPage === "wait" || firstPage === "resume";
+  const confirmedOwner = h.get(FIRST_PAGE_OWNER_HEADER);
+  const cookie = h.get("cookie") ?? "";
+  const requestOwner = faceMirrorOwner(cookie);
+  const owner = firstPage === "now" && confirmedOwner === requestOwner ? confirmedOwner : null;
+  // A cross-site visit can reach the resume screen without sending the Strict owner cookie.
+  // The boot script can still match the live cookie to the saved appearance in the browser.
+  const rememberedOwner = firstPage === "resume" || (firstPage === "wait" && cookieFromJar(cookie, RESUME_COOKIE) !== null)
+    ? requestOwner : undefined;
   return (
     <html lang={locale} suppressHydrationWarning>
-      <body className="mo-canvas app-body">
+      <head>
+        <AppearanceBoot nonce={nonce} deferLinuxFace={deferLinuxFace} owner={owner} rememberedOwner={rememberedOwner} />
+      </head>
+      <body className="mo-canvas app-body today" style={{ backgroundColor: "var(--ground)" }}>
         <LocaleShell initialLocale={locale} initialMessages={messages}>
-          <Providers nonce={nonce}>{children}</Providers>
+          <Providers nonce={nonce} deferLinuxFace={deferLinuxFace} owner={owner} rememberedOwner={rememberedOwner}>{children}</Providers>
         </LocaleShell>
       </body>
     </html>

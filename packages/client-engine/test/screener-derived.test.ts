@@ -1,20 +1,16 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO, ScreenerSenderDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { getFixtures } from "@ohmail/fixtures";
+import { getFixtures } from "@ohmail/testing";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   MemoryMirrorStore,
   OhmailEngine,
   consentPartition,
   mutationEffects,
   presentationReader,
   screenerSegments,
-  type EngineMessage,
-  type Folder,
-  type RuleDTO,
-  type ScreenerSenderDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * THE SCREENER, DERIVED FROM THE MESSAGE MIRROR.

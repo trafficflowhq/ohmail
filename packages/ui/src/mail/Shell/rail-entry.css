@@ -1,0 +1,386 @@
+@layer oh {
+  /* The measures an entry shares with the two lines under a fold that are no entry: what an open fold says
+     where it holds nothing, and the line a name is typed into. */
+  .oh-railentry,
+  .oh-railnote,
+  .oh-railfield {
+    --oh-railentry-gap: 10px;
+    --oh-railentry-sign: 20px;
+    --oh-railentry-dot-side: 6px;
+    --oh-railentry-ground: var(--oh-hover, var(--hover-ground));
+  }
+
+  .oh-railentry {
+    /* Measures of this part that no token carries yet. */
+    --oh-railentry-step: 12px;
+    --oh-railentry-depth: 0;
+    --oh-railentry-lead: calc(var(--s3) + var(--oh-railentry-step) * var(--oh-railentry-depth));
+    --oh-railentry-cursor: var(--key-focus-ring);
+    --oh-railentry-takes: inset 0 0 0 1.5px var(--ctl-ring);
+
+    box-sizing: border-box;
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--oh-railentry-gap);
+    width: 100%;
+    height: var(--h-m);
+    margin: 0;
+    padding: 0 var(--s3) 0 var(--oh-railentry-lead);
+    border: 0;
+    border-radius: var(--r-pill);
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    font-size: var(--t-ui);
+    font-weight: var(--w-mid);
+    letter-spacing: inherit;
+    text-align: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color var(--d-key-focus) var(--e-std);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .oh-railentry:hover {
+    background: var(--oh-railentry-ground);
+  }
+
+  .oh-railentry:focus {
+    outline: none;
+  }
+
+  .oh-railentry[aria-current="page"] {
+    --oh-railentry-cursor: var(--key-focus-nav-ring);
+
+    background: var(--nav-on);
+    color: var(--on-nav-on);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-railentry-name[data-wordmark] {
+    font-family: var(--f-display);
+    font-weight: var(--w-bold);
+  }
+
+  :is(
+    .oh-railentry-name[data-wordmark],
+    .oh-rail[data-drawer] .oh-railentry[data-kind="place"][aria-current="page"] .oh-railentry-name
+  )::after {
+    content: "";
+    display: inline-block;
+    inline-size: var(--oh-railentry-dot-side);
+    block-size: var(--oh-railentry-dot-side);
+    border-radius: var(--dot-r);
+    background: var(--oh-railentry-stop, currentColor);
+  }
+
+  .oh-rail[data-drawer] .oh-railentry[data-kind="place"][aria-current="page"] {
+    --oh-railentry-cursor: var(--key-focus-ring);
+    background: transparent;
+    color: var(--ink);
+  }
+
+  :root[data-face="paper"]
+    .oh-rail[data-drawer]
+    .oh-railentry[data-kind="place"][aria-current="page"]
+    .oh-railentry-name::after {
+    margin-inline-start: var(--s1);
+  }
+
+  :root[data-face="ohmarchy"] .oh-rail[data-drawer] .oh-railentry-name:not([data-wordmark])::after {
+    display: none;
+  }
+
+  .oh-railentry-sign,
+  .oh-railentry-chevron {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: var(--oh-railentry-sign);
+    height: var(--oh-railentry-sign);
+  }
+
+  :root[data-icons="0"] .oh-railentry-sign {
+    display: none;
+  }
+
+  .oh-railentry-chevron {
+    color: var(--ink2);
+    transition: transform var(--d-pop) var(--e-std);
+  }
+
+  .oh-railentry[aria-expanded="false"] > .oh-railentry-chevron {
+    transform: rotate(-90deg);
+  }
+
+  .oh-railentry[aria-current="page"] > .oh-railentry-chevron {
+    color: inherit;
+  }
+
+  .oh-railentry-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Which of two folders of one name: small after the name, in the second ink; on the place you are in, the
+     entry's own ink, a step lighter. */
+  .oh-railentry-hint {
+    --oh-railentry-hint-on: 0.74;
+
+    margin-left: var(--s2);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+  }
+
+  .oh-railentry[aria-current="page"] .oh-railentry-hint {
+    color: inherit;
+    opacity: var(--oh-railentry-hint-on);
+  }
+
+  .oh-railentry-count {
+    min-width: 1ch;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  .oh-railentry[aria-current="page"] > .oh-railentry-count {
+    color: inherit;
+  }
+
+  /* The key that goes there: where key hints are on, or at rest in the face that prints keys on its controls. */
+  .oh-railentry-key {
+    display: inline-flex;
+    flex: none;
+  }
+
+  .oh-railentry-key[data-stands] {
+    display: none;
+  }
+
+  :root[data-face="ohmarchy"][data-touch="0"] .oh-railentry-key[data-stands] {
+    display: inline-flex;
+  }
+
+  /* Only keyboard focus in the rail reveals the numbered shortcuts. */
+  .oh-railentry-digit {
+    display: none;
+  }
+
+  .oh-rail:has(:focus-visible) .oh-railentry-digit {
+    display: inline-flex;
+    flex: none;
+  }
+
+  :root .oh-rail:has(:focus-visible) .oh-railentry[data-digit] > .oh-railentry-key {
+    display: none;
+  }
+
+  .oh-railentry[aria-current="page"] .oh-key {
+    --oh-railentry-on-ink: color-mix(in srgb, var(--on-solid) 22%, transparent);
+
+    background: var(--oh-railentry-on-ink);
+    color: var(--on-solid);
+  }
+
+  /* A smaller entry under a line: a tag with its dot, a folder. */
+  .oh-railentry[data-kind="sub"] {
+    height: var(--h-s);
+    font-weight: var(--w-text);
+  }
+
+  .oh-railentry[data-kind="sub"][aria-current="page"] {
+    font-weight: var(--w-bold);
+  }
+
+  .oh-railentry[data-kind="sub"] > .oh-railentry-sign {
+    color: var(--ink2);
+  }
+
+  .oh-railentry[data-kind="sub"][aria-current="page"] > .oh-railentry-sign {
+    color: inherit;
+  }
+
+  .oh-railentry[data-quiet] {
+    color: var(--ink2);
+  }
+
+  .oh-railentry-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    margin: 0 var(--oh-railentry-dot-side);
+    border-radius: var(--dot-r);
+    background: var(--oh-railentry-dot);
+  }
+
+  .oh-railentry[aria-current="page"] > .oh-railentry-dot {
+    background: currentColor;
+  }
+
+  /* A quiet act at the foot. */
+  .oh-railentry[data-kind="tool"] {
+    flex: 1;
+    min-width: 0;
+    color: var(--ink2);
+    font-weight: var(--w-text);
+  }
+
+  .oh-railentry[aria-busy="true"] > .oh-railentry-sign {
+    animation: oh-railentry-turn var(--d-pull) var(--e-move) both;
+  }
+
+  @keyframes oh-railentry-turn {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* The keys are on it. */
+  .oh-railentry:is([data-cursor], :focus-visible) {
+    box-shadow: var(--oh-railentry-cursor);
+  }
+
+  .oh-railentry[data-cursor]:not([aria-current="page"]) {
+    background: var(--oh-railentry-ground);
+  }
+
+  /* Under a fold, two lines that are no entry. Both stand as a smaller entry stands. */
+  .oh-railnote,
+  .oh-railfield {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    height: var(--h-s);
+    margin: 0;
+    color: var(--ink2);
+    font-size: var(--t-ui);
+    font-weight: var(--w-text);
+    white-space: nowrap;
+  }
+
+  /* The note starts where a smaller entry's name starts. */
+  .oh-railnote {
+    --oh-railnote-lead: calc(var(--s3) + var(--oh-railentry-sign) + var(--oh-railentry-gap));
+
+    padding: 0 var(--s3) 0 var(--oh-railnote-lead);
+    overflow: hidden;
+  }
+
+  .oh-railfield {
+    --oh-railfield-lead: var(--s3);
+    --oh-railfield-high: 26px;
+    --oh-railfield-ring: inset 0 0 0 var(--oh-focus) var(--focus);
+
+    gap: var(--oh-railentry-gap);
+    padding: 0 var(--s3) 0 var(--oh-railfield-lead);
+    border-radius: var(--r-pill);
+  }
+
+  /* Under the pointer the line wears an entry's ground, as the line that stood there did. */
+  .oh-railfield:hover {
+    background: var(--oh-railentry-ground);
+  }
+
+  /* It stands only while it is typed into, so it always wears the keys' ring, inside its own edge. */
+  .oh-railfield > .oh-railfield-input {
+    flex: 1;
+    min-width: 0;
+    height: var(--oh-railfield-high);
+    padding: 0 var(--s2);
+    border-radius: var(--r-row);
+    background: var(--soft);
+    box-shadow: var(--oh-railfield-ring);
+    color: var(--ink);
+    cursor: text;
+    outline: none;
+  }
+
+  /* A row is dragged: a place that takes it says so, the one under the pointer most. */
+  .oh-railentry[data-drop] {
+    box-shadow: var(--oh-railentry-takes);
+  }
+
+  .oh-railentry[data-drop="over"] {
+    background: var(--solid);
+    color: var(--on-solid);
+    box-shadow: none;
+  }
+
+  .oh-railentry[data-drop="over"] > .oh-railentry-count {
+    color: inherit;
+  }
+
+  :root[data-face="ohmarchy"] .oh-railentry {
+    --oh-railentry-gap: var(--s2);
+    --oh-railentry-lead: calc(var(--s4) + var(--oh-railentry-step) * var(--oh-railentry-depth));
+    --oh-railentry-ground: var(--oh-hover, var(--hover));
+    --oh-railentry-mark: -3px;
+
+    padding-right: var(--s2);
+    font-weight: var(--w-text);
+  }
+
+  :root[data-face="ohmarchy"] .oh-railentry[aria-current="page"] {
+    font-weight: var(--w-bold);
+  }
+
+  /* The current place carries the square stop in its gutter. */
+  :root[data-face="ohmarchy"]
+    .oh-railentry:is([data-kind="place"], [data-current-mark])[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    left: 5px;
+    top: 50%;
+    width: 5px;
+    height: 5px;
+    margin-top: var(--oh-railentry-mark);
+    background: var(--ink);
+  }
+
+  :root[data-face="ohmarchy"] .oh-railentry-count {
+    color: var(--ink3);
+    font-weight: var(--w-text);
+  }
+
+  :root[data-face="ohmarchy"] .oh-railentry[aria-current="page"] > .oh-railentry-count {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  :root[data-face="ohmarchy"] .oh-railentry-count[data-hot] {
+    color: var(--hot-ink);
+    font-weight: var(--w-bold);
+  }
+
+  :root[data-face="ohmarchy"] .oh-railentry[data-kind="sub"] {
+    --oh-railentry-lead: calc(var(--s5) + var(--oh-railentry-step) * var(--oh-railentry-depth));
+  }
+
+  :root[data-face="ohmarchy"] .oh-railnote {
+    --oh-railnote-lead: var(--s5);
+
+    padding-right: var(--s2);
+  }
+
+  :root[data-face="ohmarchy"] .oh-railfield {
+    --oh-railentry-gap: var(--s2);
+    --oh-railentry-ground: var(--oh-hover, var(--hover));
+    --oh-railfield-lead: var(--s5);
+
+    padding-right: var(--s2);
+  }
+
+  :root[data-face="ohmarchy"] .oh-railentry[data-kind="tool"] {
+    --oh-railentry-gap: 6px;
+
+    padding-right: 0;
+    font-size: var(--t-meta);
+  }
+}

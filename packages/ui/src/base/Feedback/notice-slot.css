@@ -1,0 +1,43 @@
+/* The one slot holding several: the first notice in full, and one line for the others. */
+@layer oh {
+  .oh-noticeslot {
+    --oh-noticeslot-gap: 2px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--oh-noticeslot-gap);
+  }
+  /* One notice alone: the box draws nothing of its own, and the notice stands as it does without it. */
+  .oh-noticeslot[data-alone] {
+    display: contents;
+  }
+  .oh-button.oh-noticeslot-more {
+    --oh-noticeslot-pad: 0 var(--s4);
+    justify-content: flex-start;
+    gap: var(--s2);
+    width: 100%;
+    padding: var(--oh-noticeslot-pad);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+  .oh-noticeslot-more > .oh-dot {
+    --dot-size: 7px;
+    margin: 0;
+  }
+  .oh-noticeslot-more > .oh-icon {
+    margin-left: auto;
+  }
+  /* The others, listed: as wide as their titles ask, within these two measures. */
+  .oh-noticeslot .oh-menu {
+    --oh-menu-min: 264px;
+    --oh-menu-max: 380px;
+    --oh-menu-width: auto;
+  }
+  :root[data-face="ohmarchy"] .oh-button.oh-noticeslot-more {
+    --oh-noticeslot-pad: 0 var(--s2);
+  }
+  :root[data-touch="1"] .oh-button.oh-noticeslot-more {
+    --oh-noticeslot-pad: 0 var(--s5);
+    height: var(--h-s);
+  }
+}

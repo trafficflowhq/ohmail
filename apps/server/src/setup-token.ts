@@ -1,5 +1,5 @@
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
-import { pairingTokens, users } from "@trafficflow/db";
+import { bindDb, carryBinding, pairingTokens, users } from "@trafficflow/db";
 import { mintPairingToken, type PairingTokenMinted } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -56,7 +56,9 @@ export async function mintFirstRunSetupToken(
   opts: { now?: () => Date } = {},
 ): Promise<PairingTokenMinted | null> {
   const now = opts.now ?? ((): Date => new Date());
-  return db.transaction(async (tx) => {
+  // The ownerless mint runs for no account: bound to nothing, and the transaction carries it.
+  const unbound = bindDb(db, { account: null });
+  return unbound.transaction(async (tx) => {
     // postgres.js takes bigint at runtime; its published types omit it — migrate.ts's own cast,
     // for migrate.ts's reason: the 64-bit key must stay exact.
     await tx.execute(sql`select pg_advisory_xact_lock(${SETUP_TOKEN_LOCK_KEY as unknown as number})`);
@@ -80,7 +82,7 @@ export async function mintFirstRunSetupToken(
     // The boot context: `userId: null` is what makes this the ownerless mint, and it falls out
     // of the context rather than a special-case flag — pairing.ts designed the seam this way.
     const bootCtx: ServiceContext = {
-      db: tx as unknown as ServiceContext["db"],
+      db: carryBinding(unbound, tx),
       accountId: "",
       userId: null,
       now,
@@ -130,7 +132,8 @@ export async function ensureSetupTokenInvariant(
   const consistent = anyUser.length === 0 ? live.length === 1 : live.length === 0;
   if (consistent) return;
 
-  await db.transaction(async (tx) => {
+  const unbound = bindDb(db, { account: null });
+  await unbound.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(${SETUP_TOKEN_LOCK_KEY as unknown as number})`);
     const t = now();
     const usersNow = await tx.select({ id: users.id }).from(users).limit(1);
@@ -142,7 +145,7 @@ export async function ensureSetupTokenInvariant(
     const liveNow = await tx.select({ id: pairingTokens.id }).from(pairingTokens).where(liveWhere(t)).limit(1);
     if (liveNow.length > 0) return;              // another request already healed it
     const bootCtx: ServiceContext = {
-      db: tx as unknown as ServiceContext["db"],
+      db: carryBinding(unbound, tx),
       accountId: "",
       userId: null,
       now,
@@ -156,20 +159,29 @@ export async function ensureSetupTokenInvariant(
 /**
  * The one place the raw token is EVER written out. A fenced, unmistakable block on stdout — the
  * operator's `docker compose logs api` moment — and nothing else ever sees the value: only its
- * sha256 is at rest, and the boot log line above it carries no secret.
+ * sha256 is at rest, and the boot log line above it carries no secret. Its shape is read by the
+ * self-host boot smoke and by the guides: the marker line, the token alone on a line six spaces in,
+ * five lines below it, no other line four spaces in, and a fence at column 0 on either side.
  */
+export function setupTokenBlock(minted: PairingTokenMinted): string[] {
+  const fence = "─".repeat(70);
+  return [
+    "",
+    fence,
+    "  FIRST-RUN SETUP",
+    "",
+    "  No account exists on this server yet. Open ohmail in a browser and",
+    "  type this setup token to make the first account:",
+    "",
+    `      ${minted.token}`,
+    "",
+    `  It works once, until ${minted.expiresAt.toISOString()}.`,
+    "  A restart prints a new token, and this one stops working.",
+    fence,
+    "",
+  ];
+}
+
 export function printSetupToken(minted: PairingTokenMinted, print: (line: string) => void): void {
-  print("");
-  print("──────────────────────────────────────────────────────────────────────");
-  print("  FIRST-RUN SETUP");
-  print("");
-  print("  No account exists on this server yet. Open the app in a browser and");
-  print("  enter this one-time setup token to create the first account:");
-  print("");
-  print(`      ${minted.token}`);
-  print("");
-  print(`  It can be used once and expires ${minted.expiresAt.toISOString()}.`);
-  print("  Restarting the server prints a fresh token and retires this one.");
-  print("──────────────────────────────────────────────────────────────────────");
-  print("");
+  for (const line of setupTokenBlock(minted)) print(line);
 }

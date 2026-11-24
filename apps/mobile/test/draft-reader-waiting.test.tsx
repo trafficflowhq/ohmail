@@ -13,6 +13,14 @@ vi.mock("react-native", async () => ({
   AccessibilityInfo: { announceForAccessibility: () => undefined },
   BackHandler: { addEventListener: () => ({ remove: () => undefined }) },
 }));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, left: 0, right: 0, bottom: 0 }) }));
+vi.mock("../src/ui/more-move", () => ({ YieldToMore: ({ children }: { children: ReactNode }) => children }));
+vi.mock("../src/theme", () => ({
+  useTheme: () => ({ c: new Proxy({}, { get: () => "#000" }), radius: new Proxy({}, { get: () => 8 }), lift: () => ({}), reduceMotion: true }),
+}));
+vi.mock("../src/ui/MailCalendarSwitch", () => ({ MailCalendarSwitch: () => null }));
+vi.mock("../src/ui/MailPlaceDock", () => ({ MailPlaceDock: ({ children }: { children: ReactNode }) => children }));
+vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
 vi.mock("../src/ui/base", () => {
   const box = (p: { children?: ReactNode }) => createElement("div", null, p.children);
   return {

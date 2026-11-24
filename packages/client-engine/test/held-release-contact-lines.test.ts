@@ -1,9 +1,9 @@
+import type { EngineMessage, HeldReleaseWire } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, consentPartition, heldReleaseGroups, heldReleaseTotalOf,
-  presentationReader, screenerSegments, senderKey, type EngineMessage, type SyncChange,
+  presentationReader, screenerSegments, senderKey, type SyncChange,
 } from "../src/index.js";
-import type { HeldReleaseWire } from "../src/adapters/adapter.js";
 
 /**
  * A CONTACT'S HELD MAIL REACHES THE OFFER, AND THE CONTACT STAYS UNDECIDED (row 138). The door

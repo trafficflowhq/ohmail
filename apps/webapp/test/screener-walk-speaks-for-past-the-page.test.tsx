@@ -1,14 +1,14 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words";
 import {
-  consentPartition, presentationReader, screenerSegments, type EngineMessage, type OhmailEngine,
+  consentPartition, HttpAdapter, OhmailEngine, presentationReader, screenerSegments,
 } from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { createEngine } from "../app/shell/engine-config.js";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**
@@ -31,7 +31,6 @@ Element.prototype.scrollIntoView ??= function scrollIntoView() {};
   ({ matches: false, media: query, onchange: null, addListener() {}, removeListener() {},
     addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } })) as never;
 
-const ARMED = { NEXT_PUBLIC_API_BASE: "/api" } as const;
 const NOW = new Date("2026-09-28T09:00:00.000Z");
 const AT = "2026-09-28T08:00:00.000Z";
 
@@ -89,7 +88,7 @@ beforeEach(() => {
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
-const state: { current: import("../app/shell/screener-state.js").ScreenerState | null } = { current: null };
+const state: { current: import("@ohmail/app-logic/screener/screener-state").ScreenerState | null } = { current: null };
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
@@ -101,33 +100,26 @@ async function flush(n = 30): Promise<void> {
   for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
-/** The shell's own composition: the queue from the partition's presentation, as `AppShell` builds it. */
+/** The Screener's queue reads the same mailbox partition as the Ohbox. */
 const presented = (engine: OhmailEngine) => presentationReader(engine.read(), consentPartition(engine.read(), { now: NOW }));
 
 async function mount(engine: OhmailEngine): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const view = React.useMemo(() => presented(engine), [v]);
-    const s = useScreenerState(engine, v, (() => {}) as never, undefined, view);
+    const s = useScreenerState(engine, null, v, (() => {}) as never, useScreenerWords(), undefined, view);
     state.current = s;
-    const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
-    return h(ScreenerView, {
-      owed: false, state: s, segment: "waiting", settled: true, selection: sel as never,
-      onSelect: (seg: string, id: string | null) => setSel((m) => ({ ...m, [seg]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    } as never);
+    return h(React.Fragment);
   }
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
+    root!.render(h(TextProvider, {
       locale: "en", messages, timeZone: "UTC", now: NOW,
-      children: h(ThemeProvider, { storageKey: null, children: h(KeymapProvider, { children: h(Probe) }) }),
+      children: h(Probe),
     }));
   });
   await flush();
@@ -139,7 +131,7 @@ const waitingAddresses = (): string[] => state.current!.waiting.map((x) => x.fro
 
 describe("an unlisted sender older than the first page", () => {
   it("stays while no page has passed them, and leaves once the pages reach the queue's end", async () => {
-    const engine = createEngine(false, ARMED);
+    const engine = new OhmailEngine({ adapter: new HttpAdapter({ baseUrl: "/api" }) });
     await engine.start();
     await mount(engine);
     expect(waitingAddresses(), "the first page cannot speak for c yet").toContain("c@old.test");
@@ -154,7 +146,7 @@ describe("an unlisted sender older than the first page", () => {
 
   it("a page that has not reached them yet leaves them waiting", async () => {
     onwardCursor = "more";
-    const engine = createEngine(false, ARMED);
+    const engine = new OhmailEngine({ adapter: new HttpAdapter({ baseUrl: "/api" }) });
     await engine.start();
     await mount(engine);
     await act(async () => { state.current!.waitingMore.load(); });
@@ -170,7 +162,7 @@ describe("an unlisted sender older than the first page", () => {
     onward = [{ messageId: "md", sender: { address: "d@mid.test", name: null }, receivedAt: "2026-07-01T08:00:00.000Z", subject: "Subject md", snippet: "d", mailboxId: "mb" },
       { ...ONWARD, receivedAt: "2026-05-01T08:00:00.000Z" }];
     extra = [held("md", "d@mid.test", "2026-07-01T08:00:00.000Z")];
-    const engine = createEngine(false, ARMED);
+    const engine = new OhmailEngine({ adapter: new HttpAdapter({ baseUrl: "/api" }) });
     await engine.start();
     await mount(engine);
     await act(async () => { state.current!.waitingMore.load(); });

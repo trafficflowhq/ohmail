@@ -2,8 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import { readFileSync } from "node:fs";
+import { sliceOfDeclaration } from "./source-anchor.js";
 import messages from "../messages/en.json";
 import type { JunkItemWire, JunkPageWire, JunkSearchWire, JunkSweepWire } from "../app/api-client";
 
@@ -35,7 +36,7 @@ const junkBody = vi.fn<() => Promise<{ subject: string; text: string }>>();
 const junkRescue = vi.fn<(...args: unknown[]) => Promise<{ status: "queued"; rescueId: string }>>();
 const junkSearch = vi.fn<(q: string) => Promise<JunkSearchWire>>();
 const junkSweepPreview = vi.fn<() => Promise<JunkSweepWire>>();
-const junkSweepRequest = vi.fn<() => Promise<JunkSweepWire>>();
+const junkSweepRequest = vi.fn<(confirmation: string) => Promise<JunkSweepWire>>();
 /** The mock's mutable "is there a server" answer — the supported/failed cases flip it. */
 const configured = { value: true };
 
@@ -51,7 +52,7 @@ vi.mock("../app/api-client", async (importOriginal) => {
       junkRescue: (...args: unknown[]) => junkRescue(...args),
       junkSearch: (q: string) => junkSearch(q),
       junkSweepPreview: () => junkSweepPreview(),
-      junkSweepRequest: () => junkSweepRequest(),
+      junkSweepRequest: (confirmation: string) => junkSweepRequest(confirmation),
     },
   };
 });
@@ -74,7 +75,7 @@ const pageWire = (
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
-let control: import("../app/shell/junk-window").JunkWindowControl | null = null;
+let control: import("@ohmail/app-logic/screener/junk-window").JunkWindowControl | null = null;
 
 /** Toasts the hook spoke this mount — the sentences are the assertions for the two verbs. */
 let toasts: string[] = [];
@@ -82,17 +83,22 @@ let toasts: string[] = [];
 let setActive: ((v: boolean) => void) | null = null;
 /** The `warm` flag (the Screener on screen, the segment maybe not). */
 let setWarm: ((v: boolean) => void) | null = null;
-type Keep = import("../app/shell/junk-window").JunkKeep;
+type Keep = import("@ohmail/app-logic/screener/junk-window").JunkKeep;
 /** The kept page's input (the shell up with folders on, and its spam pile's key). */
 let setKeep: ((v: Keep) => void) | null = null;
 
 async function mountHook(
   initiallyActive = true,
-  hostWire?: import("../app/shell/junk-window").JunkWire,
+  hostWire?: import("@ohmail/app-logic/screener/junk-window").JunkWire,
   initiallyWarm = false,
   initialKeep?: Keep,
 ): Promise<void> {
-  const { useJunkWindow } = await import("../app/shell/junk-window");
+  /* With no wire handed, the page's own where the page has a client, and none where it has none: the hook has no
+     wire of its own. */
+  const { useJunkWindow } = await import("@ohmail/app-logic/screener/junk-window");
+  const { cloudWire } = await import("../app/(product)/mailbox/junk-wire");
+  const { apiConfigured } = await import("../app/api-client");
+  const pagesOwn = apiConfigured() ? cloudWire : "none";
   function Probe(): null {
     const [active, set] = React.useState(initiallyActive);
     const [warm, setW] = React.useState(initiallyWarm);
@@ -100,7 +106,7 @@ async function mountHook(
     setActive = set;
     setWarm = setW;
     setKeep = setK;
-    control = useJunkWindow(active, ((msg: string) => { toasts.push(msg); }) as never, hostWire, warm, keep);
+    control = useJunkWindow(active, ((msg: string) => { toasts.push(msg); }) as never, hostWire ?? pagesOwn, useTranslations("screener") as never, warm, keep);
     return null;
   }
   host = document.createElement("div");
@@ -157,7 +163,7 @@ afterEach(async () => {
  * fallback that crept back in would be visible instead of harmless.
  */
 describe("useJunkWindow — the host wire is the door, and the only one", () => {
-  interface Counted { wire: import("../app/shell/junk-window").JunkWire; calls: string[] }
+  interface Counted { wire: import("@ohmail/app-logic/screener/junk-window").JunkWire; calls: string[] }
 
   /** A host wire that records what it was asked and answers the queued page. */
   function hostWire(page: JunkPageWire = pageWire([], null)): Counted {
@@ -232,7 +238,7 @@ describe("useJunkWindow — the host wire is the door, and the only one", () => 
   it("a wire that REFUSES is reported as failed, with the human's retry — not as an empty folder", async () => {
     configured.value = false;
     const calls: string[] = [];
-    const refusing: import("../app/shell/junk-window").JunkWire = {
+    const refusing: import("@ohmail/app-logic/screener/junk-window").JunkWire = {
       ...hostWire().wire,
       list: async () => { calls.push("list"); throw new Error("the engine answered 503"); },
     };
@@ -295,14 +301,15 @@ describe("useJunkWindow — the server gate and the human retry", () => {
 
 describe("the shell's gate reads the hook's own answer", () => {
   it("AppShell passes the control on `junkWindow.supported` — never the broader suggest-wire read", () => {
-    // Source pin: the hosted desktop's suggest wire makes `autoOptIn.supported` true while its
-    // api client is the refusing stub — the exact composition jsdom cannot mount. The gate must
-    // read the hook's own `apiConfigured()` answer.
-    // A plain cwd-relative read: the suite runs from the repo root, and `import.meta.url` in
-    // this jsdom file resolves to an http-scheme URL the fs helpers refuse.
-    const shell = readFileSync("apps/webapp/app/shell/AppShell.tsx", "utf8");
-    expect(shell).toMatch(/!demo && consent\.foldersEnabled && junkWindow\.supported \? junkWindow : undefined/);
-    expect(shell).not.toMatch(/consent\.foldersEnabled && autoOptIn\.supported \? junkWindow/);
+    // The mounted reader can have a hosted suggestion wire while no Junk provider is available.
+    // The real consent check and the Junk hook's result are the only facts that hand it a window.
+    const source = readFileSync("packages/app-logic/src/screener/live.ts", "utf8");
+    const handed = sliceOfDeclaration(source, "junk");
+    expect(handed).toMatch(/useJunkHere\(\s*press,\s*junkWire,\s*text\.screener,\s*at,\s*!invented && consent\.foldersEnabled,\s*!demo && consent\.foldersEnabled,\s*\)/);
+    expect(handed).not.toMatch(/autoOptIn|suggestWire/);
+    const gate = sliceOfDeclaration(source, "useJunkHere");
+    expect(gate).toMatch(/const junk = useJunkWindow\(/);
+    expect(gate).toMatch(/return drawn && junk\.supported \? junk : null/);
   });
 });
 
@@ -358,7 +365,7 @@ const settle = async (n = 4): Promise<void> => {
 };
 /** Let the typing rest past the debounce — real timers, one short wait. */
 const restPastDebounce = async (): Promise<void> => {
-  const { JUNK_SEARCH_DEBOUNCE_MS } = await import("../app/shell/junk-window");
+  const { JUNK_SEARCH_DEBOUNCE_MS } = await import("@ohmail/app-logic/screener/junk-window");
   await act(async () => { await new Promise((r) => setTimeout(r, JUNK_SEARCH_DEBOUNCE_MS + 120)); });
   await settle();
 };
@@ -469,10 +476,12 @@ describe("useJunkWindow — the second verb", () => {
   });
 });
 
+const validSweepFingerprint = (size: number) => String(size).padStart(43, "0");
+
 describe("useJunkWindow — the one-time sweep offer", () => {
   const pile = (movable: number, over: Partial<JunkSweepWire> = {}): JunkSweepWire => ({
     mailboxes: [{ id: "mb1", address: "a@example.invalid", candidates: movable, hasJunkFolder: true, pending: false }],
-    movable, pending: false, ...over,
+    movable, pending: false, confirmation: validSweepFingerprint(movable), ...over,
   });
 
   it("an empty pile offers nothing; a pile offers its number; a dismissal holds until the pile GROWS", async () => {
@@ -508,18 +517,19 @@ describe("useJunkWindow — the one-time sweep offer", () => {
     }));
     await mountHook();
     expect(control!.sweep.phase).toBe("offer");
-    await act(async () => { control!.sweep.request(); });
+    await act(async () => { control!.sweep.request(validSweepFingerprint(2)); });
     await settle();
-    expect(junkSweepRequest).toHaveBeenCalledTimes(1);
+    expect(junkSweepRequest.mock.calls).toEqual([[validSweepFingerprint(2)]]);
     expect(control!.sweep.phase).toBe("pending");
     // A later answer with nothing left, after THIS session pressed, is "done" — not "none".
     await act(async () => { root!.unmount(); });
     junkSweepPreview.mockResolvedValueOnce(pile(1));
     junkSweepRequest.mockResolvedValueOnce(pile(0));
     await mountHook();
-    await act(async () => { control!.sweep.request(); });
+    await act(async () => { control!.sweep.request(validSweepFingerprint(1)); });
     await settle();
     expect(control!.sweep.phase).toBe("done");
+    expect(junkSweepRequest).toHaveBeenLastCalledWith(validSweepFingerprint(1));
   });
 
   it("a preview that cannot be read makes NO offer; a failed press says so and keeps the offer's number", async () => {
@@ -531,9 +541,10 @@ describe("useJunkWindow — the one-time sweep offer", () => {
     junkSweepPreview.mockResolvedValueOnce(pile(2));
     junkSweepRequest.mockRejectedValueOnce(new Error("503"));
     await mountHook();
-    await act(async () => { control!.sweep.request(); });
+    await act(async () => { control!.sweep.request(validSweepFingerprint(2)); });
     await settle();
     expect(control!.sweep.phase).toBe("failed");
+    expect(junkSweepRequest).toHaveBeenLastCalledWith(validSweepFingerprint(2));
     expect(control!.sweep.preview?.movable).toBe(2);
   });
 });
@@ -723,7 +734,7 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
   const two = [item(2, "7", "2026-10-19T11:02:00.000Z"), item(1, "7", "2026-10-19T11:01:00.000Z")];
 
   it("re-entry at the age reads the list again and shows what was filed since", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     junkList.mockResolvedValueOnce(pageWire([], null)).mockResolvedValue(pageWire(two, null));
     await mountHook();
     expect(junkList).toHaveBeenCalledTimes(1);
@@ -735,7 +746,7 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
   });
 
   it("re-entry inside the age, and ten flips, read once", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     junkList.mockResolvedValue(pageWire([], null));
     await mountHook();
     await reenter(JUNK_FIRST_PAGE_FRESH_MS - 1);
@@ -745,7 +756,7 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
   });
 
   it("after a failed read, re-entry past the age retries once; inside the age it does not", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     junkList.mockRejectedValueOnce(new Error("503")).mockResolvedValue(pageWire(two, null));
     await mountHook();
     expect(control!.phase).toBe("failed");
@@ -758,7 +769,7 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
   });
 
   it("the preview is re-read on entry past the age; `held` is a Set, kept over a failed read, null without it", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     junkList.mockResolvedValue(pageWire([], null));
     junkSweepPreview
       .mockResolvedValueOnce({ ...NO_SWEEP, held: { ids: ["q1", "q2"], truncated: true } })
@@ -777,22 +788,23 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
   });
 
   it("after a press, the first preview no longer pending re-reads the page exactly once", async () => {
-    const { JUNK_SWEEP_POLL_MS } = await import("../app/shell/junk-window");
+    const { JUNK_SWEEP_POLL_MS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const box = { id: "mb1", address: "a@example.invalid", candidates: 2, hasJunkFolder: true, pending: false };
     const pending: JunkSweepWire = { mailboxes: [{ ...box, pending: true }], movable: 2, pending: true };
     const emptied: JunkSweepWire = { mailboxes: [{ ...box, candidates: 0 }], movable: 0, pending: false };
     junkList.mockResolvedValue(pageWire([], null));
     junkSweepPreview
-      .mockResolvedValueOnce({ mailboxes: [box], movable: 2, pending: false })
+      .mockResolvedValueOnce({ mailboxes: [box], movable: 2, pending: false, confirmation: validSweepFingerprint(2) })
       .mockResolvedValueOnce(pending)
       .mockResolvedValue(emptied);
     junkSweepRequest.mockResolvedValueOnce(pending);
     await mountHook();
     expect(control!.sweep.phase).toBe("offer");
-    await act(async () => { control!.sweep.request(); });
+    await act(async () => { control!.sweep.request(validSweepFingerprint(2)); });
     await settle();
     expect(control!.sweep.phase).toBe("pending");
+    expect(junkSweepRequest).toHaveBeenLastCalledWith(validSweepFingerprint(2));
     expect(junkList).toHaveBeenCalledTimes(1);
     await act(async () => { vi.advanceTimersByTime(JUNK_SWEEP_POLL_MS); });
     await settle();
@@ -807,7 +819,7 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
   });
 
   it("re-entry past the age keeps the page on screen while it is read again", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     let answer: (p: JunkPageWire) => void = () => {};
     junkList.mockResolvedValueOnce(pageWire(two, null))
       .mockImplementationOnce(() => new Promise((r) => { answer = r; }));
@@ -822,7 +834,7 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
   });
 
   it("a failed page is re-read as loading, never left saying failed while the retry is out", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     junkList.mockRejectedValueOnce(new Error("503")).mockImplementationOnce(() => new Promise(() => {}));
     await mountHook();
     expect(control!.phase).toBe("failed");
@@ -831,7 +843,7 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
   });
 
   it("the Screener's entry (warm) reads the page and the preview before the segment is entered", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     junkList.mockResolvedValue(pageWire(two, null));
     junkSweepPreview.mockResolvedValue({ ...NO_SWEEP, held: { ids: ["q1"], truncated: false } });
     await mountHook(false, undefined, true);
@@ -854,7 +866,7 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
   });
 
   it("an answer without its arrays is a failed read, never a render throw (STOP #417)", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     const bad = { ok: true } as never;
     junkList.mockResolvedValue(bad);
     junkSweepPreview.mockResolvedValue(bad);
@@ -868,11 +880,18 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
     expect(control!.sweep.phase).toBe("unknown");
     expect(control!.sweep.preview).toBeNull();
     expect(control!.held).toBeNull();
-    // A press answered without its arrays says it failed; a search so answered is failed too.
-    await act(async () => { control!.sweep.request(); });
+    // Open a valid offer first. A malformed reply to its confirmed press is still a failure.
+    const preview = { mailboxes: [{ ...win(), candidates: 1, hasJunkFolder: true, pending: false }],
+      movable: 1, pending: false, confirmation: validSweepFingerprint(1) };
+    junkSweepPreview.mockResolvedValueOnce(preview);
+    nowMs += JUNK_FIRST_PAGE_FRESH_MS;
+    await reenter(0);
+    expect(control!.sweep.phase).toBe("offer");
+    await act(async () => { control!.sweep.request(validSweepFingerprint(1)); });
     await settle();
+    expect(junkSweepRequest).toHaveBeenLastCalledWith(validSweepFingerprint(1));
     expect(control!.sweep.phase).toBe("failed");
-    expect(control!.sweep.preview).toBeNull();
+    expect(control!.sweep.preview).toEqual(preview);
     // A good page, then an older page and a search answered without arrays: kept, and said.
     junkList.mockResolvedValueOnce(pageWire(two, "c1")).mockResolvedValueOnce(bad);
     junkSearch.mockResolvedValue(bad);
@@ -897,7 +916,7 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
   });
 
   it("staying on the segment for ten times the age makes no extra read", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     junkList.mockResolvedValue(pageWire(two, null));
     await mountHook();
     for (let i = 0; i < 10; i++) {
@@ -932,7 +951,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   };
 
   it("the shell's start reads both; the Screener and the Spam entry paint them and ask nothing", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     junkList.mockResolvedValue(pageWire(two, null));
     junkSweepPreview.mockResolvedValue({ ...NO_SWEEP, held: { ids: ["q1"], truncated: false } });
     await mountHook(false, undefined, false, { on: true, moved: 1 });
@@ -950,7 +969,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("past the age the entry reads again behind the kept page, which stays painted", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     junkList.mockResolvedValueOnce(pageWire(two, null)).mockImplementationOnce(() => new Promise(() => {}));
     await mountHook(false, undefined, false, { on: true, moved: 0 });
     nowMs += JUNK_FIRST_PAGE_FRESH_MS * 4;
@@ -961,7 +980,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("a letter moved into the pile is read after the settle; the next Spam entry paints it and reads once behind it", async () => {
-    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const filed = item(3, "7", "2026-10-28T11:03:00.000Z");
     junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValue(pageWire([filed, ...two], null));
@@ -980,7 +999,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("a letter the organizer files after the settle read is listed by the next entry inside the age", async () => {
-    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const filed = item(3, "7", "2026-10-28T11:03:00.000Z");
     junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValueOnce(pageWire(two, null))
@@ -999,7 +1018,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("on the segment, a verdict the organizer files after the settle read reaches the shelf without leaving", async () => {
-    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     junkList.mockResolvedValue(pageWire(two, null));
     const without = { ...NO_SWEEP, held: { ids: ["q1"], truncated: false } };
@@ -1018,7 +1037,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("on the segment, a verdict filed into Junk after the entry read is listed on top without leaving", async () => {
-    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const filed = item(3, "7", "2026-10-28T10:00:00.000Z");
     junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValueOnce(pageWire(two, null))
@@ -1041,7 +1060,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("on the segment, an entry read landing after the first beat does not wipe the filed letter", async () => {
-    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let land: (p: ReturnType<typeof pageWire>) => void = () => {};
     junkList.mockResolvedValueOnce(pageWire(two, null))
@@ -1058,7 +1077,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("on the segment, a Not junk press during the arrival settle keeps topping up", async () => {
-    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValueOnce(pageWire(two, null))
       .mockResolvedValue(pageWire([item(3, "7", "2026-10-28T10:00:00.000Z"), ...two], null));
@@ -1073,7 +1092,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("on the segment, a letter leaving the pile reads no list on the settle", async () => {
-    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     junkList.mockResolvedValue(pageWire(two, null));
     await mountHook(true, undefined, true, { on: true, moved: 3 * 0x1_0000_0000 });
@@ -1083,7 +1102,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("on the segment the settle keeps the older rows the reader loaded; the next entry reads", async () => {
-    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const page1 = [item(10, "7", "2026-10-28T11:10:00.000Z"), item(9, "7", "2026-10-28T11:09:00.000Z")];
     const page2 = [item(8, "7", "2026-10-28T11:08:00.000Z"), item(7, "7", "2026-10-28T11:07:00.000Z")];
@@ -1105,7 +1124,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("a failed read behind a kept page keeps it on screen, never the failed sentence", async () => {
-    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("@ohmail/app-logic/screener/junk-window");
     junkList.mockResolvedValueOnce(pageWire(two, null)).mockRejectedValueOnce(new Error("503"));
     await mountHook(false, undefined, false, { on: true, moved: 0 });
     nowMs += JUNK_FIRST_PAGE_FRESH_MS * 4;
@@ -1117,7 +1136,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("after a failed settle read off the segment, the next entry paints the kept rows and reads behind them", async () => {
-    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     junkList.mockResolvedValueOnce(pageWire(two, null)).mockRejectedValueOnce(new Error("503"))
       .mockImplementation(() => new Promise(() => {}));
@@ -1133,7 +1152,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("a letter moved out: a Spam entry inside the settle reads at once behind the page; the settle reads only the preview under the reader", async () => {
-    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValue(pageWire([two[1]!], null));
     await mountHook(false, undefined, false, { on: true, moved: 2 });
@@ -1149,7 +1168,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("a Not junk press keeps the queued row under the reader; the next entry reads it gone", async () => {
-    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValue(pageWire([two[1]!], null));
     await mountHook(true, undefined, true, { on: true, moved: 0 });
@@ -1177,7 +1196,7 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
   });
 
   it("with keep off nothing is read, and a pile change reads nothing", async () => {
-    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS } = await import("@ohmail/app-logic/screener/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await mountHook(false, undefined, false, { on: false, moved: 1 });
     await act(async () => { setKeep!({ on: false, moved: 2 }); });

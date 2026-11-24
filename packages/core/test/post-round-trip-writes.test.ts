@@ -25,7 +25,7 @@ import ts from "typescript";
  */
 
 const REPO = resolve(__dirname, "../../..");
-const ROOTS = ["packages/core/src", "apps/worker/src", "apps/sidecar/src"];
+const ROOTS = ["packages/core/src", "apps/worker/src", "packages/organizer/src", "apps/sidecar/src"];
 
 /** The adapter verbs that put a command on the wire and take a reply. */
 const ADAPTER_VERBS = new Set(["move", "moveMany", "setFlags"]);
@@ -207,11 +207,11 @@ const WORKFLOW_RUNTIME = "packages/core/src/ai/workflows/exec" + "utor.ts";
 /** THE BLIND WRITER'S CALL SITES, each with the reason it may be blind. */
 const BLIND_CENSUS: ReadonlyArray<readonly [string, string, Kind]> = [
   // The gap catch-up: a rule's desire for gap mail, committed under the page's own row locks.
-  ["apps/worker/src/gap-catchup.ts", "upsertDesired", "intent-commit"],
+  ["packages/organizer/src/gap-catchup.ts", "upsertDesired", "intent-commit"],
   ["apps/worker/src/ohbox-tidy.ts", "upsertDesired", "intent-commit"],
-  ["apps/worker/src/rule-retro.ts", "upsertDesired", "intent-commit"],
+  ["packages/organizer/src/rule-retro.ts", "upsertDesired", "intent-commit"],
   // The correspondent retro's release: a new desire, committed under the held rows' own lock.
-  ["apps/worker/src/screener-correspondent-retro.ts", "upsertDesired", "intent-commit"],
+  ["packages/organizer/src/screener-correspondent-retro.ts", "upsertDesired", "intent-commit"],
   [WORKFLOW_RUNTIME, "upsertFolderState", "intent-commit"],
   ["packages/core/src/pipeline.ts", "upsertFolderState", "no-row"],
   ["packages/core/src/pipeline.ts", "upsertFolderState", "no-row"],

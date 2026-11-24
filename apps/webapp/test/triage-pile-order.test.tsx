@@ -2,8 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import type { Fixtures, MessageFixture } from "@ohmail/fixtures";
+import type { Fixtures, MessageFixture } from "@ohmail/testing";
 import messages from "../messages/en.json";
 
 /**
@@ -27,8 +28,8 @@ const NEWEST_FIRST = ["Sender C", "Sender B", "Sender A", "Sender D", "Sender E"
 
 const world = vi.hoisted(() => ({ pile: "replyLater" as "replyLater" | "setAside", ids: [] as string[] }));
 
-vi.mock("@ohmail/fixtures", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@ohmail/fixtures")>();
+vi.mock("@ohmail/testing", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@ohmail/testing")>();
   return {
     ...real,
     getFixtures: (): Fixtures => {
@@ -91,7 +92,7 @@ afterEach(async () => {
 
 async function shell(hash: string): Promise<HTMLElement> {
   window.location.hash = hash;
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { DemoShell } = await import("../app/(product)/demo/DemoShell");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -100,7 +101,7 @@ async function shell(hash: string): Promise<HTMLElement> {
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC", now: new Date("2026-07-29T12:00:00.000Z"),
-      children: h(ThemeProvider, { children: h(ToastHost, { children: h(AppShell, { demo: true }) }) }),
+      children: h(ThemeProvider, { children: h(ToastHost, { children: h(DemoShell, { serverDemo: true, says: { service: "managed", sendCeiling: "strict" } }) }) }),
     }));
   });
   return container;
@@ -115,9 +116,15 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
   throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
 }
 
-const pileRows = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll<HTMLElement>(".view-triage .list-col .rows .row .who")].map((b) => b.textContent ?? "");
-const runSubject = (el: HTMLElement): string => el.querySelector(".fr-card h3")?.textContent ?? "";
+function pileRows(name: string): string[] {
+  const list = screen.queryByRole("listbox", { name });
+  if (list === null) return [];
+  return within(list).getAllByRole("option").map((row) => (row.getAttribute("aria-label") ?? "").split(":")[0]!);
+}
+
+const run = () => screen.queryByRole("toolbar", { name: "Reply run" });
+const runSubject = (): string => run() === null ? "" :
+  within(screen.getByRole("region", { name: "Reading" })).getByRole("heading", { level: 2 }).textContent ?? "";
 
 async function key(k: string): Promise<void> {
   await act(async () => {
@@ -132,19 +139,19 @@ describe("the triage piles render one order, whatever order the claims arrived i
   ])("Answer Later and its Reply Run, %s", async (_label, ids) => {
     world.pile = "replyLater";
     world.ids = ids;
-    const el = await shell("#/triage");
-    await waitFor(() => pileRows(el).length === 6, "the six Answer Later rows");
-    expect(pileRows(el)).toEqual(NEWEST_FIRST);
+    await shell("#/triage");
+    await waitFor(() => pileRows("Answer Later").length === 6, "the six Answer Later rows");
+    expect(pileRows("Answer Later")).toEqual(NEWEST_FIRST);
 
     await key("f");
-    await waitFor(() => runSubject(el) !== "", "the Reply Run to open");
-    const walked: string[] = [runSubject(el)];
+    await waitFor(() => runSubject() !== "", "the Reply Run to open");
+    const walked: string[] = [runSubject()];
     for (let i = 0; i < 5; i++) {
-      const before = runSubject(el);
-      const skip = [...el.querySelectorAll<HTMLButtonElement>(".fr-foot button")][1]!;
+      const before = runSubject();
+      const skip = within(run()!).getByRole("button", { name: "Skip" });
       await act(async () => { skip.click(); });
-      await waitFor(() => runSubject(el) !== before, `Reply Run step ${i + 2}`);
-      walked.push(runSubject(el));
+      await waitFor(() => runSubject() !== before, `Reply Run step ${i + 2}`);
+      walked.push(runSubject());
     }
     expect(walked).toEqual(["p-c", "p-b", "p-a", "p-d", "p-e", "p-f"].map((id) => `About ${id}`));
   });
@@ -152,8 +159,8 @@ describe("the triage piles render one order, whatever order the claims arrived i
   it("Parked, set aside out of date order", async () => {
     world.pile = "setAside";
     world.ids = ["p-a", "p-b", "p-c", "p-d", "p-e", "p-f"];
-    const el = await shell("#/triage/aside");
-    await waitFor(() => pileRows(el).length === 6, "the six Parked rows");
-    expect(pileRows(el)).toEqual(NEWEST_FIRST);
+    await shell("#/triage/aside");
+    await waitFor(() => pileRows("Parked").length === 6, "the six Parked rows");
+    expect(pileRows("Parked")).toEqual(NEWEST_FIRST);
   });
 });

@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { Platform, View, type LayoutChangeEvent } from "react-native";
 import { useTheme } from "../theme";
+import { mailColors, mailSize } from "../theme/mail";
 import { SEGMENT_PAD, segmentFace, segmentPaint } from "./segment-face";
 import { a11yRole } from "./a11y-role";
 import { Tap, Txt } from "./base";
@@ -49,6 +50,7 @@ export function Segmented<T extends string>({
   const labelW = (i: number) => sizes[`l${i}`] ?? 0;
   const countW = (i: number) => (segments[i]!.count === undefined ? 0 : (sizes[`c${i}`] ?? 0) + 5);
   const paint = segmentPaint(t.scheme, t.ringed);
+  const paper = t.mail ? mailColors(t) : null;
   const face = fill ? segmentFace(width, segments.map((_, i) => labelW(i) + countW(i))) : "equal";
   const stacked = face === "stacked";
   return (
@@ -66,6 +68,7 @@ export function Segmented<T extends string>({
           padding: 3,
           gap: 2,
         },
+        paper ? { backgroundColor: paper.sheet, borderWidth: 1, borderColor: paper["ctl-ring"], padding: 1 } : null,
         style,
       ]}
     >
@@ -101,7 +104,7 @@ export function Segmented<T extends string>({
               {
                 /* One sizing rule per face: `flex` would override the basis on the device. */
                 ...(basis ?? { flex: fill ? 1 : 0 }),
-                minHeight: stacked ? 44 : 34,
+                minHeight: paper || stacked ? mailSize.back + 4 : 34,
                 flexDirection: stacked ? "column" : "row",
                 alignItems: "center",
                 justifyContent: "center",
@@ -111,6 +114,7 @@ export function Segmented<T extends string>({
                 backgroundColor: on ? t.c[paint.selected] : "transparent",
               },
               on ? t.lift("l1") : null,
+              on && paper ? { backgroundColor: paper.solid, boxShadow: [] } : null,
             ]}
           >
             {/* The ring is PAINT over the padding, never a border: a border sits inside the
@@ -122,11 +126,12 @@ export function Segmented<T extends string>({
                   borderRadius: t.radius.pill, borderWidth: 1, borderColor: t.c.hair }}
               />
             ) : null}
-            <Txt variant={on ? "settingsLabel" : "navLabel"} tone={on ? "ink" : "ink3"} numberOfLines={1}>
+            <Txt variant={on ? "settingsLabel" : "navLabel"} tone={on ? "ink" : "ink3"} numberOfLines={1}
+              style={on && paper ? { color: paper["on-solid"] } : undefined}>
               {seg.label}
             </Txt>
             {seg.count !== undefined ? (
-              <Txt variant="caption" tone={on ? "ink3" : "ink3"} tabular>
+              <Txt variant="caption" tone="ink3" tabular style={on && paper ? { color: paper["on-solid"] } : undefined}>
                 {seg.count}
               </Txt>
             ) : null}

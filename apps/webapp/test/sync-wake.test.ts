@@ -1,11 +1,10 @@
 /** @vitest-environment jsdom */
+import type { MessageBodyWire, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type MessageBodyWire,
-  type MutationOutcome,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
@@ -17,7 +16,7 @@ import {
   WAKE_STREAM_REASK_MS,
   startSyncScheduler,
   type WakeStreamLike,
-} from "../app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 import { cloudPushWakes } from "../app/shell/engine-config.js";
 
 /**
@@ -794,7 +793,7 @@ describe("every reachable state of the machine leaves a drain armed", () => {
 describe("a return dials its stream before the drain without a lane, after the delta's lead with one", () => {
   for (const withLane of [false, true]) {
     it(withLane ? "with the lane: the drain first, then the stream once its lead is over" : "no lane (the desktop): the stream first, then the drain, as before", async () => {
-      const { createResumeLane } = await import("../app/shell/resume-lane.js");
+      const { createResumeLane } = await import("@ohmail/app-logic/session/resume-lane");
       const order: string[] = [];
       const adapter = new ScriptedAdapter((_p, n) => { order.push("drain"); return page(`c${n + 1}`, []); });
       const { streams, factory } = wakeFactory();

@@ -1,3 +1,29 @@
+import type {
+  EmailAddress,
+  EngineDraft,
+  EngineMessage,
+  FailedAtGateDTO,
+  FeedSinceMeta,
+  FeedView,
+  Folder,
+  HeldReleaseGroupDTO,
+  MessageBody,
+  MessageBodyRecord,
+  MessageStateDTO,
+  OhmailView,
+  RuleEntity as RuleDTO,
+  ScreenerHeldMail,
+  ScreenerSegment,
+  ScreenerSenderDTO,
+  ScreenerSuggestionEntity,
+  ScreenerWaitingDTO,
+  ScreenerWaitingPageDTO,
+  ScreenerWaitingSenderDTO,
+  TagEntity as TagDTO,
+  TriageItemDTO,
+  UnscreenedGroupDTO,
+  WaterlineMeta,
+} from "@ohmail/wire";
 import { canonicalDestination, isSentFolderOf } from "@trafficflow/core/folder-name";
 import { recordedSentFolderOf } from "./sent-folders.js";
 import { opensWithForwardPrefix } from "@trafficflow/core/reply-subject";
@@ -19,36 +45,12 @@ import {
   VIEW_OF_FOLDER,
   waterlineIdOf,
   FEED_SINCE_ID,
-  type FeedSinceMeta,
-  type EmailAddress,
-  type EngineDraft,
-  type EngineMessage,
-  type FailedAtGateDTO,
-  type FeedView,
-  type Folder,
-  type MessageBody,
-  type MessageBodyRecord,
-  type MessageStateDTO,
-  type OhmailView,
-  type RuleDTO,
-  type HeldReleaseGroupDTO,
-  type UnscreenedGroupDTO,
   HELD_RELEASE_TYPE,
   RETIRED_DECIDED_TYPE,
   SENT_IN_HISTORY_TYPE,
   UNSCREENED_TYPE,
   SCREENER_WAITING_TYPE,
   SCREENER_WAITING_PAGE_ID,
-  type ScreenerWaitingDTO,
-  type ScreenerWaitingPageDTO,
-  type ScreenerWaitingSenderDTO,
-  type ScreenerHeldMail,
-  type ScreenerSegment,
-  type ScreenerSenderDTO,
-  type ScreenerSuggestionEntity,
-  type TagDTO,
-  type TriageItemDTO,
-  type WaterlineMeta,
 } from "./types.js";
 
 /**
@@ -964,8 +966,38 @@ export function threadSizeIndex(reader: EntityReader): ReadonlyMap<string, Threa
   return sizes;
 }
 
-/** One conversation member's square: unread, read, or the account's own (unread wins). */
+/** One conversation member's square: unread, read, or the account's own. */
 export type ThreadMark = "unread" | "read" | "mine";
+
+/** A sent reply stays hollow even if its stored copy carries an unread flag. */
+export function threadMarkOf(m: Pick<EngineMessage, "folder" | "mailboxId" | "local" | "unread">): ThreadMark {
+  return isOwnOutbound(m) ? "mine" : m.unread ? "unread" : "read";
+}
+
+const memberCache = new WeakMap<EntityReader, { v: number; members: Map<string, EngineMessage[]> }>();
+
+/** Placed conversations with the same held-letter and twin exclusions as the reader. */
+export function placedThreadMembers(reader: EntityReader): ReadonlyMap<string, readonly EngineMessage[]> {
+  const version = typeof reader.version === "function" ? reader.version() : null;
+  const cached = version === null ? undefined : memberCache.get(reader);
+  if (cached?.v === version) return cached.members;
+
+  const claims = winningStates(reader);
+  const groups = new Map<string, EngineMessage[]>();
+  for (const message of reader.list<EngineMessage>("message")) {
+    if (!message.threadId || standsHeld(message, claims)) continue;
+    const members = groups.get(message.threadId);
+    if (members) members.push(message);
+    else groups.set(message.threadId, [message]);
+  }
+  for (const [id, messages] of groups) {
+    const members = collapseTwins(messages.sort(byDateAsc), "");
+    if (members.length < 2) groups.delete(id);
+    else groups.set(id, members);
+  }
+  if (version !== null) memberCache.set(reader, { v: version, members: groups });
+  return groups;
+}
 
 const marksCache = new WeakMap<EntityReader, { v: number; marks: Map<string, ThreadMark[]> }>();
 
@@ -981,21 +1013,8 @@ export function threadMarksIndex(reader: EntityReader): ReadonlyMap<string, read
     const hit = marksCache.get(reader);
     if (hit && hit.v === v) return hit.marks;
   }
-  const claims = winningStates(reader);
-  const byThread = new Map<string, EngineMessage[]>();
-  for (const m of reader.list<EngineMessage>("message")) {
-    if (!m.threadId || standsHeld(m, claims)) continue;
-    const list = byThread.get(m.threadId);
-    if (list) list.push(m);
-    else byThread.set(m.threadId, [m]);
-  }
   const marks = new Map<string, ThreadMark[]>();
-  for (const [threadId, list] of byThread) {
-    if (list.length < 2) continue;
-    const members = collapseTwins(list.sort(byDateAsc), "");
-    if (members.length < 2) continue;
-    marks.set(threadId, members.map((m) => (m.unread ? "unread" : isOwnOutbound(m) ? "mine" : "read")));
-  }
+  for (const [id, members] of placedThreadMembers(reader)) marks.set(id, members.map(threadMarkOf));
   if (v !== null) marksCache.set(reader, { v, marks });
   return marks;
 }
@@ -1210,7 +1229,9 @@ export interface FeedPartition {
  * first completed sync (`FEED_SINCE_ID`). Neither fallback draws a line.
  */
 export function feedPartition(reader: EntityReader, view: FeedView): FeedPartition {
-  const all = messagesIn(reader, FOLDER_OF_VIEW[view]);
+  // A stored row without a message ID cannot be opened or sent as a glance.
+  const all = messagesIn(reader, FOLDER_OF_VIEW[view]).filter(({ id }) =>
+    typeof id === "string" && id !== "" && id !== "null" && id !== "undefined");
   const row = reader.get<WaterlineMeta>("view_meta", waterlineIdOf(view)) ?? null;
   const idx = row ? lineIndexOf(all, row) : -1;
   const cut = idx >= 0 ? idx : row ? sinceIndexOf(all, reader.get<FeedSinceMeta>("view_meta", FEED_SINCE_ID)) : -1;
@@ -2276,7 +2297,7 @@ export function tagsCrossView(reader: EntityReader): TagGroup[] {
  * carries `hits`, `lastHitAt` and `demotions`, and nothing anywhere writes them — every value
  * is still its inserted `default(0)` / `null` — so a count would put "0 messages" beside a rule
  * that has silently filed three thousand; the surface says the count is not recorded instead
- * (see `RulesView`). A count of mirror messages currently in the rule's destination is also
+ * (see the rule list, `packages/app-logic/src/press/rule-list.ts`). A count of mirror messages currently in the rule's destination is also
  * refused: it reads as "these will move back", exactly the false promise revocation must not
  * make.
  */

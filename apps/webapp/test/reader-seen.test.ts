@@ -1,15 +1,15 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { THREAD_READ_HOLD_MS, createThreadRead } from "@ohmail/client-engine";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import type { EngineMessage } from "@ohmail/client-engine";
 import {
   EVIDENCE_WINDOW_MS, LANDING_REST_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, createUnreadHold, panelsOf, pressEnters, useReaderVisit,
   useThreadRead, viewOf, type ThreadReadDomOptions,
-} from "../app/shell/reader-seen";
-import { scrollProgrammatically } from "../app/shell/programmatic-scroll";
-import { readLandedCard } from "../app/shell/stream-landing-read";
+} from "@ohmail/app-logic/reading/reader-seen";
+import { scrollProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
+import { readLandedCard } from "@ohmail/app-logic/lists/stream-landing-read";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout";
 
 /**
@@ -662,9 +662,15 @@ describe("a reader's visit off the Ohbox (useReaderVisit)", () => {
     expect(visit.wiring?.restMs, "b came by another path").toBeUndefined();
     act(() => show(letter("a")));
     expect(visit.wiring?.restMs, "back on a: a new visit").toBeUndefined();
+    // A key press can land before the browser commits the matching address.
     act(() => visit.land("c"));
     act(() => show(letter("c")));
-    expect(visit.wiring?.restMs, "c was not shown when it was landed on").toBeUndefined();
+    expect(visit.wiring?.restMs, "the address arriving a commit later still rests").toBe(LANDING_REST_MS);
+    // A different address that arrives first cancels the pending landing.
+    act(() => visit.land("a"));
+    act(() => show(letter("b")));
+    act(() => show(letter("a")));
+    expect(visit.wiring?.restMs, "a superseded landing is dropped").toBeUndefined();
   });
 
   it("an arrow scroll of the column enters the letter, never while the column shows it held unread (⋯ Mark unread)", () => {

@@ -2,8 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider } from "@ohmail/ui";
+import { within } from "@testing-library/react";
 import { fillFrom } from "../app/shell/locale";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
@@ -70,13 +69,13 @@ interface Wire {
   ohboxPolicy: "people_only" | "people_and_replied" | null;
   ohboxBar: string | null;
   defaultBar: string;
-  screenerAutoApply: boolean;
 }
 
 let stored: Wire;
 let patchBodies: Array<{ ohboxBar?: unknown }>;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+let Frame: ReturnType<typeof import("./fixtures/screening-settings.js").screeningSettingsFrame> | null = null;
 
 const json = (v: unknown): Response =>
   new Response(JSON.stringify(v), { status: 200, headers: { "content-type": "application/json" } });
@@ -103,32 +102,35 @@ const flush = async (): Promise<void> => {
 
 /** Render (or re-render, for the language switch) the pane under one catalogue. */
 async function show(locale: "en" | "de"): Promise<void> {
-  const { ScreeningSection } = await import("../app/shell/ScreeningSection.js");
+  const { screeningSettingsFrame } = await import("./fixtures/screening-settings.js");
   const messages = locale === "de" ? GERMAN : en;
   if (!root) {
+    Frame = screeningSettingsFrame();
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
   }
   await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale, messages, timeZone: "UTC",
-        children: h(ThemeProvider, { storageKey: null, children: h(ScreeningSection) }),
-      }),
-    );
+    root!.render(h(Frame!, { locale, messages }));
   });
   await flush();
+  await within(host!).findByRole("textbox", {
+    name: (name) => [en.settings.screening.barLabel, GERMAN.settings.screening.barLabel].includes(name),
+  }, { timeout: 5000 });
 }
 
 const textarea = (): HTMLTextAreaElement =>
-  host!.querySelector(".set-screening-textarea") as HTMLTextAreaElement;
+  within(host!).getByRole<HTMLTextAreaElement>("textbox", {
+    name: (name) => [en.settings.screening.barLabel, GERMAN.settings.screening.barLabel].includes(name),
+  });
 const buttonNamed = (label: string): HTMLButtonElement | undefined =>
-  Array.from(host!.querySelectorAll("button")).find(
-    (b) => (b.textContent ?? "").trim() === label,
-  ) as HTMLButtonElement | undefined;
-const saveButton = (locale: "en" | "de"): HTMLButtonElement =>
-  buttonNamed((locale === "de" ? GERMAN : en).settings.screening.save)!;
+  within(host!).queryByRole<HTMLButtonElement>("button", { name: label }) ?? undefined;
+const findSave = (locale: "en" | "de") =>
+  buttonNamed((locale === "de" ? GERMAN : en).settings.screening.save);
+const saveButton = (locale: "en" | "de") =>
+  within(host!).getByRole<HTMLButtonElement>("button", {
+    name: (locale === "de" ? GERMAN : en).settings.screening.save,
+  });
 
 /** Type into the controlled textarea the way React reads it — set the value, then dispatch input. */
 async function typeInto(value: string): Promise<void> {
@@ -150,7 +152,6 @@ beforeEach(() => {
   patchBodies = [];
   stored = {
     ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: SERVER_DEFAULT,
-    screenerAutoApply: false,
   };
   installFetch();
 });
@@ -186,10 +187,10 @@ describe("the prefilled default, in the reader's language", () => {
   });
 });
 
-describe("an untouched prefill writes NOTHING — in either language", () => {
+describe("an untouched prefill offers no Save and writes nothing — in either language", () => {
   it("leaves Save inert under English, and PATCHes nothing on open", async () => {
     await show("en");
-    expect(saveButton("en").disabled).toBe(true);
+    expect(findSave("en")).toBeUndefined();
     expect(patchBodies).toEqual([]);
   });
 
@@ -204,16 +205,16 @@ describe("an untouched prefill writes NOTHING — in either language", () => {
     await show("de");
     expect(textarea().value).not.toBe(stored.defaultBar);
     expect(
-      saveButton("de").disabled,
+      findSave("de"),
       "Save armed on an untouched German prefill — opening Settings would offer to store the twin",
-    ).toBe(true);
+    ).toBeUndefined();
     expect(patchBodies).toEqual([]);
   });
 
   it("treats EITHER language's default as unchanged — pasting the English one into a German box", async () => {
     await show("de");
     await typeInto(SERVER_DEFAULT);
-    expect(saveButton("de").disabled).toBe(true);
+    expect(findSave("de")).toBeUndefined();
   });
 
   /**
@@ -226,7 +227,7 @@ describe("an untouched prefill writes NOTHING — in either language", () => {
     expect(textarea().value).toBe(GERMAN_DEFAULT);
     await show("en");
     expect(textarea().value).toBe(SERVER_DEFAULT);
-    expect(saveButton("en").disabled).toBe(true);
+    expect(findSave("en")).toBeUndefined();
     expect(patchBodies).toEqual([]);
   });
 
@@ -281,6 +282,6 @@ describe("what a save actually writes", () => {
     await press(buttonNamed(GERMAN.settings.screening.reset)!);
     expect(patchBodies).toEqual([{ ohboxBar: null }]);
     expect(textarea().value).toBe(GERMAN_DEFAULT);
-    expect(saveButton("de").disabled).toBe(true);
+    expect(findSave("de")).toBeUndefined();
   });
 });

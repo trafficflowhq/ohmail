@@ -6,6 +6,7 @@
  * source: the file name and kind the save accepts are the builder's own. A window with no shell
  * draws no row, and the hosted web app has no such row at all.
  */
+import { getByRole } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
@@ -61,11 +62,10 @@ async function render(messages: typeof en | typeof de, locale: string): Promise<
   return el;
 }
 
-async function press(node: HTMLDivElement): Promise<void> {
-  const button = node.querySelector("button");
-  if (!button) throw new Error("the row drew no button");
+async function press(node: HTMLDivElement, name = en.desktopDoor.diagnosticAction): Promise<void> {
+  const button = getByRole(node, "button", { name });
   await act(async () => { button.click(); });
-  for (let i = 0; i < 20 && node.querySelector("button")?.hasAttribute("disabled"); i++) {
+  for (let i = 0; i < 20 && button.hasAttribute("disabled"); i++) {
     await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
   }
 }
@@ -105,7 +105,7 @@ describe("the desktop's diagnostic file row", () => {
     // What `DesktopLocale` sets for German: English filled underneath.
     setActiveCatalog("de", fillFrom(en as never, de as never) as never);
     const node = await render(de, "de");
-    await press(node);
+    await press(node, de.desktopDoor.diagnosticAction);
     expect(node.textContent).toContain(de.desktopDoor.diagnosticWritten.replace("{path}", WRITTEN));
   });
 
@@ -114,7 +114,7 @@ describe("the desktop's diagnostic file row", () => {
     const node = await render(en, "en");
     await press(node);
     expect(node.textContent).toContain(en.desktopDoor.diagnosticFailed);
-    expect(node.querySelector("button")?.textContent).toBe(en.desktopDoor.diagnosticAction);
+    expect(getByRole(node, "button", { name: en.desktopDoor.diagnosticAction })).toBeTruthy();
   });
 
   it("a window with no shell draws no row — there is no log to write beside", async () => {
@@ -129,12 +129,18 @@ describe("the desktop's diagnostic file row", () => {
   });
 
   it("About mounts the row, and the hosted web app carries no diagnostic action", () => {
+    const frame = readFileSync("apps/desktop/src/DesktopFrame.tsx", "utf8");
+    expect(frame).toContain("about: DesktopAboutPane");
+    expect(frame).toContain('about: entry("about", <DesktopAbout status={status} />)');
     expect(readFileSync("apps/desktop/src/DesktopAbout.tsx", "utf8")).toContain("<DiagnosticFileRow />");
+    // The catalogue holds every place's words; the phone's own Settings draw on the phone alone.
+    const ownHosts = new Set(["desktopDoor", "phoneSettings"]);
     const webKeys = Object.entries(en as Record<string, Record<string, unknown>>)
-      .filter(([ns]) => ns !== "desktopDoor")
+      .filter(([ns]) => !ownHosts.has(ns))
       .flatMap(([ns, table]) => Object.keys(table ?? {}).filter((k) => /diagnostic/i.test(k)).map((k) => `${ns}.${k}`));
     expect(webKeys).toEqual([]);
-    // Control: the reader does find the desktop's own keys.
+    // Control: the reader does find the desktop's own keys, and the phone's one.
     expect(Object.keys(en.desktopDoor).filter((k) => /diagnostic/i.test(k)).length).toBe(6);
+    expect(Object.keys(en.phoneSettings).filter((k) => /diagnostic/i.test(k))).toEqual(["diagnostics"]);
   });
 });

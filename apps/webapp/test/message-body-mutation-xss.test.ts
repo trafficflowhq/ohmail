@@ -35,8 +35,8 @@ import { HOSTILE_HTML, OWNER_BILLING_HTML } from "./fixtures/owner-billing-email
  * never REQUESTED" is decided; below, the claim is only that they are never NAMED.
  */
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../../../packages/letter-body/src/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../../../packages/letter-body/src/MessageBody.js");
 
 async function clean(html: string, opts: Parameters<Mod["sanitizeMailHtml"]>[1] = {}) {
   const { sanitizeMailHtml } = await mod();
@@ -429,7 +429,7 @@ describe("a message cannot freeze the tab it is opened in", () => {
     expect(out.html).toBe("");
     expect(out.blocked).toEqual([]);
     // The reason is a sentence a reader can act on, not a blank frame.
-    expect(COPY.oversize).toMatch(/plain-text/i);
+    expect(COPY.oversize).toBe("This message's design is too large to draw safely, so you are reading its plain text.");
     // And an ordinary message is an ordinary message.
     const ok = await clean(`<p>${"x".repeat(64 * 1024)}</p>`);
     expect(ok.oversize).toBeUndefined();

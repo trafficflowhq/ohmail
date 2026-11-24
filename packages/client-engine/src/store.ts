@@ -1,7 +1,10 @@
+import { calendarSettlementExpiry, type CalendarSettlement } from "./calendar-receipts.js";
+import type { Cursor, EngineMessage } from "@ohmail/wire";
 import { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
+import { cascadeCalendarRemoval, forgetBusyCalendarDetails } from "./calendar-cascade.js";
 import { beginDerive, noteMirrorMessages } from "./client-vitals.js";
-import { MAILBOX_TYPE, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, isCarriedLocalType, isProtectedMessage } from "./types.js";
-import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js";
+import { CALENDAR_OUTBOX_TYPE, CALENDAR_SETTLEMENT_TYPE, isCalendarQueueType, MAILBOX_TYPE, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, isCarriedLocalType, isProtectedMessage } from "./types.js";
+import type { SyncChange, SyncResponse } from "./types.js";
 
 /**
  * WHAT THE WINDOWS OVER ONE SHARED DISK SAY TO EACH OTHER about its outbox. `changed`: a write or
@@ -12,6 +15,7 @@ import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js
  */
 export type OutboxNotice =
   | { t: "changed" }
+  | { t: "calendar-changed" }
   | { t: "withdraw"; key: string; outcome?: "withdrawn" }
   | { t: "ended"; key: string; how: "confirmed" | "refused" | "withdrawn" };
 
@@ -292,6 +296,13 @@ export interface MirrorStore extends EntityReader {
    * when memory moved. On the write lane, so it never reads behind this store's own writes.
    */
   refreshOutbox?(exclude: () => ReadonlySet<string>): Promise<boolean>;
+  /**
+   * Decide against the current calendar outbox row, then publish it after the transaction commits.
+   * The callback returns undefined to leave it alone, or null to remove it.
+   */
+  decideCalendarRow(id: string, decide: (entity: unknown) => unknown, receipt?: CalendarSettlement): Promise<boolean>;
+  /** Reconcile the account's calendar outbox from disk on the mirror write lane. */
+  refreshCalendarOutbox?(now: number): Promise<boolean>;
   /** {@link decideOutboxRow} over the disk row, inside one write transaction. */
   decideOutboxRow?(id: string, act: OutboxRowAct): Promise<OutboxRowVerdict>;
   /**
@@ -402,7 +413,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     this.unflushedCursor = null;
     // A claim a mirror kept over a letter it already holds as deleted — written before the
     // cascade below existed — leaves at the first load. A failed write rides the next flush.
-    const healed = this.cascadeGoneLetterClaims(null);
+    const healed = [...this.cascadeGoneLetterClaims(null), ...forgetBusyCalendarDetails(this.records, null)];
     if (healed.length > 0) await this.flush(healed, null, []).catch(() => undefined);
   }
 
@@ -539,6 +550,9 @@ export abstract class BaseMirrorStore implements MirrorStore {
   private async adoptWipedBaseline(): Promise<void> {
     const kept: MirrorRecord[] = [];
     for (const [key, rec] of [...this.records]) {
+      // Calendar intents commit before publication. The shared disk already has the current
+      // state, including any Undo or claim this tab missed.
+      if (isCalendarQueueType(rec.type)) continue;
       if (rec.seq === 0) kept.push(rec);
       else this.records.delete(key);
     }
@@ -771,6 +785,17 @@ export abstract class BaseMirrorStore implements MirrorStore {
     return out;
   }
 
+  /** A removed calendar connection or calendar takes what hangs on it (`calendar-cascade.ts`). */
+  private cascadeCalendarRemovals(applied: MirrorRecord[]): MirrorRecord[] {
+    const out: MirrorRecord[] = [];
+    cascadeCalendarRemoval(this.records, applied, (rec, seq) => {
+      const next: MirrorRecord = { type: rec.type, id: rec.id, seq: rec.seq === 0 ? 0 : Math.max(rec.seq, seq), entity: null };
+      this.records.set(recordKey(rec.type, rec.id), next);
+      out.push(next);
+    });
+    return out;
+  }
+
   /**
    * A MAILBOX THE SERVER NO LONGER HOLDS TAKES EVERYTHING KEYED BY IT — the receipt's cascade, on
    * ONE `mailbox` delete. STRUCTURAL, not a list of types: pass one takes every record naming the
@@ -928,6 +953,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     const applied = applyToRecords(this.records, changes);
     const dirty = [
       ...applied, ...this.cascadeLocalDeletes(changes, applied), ...this.cascadeMailboxRemoval(applied),
+      ...this.cascadeCalendarRemovals(applied), ...forgetBusyCalendarDetails(this.records, applied),
       ...this.cascadeEmptiedThreads(threads, applied), ...this.claimsOfGoneLetters(applied),
     ];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
@@ -1045,24 +1071,56 @@ export abstract class BaseMirrorStore implements MirrorStore {
       const onDisk = new Map<string, MirrorRecord>();
       // A row this store has evicted and not yet purged is not read back: its delete is queued behind this.
       for (const rec of disk) if (keep(rec) && !this.outboxEvicting.has(recordKey(rec.type, rec.id))) onDisk.set(recordKey(rec.type, rec.id), rec);
-      let moved = false;
-      for (const [key, rec] of [...this.records]) {
-        if (!isOutboxKey(key) || !keep(rec) || onDisk.has(key)) continue;
-        this.records.delete(key);
-        moved = true;
-      }
-      for (const [key, rec] of onDisk) {
-        const mine = this.records.get(key);
-        if (mine !== undefined && JSON.stringify(mine.entity) === JSON.stringify(rec.entity)) continue;
-        this.records.set(key, rec);
-        moved = true;
-      }
-      if (moved) {
-        this.ver++;
-        this.stampTypes([OUTBOX_TYPE, OUTBOX_ABANDONED_TYPE]);
-      }
-      return moved;
+      return this.reconcileOutboxRows(onDisk, this.records.values(), (key, rec) => isOutboxKey(key) && keep(rec),
+        [OUTBOX_TYPE, OUTBOX_ABANDONED_TYPE]);
     });
+  }
+
+  async refreshCalendarOutbox(now: number): Promise<boolean> {
+    return this.serializeWrite(async () => {
+      await this.settleWipe();
+      const disk = await this.readCalendarOutboxRange(now);
+      const settlements = this.bucketsOf(CALENDAR_SETTLEMENT_TYPE);
+      if (disk === null) {
+        const expired = settlements.filter((rec) => calendarSettlementExpiry(rec.entity) <= now);
+        if (expired.length === 0) return false;
+        await this.commitLocalInner([], expired.map(({ id, type }) => ({ id, type })));
+        return true;
+      }
+      const rows = new Map(disk.map((rec) => [recordKey(rec.type, rec.id), rec]));
+      return this.reconcileOutboxRows(rows, [...this.bucketsOf(CALENDAR_OUTBOX_TYPE), ...settlements],
+        () => true, [CALENDAR_OUTBOX_TYPE, CALENDAR_SETTLEMENT_TYPE]);
+    });
+  }
+
+  private reconcileOutboxRows(
+    disk: ReadonlyMap<string, MirrorRecord>,
+    current: Iterable<MirrorRecord>,
+    includes: (key: string, rec: MirrorRecord) => boolean,
+    types: string[],
+  ): boolean {
+    let moved = false;
+    for (const rec of current) {
+      const key = recordKey(rec.type, rec.id);
+      if (!includes(key, rec) || disk.has(key)) continue;
+      this.records.delete(key);
+      moved = true;
+    }
+    for (const [key, rec] of disk) {
+      const mine = this.records.get(key);
+      if (mine !== undefined && JSON.stringify(mine.entity) === JSON.stringify(rec.entity)) continue;
+      this.records.set(key, rec);
+      moved = true;
+    }
+    if (moved) {
+      this.ver++;
+      this.stampTypes(types);
+    }
+    return moved;
+  }
+
+  protected async readCalendarOutboxRange(_now: number): Promise<MirrorRecord[] | null> {
+    return null;
   }
 
   /** The disk's outbox rows of both types, or `null` for a store with no disk to read. */
@@ -1099,6 +1157,47 @@ export abstract class BaseMirrorStore implements MirrorStore {
     return { verdict: "gone", rec: null };
   }
 
+  async decideCalendarRow(id: string, decide: (entity: unknown) => unknown, receipt?: CalendarSettlement): Promise<boolean> {
+    return this.serializeWrite(async () => {
+      await this.settleWipe();
+      const key = recordKey(CALENDAR_OUTBOX_TYPE, id);
+      let result: { changed: boolean; rec: MirrorRecord | null };
+      try {
+        result = await this.decideCalendarOnDisk(id, decide, receipt);
+      } catch (err) {
+        if (!(err instanceof MirrorGenerationChanged)) throw err;
+        await this.adoptWipedBaseline();
+        result = await this.decideCalendarOnDisk(id, decide, receipt);
+      }
+      const prior = this.records.get(key);
+      if (result.rec === null) this.records.delete(key);
+      else this.records.set(key, result.rec);
+      const settled = result.changed && result.rec === null && receipt !== undefined;
+      if (settled) {
+        const rec = { type: CALENDAR_SETTLEMENT_TYPE, id, seq: 0, entity: receipt };
+        this.records.set(recordKey(rec.type, id), rec);
+      }
+      if (settled || prior?.entity !== result.rec?.entity) {
+        this.ver++;
+        this.stampTypes(settled ? [CALENDAR_OUTBOX_TYPE, CALENDAR_SETTLEMENT_TYPE] : [CALENDAR_OUTBOX_TYPE]);
+      }
+      return result.changed;
+    });
+  }
+
+  protected async decideCalendarOnDisk(
+    id: string, decide: (entity: unknown) => unknown, receipt?: CalendarSettlement,
+  ): Promise<{ changed: boolean; rec: MirrorRecord | null }> {
+    const prior = this.records.get(recordKey(CALENDAR_OUTBOX_TYPE, id));
+    const next = decide(prior?.entity ?? null);
+    if (next === undefined) return { changed: false, rec: prior ?? null };
+    const rec: MirrorRecord = { type: CALENDAR_OUTBOX_TYPE, id, seq: 0, entity: next };
+    const puts = next !== null ? [rec] : receipt === undefined ? [] :
+      [{ type: CALENDAR_SETTLEMENT_TYPE, id, seq: 0, entity: receipt }];
+    await this.transact(puts, next === null ? [recordKey(rec.type, id)] : []);
+    return { changed: true, rec: next === null ? null : rec };
+  }
+
   /** See {@link MirrorStore.putLocal} — seq 0, latest wins, never through the seq guard. */
   async putLocal(type: string, id: string, entity: unknown | null): Promise<void> {
     const rec: MirrorRecord = { type, id, seq: 0, entity };
@@ -1115,6 +1214,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     const applied = applyToRecords(this.records, changes);
     const dirty = [
       ...applied, ...this.cascadeLocalDeletes(changes, applied), ...this.cascadeMailboxRemoval(applied),
+      ...this.cascadeCalendarRemovals(applied), ...forgetBusyCalendarDetails(this.records, applied),
       ...this.cascadeEmptiedThreads(threads, applied), ...this.claimsOfGoneLetters(applied),
     ];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));

@@ -21,7 +21,7 @@ import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, connectAttemptRecorder, type ApiDeps } from "@trafficflow/api";
 import { accounts, mailboxes, mailboxCredentials, type Tx } from "@trafficflow/db";
 import { authThrottle, connectAttempts, HOSTED_IMAP_ADMISSION } from "@trafficflow/db/cloud";
-import { deleteAccount, throttleKeysFor } from "@trafficflow/services";
+import { dbFor, deleteAccount, throttleKeysFor } from "@trafficflow/services";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
@@ -354,7 +354,7 @@ describe("Test connection over time, on the hosted hosts", () => {
       (await db.select().from(authThrottle)).filter((r) => r.key.endsWith(`:${accountId}`)).length;
     // The press's slot and its four windows.
     expect([await rowsOf(s.accountId), await rowsOf(other.accountId)]).toEqual([5, 5]);
-    await deleteAccount({ db, accountId: s.accountId, userId: s.userId, now: deps.now, requestId: "erase" },
+    await deleteAccount({ db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: deps.now, requestId: "erase" },
       { throttleKeys: throttleKeysFor(deps.keyProvider) });
     expect([await rowsOf(s.accountId), await rowsOf(other.accountId)]).toEqual([0, 5]);
   });

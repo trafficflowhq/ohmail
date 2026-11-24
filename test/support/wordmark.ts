@@ -32,7 +32,7 @@ import path from "node:path";
 export const repoRoot = (() => {
   let dir = process.cwd();
   for (;;) {
-    if (existsSync(path.join(dir, "tsconfig.base.json"))) return `${dir}${path.sep}`;
+    if (existsSync(path.join(dir, "tools/tsconfig.base.json"))) return `${dir}${path.sep}`;
     const up = path.dirname(dir);
     if (up === dir) throw new Error("repo root not found above " + process.cwd());
     dir = up;

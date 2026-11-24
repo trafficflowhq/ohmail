@@ -1,0 +1,312 @@
+/* One head for every view of the calendar. It stands on the ground, sheds by its own width alone, and
+   nothing in it folds because a panel came. */
+@layer oh {
+  .oh-calhead {
+    --oh-calhead-pad: 0 0 0 var(--flush);
+    --oh-calhead-gap: var(--s1);
+    --oh-hover: var(--hover-ground);
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--oh-calhead-gap);
+    height: var(--calhead);
+    margin-bottom: var(--calhead-gap);
+    padding: var(--oh-calhead-pad);
+    container: oh-calhead / inline-size;
+  }
+  .oh-calhead-title {
+    min-width: 0;
+    margin-right: var(--s2);
+    overflow: hidden;
+    font-size: var(--t-title);
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* A span of days is pressable: the way to a date. */
+  .oh-calhead-goto {
+    --oh-calhead-goto-out: 0 -6px;
+    --oh-calhead-goto-pad: 0 6px;
+    max-width: calc(100% + 12px);
+    margin: var(--oh-calhead-goto-out);
+    padding: var(--oh-calhead-goto-pad);
+    overflow: hidden;
+    border-radius: var(--r-row);
+    font-variation-settings: inherit;
+    text-align: left;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    white-space: nowrap;
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+  .oh-calhead-today-date {
+    display: inline-grid;
+    place-items: center;
+    min-width: var(--s5);
+    border-radius: var(--r-pill);
+  }
+  .oh-calhead-today-date[data-today-pulse] {
+    color: var(--on-hot);
+    background: var(--hot);
+  }
+  .oh-calhead-goto:hover {
+    background: var(--hover-ground);
+  }
+  .oh-calhead-short {
+    display: none;
+  }
+  .oh-calhead-sub {
+    margin-left: var(--s2);
+    color: var(--ink2);
+    font-family: var(--f-text);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+    letter-spacing: 0;
+  }
+  .oh-calhead-week {
+    --oh-calhead-week-out: 0 var(--s2) 0 calc(var(--s2) * -1);
+    --oh-calhead-week-pad: 0 var(--s2);
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    height: var(--h-s);
+    margin: var(--oh-calhead-week-out);
+    padding: var(--oh-calhead-week-pad);
+    border-radius: var(--r-pill);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .oh-calhead-week[data-way] {
+    transition:
+      background-color var(--d-hover) var(--e-std),
+      color var(--d-hover) var(--e-std);
+  }
+  .oh-calhead-week[data-way]:hover {
+    background: var(--hover-ground);
+    color: var(--ink);
+  }
+  .oh-calhead-week[data-way]:focus-visible {
+    border-radius: var(--r-pill);
+  }
+  .oh-calhead-wword {
+    --oh-calhead-wgap: 0.3em;
+    margin-right: var(--oh-calhead-wgap);
+  }
+  .oh-calhead-wshort {
+    display: none;
+  }
+  /* Each of its own controls is a part of the kit; the head only says where it stands and when it goes. */
+  .oh-calhead-part {
+    display: contents;
+  }
+  .oh-calhead-part > .oh-button[data-bare] {
+    color: var(--ink2);
+  }
+  .oh-calhead-part > .oh-button[data-bare]:disabled {
+    background: transparent;
+    color: var(--on-off);
+  }
+  .oh-calhead-part > .oh-button[data-kind="two"][data-size="s"] {
+    font-weight: var(--w-mid);
+  }
+  .oh-calhead-gap {
+    flex: 1;
+  }
+  .oh-calhead .oh-vs {
+    margin-right: var(--s2);
+  }
+  /* The bell in a head says its count and stands on the count's own measure, on both faces. */
+  :root .oh-calhead .oh-doorbell {
+    --oh-calhead-bell: 0 var(--s1);
+    --oh-doorbell-lead: var(--s2);
+    margin: var(--oh-calhead-bell);
+  }
+  /* Stand-in: the sheet gives ohmarchy this edge in a window, and the tokens do not carry it yet. */
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-calhead {
+    --flush: 26px;
+  }
+  /* The Agenda's control is ink while its panel stands. */
+  .oh-calhead-part[data-part="agenda"] > .oh-button[aria-pressed="true"] {
+    --oh-button-pad: 4px;
+    background: var(--solid);
+    background-clip: content-box;
+    color: var(--on-solid);
+  }
+  :root[data-touch="1"] .oh-calhead-part[data-part="agenda"] > .oh-button[aria-pressed="true"] {
+    --oh-button-pad: 6px;
+  }
+  :root[data-face="ohmarchy"] .oh-calhead-part[data-part="agenda"] > .oh-button[aria-pressed="true"] {
+    --oh-button-pad: 3px;
+    box-shadow: none;
+  }
+  :root[data-face="ohmarchy"][data-touch="1"]
+    .oh-calhead-part[data-part="agenda"]
+    > .oh-button[aria-pressed="true"] {
+    --oh-button-pad: 7px;
+  }
+  :root[data-touch="1"] .oh-calhead-wword {
+    display: none;
+  }
+  :root[data-touch="1"] .oh-calhead-wshort {
+    display: inline;
+  }
+  :root[data-touch="1"] .oh-calhead-goto {
+    position: relative;
+  }
+  :root[data-touch="1"] .oh-calhead-goto::after {
+    content: "";
+    position: absolute;
+    inset: -10px -4px;
+  }
+
+  /* The unfolded phone. */
+  :root[data-device="fold"] .oh-calhead {
+    --oh-calhead-pad: 0 0 0 var(--s3);
+    --oh-calhead-gap: 2px;
+  }
+  /* The phone: the title, Today, the bell, More. Its view switch is the dock. */
+  :root[data-device="phone"] .oh-calhead {
+    --oh-calhead-pad: 0 var(--s2) 0 var(--s3);
+    height: 64px;
+    margin-bottom: 0;
+  }
+  :root[data-device="phone"] .oh-calhead-title {
+    --oh-calhead-phone: 22px;
+    flex: none;
+    margin-right: var(--s1);
+    overflow: visible;
+    font-size: var(--oh-calhead-phone);
+    text-overflow: clip;
+  }
+  :root[data-device="phone"] .oh-calhead-goto {
+    --oh-calhead-goto-out: 0;
+    --oh-calhead-goto-pad: 0;
+    overflow: visible;
+  }
+  :root[data-device="phone"] .oh-calhead-part[data-part="before"],
+  :root[data-device="phone"] .oh-calhead-part[data-part="after"],
+  :root[data-device="phone"] .oh-calhead-part[data-part="search"],
+  :root[data-device="phone"] .oh-calhead-part[data-part="agenda"],
+  :root[data-device="phone"] .oh-calhead:not([data-away]) .oh-calhead-part[data-part="today"] {
+    display: none;
+  }
+  :root[data-device="phone"] .oh-calhead-part[data-part="today"] > .oh-button {
+    --oh-button-pad: 0 var(--s3);
+    position: relative;
+    flex: none;
+    height: var(--h-s);
+    min-height: 0;
+    font-weight: var(--w-bold);
+  }
+
+  /* What goes first when the head runs short of room: the keys, Today, the title's long names, Search, the arrows. */
+  @container oh-calhead (max-width: 700px) {
+    .oh-calhead .oh-key {
+      display: none;
+    }
+  }
+  @container oh-calhead (max-width: 560px) {
+    .oh-calhead-part[data-part="today"] {
+      display: none;
+    }
+  }
+  @container oh-calhead (max-width: 500px) {
+    .oh-calhead-full {
+      display: none;
+    }
+    .oh-calhead-short {
+      display: inline;
+    }
+  }
+  @container oh-calhead (max-width: 430px) {
+    .oh-calhead-part[data-part="search"] {
+      display: none;
+    }
+  }
+  @container oh-calhead (max-width: 372px) {
+    .oh-calhead-part[data-part="before"],
+    .oh-calhead-part[data-part="after"] {
+      display: none;
+    }
+  }
+  /* The desktop's head holds the whole switch, so it sheds earlier. */
+  @container oh-calhead (max-width: 940px) {
+    :root[data-device="desktop"] .oh-calhead .oh-key {
+      display: none;
+    }
+  }
+  @container oh-calhead (max-width: 900px) {
+    :root[data-device="desktop"] .oh-calhead-part[data-part="today"] {
+      display: none;
+    }
+  }
+  @container oh-calhead (max-width: 830px) {
+    :root[data-device="desktop"] .oh-calhead-full {
+      display: none;
+    }
+    :root[data-device="desktop"] .oh-calhead-short {
+      display: inline;
+    }
+  }
+  @container oh-calhead (max-width: 690px) {
+    :root[data-device="desktop"] .oh-calhead-part[data-part="search"] {
+      display: none;
+    }
+  }
+  @container oh-calhead (max-width: 640px) {
+    :root[data-device="desktop"] .oh-calhead-part[data-part="before"],
+    :root[data-device="desktop"] .oh-calhead-part[data-part="after"] {
+      display: none;
+    }
+  }
+  @container oh-calhead (max-width: 660px) {
+    :root[data-device="fold"] .oh-calhead-full {
+      display: none;
+    }
+    :root[data-device="fold"] .oh-calhead-short {
+      display: inline;
+    }
+  }
+  /* With the week's number in it, everything goes 64 px earlier, and the number's word with the title's. */
+  @container oh-calhead (max-width: 1004px) {
+    :root[data-device="desktop"] .oh-calhead[data-week] .oh-key {
+      display: none;
+    }
+  }
+  @container oh-calhead (max-width: 964px) {
+    :root[data-device="desktop"] .oh-calhead[data-week] .oh-calhead-part[data-part="today"] {
+      display: none;
+    }
+  }
+  @container oh-calhead (max-width: 894px) {
+    :root[data-device="desktop"] .oh-calhead[data-week] .oh-calhead-full,
+    :root[data-device="desktop"] .oh-calhead-wword {
+      display: none;
+    }
+    :root[data-device="desktop"] .oh-calhead[data-week] .oh-calhead-short,
+    :root[data-device="desktop"] .oh-calhead-wshort {
+      display: inline;
+    }
+  }
+  @container oh-calhead (max-width: 734px) {
+    :root[data-device="desktop"] .oh-calhead[data-week] .oh-calhead-part[data-part="search"] {
+      display: none;
+    }
+  }
+  @container oh-calhead (max-width: 684px) {
+    :root[data-device="desktop"] .oh-calhead[data-week] .oh-calhead-part[data-part="before"],
+    :root[data-device="desktop"] .oh-calhead[data-week] .oh-calhead-part[data-part="after"] {
+      display: none;
+    }
+  }
+}
+
+@layer oh {
+  :root[data-device="phone"] .oh-calhead[data-away] .oh-calhead-part[data-part="today"],
+  :root[data-device="phone"] .oh-calhead .oh-calhead-part[data-part="today"][data-always] {
+    display: contents;
+  }
+}

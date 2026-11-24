@@ -1,4 +1,6 @@
-import { countRealFiles, normalizeMime } from "./mime.js";
+import type { AuthVerdict } from "@ohmail/wire";
+import { countRealFiles, itipReplyByHeaders, normalizeMime } from "./mime.js";
+import type { PlannedInvitation } from "./invitation-mail.js";
 import type { Logger } from "./log.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
 import { searchBodyOf, type MessageSearchInput } from "./message-search.js";
@@ -10,7 +12,7 @@ import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
   NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, autoReplySuppression,
   dsnVerdict, effectForDestination, evaluateRules, gateAuthor, isDaemonAddress, isDeliveryReportShape, screenerAdmits,
-  unsubscribeHeaderState, type AuthVerdict, type KnownSenders, type OhboxPolicy, type Rule,
+  unsubscribeHeaderState, type KnownSenders, type OhboxPolicy, type Rule,
 } from "./rules.js";
 import {
   claimedIdentity, companyDomainsOf, ownedBrand, registrableDomain, senderDomainOf, type IdentityFact,
@@ -47,7 +49,10 @@ import type { CorrespondentEvidence } from "./correspondent.js";
 // the hosted half for as long as the barrel happened not to reach it. Naming the leaf itself is
 // what makes that a property instead of a coincidence.
 import { classifyAttemptKey } from "@trafficflow/db/ledger-source";
-import type { MailboxMustBeLive } from "@trafficflow/db";
+import {
+  modelConsentGate, ModelConsentWithdrawn, reverseCharge,
+  type MailboxMustBeLive, type RefundObligationPort, type SpendOutcome,
+} from "@trafficflow/db";
 import { aiSpendPermitted } from "./ports.js";
 import type {
   Change, CreditGate, MoveEvidence, PipelineDeps, RepoPort, RepoChangeInput, RoutingPort, FolderStateRow,
@@ -447,6 +452,13 @@ export interface NewPlan {
    * PlanDeps.correspondenceSince} — which the commit teaches `contacts`. Absent for anything else.
    */
   learnCorrespondents?: readonly string[];
+  /**
+   * THE INVITATION THE LETTER CARRIES (mail 0204), as its calendar part said it at the parse, and
+   * whether the person wrote it. Set in ONE place, {@link planChange}, whichever arm planned the
+   * row; the commit writes it, as the winner. A letter carrying one is never a run member: only the
+   * per-letter commit writes the row (`sync.ts`'s `runnable`).
+   */
+  invitation?: PlannedInvitation;
 }
 
 export interface ExistingPlan {
@@ -602,6 +614,8 @@ export interface PlanDeps {
   routing?: RoutingPort;
   /** The AI spend gate. Absent ⇒ unmetered; see {@link CreditGate}. */
   credits?: CreditGate;
+  readModelConsent?: () => Promise<boolean>;
+  consentRefunds?: RefundObligationPort;
   /**
    * The authserv-ids the account's own provider signs `Authentication-Results` with, lowercased.
    * Configuration, not a `mailboxes` column: a statement about WHOM THIS DEPLOYMENT BELIEVES — a
@@ -832,6 +846,11 @@ export interface CommitDeps {
   mailboxMustBeLive?: MailboxMustBeLive;
   /** {@link AdoptDeps.observedSince}, for the `adopt_external` arm; absent ⇒ read when it adopts. */
   observedSince?: Date | null;
+  /**
+   * The caller's log: a letter kept without its invitation row (the store refused the row's value)
+   * is said here, by ids and a closed word.
+   */
+  log?: Logger;
 }
 
 /**
@@ -1043,7 +1062,9 @@ function domainOf(value: string): string {
  * Who one of the account's own Sent copies was written to, when it teaches — To, Cc and a Bcc
  * the copy kept, lower-cased. Nothing before the consent point ({@link
  * PlanDeps.correspondenceSince}) and nothing a machine wrote: an out-of-office copy addressed to
- * every stranger who wrote is not the person writing to them.
+ * every stranger who wrote is not the person writing to them. Nor an answer to an invitation (an
+ * iTIP REPLY, by its type or its calendar part): a "No" to an invitation a stranger sent is not
+ * writing to them, and must not let them past the gate for good.
  */
 function sentCopyRecipients(
   msg: NormalizedMessage, internalDate: Date | null, since: Date | undefined,
@@ -1051,6 +1072,8 @@ function sentCopyRecipients(
   const at = internalDate ?? msg.date;
   if (since === undefined || at === null || at.getTime() <= since.getTime()) return [];
   if (autoReplySuppression(msg.headers, msg.from.address) !== null) return [];
+  const method = msg.calendar?.invitation?.method;
+  if (itipReplyByHeaders(msg) || method === "REPLY" || method === "COUNTER" || method === "DECLINECOUNTER") return [];
   const bcc = (msg.headers["bcc"] ?? []).flatMap((line) => line.split(","))
     .map((part) => /<([^<>@\s]+@[^<>\s]+)>/.exec(part)?.[1] ?? part.trim());
   return [...new Set([...msg.to.map((a) => a.address), ...msg.cc.map((a) => a.address), ...bcc]
@@ -1126,6 +1149,8 @@ function headersDigest(normalized: NormalizedMessage): string {
 export async function planChange(change: Change, deps: PlanDeps, parsed?: NormalizedMessage): Promise<ChangePlan> {
   const plan = await planFromRaw(change, deps, parsed);
   if (change.oversizeBytes !== undefined && plan.new) plan.new.bodyWithheld = "too_large";
+  const invitation = plan.new?.normalized.calendar?.invitation;
+  if (plan.new && invitation !== undefined) plan.new.invitation = { ...invitation, own: change.ownAuthored === true };
   return plan;
 }
 
@@ -1488,6 +1513,8 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
     // refused there rather than doubled (see `sourceFor`). Computing it writes nothing — only the
     // spend below can move money — so it is safe to build before the gate runs.
     const attemptKey = classifyAttemptKey(mailboxId, key);
+    const consent = deps.readModelConsent ? modelConsentGate(deps.readModelConsent) : undefined;
+    let charge: SpendOutcome | undefined;
     // AI gate: classify only on the unclear residue, never for sensitive/no_ai mail, and only
     // when the account may spend. The classifier is not even constructed for sensitive messages,
     // so the raw secret never leaves the process. THE ORDER OF THIS CONDITION IS THE INVARIANT:
@@ -1514,12 +1541,14 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
       // key already. `aiSpendPermitted` reads the six-verdict answer for this path: proceed on
       // `ok` and `duplicate` (already paid), skip on everything else — including `inflight`,
       // where another caller is running the model for this exact mail right now.
+      (!consent || await consent.allowed()) &&
       (credits == null || aiSpendPermitted(
-        await credits.spend(accountId, "classify_ingest", attemptKey, { mailboxId })))
+        charge = await credits.spend(accountId, "classify_ingest", attemptKey, { mailboxId })))
     ) {
       let result: ClassifierResult | undefined;
       try {
-        result = await classifier.classify({
+        await consent?.beforeDispatch();
+        const input = {
           from: normalized.from,
           subject: normalized.subject,
           snippet: bodySnippet(normalized),
@@ -1528,7 +1557,8 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
           // The account's own words, into the USER turn only. Absent ⇒ omitted. It sharpens what
           // the model proposes on this unclear residue; it never itself moves the message.
           ohboxBar: deps.ohboxBar,
-        });
+        };
+        result = await (consent ? classifier.classify(input, { beforeDispatch: consent.beforeDispatch }) : classifier.classify(input));
       } catch (err) {
         // Rethrow, deliberately, and do NOT refund — two decisions. The rethrow: a classifier
         // FAULT, not out-of-credits. Degrading would file by rules and never look again, making a
@@ -1545,7 +1575,22 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
         // `desired` is the rules' answer. Rethrown, it stalled the mailbox behind the message
         // (the retry draws the same decline), so new mail and read state stopped behind it. The
         // charge comes back where it was metered: the worker's circuit, which owns the open charge.
-        if (!(err instanceof ModelDeclinedError)) throw err;
+        if (err instanceof ModelConsentWithdrawn) {
+          if (credits?.release) {
+            try {
+              if (charge?.verdict === "ok") {
+                await reverseCharge({ release: credits.release.bind(credits) }, deps.consentRefunds, {
+                  accountId, action: "classify_ingest", attemptKey, attempt: charge.attempt,
+                  reason: "drafter_failed", meta: { mailboxId },
+                }, (fact) => deps.log?.warn("classifier_consent_refund", { mailboxId, fact: fact.fact }));
+              } else if (charge?.verdict === "duplicate") {
+                await credits.release(accountId, { action: "classify_ingest", attemptKey, refund: false, meta: { mailboxId } });
+              }
+            } catch {
+              deps.log?.warn("classifier_consent_refund_failed", { mailboxId });
+            }
+          }
+        } else if (!(err instanceof ModelDeclinedError)) throw err;
       }
       if (result) {
         const patternKey = `sender:${normalized.from.address}→${result.destination}`;
@@ -1988,6 +2033,20 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // Attachment METADATA (never bytes) persists in the SAME transaction as the
     // message — atomic ingest, no orphan attachment without its message.
     await repo.insertAttachments(stored.id, accountId, p.normalized.attachments);
+
+    // The invitation the letter carries, as the winner and in this transaction: its own row rides
+    // the letter's `create` below, and every OTHER letter the write changed (the person's reply
+    // recording its answer on the invitation) is owed a message change in the same list. A fault
+    // of the store's own leaves here as a throw: the letter is never kept without its row for it.
+    if (p.invitation) {
+      const wrote = await repo.writeInvitation(stored.id, accountId, mailboxId, p.invitation);
+      for (const id of wrote.touched) {
+        deltas.push({ accountId, entityType: "message", entityId: id, op: "update", meta: null });
+      }
+      if (wrote.refused !== undefined) {
+        deps.log?.warn("invitation_row_refused", { accountId, mailboxId, messageId: stored.id, reason: wrote.refused });
+      }
+    }
 
     // The full original body, always — text AND html, sensitive or not. Body redaction is
     // removed: the mailbox on the IMAP server already holds this mail unredacted, so a redacted

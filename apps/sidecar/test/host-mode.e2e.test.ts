@@ -14,7 +14,7 @@ const BAKED = vi.hoisted(() => {
 });
 afterAll(() => { delete (globalThis as Record<string, unknown>).__OHMAIL_ENGINE_VERSION__; });
 import { freshDataDir } from "./_datadir.js";
-import { BearerManager, PAIR_SCOPE_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../../desktop/src/host-client/bearer.js";
+import { BearerManager, PAIR_SCOPE_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../../paired-page/src/bearer.js";
 import { BearerManager as ShippedBearerManager } from "../../desktop/test/fixtures/host-bearer-0.30.13.js";
 
 /* The engine's own devDependency, reached through its package: neither app carries one. */
@@ -213,6 +213,10 @@ describe("ARMED — the desktop-host door, stdio→host end to end", () => {
       sse: false, staging: false, ai: false, pairing: true,
       // Same composition, same armed egress as the window's own door.
       remoteImages: true, accountHeader: true, forwardParts: true,
+      // An invitation may be answered by mail here (mail 0204); a fact of this build, as `accountHeader` is.
+      invitationAnswer: true,
+      // Search takes a person, unread and the days; a fact of this build.
+      searchPeople: true,
       // Same store and the same pass: a scheduled letter's files wait here (mail 0179).
       scheduleFiles: true,
     });
@@ -238,6 +242,12 @@ describe("ARMED — the desktop-host door, stdio→host end to end", () => {
     const sync = await sidecar.handleHost!(req("GET", "/sync", { bearer: tokens.accessToken }));
     expect(sync.status).toBe(200);
     expect(sync.headers.getSetCookie()).toEqual([]);
+    const snapshot = await sidecar.handleHost!(req("GET", "/sync/snapshot", { bearer: tokens.accessToken }));
+    expect(snapshot.status).toBe(200);
+    expect(snapshot.headers.get("x-ohmail-mirror-account")).toBe(sidecar.world.accountId);
+    const unpaired = await sidecar.handleHost!(req("GET", "/sync/snapshot"));
+    expect(unpaired.status).toBe(401);
+    expect(unpaired.headers.get("x-ohmail-mirror-account")).toBeNull();
 
     // 4. …and its session lives by the shared lifecycle: the refresh rotates, cookie-free.
     const rotated = await sidecar.handleHost!(req("POST", "/auth/refresh",

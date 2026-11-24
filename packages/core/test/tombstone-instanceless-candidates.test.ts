@@ -9,7 +9,7 @@ import { DrizzleRepo } from "../src/adapters/drizzle-repo.js";
  * follows the instance-less rows. Every shape the predicate tells apart is planted beside a crowd
  * of ordinary messages; the ORACLE is the scan as it stood before (one statement, every live
  * message probed). The phone runs the worker's cycle over the device store, so this file is
- * registered in `vitest.sqlite.config.ts` too.
+ * registered in `test/vitest.sqlite.config.ts` too.
  */
 const ACCOUNT = "00000000-0000-4000-8000-0000000000a1";
 const MAILBOX = "00000000-0000-4000-8000-0000000000b1";
@@ -42,14 +42,14 @@ async function seeded(shapes: Shape[], opts: { strayInOther?: boolean } = {}) {
     if (shape === "tombstoned") await db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, id(n)));
     if (shape === "junkParked") {
       await db.insert(folderState).values({
-        messageId: id(n), desiredFolder: "Junk", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled",
+        messageId: id(n), accountId: ACCOUNT, desiredFolder: "Junk", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled",
       });
     }
     if (shape === "undone" || shape === "moved") {
       // An Undo of a delete whose move may have landed, marked by its origin: kept until the
       // organizer has looked. A move and its undo leave the same row without the mark.
       await db.insert(folderState).values({
-        messageId: id(n), desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending",
+        messageId: id(n), accountId: ACCOUNT, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending",
         trashedFrom: shape === "undone" ? "INBOX" : null,
       });
     }
@@ -57,9 +57,9 @@ async function seeded(shapes: Shape[], opts: { strayInOther?: boolean } = {}) {
       // A landed delete: tombstoned, parked at its Trash UID, no copy on record.
       await db.update(messages).set({ deletedAt: new Date(), nativeLocator: { folder: "Trash", ref: `1:${n}` } }).where(eq(messages.id, id(n)));
       await db.insert(folderState).values({
-        messageId: id(n), desiredFolder: "Trash", observedFolder: "Trash", lastSetBy: "us", reconcileStatus: "reconciled",
+        messageId: id(n), accountId: ACCOUNT, desiredFolder: "Trash", observedFolder: "Trash", lastSetBy: "us", reconcileStatus: "reconciled",
       });
-      await db.insert(messageBodies).values({ messageId: id(n), text: "the text of a deleted letter", html: null });
+      await db.insert(messageBodies).values({ messageId: id(n), accountId: ACCOUNT, text: "the text of a deleted letter", html: null });
     }
   }
   // A located, instance-less message in the OTHER mailbox: never this mailbox's victim.

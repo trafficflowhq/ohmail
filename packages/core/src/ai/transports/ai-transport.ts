@@ -1,5 +1,5 @@
 import type {
-  AnthropicCallReport, ClassifierInput, ClassifierResult, DraftInput, DraftResult,
+  AiCallOptions, AnthropicCallReport, ClassifierInput, ClassifierResult, DraftInput, DraftResult,
 } from "../../mail.js";
 
 /**
@@ -48,7 +48,7 @@ export interface ProbeOutcome {
 
 export interface AiTransport {
   /** THE ROUTING QUESTION — "which folder does this belong in". Asked of live mail, per message. */
-  classify(input: ClassifierInput): Promise<ClassifierResult>;
+  classify(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult>;
   /**
    * The screening question — "what should happen to this first-contact sender". A different question
    * over a different answer set, asked only when a person presses a button about senders waiting at
@@ -59,8 +59,8 @@ export interface AiTransport {
    * (the fallback degrades the advice without endangering anything). `AiTransport` is INTERNAL with
    * both implementations here, so required means a third provider does not compile until taught it.
    */
-  screen(input: ClassifierInput): Promise<ClassifierResult>;
-  draft(input: DraftInput): Promise<DraftResult>;
+  screen(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult>;
+  draft(input: DraftInput, call?: AiCallOptions): Promise<DraftResult>;
   /** Never throws for anything the endpoint did. A refusal is an outcome, not an exception. */
   probe(): Promise<ProbeOutcome>;
 }
@@ -107,10 +107,10 @@ export function usageMeter(onUsage: TransportUsage | undefined, requested: strin
       outputTokens = count(o.output);
     },
     end(): void {
-      if (!onUsage) return;
+      if (!onUsage || attempts === 0) return;
       try {
         onUsage({
-          model, ok, status, latencyMs: Date.now() - startedAt, attempts: Math.max(attempts, 1),
+          model, ok, status, latencyMs: Date.now() - startedAt, attempts,
           requestId: null, inputTokens, outputTokens, cacheReadTokens: null, cacheWriteTokens: null,
           thinkingTokens: null, stopReason: null, costMicroUsd: null,
         });

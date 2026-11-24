@@ -1,7 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import {
   listRequestsForSurface, mailboxes, messages, MOVE_DESTINATIONS, WAITING_REQUESTS_READ_MAX,
-  type OrganizerRequestRow, type Tx,
+  validateFolderMovePayload, type OrganizerRequestRow, type Tx,
 } from "@trafficflow/db";
 import { bridgeTx, type ServiceContext } from "./context.js";
 
@@ -69,7 +69,8 @@ export async function listWaitingOnOrganizer(ctx: ServiceContext): Promise<Waiti
     .from(mailboxes).where(eq(mailboxes.accountId, ctx.accountId))).map((m) => [m.id, m.name ?? null]));
 
   // A move names its message by the key both installs share; this install's own row is the id.
-  const moveKeys = rows.flatMap((r) => (r.kind === "message.move" ? [str(obj(r.payload)?.dedupKey)] : []))
+  const isMove = (kind: string): boolean => kind === "message.move" || kind === "message.file";
+  const moveKeys = rows.flatMap((r) => (isMove(r.kind) ? [str(obj(r.payload)?.dedupKey)] : []))
     .filter((k): k is string => k !== null);
   const idOf = new Map<string, string>();
   if (moveKeys.length > 0) {
@@ -84,9 +85,11 @@ export async function listWaitingOnOrganizer(ctx: ServiceContext): Promise<Waiti
     const p = obj(r.payload) ?? {};
     let target: WaitingTarget;
     if (r.kind.startsWith("rule.")) target = ruleTarget(p);
-    else if (r.kind === "message.move") {
+    else if (isMove(r.kind)) {
       const key = str(p.dedupKey);
-      target = { messageId: key === null ? null : idOf.get(`${r.mailboxId}\u0000${key}`) ?? null, folder: pathOf(p.destination) ?? null };
+      // A person's own folder only as the move's own validator reads it; a place by its word.
+      const folder = r.kind === "message.file" ? validateFolderMovePayload(p)?.folder ?? null : pathOf(p.destination) ?? null;
+      target = { messageId: key === null ? null : idOf.get(`${r.mailboxId}\u0000${key}`) ?? null, folder };
     } else if (r.kind === "screener.decide" && str(p.scope) !== null && str(p.match) !== null) {
       target = { scope: p.scope as string, match: p.match as string };
     } else if (r.kind === "profile.update") target = { fields: Object.keys(p).sort() };

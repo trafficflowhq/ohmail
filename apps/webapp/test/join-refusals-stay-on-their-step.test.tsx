@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
+import { mailboxProbes } from "./join-mailbox-probes.js";
 
 type Messages = typeof en;
 
@@ -65,7 +66,7 @@ async function mount(messages: Messages = en, props: { initialCode: string; publ
   const React = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -83,32 +84,32 @@ async function mount(messages: Messages = en, props: { initialCode: string; publ
   });
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
+  /* The mailbox step is the one connect form: its fields by their labels, its tiles by their names. */
+  const probes = mailboxProbes(host, messages, act);
   const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
-    expect(input, `#${id} is not on screen`).toBeTruthy();
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
+    expect(probes.input(id), `#${id} is not on screen`).toBeTruthy();
+    await probes.type(id, value);
   };
+  /** A button by its words; a door's ink button carries its key after them. */
   const submit = async (label: string) => {
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label);
+    const buttons = [...host.querySelectorAll("button")];
+    const button = buttons.find((b) => b.textContent === label) ?? buttons.find((b) => b.textContent?.startsWith(label));
     expect(button, `no "${label}" button`).toBeTruthy();
     await act(async () => { button!.click(); });
     await settle();
   };
-  const h1 = () => host.querySelector("h1")?.textContent ?? "";
+  const h1 = () => (host.querySelector("[data-page-filling-form] h1") ?? host.querySelector("h1"))?.textContent ?? "";
   const alertText = () => [...host.querySelectorAll('[role="alert"]')].map((el) => el.textContent ?? "").join(" | ");
-  const value = (id: string) => host.querySelector<HTMLInputElement>(`#${id}`)?.value ?? null;
-  return { host, type, submit, h1, alertText, value, settle };
+  const value = (id: string) => probes.input(id)?.value ?? null;
+  return { host, type, submit, h1, alertText, value, settle, choose: probes.choose };
 }
 
 /** The generic entry, filled as a person on their own mail server fills it. */
 async function mailboxForm(messages: Messages, imapHost: string) {
   const ui = await mount(messages);
-  expect(ui.h1()).toBe(messages.join.step_mailbox_title);
-  const tile = [...ui.host.querySelectorAll('[role="radio"]')]
-    .find((b) => (b.textContent ?? "").startsWith(messages.providerPicker.otherLabel));
-  const React = await import("react");
-  await (React as unknown as { act: (cb: () => void) => Promise<void> }).act(() => { (tile as HTMLElement).click(); });
+  expect(ui.h1().trim()).toBe(messages.onboarding.providerFirst);
+  await ui.choose(messages.providerPicker.otherShort);
+  expect(ui.h1()).toBe(messages.join.manualTitle);
   await ui.type("join-mb-address", "pat@family.example");
   await ui.type("join-imap", imapHost);
   await ui.type("join-smtp", "smtp.family.example");
@@ -121,9 +122,9 @@ describe("the mailbox step keeps its own refusals", () => {
     const said = "That incoming (IMAP) server address names this machine or your own network, not a mail server on the internet.";
     mailboxAnswer = refusal(400, "validation_failed", said);
     const ui = await mailboxForm(en, "mail.home.lan");
-    await ui.submit(en.join.connectMailbox);
-    expect(ui.h1()).toBe(en.join.step_mailbox_title);
-    expect(ui.h1()).not.toBe(en.join.step_invite_title);
+    await ui.submit(en.join.manualConnect);
+    expect(ui.h1()).toBe(en.join.manualTitle);
+    expect(ui.h1()).not.toBe(en.join.myInvite.replace("<blank></blank>.", en.join.inviteLabel));
     expect(ui.alertText()).toContain(said);
     expect(ui.alertText()).not.toContain(en.join.inviteRequiredAfterAll);
     expect(ui.value("join-imap")).toBe("mail.home.lan");
@@ -134,8 +135,8 @@ describe("the mailbox step keeps its own refusals", () => {
     const said = "Mail is not carried on port 995. Use 993, 143.";
     mailboxAnswer = refusal(400, "validation_failed", said, { port: 995, ports: [993, 143] });
     const ui = await mailboxForm(en, "mail.family.example:995");
-    await ui.submit(en.join.connectMailbox);
-    expect(ui.h1()).toBe(en.join.step_mailbox_title);
+    await ui.submit(en.join.manualConnect);
+    expect(ui.h1()).toBe(en.join.manualTitle);
     expect(ui.alertText()).toContain(said);
   });
 
@@ -144,8 +145,8 @@ describe("the mailbox step keeps its own refusals", () => {
       "The mail server refused this password. If your provider requires an app-specific password, generate one there and use it here instead of your account password.",
       { reason: "auth", transport: "imap" });
     const ui = await mailboxForm(de, "mail.family.example");
-    await ui.submit(de.join.connectMailbox);
-    expect(ui.h1()).toBe(de.join.step_mailbox_title);
+    await ui.submit(de.join.manualConnect);
+    expect(ui.h1()).toBe(de.join.manualTitle);
     expect(ui.alertText()).toBe(de.mailboxes.probe_auth);
   });
 });
@@ -154,7 +155,7 @@ describe("the account step keeps its own refusals, and the invite step opens onl
   const openAccountForm = async (address: string) => {
     signedIn = false;
     const ui = await mount(en);
-    expect(ui.h1()).toBe(en.join.step_account_title);
+    expect(ui.h1()).toBe(en.join.account.replace("<name>,</name>", `${en.join.nameLabel},`).replace("<email>,</email>", `${en.join.emailLabel},`).replace("<password></password>.", en.join.passwordLabel));
     await ui.type("join-email", address);
     await ui.type("join-name", "Mila Reyes");
     await ui.type("join-pw", "a-long-enough-password");
@@ -164,8 +165,8 @@ describe("the account step keeps its own refusals, and the invite step opens onl
   it("an address the browser takes and the server does not (mila@gmailcom): still the account step, its own sentence", async () => {
     registerAnswer = refusal(400, "validation_failed", "email must be a valid address");
     const ui = await openAccountForm("mila@gmailcom");
-    await ui.submit(en.join.createAccount);
-    expect(ui.h1()).toBe(en.join.step_account_title);
+    await ui.submit(en.join.continue);
+    expect(ui.h1()).toBe(en.join.account.replace("<name>,</name>", `${en.join.nameLabel},`).replace("<email>,</email>", `${en.join.emailLabel},`).replace("<password></password>.", en.join.passwordLabel));
     expect(ui.alertText()).toContain(en.join.refusedEmail);
     expect(ui.value("join-email")).toBe("mila@gmailcom");
   });
@@ -173,8 +174,8 @@ describe("the account step keeps its own refusals, and the invite step opens onl
   it("the control: an API that still wants an invite under open signup opens the invite step", async () => {
     registerAnswer = refusal(400, "validation_failed", "inviteCode is required");
     const ui = await openAccountForm("mila@example.com");
-    await ui.submit(en.join.createAccount);
-    expect(ui.h1()).toBe(en.join.step_invite_title);
+    await ui.submit(en.join.continue);
+    expect(ui.h1()).toBe(en.join.myInvite.replace("<blank></blank>.", en.join.inviteLabel));
     expect(ui.alertText()).toContain(en.join.inviteRequiredAfterAll);
   });
 });

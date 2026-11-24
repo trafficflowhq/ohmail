@@ -1,0 +1,54 @@
+{
+  "event": {
+    "movePending": "Termin wird verschoben",
+    "undoDelete": "Rückgängig",
+    "deleteUndone": "Termin wiederhergestellt",
+    "undoLate": "Zu spät zum Rückgängigmachen",
+    "waiting": {
+      "device": "Wartet",
+      "provider": "Wartet"
+    },
+    "notSaved": "Nicht gespeichert",
+    "fault": {
+      "moveCopyLeft": "Der Termin ist noch in beiden Kalendern",
+      "moveUnresolved": "Das Verschieben konnte nicht bestätigt werden. Prüfe beide Kalender",
+      "moveDestinationUnavailable": "Der andere Kalender ist nicht mehr verfügbar",
+      "signIn": "Die Anmeldung beim Kalender muss erneuert werden.",
+      "notAllowed": "Der Kalender lässt diese Änderung nicht zu.",
+      "gone": "Der Termin ist nicht mehr in diesem Kalender.",
+      "unreachable": "Der Kalender war nicht erreichbar.",
+      "notKept": "Der Kalender würde diese Änderung nicht so behalten.",
+      "stale": "Anderswo geändert",
+      "versionUnknown": "Die Fassung des Kalenders war nicht lesbar, darum wurde nichts gesendet.",
+      "earlier": "Eine frühere Änderung dieses Termins wurde nicht gespeichert, darum wurde diese nicht gesendet.",
+      "chained": "Erneut drücken, sobald die Änderung davor erledigt ist.",
+      "expired": "Diese Änderung hat zu lange gewartet und wurde nicht gesendet.",
+      "unknown": "Die Änderung wurde nicht gespeichert."
+    },
+    "refusal": {
+      "changed": "Der Termin wurde geändert. Öffne ihn erneut, um die aktuelle Version zu sehen.",
+      "off": "Der Kalender ist für diesen Account ausgeschaltet.",
+      "readOnly": "Dieser Kalender kann angesehen, aber nicht geändert werden.",
+      "full": "Zu viele Änderungen warten. Bitte gleich noch einmal versuchen.",
+      "left": "Sie wird gerade gesendet. Verwerfen geht, sobald der Kalender geantwortet hat.",
+      "connection": "Die Verbindung dieses Kalenders wartet in den Einstellungen auf Sie.",
+      "invalid": "Diese Änderung war so nicht lesbar.",
+      "gone": "Dieser Termin ist nicht mehr da.",
+      "tooLarge": "Diese Änderung ist zu groß zum Senden.",
+      "replay": "Dieser Druck wurde schon mit anderem Inhalt gesendet.",
+      "unknown": "Die Änderung wurde nicht gespeichert."
+    },
+    "taken": {
+      "deleteAudience": "Absage an {guests} gesendet",
+      "create": "Termin hinzugefügt",
+      "update": "Geändert",
+      "delete": "Gelöscht",
+      "move": "Termin verschoben",
+      "answer": "Antwort gespeichert",
+      "retry": "Wird erneut gesendet",
+      "dismiss": "Änderung verworfen",
+      "updateAudience": "Änderung an {guests} gesendet",
+      "invitationAudience": "Einladung an {guests} gesendet"
+    }
+  }
+}

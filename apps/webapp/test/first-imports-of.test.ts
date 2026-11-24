@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firstImportsOf } from "../app/shell/consent-options";
+import { firstImportsOf } from "@ohmail/app-logic/press/consent-options";
 
 /**
  * THE STAMP THE SCREENER DATES A HELD CLAIM AGAINST (REVIEW-026 LOW 4). A Cloud-paired desktop's row

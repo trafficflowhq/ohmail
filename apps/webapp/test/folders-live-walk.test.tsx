@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { getByRole, getByTitle, queryByRole, within } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell,
@@ -14,7 +15,7 @@ import {
  *     no Folders group, nothing to collapse. The flag is the authority; entities are data.
  *  2. FLAG ON: the rail grows the Folders group under Tags, with the folder and its unread
  *     count; pressing the row routes to `#/folder/<id>` and the view lists the folder's mail
- *     in the standard New / Earlier grouping, read in place.
+ *     in one list, with unread mail above earlier read mail and each row's read state exposed.
  *  3. HISTORY IS A LENS: an old, read message from an unscreened sender that lives in a user
  *     folder appears in History wearing its folder as the place badge — and it is still in its
  *     folder's own list, because a lens never empties the place it looks at.
@@ -90,13 +91,11 @@ describe("flag off — the pre-feature rail, rendered", () => {
     answerSyncWith(world);
     const el = await mountShell([mailbox()]);
     await tick(30_000);
-    // The group's toggle would say "Folders"; the rail must not carry it, nor any folder row.
-    expect(el.querySelector(".frow")).toBeNull();
-    const toggles = [...el.querySelectorAll(".rlabel-toggle")].map((n) => n.textContent?.trim());
-    expect(toggles).not.toContain("Folders");
-    // And the folder deep link falls back to the Ohbox rather than opening a hidden view.
+    expect(queryByRole(el, "button", { name: "Folders" })).toBeNull();
+    expect(queryByRole(el, "button", { name: /^Acme/ })).toBeNull();
+    // A deep link cannot open a Folder when consent is off.
     await goHash("#/folder/fd1");
-    expect(el.querySelector(".view-folder")).toBeNull();
+    expect(queryByRole(el, "heading", { name: "Acme" })).toBeNull();
   });
 });
 
@@ -110,28 +109,23 @@ describe("flag on — the rail group, the view, the lens", () => {
     const el = await mountShell([mailbox()]);
     await tick(30_000);
 
-    const toggles = [...el.querySelectorAll(".rlabel-toggle")].map((n) => n.textContent?.trim());
-    // Under Tags: both groups present, Tags first.
-    expect(toggles.indexOf("Folders")).toBeGreaterThan(toggles.indexOf("Tags"));
+    const tags = getByRole(el, "button", { name: "Tags" });
+    const folders = getByRole(el, "button", { name: "Folders" });
+    expect(tags.compareDocumentPosition(folders) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const row = getByRole(el, "button", { name: "Acme, 1 unread" });
+    expect(textOf(row)).toContain("1");
 
-    const row = el.querySelector('[data-rail-folder-id="fd1"]') as HTMLElement;
-    expect(row, "the folder row is missing from the rail").not.toBeNull();
-    // "Projects/Acme" has no parent row in this inventory, so it renders as a ROOT showing its
-    // leaf — the label is the leaf, the title carries the full path.
-    expect(row.getAttribute("title")).toBe("Projects/Acme");
-    // One unread message in the folder — the badge says so.
-    expect(row.querySelector(".cnt")?.textContent).toBe("1");
-
-    await act(async () => { row.click(); await Promise.resolve(); });
+    await act(async () => { row.click(); });
     await tick(0);
     expect(window.location.hash).toBe("#/folder/fd1");
-    const view = el.querySelector(".view-folder") as HTMLElement;
-    expect(view).not.toBeNull();
-    // The standard grouping: the unread arrival under New, the old read one under Earlier.
-    expect(textOf(view)).toContain("New");
-    expect(textOf(view)).toContain("Earlier");
-    expect(textOf(view)).toContain("subject of fm-new");
-    expect(textOf(view)).toContain("subject of fm-old");
+    expect(getByRole(el, "heading", { name: "Acme" })).toBeDefined();
+    expect(getByTitle(el, /Projects \/ Acme$/)).toBeDefined();
+    const list = within(getByRole(el, "listbox", { name: "Acme" }));
+    const unread = list.getByRole("option", { name: /subject of fm-new/ });
+    const read = list.getByRole("option", { name: /subject of fm-old/ });
+    expect(list.getAllByRole("option")).toEqual([unread, read]);
+    expect(unread.getAttribute("aria-description")).toBe("unread");
+    expect(read.getAttribute("aria-description")).toBe("read");
   });
 
   it("History shows the folder-filed old read mail, badged with its folder — and the folder keeps it", async () => {
@@ -139,15 +133,14 @@ describe("flag on — the rail group, the view, the lens", () => {
     await tick(30_000);
 
     await goHash("#/history");
-    const history = textOf(el.querySelector(".view") as HTMLElement);
-    expect(history).toContain("subject of fm-old");
-    // The place badge is the server's own folder — the lens, not a move.
-    const row = [...el.querySelectorAll(".row")].find((r) => textOf(r as HTMLElement).includes("fm-old"));
-    expect(row).toBeDefined();
-    expect(textOf(row as HTMLElement)).toContain("Projects/Acme");
+    const history = getByRole(el, "listbox", { name: "History" });
+    const row = within(history).getByRole("option", { name: /subject of fm-old/ });
+    expect(textOf(row)).toContain("Projects/Acme");
 
     // The lens never empties the place it looks at: the folder's list still holds the row.
     await goHash("#/folder/fd1");
-    expect(textOf(el.querySelector(".view-folder") as HTMLElement)).toContain("subject of fm-old");
+    const list = within(getByRole(el, "listbox", { name: "Acme" }));
+    const read = list.getByRole("option", { name: /subject of fm-old/ });
+    expect(read.getAttribute("aria-description")).toBe("read");
   });
 });

@@ -8,7 +8,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * EVERY STORE READ ON THE WEB AND THE PHONE GOES THROUGH THE ONE RE-ASK.
  *
  * SCANNED ROOTS: `apps/webapp/app`, `apps/mobile/src`, `apps/mobile/app` — none is this package,
- * so it runs by its scanned roots (CLAUDE.md's census rule). A store read is a render bind of a
+ * so it runs by its scanned roots (AGENTS.md's census rule). A store read is a render bind of a
  * History or Search walker (`useSyncExternalStore` over its `subscribe`); each one needs a
  * `useSessionReask` call in its file, and each platform's `useSessionReask` calls the engine's
  * `createSessionReask`. The phone's two reads had none: a 401 there stayed "did not answer".
@@ -16,19 +16,21 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
 const ROOTS: Array<[string, URL]> = [
   ["apps/webapp/app", new URL("../../../apps/webapp/app/", import.meta.url)],
+  ["packages/app-logic/src", new URL("../../app-logic/src/", import.meta.url)],
+  ["packages/letter-body/src", new URL("../../letter-body/src/", import.meta.url)],
   ["apps/mobile/src", new URL("../../../apps/mobile/src/", import.meta.url)],
   ["apps/mobile/app", new URL("../../../apps/mobile/app/", import.meta.url)],
 ];
 
 /** Every render bind the roots hold today, by file. A new one is named here on purpose. */
 const BINDS: Record<string, number> = {
-  "apps/webapp/app/shell/store-timeline.ts": 1,
-  "apps/webapp/app/views/SearchView.tsx": 1,
+  "packages/app-logic/src/session/store-timeline.ts": 1,
+  "packages/app-logic/src/search/store-pass.ts": 1,
   "apps/mobile/src/state/store-views.ts": 2,
 };
 
 /** Each platform's one adapter over the engine's rule. */
-const ADAPTERS = ["apps/webapp/app/shell/session-reask.ts", "apps/mobile/src/state/store-views.ts"];
+const ADAPTERS = ["packages/app-logic/src/session/session-reask.ts", "apps/mobile/src/state/store-views.ts"];
 
 const WALKER_SOURCE = /new\s+Store(?:Timeline|Search)Walker\(|store(?:Search)?WalkerFor\(|\.store\.(?:walker|searchWalker)\b/;
 

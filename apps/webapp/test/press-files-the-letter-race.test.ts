@@ -1,3 +1,10 @@
+import type {
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  MessageBodyWire,
+  RuleEntity as RuleDTO,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -13,18 +20,13 @@ import {
   presentationReader,
   pressForecast,
   rulesList,
-  type EngineMessage,
-  type EngineMutation,
   type EntityReader,
-  type Folder,
-  type MessageBodyWire,
-  type RuleDTO,
   type ScreenIntent,
   type SyncChange,
 } from "@ohmail/client-engine";
 import {
   movesAtLanding, planScreeningChange, ruleMatchOf, screeningPath, senderScreening,
-} from "../app/shell/sender-screening";
+} from "@ohmail/app-logic/press/sender-screening";
 
 /*
  * THE JUST-ARRIVED RACE (RULE-FILED-MESSAGE-SNAPS-BACK-TO-OHBOX): the sender sheet's rule press on

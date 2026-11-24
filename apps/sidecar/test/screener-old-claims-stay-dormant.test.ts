@@ -6,9 +6,9 @@ import {
   accounts, accountSettings, contacts, folderState, mailboxes, messageBodies, messages, rules, type Tx,
 } from "@trafficflow/db";
 import { ScreenerService, cutlineCounts, unscreenedSummary, type ServiceContext } from "@trafficflow/services";
-import { senderCheckBackfillPass } from "@trafficflow/worker/sender-check-backfill";
-import { ruleRetroPass } from "@trafficflow/worker/rule-retro";
-import { screenerCorrespondentRetroPass } from "@trafficflow/worker/screener-correspondent-retro";
+import { senderCheckBackfillPass } from "@ohmail/organizer/sender-check-backfill";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
+import { screenerCorrespondentRetroPass } from "@ohmail/organizer/screener-correspondent-retro";
 
 /**
  * THE IDENTITY BACKFILL NEVER RESURFACES MAIL FROM BEFORE THE CUTLINE (hotfix 0.25.19). An install
@@ -46,9 +46,9 @@ async function world() {
       date: o.date, arrivedAt: o.arrivedAt, unread: o.unread ?? false, createdAt: o.createdAt ?? STORE_BUILT,
       nativeLocator: { folder: o.folder, ref: `1:${ids.length + 1}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: o.folder, observedFolder: o.folder, lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: o.folder, observedFolder: o.folder, lastSetBy: "us",
       reconcileStatus: "reconciled", conflict: false,
     });
     ids.push(m!.id);

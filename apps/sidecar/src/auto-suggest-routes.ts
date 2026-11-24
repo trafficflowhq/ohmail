@@ -1,9 +1,10 @@
 import { eq } from "drizzle-orm";
 import { jsonResponse, type Route } from "@trafficflow/api/local";
 import { accountSettings } from "@trafficflow/db";
-import { ServiceError, setAutoSuggest, type ServiceContext } from "@trafficflow/services/mail";
+import { ServiceError, setAutoSuggest } from "@trafficflow/services/mail";
 import type { AiProviderKind, LocalAi } from "./ai-provider.js";
 import type { LocalDb } from "./db.js";
+import { ownContextOf } from "./store-binding.js";
 
 /**
  * The two routes a standalone install serves for "suggest for new senders as they arrive". Not
@@ -100,13 +101,11 @@ export function localAutoSuggestRoutes(deps: {
           throw new ServiceError("validation_failed", 400, "on must be true or false");
         }
         // The SHARED writer, so the timestamp this stamps is the one the hosted route stamps and
-        // the pass reads one meaning of the column. A `ServiceContext` is built inline because this
-        // engine has no session behind the request that a `serviceContext(deps, req)` could read:
-        // the local API mints one bearer per launch for the shell that spawned it, and the account
-        // is this install's own. `userId` is null for the same reason every local pass leaves it so.
-        const ctx: ServiceContext = {
-          db, accountId, userId: null, now, requestId: "local-auto-suggest",
-        };
+        // the pass reads one meaning of the column. The context is the engine's own and not the
+        // request's: the local API mints one bearer per launch for the shell that spawned it, and
+        // the account is this install's own, the one this store holds. No user stands behind it,
+        // as behind every local pass.
+        const ctx = ownContextOf(db, { accountId }, { now, requestId: "local-auto-suggest" });
         await setAutoSuggest(ctx, body.on);
         // Re-READ rather than compose the answer from what was asked for, so the window renders
         // what is stored. Same discipline the screening pane's controls follow.

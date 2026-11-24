@@ -76,13 +76,15 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 
-/** The interface sources: the shared UI package, the shell and views, and the desktop window. */
+/** The interface sources: the shared UI package, the shell and views, and the desktop window, the paired page. */
 export const COPY_CENSUS_ROOTS = [
   "packages/ui/src",
   "apps/webapp/app/shell",
-  "apps/webapp/app/views",
+  "packages/app/src/stream",
   "apps/webapp/app/components",
+  "packages/letter-body/src",
   "apps/desktop/src",
+  "apps/paired-page/src",
 ];
 
 /**
@@ -307,6 +309,489 @@ export interface KeyRead {
   dotted: string;
 }
 
+/**
+ * ── A READER CAN ALSO BE HANDED IN ─────────────────────────────────────────────────────────
+ *
+ * The files below call no `useTranslations`: their caller hands them the reader (a hook in
+ * `packages/app-logic` may not import `next-intl`). The binding the scan keys on is then in
+ * another file, and every `t("…")` here was outside the census until this table: 77 reads in the
+ * first three, measured when they moved, and 37 in the dispatch spine, which moved before them;
+ * the Ohbox's key table and walk (26), since its behaviour left the view for `useOhboxList`.
+ * Each row names the identifier the file reads through and the namespace its caller binds,
+ * and `glue` names where that choice is made, which `handedReaderNamespaces` reads back.
+ */
+type MountedReader =
+  | "junk" | "composer" | "press" | "ohbox" | "cursorKeys" | "cursorHint" | "ohboxWords"
+  | "contact" | "verdict" | "stream" | "trash" | "search";
+
+export interface HandedReaders {
+  /** Identifier in the file → the namespace of the reader it holds ("" is the catalogue root). */
+  readers: Record<string, string | readonly string[]>;
+  /** This file passes its reader onward without calling it. */
+  forwardsTo?: string;
+  /**
+   * Where the namespaces are chosen: every reader bound in that file, or every reader handed at each call of that
+   * hook. The mounted suggestion record is resolved through its consumer.
+   */
+  glue:
+    | { file: string }
+    | { call: string }
+    | { calls: readonly string[] }
+    | { mountedScreener: "state" | "suggestions" }
+    | { mounted: MountedReader };
+}
+
+const SCREENER_WORDS = "packages/app/src/screener/words.ts";
+const SCREENER_MOUNT = "packages/app/src/mail/ground/ScreenerMount.tsx";
+
+export const HANDED_READERS: Record<string, HandedReaders> = {
+  "packages/app-logic/src/screener/screener-state.ts": {
+    readers: { t: "screener", ts: "screening", tWhy: "ohbox", tSession: "session" },
+    glue: { mountedScreener: "state" },
+  },
+  "packages/app-logic/src/screener/junk-window.ts": {
+    readers: { t: "screener" },
+    glue: { mounted: "junk" },
+  },
+  "packages/app-logic/src/screener/screener-suggest.ts": {
+    readers: { t: "screener", tAi: "aiRefusal" },
+    glue: { mountedScreener: "suggestions" },
+  },
+  /* The send machine's words are made from the composer's own reader (`useSendText`), chosen where the composer is called. */
+  "packages/app-logic/src/writing/mail-send.ts": {
+    readers: { t: "" },
+    glue: { mounted: "composer" },
+  },
+  /* The drafted reply's hook is handed the composer's own reader: the one chosen at each call of the composer. */
+  "packages/app-logic/src/writing/draft-reply.ts": {
+    readers: { t: "" },
+    glue: { mounted: "composer" },
+  },
+  "packages/app-logic/src/writing/shell-compose.ts": {
+    readers: { t: "" },
+    glue: { mounted: "composer" },
+  },
+  /* No product code calls useRowBadgeCopy until the list places are mounted. */
+  "packages/app-logic/src/text/row-copy.ts": {
+    readers: { tOhbox: "ohbox" },
+    glue: { calls: ["useSentLabel"] },
+  },
+  "packages/app-logic/src/keys/zone-nav.ts": {
+    readers: { t: "shortcuts" },
+    glue: { call: "useZoneNav" },
+  },
+  "packages/app-logic/src/press/shell-dispatch.ts": {
+    readers: { t: "" },
+    glue: { mounted: "press" },
+  },
+  "packages/app-logic/src/ohbox/keys.ts": {
+    readers: { t: "ohbox" },
+    glue: { mounted: "ohbox" },
+  },
+  "packages/app-logic/src/ohbox/walk.ts": {
+    readers: { t: "ohbox" },
+    glue: { mounted: "ohbox" },
+  },
+  "packages/app-logic/src/ohbox/cursor-verbs.ts": {
+    readers: { t: "shortcuts" },
+    glue: { mounted: "cursorKeys" },
+  },
+  "packages/app-logic/src/ohbox/live.ts": {
+    readers: { "own.cursor": "cursor" },
+    forwardsTo: "packages/app-logic/src/keys/keymap.ts",
+    glue: { mounted: "cursorHint" },
+  },
+  // Ohbox and the shared list setup hand the reader to cursorPlacementText.
+  "packages/app-logic/src/keys/keymap.ts": {
+    readers: { cursor: "cursor" },
+    glue: { mounted: "cursorHint" },
+  },
+  "packages/app-logic/src/ohbox/live-verbs.ts": {
+    readers: { words: "" },
+    glue: { mounted: "ohboxWords" },
+  },
+  "packages/app-logic/src/press/contact-screening.ts": {
+    readers: { t: "" },
+    glue: { mounted: "contact" },
+  },
+  "packages/app-logic/src/press/press-verdict.ts": {
+    readers: { t: "screening" },
+    glue: { mounted: "verdict" },
+  },
+  "packages/app-logic/src/streams/live.ts": {
+    readers: { t: ["news", "receipts"] },
+    glue: { mounted: "stream" },
+  },
+  "packages/app-logic/src/trash/live.ts": {
+    readers: { t: "shortcuts" },
+    glue: { mounted: "trash" },
+  },
+  "packages/app-logic/src/search/live.ts": {
+    readers: { "own.t": "search" },
+    forwardsTo: "packages/app-logic/src/search/facets.ts",
+    glue: { mounted: "search" },
+  },
+  "packages/app-logic/src/search/facets.ts": {
+    readers: { t: "search" },
+    glue: { mounted: "search" },
+  },
+  "packages/app-logic/src/search/keys.ts": {
+    readers: { t: "search" },
+    glue: { mounted: "search" },
+  },
+};
+
+/** Read the namespace from a translator hook. Null marks a computed namespace. */
+function readerNamespace(e: ts.Expression, hook?: string): string | null | undefined {
+  e = unwrapped(e);
+  if (!ts.isCallExpression(e) || !ts.isIdentifier(e.expression)) return undefined;
+  const name = e.expression.text;
+  if (hook === undefined ? name !== "useTranslations" && name !== "useText" : name !== hook) return undefined;
+  const arg = e.arguments[0];
+  return arg === undefined ? "" : ts.isStringLiteral(arg) ? arg.text : null;
+}
+
+function unwrapped(e: ts.Expression): ts.Expression {
+  while (ts.isAsExpression(e) || ts.isParenthesizedExpression(e)) e = e.expression;
+  return e;
+}
+
+function sourceFiles(repo: string, roots: string[]): string[] {
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== "node_modules") walk(p);
+      } else if (e.name.endsWith(".ts") || e.name.endsWith(".tsx")) files.push(p);
+    }
+  };
+  for (const root of roots) walk(path.join(repo, root));
+  return files;
+}
+
+const parse = (file: string): ts.SourceFile =>
+  ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+type SourceScope = ts.SourceFile | ts.FunctionDeclaration;
+
+function findOne<T extends ts.Node>(scope: SourceScope, label: string, matches: (n: ts.Node) => n is T): T {
+  const found: T[] = [];
+  const visit = (n: ts.Node): void => {
+    if (matches(n)) found.push(n);
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  if (found.length !== 1) throw new Error(`${scope.getSourceFile().fileName}: expected one ${label}, found ${found.length}`);
+  return found[0]!;
+}
+
+/** Follow the reader records from the mounted frame to the state and suggestion hooks. */
+export function mountedScreenerReaderBindings(repo: string) {
+  const logic = "packages/app-logic/src/screener";
+  const declared = (file: string, name: string) =>
+    findOne(parse(path.join(repo, file)), name,
+      (n): n is ts.FunctionDeclaration => ts.isFunctionDeclaration(n) && n.name?.text === name);
+  const call = (scope: SourceScope, name: string) =>
+    findOne(scope, name, (n): n is ts.CallExpression =>
+      ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name);
+  const initializer = (scope: SourceScope, name: string): ts.Expression => {
+    const decl = findOne(scope, name, (n): n is ts.VariableDeclaration =>
+      ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name);
+    if (!decl.initializer) throw new Error(`${name} has no initializer`);
+    return unwrapped(decl.initializer);
+  };
+  const field = (record: ts.Expression | undefined, name: string): ts.Expression => {
+    if (!record || !ts.isObjectLiteralExpression(record) || record.properties.some(ts.isSpreadAssignment)) {
+      throw new Error(`expected an explicit reader record for ${name}`);
+    }
+    const props = record.properties.filter((prop) => prop.name?.getText() === name);
+    const prop = props.length === 1 ? props[0] : undefined;
+    if (prop && ts.isShorthandPropertyAssignment(prop)) return prop.name;
+    if (prop && ts.isPropertyAssignment(prop)) return unwrapped(prop.initializer);
+    throw new Error(`expected one reader field named ${name}`);
+  };
+  const requireSource = (node: ts.Node | undefined, expected: string): void => {
+    if (node?.getText() !== expected) throw new Error(`expected reader ${expected}, found ${node?.getText()}`);
+  };
+  const memoRecord = (expr: ts.Expression): ts.Expression => {
+    const fn = ts.isCallExpression(expr) && expr.expression.getText() === "useMemo" ? expr.arguments[0] : undefined;
+    if (!fn || !ts.isArrowFunction(fn) || ts.isBlock(fn.body)) throw new Error("expected a memoized reader record");
+    return unwrapped(fn.body);
+  };
+  const namespace = (scope: SourceScope, reader: ts.Expression): string | null => {
+    const expr = ts.isIdentifier(reader) ? initializer(scope, reader.text) : reader;
+    return readerNamespace(expr, "useText") ?? null;
+  };
+
+  const mount = declared(SCREENER_MOUNT, "ScreenerMount");
+  const liveInput = call(mount, "useScreenerLive").arguments[0];
+  const words = field(liveInput, "text");
+  requireSource(ts.isIdentifier(words) ? initializer(mount, words.text) : words, "useScreenerWords()");
+  const producer = declared(SCREENER_WORDS, "useScreenerWords");
+  const record = memoRecord(call(producer, "useMemo"));
+
+  const live = declared(`${logic}/live.ts`, "useScreenerLive");
+  const input = live.parameters[0]?.name;
+  for (const name of ["text", "aiRefusal"]) {
+    if (!input || !ts.isObjectBindingPattern(input) ||
+        !input.elements.some((element) => !element.propertyName && element.name.getText() === name)) {
+      throw new Error(`the live hook no longer receives ${name} from its mounted caller`);
+    }
+  }
+  requireSource(field(call(live, "useScreenerModel").arguments[0], "text"), "text");
+  const model = declared(`${logic}/model.ts`, "useScreenerModel");
+  requireSource(call(model, "useScreenerState").arguments[4], "input.text");
+  const stateHook = declared(`${logic}/screener-state.ts`, "useScreenerState");
+  requireSource(stateHook.parameters[4]?.name, "text");
+  const state = Object.fromEntries(Object.entries({
+    t: "screener", ts: "screening", tWhy: "ohbox", tSession: "session",
+  }).map(([reader, fieldName]) => {
+    requireSource(initializer(stateHook, reader), `text.${fieldName}`);
+    return [reader, namespace(producer, field(record, fieldName))];
+  }));
+
+  const suggestionsText = field(call(live, "useScreenerSuggestions").arguments[0], "text");
+  const suggestionsRecord = memoRecord(ts.isIdentifier(suggestionsText)
+    ? initializer(live, suggestionsText.text) : suggestionsText);
+  requireSource(field(suggestionsRecord, "screener"), "text.screener");
+  requireSource(field(suggestionsRecord, "aiRefusal"), "aiRefusal");
+  const suggestHook = declared(`${logic}/screener-suggest.ts`, "useScreenerSuggestions");
+  requireSource(initializer(suggestHook, "t"), "opts.text.screener");
+  requireSource(initializer(suggestHook, "tAi"), "opts.text.aiRefusal");
+  return {
+    state,
+    suggestions: {
+      t: state.t ?? null,
+      tAi: namespace(mount, field(liveInput, "aiRefusal")),
+    },
+  };
+}
+
+/** Verify the reader's path through the mounted shell, including each forwarding record. */
+function mountedNamespaces(repo: string, mounted: MountedReader): Set<string | null> {
+  const printer = ts.createPrinter({ removeComments: true });
+  const compact = (source: string) => source.replace(/\s+/g, "");
+  const source = (file: string, ...links: string[]) => {
+    const code = compact(printer.printFile(parse(path.join(repo, file))));
+    for (const link of links) {
+      if (!code.includes(compact(link))) throw new Error(`${file}: missing reader link ${link}`);
+    }
+  };
+  const logic = "packages/app-logic/src";
+  const app = "packages/app/src";
+  if (mounted === "junk") {
+    source(`${logic}/screener/live.ts`, "useJunkHere(press, junkWire, text.screener, at,",
+      "useJunkWindow(on && at.third, press.undoToast, wire, t, on && at.screener, keep)");
+    return new Set([mountedScreenerReaderBindings(repo).state.t ?? null]);
+  }
+  if (mounted === "composer") {
+    source(`${app}/mail/ground/WritingMount.tsx`, "const inputs = useWritingInputs();",
+      "useShellCompose(inputs.composer)");
+    source(`${app}/mail/ground/writing-inputs.ts`, "const t = useCatalogue();",
+      "const composer: ShellComposeInput = { engine, reader, t,",
+      "return { composer, engine, scope, replyTo, facts, lists, t };",
+      "return useMemo(() => catalogueOver(textOf), [textOf]);",
+      "const textOf = useTextLookup();",
+      "textOf(key.slice(0, dot))(key.slice(dot + 1), values as never)");
+    source(`${logic}/writing/shell-compose.ts`, "useDraftReply({ onDraft, wire: draftReplyWire, t })",
+      "useMailSend(engine, scope, toast, useSendText(t, words.scheduleLabel),");
+    return new Set([""]);
+  }
+  if (mounted === "press") {
+    source(`${app}/frame/room.tsx`,
+      "useShellDispatch({ engine, reader, toast: report, t, placeLabel, demo, refreshFacts, scope })",
+      "const t = useMemo(() => pressWords({ ohbox, screener, trash, screening, session, shortcuts })",
+      ...["ohbox", "screener", "trash", "screening", "session", "shortcuts"].map(
+        (ns) => `const ${ns} = useText("${ns}");`,
+      ));
+    source(`${logic}/reader/press-words.ts`, "return wordsOver(texts);",
+      "const text = dot > 0 ? texts[key.slice(0, dot)] : undefined;",
+      "return text ? text(key.slice(dot + 1), values)");
+    return new Set([""]);
+  }
+  if (mounted === "cursorKeys" || mounted === "cursorHint") {
+    source(`${app}/ohbox/Seat.tsx`, "const own = useOwn(", "useOhboxLive(args, own,",
+      mounted === "cursorKeys" ? 'shortcuts: useText("shortcuts")' : 'cursor: useText("cursor")');
+    if (mounted === "cursorKeys") {
+      source(`${logic}/ohbox/live.ts`, "cursorRowKeys({ t: own.shortcuts,");
+      return new Set(["shortcuts"]);
+    }
+    source(`${logic}/ohbox/live.ts`, "args.report(cursorPlacementText(own.cursor, label),");
+    source(`${app}/place-list/own.ts`, 'const cursor = useText("cursor");',
+      "placed: (label: string) => cursorPlacementText(cursor, label)");
+    source(`${logic}/keys/keymap.ts`, 'return cursor("placed", { label });');
+    return new Set(["cursor"]);
+  }
+  if (mounted === "ohboxWords") {
+    source(`${app}/ohbox/Seat.tsx`, 'const markAll = useText("markAll");',
+      "wordsOver({ ohbox: t, screening, session, tag, markAll })", "return { t, words,",
+      "const own = useOwn(", "useOhboxLive(args, own,");
+    source(`${logic}/ohbox/live.ts`, "useOhboxVerbs({", "words: own.words");
+    source(`${logic}/ohbox/live-verbs.ts`, "const { args, mirror, words } = input;");
+    return new Set([""]);
+  }
+  if (mounted === "contact") {
+    source(`${app}/reader/contact/Screening.tsx`, "const lookup = useTextLookup();",
+      "screenContact({ ...input, dest,", "toast: report, t: (key, values) =>",
+      "return lookup(key.slice(0, dot))(key.slice(dot + 1), values);");
+    return new Set([""]);
+  }
+  if (mounted === "verdict") {
+    source(`${logic}/screener/screener-state.ts`, "verdictSentence(ts, verdict, sender, piles[d.dest])");
+    return new Set([mountedScreenerReaderBindings(repo).state.ts ?? null]);
+  }
+  if (mounted === "stream") {
+    source(`${app}/stream/Seat.tsx`, "const t = useStreamText(place);",
+      "const own: StreamLiveOwn = useMemo(() => ({ t, zone, onPageHide: subscribe })",
+      "useStreamLive(place, args, own)");
+    source(`${app}/stream/words.ts`, 'const news = useText("news");',
+      'const receipts = useText("receipts");', 'return place === "news" ? news : receipts;');
+    return new Set(["news", "receipts"]);
+  }
+  if (mounted === "search") {
+    source(`${app}/search/Seat.tsx`, "function useOwn(): SearchLiveOwn {",
+      'const t = useText("search");', "(): SearchLiveOwn => ({ t,",
+      "const own = useOwn();", "useSearchLive(args, own)");
+    source(`${logic}/search/live.ts`, "const model = useSearchList({", "t: own.t,");
+    source(`${logic}/search/search-list.ts`, "const facets = useFacets({", "useSearchKeys({", "t,");
+    return new Set(["search"]);
+  }
+  if (mounted === "trash") {
+    source(`${app}/trash/Seat.tsx`, 'shortcuts: useText("shortcuts")', "useTrashLive(args, useOwn())");
+    source(`${logic}/trash/live.ts`, "useKeyBindings(noEraseKeys(own.shortcuts));");
+    return new Set(["shortcuts"]);
+  }
+  source(`${app}/ohbox/Seat.tsx`, 'const t = useText("ohbox");',
+    "return { t, words, shortcuts:", "const own = useOwn(", "useOhboxLive(args, own,");
+  source(`${logic}/ohbox/live.ts`, "const model = useOhboxList({", "t: own.t,");
+  source(`${logic}/ohbox/ohbox-list.ts`, "const t = input.t;",
+    "walkSteps({ order, at, t, selectByUser, setLandedOn:", "ohboxKeys({ ...pickSet, ...pickVerbs, ...marks, ...steps, t,");
+  return new Set(["ohbox"]);
+}
+
+/**
+ * The namespaces a row's glue chooses: for `{ file }` every reader bound in that file, for
+ * `{ call }` (and each of `{ calls }`) every reader handed at a call of that hook, as an argument (`useZoneNav(
+ * useTranslations("shortcuts"), …)`) or as a property of one (`useShellDispatch({ t })`, where
+ * `t` is resolved to the nearest binding as the scan does). A variable namespace answers null.
+ */
+export function handedReaderNamespaces(repo: string, roots: string[], glue: HandedReaders["glue"]): Set<string | null> {
+  if ("mounted" in glue) return mountedNamespaces(repo, glue.mounted);
+  if ("mountedScreener" in glue) return new Set(Object.values(mountedScreenerReaderBindings(repo)[glue.mountedScreener]));
+  const out = new Set<string | null>();
+  const files = "file" in glue ? [path.join(repo, glue.file)] : sourceFiles(repo, roots);
+  for (const file of files) {
+    const sf = parse(file);
+    const calls = "call" in glue ? [glue.call] : "calls" in glue ? glue.calls : [];
+    const scopes: Map<string, string | null>[] = [new Map()];
+    const lookup = (name: string): string | null | undefined => {
+      for (let i = scopes.length - 1; i >= 0; i--) if (scopes[i]!.has(name)) return scopes[i]!.get(name);
+      return undefined;
+    };
+    const isScope = (n: ts.Node): boolean =>
+      ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n)
+      || ts.isMethodDeclaration(n) || ts.isBlock(n) || ts.isSourceFile(n);
+    const handed = (e: ts.Expression): string | null | undefined => {
+      const ns = readerNamespace(e);
+      if (ns !== undefined) return ns;
+      let inner = e;
+      while (ts.isAsExpression(inner) || ts.isParenthesizedExpression(inner)) inner = inner.expression;
+      return ts.isIdentifier(inner) ? lookup(inner.text) : undefined;
+    };
+    const visit = (n: ts.Node): void => {
+      const opened = isScope(n);
+      if (opened) scopes.push(new Map());
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) {
+        const ns = readerNamespace(n.initializer);
+        if (ns !== undefined) {
+          scopes[scopes.length - 1]!.set(n.name.text, ns);
+          if ("file" in glue) out.add(ns);
+        }
+      }
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && calls.includes(n.expression.text)) {
+        for (const arg of n.arguments) {
+          if (ts.isObjectLiteralExpression(arg)) {
+            for (const prop of arg.properties) {
+              const value = ts.isShorthandPropertyAssignment(prop) ? prop.name
+                : ts.isPropertyAssignment(prop) ? prop.initializer : undefined;
+              const ns = value === undefined ? undefined : handed(value);
+              if (ns !== undefined) out.add(ns);
+            }
+          } else {
+            const ns = handed(arg);
+            if (ns !== undefined) out.add(ns);
+          }
+        }
+      }
+      ts.forEachChild(n, visit);
+      if (opened) scopes.pop();
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+/** A verb bridge forwards its reader to the shared actions without reading any key itself. */
+export function checkForwardedReader(repo: string): void {
+  const file = "packages/app-logic/src/place-list/verbs.ts";
+  const scope = parse(path.join(repo, file));
+  const words = findOne(scope, "forwarded own.words",
+    (n): n is ts.PropertyAccessExpression => ts.isPropertyAccessExpression(n) && n.getText() === "own.words");
+  const property = words.parent;
+  if (!ts.isPropertyAssignment(property) || property.name.getText() !== "t" ||
+      !ts.isObjectLiteralExpression(property.parent) || !ts.isCallExpression(property.parent.parent) ||
+      property.parent.parent.expression.getText() !== "useListVerbs") {
+    throw new Error(`${file}: own.words must be handed directly to useListVerbs`);
+  }
+}
+
+/**
+ * Every file in the roots that takes a `Translator` (the type a handed reader carries), binds
+ * no reader of its own and calls anything with a string first (`x("…")`, `x.rich("…")`, and a
+ * reader reached through a record, `text.screener("…")`, which the scan cannot read): each must
+ * be a row of {@link HANDED_READERS}, or its reads are outside the census. A file that only names
+ * the type (`ohbox/types.ts`, the input's declaration) makes no call and holds no read, and a
+ * string's own method on another value (`key.indexOf(".")`) is no reader, unless its name is
+ * also a catalogue namespace (`text.search("…")` stays a read).
+ */
+export function filesHandedAReader(repo: string, roots: string[]): string[] {
+  const out: string[] = [];
+  const namespaces = Object.keys(JSON.parse(fs.readFileSync(path.join(repo, "apps/webapp/messages/en.json"), "utf8")));
+  const stringMethod = (name: string): boolean =>
+    Object.getOwnPropertyNames(String.prototype).includes(name) && !namespaces.includes(name);
+  for (const file of sourceFiles(repo, roots)) {
+    const sf = parse(file);
+    const takesTranslator = sf.statements.some((st) =>
+      ts.isImportDeclaration(st) && st.importClause?.namedBindings !== undefined
+      && ts.isNamedImports(st.importClause.namedBindings)
+      && st.importClause.namedBindings.elements.some((el) => (el.propertyName ?? el.name).text === "Translator"));
+    if (!takesTranslator) continue;
+    let binds = false;
+    let readShaped = false;
+    const visit = (n: ts.Node): void => {
+      if (ts.isVariableDeclaration(n) && n.initializer && readerNamespace(n.initializer) !== undefined) binds = true;
+      if (
+        ts.isCallExpression(n) && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])
+        && (ts.isIdentifier(n.expression)
+          || ts.isPropertyAccessExpression(n.expression) && !stringMethod(n.expression.name.text))
+      ) {
+        // This exact call reads tag entities from the engine; its argument is a record type.
+        const tagEntities = path.relative(repo, file) === "packages/app-logic/src/place-list/verbs.ts"
+          && n.expression.getText(sf) === "engine.read().list"
+          && n.typeArguments?.length === 1
+          && n.typeArguments[0]?.getText(sf) === "TagDTO"
+          && n.arguments.length === 1 && n.arguments[0]?.getText(sf) === '"tag"';
+        if (!tagEntities) readShaped = true;
+      }
+      if (!binds) ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    if (!binds && readShaped) out.push(path.relative(repo, file));
+  }
+  return out.sort();
+}
+
 /** Every `t("…")` in the scanned roots, with the namespace its translator was bound to. */
 export function scanKeyReads(repo: string, roots: string[]): KeyRead[] {
   const reads: KeyRead[] = [];
@@ -378,9 +863,11 @@ export function scanKeyReads(repo: string, roots: string[]): KeyRead[] {
       };
       liveCopyKeys(sf);
 
-      /** Innermost first. Each frame maps a translator identifier to its namespace prefix. */
-      const scopes: Map<string, string | null>[] = [new Map()];
-      const lookup = (name: string): string | null | undefined => {
+      /** Innermost first. Each frame maps a translator identifier to its namespace prefix. The
+          outermost holds the readers a caller hands this file ({@link HANDED_READERS}). */
+      type Prefix = string | readonly string[] | null;
+      const scopes: Map<string, Prefix>[] = [new Map(Object.entries(HANDED_READERS[rel]?.readers ?? {}))];
+      const lookup = (name: string): Prefix | undefined => {
         for (let i = scopes.length - 1; i >= 0; i--) {
           if (scopes[i]!.has(name)) return scopes[i]!.get(name);
         }
@@ -427,34 +914,18 @@ export function scanKeyReads(repo: string, roots: string[]): KeyRead[] {
          * `rich`, `markup` and `raw` are the three members of the translator that take a key.
          * Anything else called off `t` is not a key read, and matching the member by name rather
          * than accepting every property call is what keeps this from collecting `t.length`. */
-        const RICH_MEMBERS = new Set(["rich", "markup", "raw"]);
-        if (
-          ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)
-          && ts.isIdentifier(n.expression.expression)
-          && RICH_MEMBERS.has(n.expression.name.text)
-          && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])
-        ) {
-          const prefix = lookup(n.expression.expression.text);
+        const richMembers = new Set(["rich", "markup", "raw"]);
+        if (ts.isCallExpression(n) && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])) {
+          const reader = ts.isPropertyAccessExpression(n.expression) && richMembers.has(n.expression.name.text)
+            ? n.expression.expression.getText()
+            : n.expression.getText();
+          const prefix = lookup(reader);
+          const key = n.arguments[0].text;
           if (prefix !== undefined && prefix !== null) {
-            const key = (n.arguments[0] as ts.StringLiteral).text;
-            reads.push({
+            for (const ns of typeof prefix === "string" ? [prefix] : prefix) reads.push({
               file: rel,
               line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
-              dotted: prefix ? `${prefix}.${key}` : key,
-            });
-          }
-        }
-        if (
-          ts.isCallExpression(n) && ts.isIdentifier(n.expression)
-          && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])
-        ) {
-          const prefix = lookup(n.expression.text);
-          if (prefix !== undefined && prefix !== null) {
-            const key = (n.arguments[0] as ts.StringLiteral).text;
-            reads.push({
-              file: rel,
-              line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
-              dotted: prefix ? `${prefix}.${key}` : key,
+              dotted: ns ? `${ns}.${key}` : key,
             });
           }
         }

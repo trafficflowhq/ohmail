@@ -1,0 +1,135 @@
+name: journeys
+
+# The journeys on the tip of `next`: what a person does in the app, walked in a browser on each bench
+# (test/journeys/README.md). Two jobs:
+#
+#   web    the web app against the route table in process (W-s, W-d, W-m, one after the other) and the page
+#          a desktop serves to a phone (H). Chromium only; no service.
+#   stack  the self-hosted stack an operator runs: its three images built from this tree, booted with the
+#          first-run ceremony (.github/scripts/selfhost-smoke.sh), then the journeys of W-i against it.
+#
+# When it runs. By dispatch on `next`: the nightly dispatches it once the night's whole run of ci.yml has
+# ended, never beside it, and a milestone run does. And on a push to `next` that changes this file, which is
+# also what makes the workflow known to GitHub: a file that exists on `next` alone cannot be dispatched
+# before it has run once. No schedule (a schedule fires on the default branch alone) and no pull request:
+# a landing never pays for it.
+#
+# Where it runs: on the maintainers' own runners, and nowhere else. Both jobs carry ci.yml's routing
+# expression (test/workflows-route-linux-jobs.test.ts holds it byte for byte), and each job's first step
+# refuses a GitHub-hosted runner, so a run the expression sends there runs nothing.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [next]
+    paths:
+      - .github/workflows/journeys.yml
+
+permissions:
+  contents: read
+
+# One run per commit, never cancelled: a night's run is not dropped for the next one.
+concurrency:
+  group: journeys-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  web:
+    name: journeys · web · W-s, W-d, W-m, H
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: The journeys run on the maintainers' own runners only
+        if: ${{ runner.environment != 'self-hosted' }}
+        run: |
+          echo "::error::the journeys run on the maintainers' own runners only; this run was routed to a ${{ runner.environment }} runner, so nothing ran"
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.4
+
+      - name: Install the locked dependency tree
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
+
+      # H builds the desktop's host page with the desktop's own tree.
+      - name: The desktop app's own dependency tree
+        run: cd apps/desktop && bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
+
+      - name: The project build
+        run: npm run build
+
+      - name: The browser
+        run: npx playwright install chromium
+
+      # Every setting runs, a red one included; the job is red when any was.
+      - name: W-s, W-d and W-m, one after the other
+        run: |
+          rc=0
+          for setting in selfhost demo managed; do
+            echo "::group::TF_JOURNEYS=$setting"
+            TF_JOURNEYS="$setting" npx vitest run test/journeys/guards.test.ts test/journeys/journeys/*.journeys.test.ts || rc=1
+            echo "::endgroup::"
+          done
+          exit "$rc"
+
+      - name: H
+        run: TF_JOURNEYS=host npx vitest run apps/desktop/test/journeys-host.test.ts
+
+  stack:
+    name: journeys · self-hosted stack · W-i
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: The journeys run on the maintainers' own runners only
+        if: ${{ runner.environment != 'self-hosted' }}
+        run: |
+          echo "::error::the journeys run on the maintainers' own runners only; this run was routed to a ${{ runner.environment }} runner, so nothing ran"
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.4
+
+      - name: Install the locked dependency tree
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
+
+      - name: The project build
+        run: npm run build
+
+      - name: The browser
+        run: npx playwright install chromium
+
+      - name: Build the three images, boot the stack, the first-run ceremony, then the journeys
+        env:
+          TAG: smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          SHA: ${{ github.sha }}
+        run: bash .github/scripts/selfhost-smoke.sh --build --dir deploy/selfhost --tag "$TAG" --commit "$SHA" --journeys
+
+      - name: Runner disk after the run
+        if: always() && runner.environment == 'self-hosted'
+        run: |
+          df -h /
+          docker system df

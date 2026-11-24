@@ -9,7 +9,7 @@ import { StaticKeyProvider, createLogger, type DraftPort, type Logger } from "@t
 import { runWorkerSupervised } from "../src/supervisor.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE RESURFACING PASS RUNS BECAUSE THE WORKER'S OWN LOOP CALLS IT.
@@ -56,7 +56,7 @@ async function seedMailbox(db: Db, accountId: string): Promise<string> {
     .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return row!.id;
@@ -154,6 +154,8 @@ describe("bubble-up runs INLINE in the worker cycle", () => {
     expect(changes[1]!.seq > setSeq).toBe(true);
 
     // ── THE LINE, AS BYTES ──────────────────────────────────────────────────────────────
+    // Written once the flip's write returns, so it is waited for as the row was.
+    await waitFor(() => lines.some((l) => l.event === "bubble_up_flipped"), 15000, "the flip's line");
     const flips = lines.filter((l) => l.event === "bubble_up_flipped");
     expect(flips).toHaveLength(1);
     expect(flips[0]!.flipped).toBe(1);

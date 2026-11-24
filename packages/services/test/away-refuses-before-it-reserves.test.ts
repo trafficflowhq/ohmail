@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages,
+  awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages, bindDb,
 } from "@trafficflow/db";
 import type { OutboundMessage, SendAdapter } from "@trafficflow/core";
 import { runAwayResponderPass, AWAY_DIAL_MS } from "../src/away-responder-pass.js";
@@ -73,9 +73,9 @@ async function arrive(w: World, subject = "the roof", mailboxId?: string): Promi
     bodyHash: randomUUID(), dedupKey: randomUUID(), subject,
     fromAddress: "colleague@them.test", date: at, createdAt: at,
   }).returning();
-  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "hello", headers: {} });
+  await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "hello", headers: {} });
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
   return m!.id;
 }
@@ -110,7 +110,7 @@ describe("the away pass asks the lease before it spends a reservation", () => {
     await arrive(w);
     const r = recorder();
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: r.factory as never,
       stillOrganizing: async () => false,
       now: () => NOW, mailboxIds: [w.mailboxId],
@@ -128,14 +128,14 @@ describe("the away pass asks the lease before it spends a reservation", () => {
     await arrive(w);
 
     const refused = recorder();
-    await runAwayResponderPass(w.db, {
+    await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: refused.factory as never,
       stillOrganizing: async () => false,
       now: () => NOW, mailboxIds: [w.mailboxId],
     });
 
     const held = recorder();
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: held.factory as never,
       stillOrganizing: async () => true,
       now: () => NOW, mailboxIds: [w.mailboxId],
@@ -159,7 +159,7 @@ describe("the away pass asks the lease before it spends a reservation", () => {
     const r = recorder();
     let asked = 0;
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: r.factory as never,
       stillOrganizing: async () => { asked += 1; return false; },
       now: () => NOW, mailboxIds: [w.mailboxId],
@@ -181,7 +181,7 @@ describe("the away pass asks the lease before it spends a reservation", () => {
     await arrive(w, "the drains", other);
     const r = recorder();
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: r.factory as never,
       stillOrganizing: async (mailboxId) => mailboxId !== w.mailboxId,
       now: () => NOW, mailboxIds: [w.mailboxId, other],
@@ -203,7 +203,7 @@ describe("the away pass asks the lease before it spends a reservation", () => {
     const r = recorder();
     const asked: string[] = [];
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: r.factory as never,
       stillOrganizing: async (mailboxId) => { asked.push(mailboxId); return true; },
       now: () => NOW, mailboxIds: [w.mailboxId],
@@ -224,7 +224,7 @@ describe("the away pass asks the lease before it spends a reservation", () => {
     await arrive(w);
     const r = recorder();
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: r.factory as never, now: () => NOW, mailboxIds: [w.mailboxId],
     });
 
@@ -240,7 +240,7 @@ describe("the away pass asks the lease before it spends a reservation", () => {
     await arrive(w);
     let asked = 0;
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: async () => { throw new Error("no credentials for this mailbox"); },
       stillOrganizing: async () => { asked += 1; return true; },
       now: () => NOW, mailboxIds: [w.mailboxId],
@@ -265,7 +265,7 @@ describe("the dial is bounded, and a breach ends where a throw ends", () => {
     try {
       const started = Date.now();
       let done = false;
-      const pass = runAwayResponderPass(w.db, {
+      const pass = runAwayResponderPass(bindDb(w.db, { account: null }), {
         openSendAdapter: r.factory as never,
         dialMs: 120,
         now: () => NOW, mailboxIds: [w.mailboxId],
@@ -292,7 +292,7 @@ describe("the dial is bounded, and a breach ends where a throw ends", () => {
     await arrive(w);
     const r = recorder();
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: r.factory as never,
       dialMs: 120,
       now: () => NOW, mailboxIds: [w.mailboxId],

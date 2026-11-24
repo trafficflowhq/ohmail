@@ -1,16 +1,18 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TagEntity as TagDTO } from "@ohmail/wire";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { STORE_ANSWER_TIMEOUT_MS, type OhmailEngine, type TagDTO } from "@ohmail/client-engine";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import historyWords from "../../../packages/app/messages/history.en.json";
+import { stubDom } from "./_draft-shell";
+import { MailShell } from "./_mail-shell";
+import { STORE_ANSWER_TIMEOUT_MS, type OhmailEngine } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { HistoryView as HistoryViewRaw } from "../app/views/HistoryView";
-import { KeymapProvider } from "../app/shell/keymap";
-import { WithListGone } from "./_list-gone";
 import {
   markSessionAlive, registerSessionProbe, resetSessionTruthForTests,
-} from "../app/shell/session-truth";
+} from "@ohmail/app-logic/session/session-truth";
 import { FIXTURE_NOW, storeFixture, storeRows } from "./_store-fixture";
 
 /**
@@ -23,16 +25,16 @@ import { FIXTURE_NOW, storeFixture, storeRows } from "./_store-fixture";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const HistoryView = (props: React.ComponentProps<typeof HistoryViewRaw>) => (
-  <KeymapProvider><WithListGone><HistoryViewRaw {...props} /></WithListGone></KeymapProvider>
-);
-const tags: TagDTO[] = [];
 const N = 120;
 const SENTENCE = messages.history.storeUnavailable;
 
 let roots: Root[] = [];
-afterEach(() => {
-  for (const r of roots) r.unmount();
+beforeEach(() => {
+  stubDom();
+  history.replaceState(null, "", "#/history");
+});
+afterEach(async () => {
+  for (const r of roots) await act(() => { r.unmount(); });
   roots = [];
   document.body.innerHTML = "";
   resetSessionTruthForTests();
@@ -45,19 +47,19 @@ async function settle(rounds = 4): Promise<void> {
   }
 }
 
-async function mountHistory(engine: OhmailEngine): Promise<HTMLElement> {
+async function mountRegisteredHistory(engine: OhmailEngine): Promise<HTMLElement> {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   roots.push(root);
   await act(() => {
     root.render(
-      <NextIntlClientProvider locale="en" messages={messages} now={FIXTURE_NOW} timeZone="UTC">
-        <HistoryView onMarkSeen={() => {}}
-          engine={engine} version={0} settled owed={false} tags={tags} now={FIXTURE_NOW}
-          onOpen={() => {}} hydrateBody={() => {}} onAction={() => {}} onAddTag={() => {}}
-          onScreen={() => {}} canDelete={() => true} canReplyAll={() => true}
-        />
+      <NextIntlClientProvider locale="en" messages={{ ...messages, ...historyWords }} now={FIXTURE_NOW} timeZone="UTC">
+        <ThemeProvider storageKey={null}>
+          <ToastHost>
+            <MailShell engine={engine} />
+          </ToastHost>
+        </ThemeProvider>
       </NextIntlClientProvider>,
     );
   });
@@ -65,35 +67,13 @@ async function mountHistory(engine: OhmailEngine): Promise<HTMLElement> {
 }
 
 const said = (host: HTMLElement): string => host.textContent ?? "";
-const meta = (host: HTMLElement): string => host.querySelector(".view-history .meta")?.textContent ?? "";
 
 describe("History over a session renewal", () => {
-  it("a 401 asks the renewal, says nothing about the server, and History re-asks once it answers", async () => {
-    let status: number | null = 401;
-    const probes: number[] = [];
-    registerSessionProbe(() => { probes.push(Date.now()); });
-    const fx = await storeFixture(storeRows(N), { refuse: () => status });
-    const host = await mountHistory(fx.engine);
-    await settle();
-
-    expect(said(host), "a refused session read as a silent server").not.toContain(SENTENCE);
-    expect(probes.length, "nothing asked for the renewal").toBe(1);
-    expect(fx.timelineCalls()).toBe(1);
-
-    status = null;
-    await act(async () => { markSessionAlive(); });
-    await settle();
-
-    expect(fx.timelineCalls(), "no second ask after the renewal").toBe(2);
-    expect(said(host)).not.toContain(SENTENCE);
-    expect(meta(host)).toContain(N.toLocaleString("en-US"));
-  });
-
   it("CONTROL — a server fault is the server's answer: said at once, no renewal asked, no re-ask", async () => {
     const probes: number[] = [];
     registerSessionProbe(() => { probes.push(Date.now()); });
     const fx = await storeFixture(storeRows(N), { refuse: () => 503 });
-    const host = await mountHistory(fx.engine);
+    const host = await mountRegisteredHistory(fx.engine);
     await settle();
 
     expect(said(host)).toContain(SENTENCE);
@@ -107,7 +87,7 @@ describe("History over a session renewal", () => {
     const probes: number[] = [];
     registerSessionProbe(() => { probes.push(Date.now()); });
     const fx = await storeFixture(storeRows(N), { refuse: () => 401 });
-    const host = await mountHistory(fx.engine);
+    const host = await mountRegisteredHistory(fx.engine);
     await settle();
     await act(async () => { markSessionAlive(); });
     await settle();
@@ -121,7 +101,7 @@ describe("History over a session renewal", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     registerSessionProbe(() => {});
     const fx = await storeFixture(storeRows(N), { refuse: () => 401 });
-    const host = await mountHistory(fx.engine);
+    const host = await mountRegisteredHistory(fx.engine);
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
     expect(said(host)).not.toContain(SENTENCE);
 

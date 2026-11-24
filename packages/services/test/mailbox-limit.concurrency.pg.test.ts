@@ -1,17 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { accounts, mailboxes } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import type { AccessVerdict } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { StaticKeyProvider, type KeyProvider } from "@trafficflow/core";
-import { makeMailboxService, MailboxAllowanceError, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, MailboxAllowanceError, type ServiceContext } from "@trafficflow/services";
 
 /**
  * THE GATE — and the one assertion PGlite structurally cannot host.
@@ -47,13 +44,13 @@ const PROBE_OK = { probe: async () => ({ verdict: "ok" as const }) };
 
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+const ownedA = makeOwnedDb(PG_TEST_URL);
+const ownedB = makeOwnedDb(PG_TEST_URL);
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await ownedA.close(); await ownedB.close(); });
 
 const NOW = new Date("2026-08-01T12:00:00.000Z");
 const sleep = (ms: number) => new Promise<void>((r) => { setTimeout(r, ms); });
@@ -120,7 +117,7 @@ describe.skipIf(!PG_UP)("plan limits under real-Postgres concurrency (the limit 
   }
 
   const ctxOn = (db: typeof dbA, accountId: string): ServiceContext =>
-    ({ db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => NOW, requestId: "r" });
+    ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
   const enabledCount = async (accountId: string): Promise<number> =>
     (await dbA.select().from(mailboxes).where(eq(mailboxes.accountId, accountId)))

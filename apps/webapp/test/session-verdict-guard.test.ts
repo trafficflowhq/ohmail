@@ -78,7 +78,7 @@ function code(rel: string): string {
 
 const ENGINE = "../app/shell/engine.tsx";
 const CLOUD_SHELL = "../app/(product)/mailbox/CloudShell.tsx";
-const LOGIN = "../app/(product)/login/LoginScreen.tsx";
+const LOGIN = "../app/(product)/login/use-sign-in-door.ts";
 
 /**
  * The bodies of every `.catch(` in a source file, by brace matching from the first `{` after
@@ -106,22 +106,23 @@ function catchBodies(src: string): string[] {
   return bodies;
 }
 
-describe("engine.tsx: the verdict is written in four places and only four", () => {
+describe("engine.tsx: the signed-out verdict is named in five places", () => {
   const src = code(ENGINE);
 
-  it("names `unauthenticated` exactly four times", () => {
+  it("names `unauthenticated` exactly five times", () => {
     /*
-     * The four, and what each one is:
+     * The five, and what each one is:
      *   1. the `Binding` union's own arm — the declaration;
      *   2. no `resolveOwner` at all, so this build cannot ask (the desktop's path);
      *   3. the `none` outcome: the SERVER answered that there is no full session;
      *   4. a confirmed owner that is not the account whose mirror is on screen.
+     *   5. a cold open whose confirmed owner is not the edge's owner of this tab.
      *
-     * A fifth is a claim somebody has to argue for in a diff. `unknown`, a thrown
+     * Another is a claim somebody has to argue for in a diff. `unknown`, a thrown
      * `createEngine`, a rejected classifier: none of those may be here.
      */
     const hits = src.match(/status: "unauthenticated"/g) ?? [];
-    expect(hits, "a writer of the signed-out verdict was added or removed").toHaveLength(4);
+    expect(hits, "a writer of the signed-out verdict was added or removed").toHaveLength(5);
   });
 
   it("writes it in NO `.catch(` block", () => {
@@ -257,7 +258,7 @@ describe("the sync gate is built closed, and opened in exactly two places", () =
     const src = code("../app/shell/engine-config.ts");
     expect(src, "the live engine's gate no longer knows which mirror it guards")
       .toMatch(/createSyncGate\(owner\s*\?\?\s*null\)/);
-    const sched = code("../app/shell/sync-scheduler.ts");
+    const sched = code("../../../packages/app-logic/src/session/sync-scheduler.ts");
     expect(sched, "createSyncGate grew a default — the closed-by-default property is gone")
       .not.toMatch(/createSyncGate\(\s*\w+\s*:\s*[^)]*=\s*/);
     // And no permissive escape hatch on the options: a `mayMerge` with a default is the same
@@ -289,7 +290,7 @@ describe("the schedule is not configurable", () => {
     const src = code(ENGINE);
     expect(src).not.toMatch(/schedule\??:/);
     expect(src, "the schedule is no longer read from the pinned module")
-      .toContain('from "./confirm-schedule"');
+      .toContain('from "@ohmail/app-logic/session/confirm-schedule"');
   });
 });
 
@@ -299,18 +300,18 @@ describe("the copy on the unconfirmed surface is not a verdict", () => {
       const messages = JSON.parse(readRaw(`../messages/${locale}.json`)) as {
         session: Record<string, string>;
       };
-      const keys = ["unconfirmedTitle", "unconfirmedBody", "unconfirmedBodyWarm", "tryAgain"];
+      const keys = ["unconfirmedTitle", "unconfirmedLine", "unconfirmedBodyWarm", "tryAgain"];
       for (const key of keys) {
         expect(messages.session[key], `${locale}.session.${key} is missing`).toBeTruthy();
       }
-      for (const key of ["unconfirmedTitle", "unconfirmedBody", "unconfirmedBodyWarm"]) {
+      for (const key of ["unconfirmedTitle", "unconfirmedLine", "unconfirmedBodyWarm"]) {
         const text = messages.session[key]!.toLowerCase();
         expect(text, `${locale}.session.${key} claims a sign-out`).not.toContain("signed out");
         expect(text, `${locale}.session.${key} claims a sign-out`).not.toContain("abgemeldet");
       }
       // And the two body strings must say what actually happened rather than only what did
       // not: a title alone would let the bodies drift back into verdict language.
-      expect(messages.session.unconfirmedBody).toBeTruthy();
+      expect(messages.session.unconfirmedLine).toBeTruthy();
       expect(messages.session.unconfirmedBodyWarm, `${locale} warm body does not mention the device`)
         .toMatch(locale === "en" ? /device/i : /Gerät/i);
     }

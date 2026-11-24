@@ -1,117 +1,109 @@
 /** @vitest-environment jsdom */
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import messages from "../messages/en.json";
-import de from "../messages/de.json";
+import { Frame } from "../../../packages/app/src/frame/Frame.js";
+import { NONE } from "../../../packages/app/src/host/index.js";
+import { PANE_IDS, type SettingsPanes } from "../../../packages/app/src/settings/contract.js";
+import { paneOf } from "../../../packages/app/src/settings/facts.js";
+import { FoldersPane, foldersMailboxes } from "../../../packages/app/src/settings/folders/index.js";
+import { settingsPlace } from "../../../packages/app/src/settings/place.js";
+import { TextProvider } from "@ohmail/app/text";
+import en from "../../../packages/app/messages/settings.en.json";
+import de from "../../../packages/app/messages/settings.de.json";
+import { FRAME_WORDS } from "../../../packages/app/test/support/frame-words.js";
+import { fakeAddress, fakeWindow } from "../../../packages/app/test/support/fake-window.js";
+import { madeOf, SETTINGS } from "../../../packages/app/test/settings/frame/hosts.js";
 
-import { SettingsView } from "../app/views/SettingsView";
-import { FoldersRow } from "../app/shell/FoldersRow";
+afterEach(cleanup);
 
-/**
- * SETTINGS → FOLDERS — the master toggle's pane (FOLDERS-SPEC.md §6; owner decisions 1 and 2).
- *
- *  1. A HOST THAT WIRES THE NODE GETS A NAV ENTRY, directly after Tags — the rail's own
- *     placement argument — and choosing it renders the honest intro plus the node.
- *  2. NO NODE ⇒ NO ENTRY AND NO PANE — the control is absent by construction rather than present
- *     and dead. This clause used to give the reason as "a standalone install and the demo have no
- *     consent row", which is now true of the demo alone: `consentRoutes` are mounted on
- *     `localRoutes`, so a standalone install answers `GET /consent` and `consent.known` goes true
- *     there. What withholds the pane on that door is the transport's `foldersStorable`, because
- *     the engine behind it serves no folder verb and the route silently drops the flag — see
- *     `ConsentTransport.foldersStorable`. The CASES below are unaffected: they drive the
- *     `foldersSection` prop directly and never the door. Corrected because a header that states
- *     the retired reason as the reason under test is the shape this pane's own slice was about.
- *  3. THE SWITCH SHOWS THE STORED VALUE, NEVER THE HOPED-FOR ONE: pressing it calls the writer
- *     and does not move until the prop (the server's echo) moves. A refused write must not draw
- *     a rail the account does not have.
- *  4. BOTH LOCALES carry the copy — the pane renders German from the catalogue, not English.
- */
-
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const h = React.createElement;
-
-let host: HTMLDivElement;
-let root: Root;
-
-async function mount(node: React.ReactNode, locale: "en" | "de" = "en") {
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale,
-        messages: locale === "de" ? (de as never) : messages,
-        timeZone: "UTC",
-        children: h(ThemeProvider, null, h(ToastHost, null, node)),
-      }),
-    );
-  });
+function words(node: React.ReactNode, locale: "en" | "de") {
+  return <TextProvider locale={locale} messages={{ ...FRAME_WORDS[locale], ...(locale === "de" ? de : en) }}
+    timeZone="UTC">{node}</TextProvider>;
 }
 
-afterEach(async () => {
-  await act(() => root.unmount());
-  host.remove();
-});
+function mount(node: React.ReactNode, locale: "en" | "de" = "en") {
+  const view = render(words(node, locale));
+  return { ...view, mountOver: (next: React.ReactNode) => view.rerender(words(next, locale)) };
+}
 
-const navLabels = () =>
-  [...host.querySelectorAll(".set-nav button")].map((b) => b.textContent?.trim());
+function mountSettings(foldersSection?: React.ReactNode, locale: "en" | "de" = "en") {
+  const address = fakeAddress("#/settings");
+  const barePanes = Object.fromEntries(PANE_IDS.map((id) => [
+    id, id === "general" || id === "tags" ? paneOf(id, { Body: () => null }) : NONE,
+  ]));
+  const panes = {
+    ...barePanes,
+    folders: foldersSection ? paneOf("folders", { Body: () => foldersSection }) : NONE,
+  } as SettingsPanes;
+  const settings = settingsPlace(panes, () => ({
+    startAt: null,
+    go: (pane) => address.visit(pane ? `#/settings/${pane}` : "#/settings"),
+  }));
+  const { host } = madeOf(SETTINGS["W-m"]!, { address, window: fakeWindow("desktop"), places: { settings } });
+  return mount(<Frame host={host} />, locale);
+}
 
-const choose = async (label: string): Promise<void> => {
-  const entry = [...host.querySelectorAll(".set-nav button")].find(
-    (b) => b.textContent?.trim() === label,
-  );
-  if (!entry) throw new Error(`no settings nav entry labelled ${label}`);
-  await act(async () => { entry.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-};
+function folders(
+  {
+    on, setFoldersEnabled, mailboxes = null, mailboxesOff = {}, mailboxesKnown = false, setMailboxFoldersEnabled,
+  }: {
+    on: boolean;
+    setFoldersEnabled: (enabled: boolean) => Promise<unknown>;
+    mailboxes?: { id: string; address: string }[] | null;
+    mailboxesOff?: Record<string, string>;
+    mailboxesKnown?: boolean;
+    setMailboxFoldersEnabled?: (id: string, enabled: boolean) => Promise<unknown>;
+  },
+) {
+  return <FoldersPane model={{
+    on,
+    set: setFoldersEnabled,
+    setMailbox: setMailboxFoldersEnabled ?? (async () => { throw new Error("Mailbox write unavailable"); }),
+    mailboxes: foldersMailboxes({
+      on, known: mailboxesKnown, settable: setMailboxFoldersEnabled !== undefined, mailboxes, off: mailboxesOff,
+    }),
+  }} />;
+}
 
-const BASE: Parameters<typeof SettingsView>[0] = {
-  notifications: null,
-  tags: [],
-  tagCounts: {},
+function menu() {
+  return within(screen.getByRole("navigation", { name: /Settings sections|Einstellungsbereiche/ }));
+}
+
+const navLabels = () => menu().getAllByRole("button").map((button) => button.getAttribute("aria-label"));
+
+const choose = async (label: string) => {
+  await act(async () => { menu().getByRole("button", { name: label }).click(); });
 };
 
 describe("the pane exists exactly where the shell wired it", () => {
-  it("wired: a Folders entry directly after Tags, whose pane is the intro plus the node", async () => {
-    await mount(h(SettingsView, {
-      ...BASE,
-      foldersSection: h("p", { className: "folders-probe" }, "the toggle"),
-    }));
+  it("wired: a Folders entry directly after Tags, whose pane offers the master switch", async () => {
+    mountSettings(folders({ on: false, setFoldersEnabled: async () => false }));
     const labels = navLabels();
     expect(labels).toContain("Folders");
     expect(labels.indexOf("Folders")).toBe(labels.indexOf("Tags") + 1);
     await choose("Folders");
-    expect(host.querySelector(".folders-probe")).not.toBeNull();
-    expect(host.textContent).toContain("the real folders on your mail server, not a copy");
+    expect(screen.getByRole("switch", { name: "Use folders", checked: false })).toBeTruthy();
   });
 
   it("not wired: no entry, no pane", async () => {
-    await mount(h(SettingsView, BASE));
+    mountSettings();
     expect(navLabels()).not.toContain("Folders");
+    expect(screen.queryByRole("switch")).toBeNull();
   });
 
   it("the menu says which section is open, to a screen reader too, and only that one", async () => {
-    await mount(h(SettingsView, { ...BASE, foldersSection: h("p", null, "the toggle") }));
-    const current = () =>
-      [...host.querySelectorAll('.set-nav button[aria-current="page"]')].map((b) => b.textContent?.trim());
+    mountSettings(folders({ on: false, setFoldersEnabled: async () => false }));
+    const current = () => menu().getAllByRole("button", { current: "page" }).map((button) => button.getAttribute("aria-label"));
     expect(current()).toEqual(["General"]);
     await choose("Folders");
     expect(current()).toEqual(["Folders"]);
   });
 
   it("German reads German — the pane copy comes from the catalogue", async () => {
-    await mount(
-      h(SettingsView, { ...BASE, foldersSection: h(FoldersRow, { on: false, setFoldersEnabled: async () => false }) }),
-      "de",
-    );
+    mountSettings(folders({ on: false, setFoldersEnabled: async () => false }), "de");
     expect(navLabels()).toContain("Ordner");
     await choose("Ordner");
-    expect(host.textContent).toContain("die echten Ordner auf deinem Mailserver, keine Kopie");
-    expect(host.textContent).toContain("Ordner verwenden");
+    expect(screen.getByRole("switch", { name: "Ordner verwenden", checked: false })).toBeTruthy();
   });
 });
 
@@ -124,10 +116,10 @@ describe("the switch shows the stored value, never the hoped-for one", () => {
       return new Promise((res) => { resolveWrite = res; });
     };
 
-    await mount(h(FoldersRow, { on: false, setFoldersEnabled }));
-    const sw = host.querySelector('[role="switch"]') as HTMLElement;
+    const { container: host, mountOver } = mount(folders({ on: false, setFoldersEnabled }));
+    const sw = within(host).getByRole("switch");
     expect(sw.getAttribute("aria-checked")).toBe("false");
-    expect(host.textContent).toContain("Your folders stay hidden");
+    expect(within(host).getByRole("switch", { name: "Use folders", checked: false })).toBe(sw);
 
     await act(async () => { sw.click(); });
     expect(calls).toEqual([true]);
@@ -138,15 +130,15 @@ describe("the switch shows the stored value, never the hoped-for one", () => {
     // Still false: this component renders the PROP. The hook that owns the echo re-renders it
     // with `on: true` — simulated here by the rerender, which is the seam under test.
     expect(sw.getAttribute("aria-checked")).toBe("false");
-    await mountOver(h(FoldersRow, { on: true, setFoldersEnabled }));
-    const sw2 = host.querySelector('[role="switch"]') as HTMLElement;
+    mountOver(folders({ on: true, setFoldersEnabled }));
+    const sw2 = within(host).getByRole("switch");
     expect(sw2.getAttribute("aria-checked")).toBe("true");
-    expect(host.textContent).toContain("show in the menu");
+    expect(within(host).getByRole("switch", { name: "Use folders", checked: true })).toBe(sw2);
   });
 
   it("a refused write says so instead of moving the switch", async () => {
-    await mount(h(FoldersRow, { on: false, setFoldersEnabled: async () => { throw new Error("nope"); } }));
-    const sw = host.querySelector('[role="switch"]') as HTMLElement;
+    const { container: host } = mount(folders({ on: false, setFoldersEnabled: async () => { throw new Error("nope"); } }));
+    const sw = within(host).getByRole("switch");
     await act(async () => { sw.click(); });
     expect(sw.getAttribute("aria-checked")).toBe("false");
     expect(host.textContent).toContain("Couldn't save that");
@@ -161,39 +153,39 @@ describe("the per-mailbox list (FOLDERS-SPEC.md §17)", () => {
   const noopMaster = async (v: boolean) => v;
 
   it("renders one switch per mailbox under the ON master, wearing the SERVER's answer", async () => {
-    await mount(h(FoldersRow, {
+    const { container: host } = mount(folders({
       on: true, setFoldersEnabled: noopMaster,
       mailboxes: MBS,
       mailboxesOff: { "mb-2": "2026-08-25T21:03:31.000Z" },
       mailboxesKnown: true,
       setMailboxFoldersEnabled: async () => ({}),
     }));
-    const switches = [...host.querySelectorAll('[role="switch"]')];
+    const switches = within(host).getAllByRole("switch");
     expect(switches).toHaveLength(3);   // the master + one per mailbox
     expect(host.textContent).toContain("one@example.com");
     expect(host.textContent).toContain("two@example.com");
     // mb-1 participates (no exception), mb-2 is the stored exception.
     expect(switches[1]!.getAttribute("aria-checked")).toBe("true");
     expect(switches[2]!.getAttribute("aria-checked")).toBe("false");
-    expect(host.textContent).toContain("Folders show");
-    expect(host.textContent).toContain("Folders hidden");
+    expect(switches[1]!.getAttribute("aria-label")).toEqual(MBS[0]!.address);
+    expect(switches[2]!.getAttribute("aria-label")).toEqual(MBS[1]!.address);
   });
 
   it("with the master OFF, or one mailbox, or no setter: no list — the master is the only switch", async () => {
-    await mount(h(FoldersRow, {
+    const { container: host, mountOver } = mount(folders({
       on: false, setFoldersEnabled: noopMaster,
       mailboxes: MBS, mailboxesOff: {}, mailboxesKnown: true, setMailboxFoldersEnabled: async () => ({}),
     }));
-    expect([...host.querySelectorAll('[role="switch"]')]).toHaveLength(1);
+    expect(within(host).getAllByRole("switch")).toHaveLength(1);
 
-    await mountOver(h(FoldersRow, {
+    mountOver(folders({
       on: true, setFoldersEnabled: noopMaster,
       mailboxes: [MBS[0]!], mailboxesOff: {}, mailboxesKnown: true, setMailboxFoldersEnabled: async () => ({}),
     }));
-    expect([...host.querySelectorAll('[role="switch"]')]).toHaveLength(1);
+    expect(within(host).getAllByRole("switch")).toHaveLength(1);
 
-    await mountOver(h(FoldersRow, { on: true, setFoldersEnabled: noopMaster, mailboxes: MBS }));
-    expect([...host.querySelectorAll('[role="switch"]')]).toHaveLength(1);
+    mountOver(folders({ on: true, setFoldersEnabled: noopMaster, mailboxes: MBS }));
+    expect(within(host).getAllByRole("switch")).toHaveLength(1);
   });
 
   it("the list WAITS for the live exceptions map — a warm boot's cache paints no switches (codex round 1)", async () => {
@@ -201,24 +193,24 @@ describe("the per-mailbox list (FOLDERS-SPEC.md §17)", () => {
     // render — a stored opt-out shown as ON is the wrong-then-right flash this pane refuses
     // everywhere else. The live wire (or a write's echo) flips `mailboxesKnown` and the list
     // appears wearing the stored answer.
-    await mount(h(FoldersRow, {
+    const { container: host, mountOver } = mount(folders({
       on: true, setFoldersEnabled: noopMaster,
       mailboxes: MBS, mailboxesOff: {}, setMailboxFoldersEnabled: async () => ({}),
     }));
-    expect([...host.querySelectorAll('[role="switch"]')]).toHaveLength(1);
-    await mountOver(h(FoldersRow, {
+    expect(within(host).getAllByRole("switch")).toHaveLength(1);
+    mountOver(folders({
       on: true, setFoldersEnabled: noopMaster,
       mailboxes: MBS, mailboxesOff: { "mb-2": "2026-08-25T21:03:31.000Z" },
       mailboxesKnown: true, setMailboxFoldersEnabled: async () => ({}),
     }));
-    const switches = [...host.querySelectorAll('[role="switch"]')];
+    const switches = within(host).getAllByRole("switch");
     expect(switches).toHaveLength(3);
     expect(switches[2]!.getAttribute("aria-checked")).toBe("false");
   });
 
   it("pressing a mailbox switch writes THAT mailbox, and the switch renders the prop, never the press", async () => {
     const calls: Array<[string, boolean]> = [];
-    await mount(h(FoldersRow, {
+    const { container: host, mountOver } = mount(folders({
       on: true, setFoldersEnabled: noopMaster,
       mailboxes: MBS, mailboxesOff: {}, mailboxesKnown: true,
       setMailboxFoldersEnabled: async (id: string, enabled: boolean) => {
@@ -226,52 +218,38 @@ describe("the per-mailbox list (FOLDERS-SPEC.md §17)", () => {
         return { [id]: "2026-08-25T21:03:31.000Z" };
       },
     }));
-    const switches = [...host.querySelectorAll('[role="switch"]')];
-    await act(async () => { (switches[2] as HTMLElement).click(); });
+    const switches = within(host).getAllByRole("switch");
+    await act(async () => { switches[2]!.click(); });
     expect(calls).toEqual([["mb-2", false]]);
     // The prop has not moved, so neither has the switch — the hook's echo owns the move.
     expect(switches[2]!.getAttribute("aria-checked")).toBe("true");
-    await mountOver(h(FoldersRow, {
+    mountOver(folders({
       on: true, setFoldersEnabled: noopMaster,
       mailboxes: MBS, mailboxesOff: { "mb-2": "2026-08-25T21:03:31.000Z" },
       mailboxesKnown: true,
       setMailboxFoldersEnabled: async () => ({}),
     }));
-    expect([...host.querySelectorAll('[role="switch"]')][2]!.getAttribute("aria-checked")).toBe("false");
+    expect(within(host).getAllByRole("switch")[2]!.getAttribute("aria-checked")).toBe("false");
   });
 
   it("a refused mailbox write says so and moves nothing", async () => {
-    await mount(h(FoldersRow, {
+    const { container: host } = mount(folders({
       on: true, setFoldersEnabled: noopMaster,
       mailboxes: MBS, mailboxesOff: {}, mailboxesKnown: true,
       setMailboxFoldersEnabled: async () => { throw new Error("nope"); },
     }));
-    const switches = [...host.querySelectorAll('[role="switch"]')];
-    await act(async () => { (switches[1] as HTMLElement).click(); });
+    const switches = within(host).getAllByRole("switch");
+    await act(async () => { switches[1]!.click(); });
     expect(switches[1]!.getAttribute("aria-checked")).toBe("true");
     expect(host.textContent).toContain("Couldn't save that");
   });
 
   it("German reads German — the list copy comes from the catalogue", async () => {
-    await mount(h(FoldersRow, {
+    const { container: host } = mount(folders({
       on: true, setFoldersEnabled: noopMaster,
       mailboxes: MBS, mailboxesOff: {}, mailboxesKnown: true, setMailboxFoldersEnabled: async () => ({}),
     }), "de");
-    expect(host.textContent).toContain("Ordner werden gezeigt");
-    expect(host.textContent).not.toContain("Folders show");
+    expect(within(host).getByRole("switch", { name: "Ordner verwenden", checked: true })).toBeTruthy();
+    expect(within(host).queryByRole("switch", { name: "Use folders" })).toBeNull();
   });
 });
-
-/** Re-render into the SAME root — the echo arriving, without a second mount's fresh state. */
-async function mountOver(node: React.ReactNode) {
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages,
-        timeZone: "UTC",
-        children: h(ThemeProvider, null, h(ToastHost, null, node)),
-      }),
-    );
-  });
-}

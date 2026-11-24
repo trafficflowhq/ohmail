@@ -142,11 +142,9 @@ describe("db_busy — a starved connection answers, it does not hang", () => {
    * Driven for real: the session lookup itself raises the ceiling's error.
    */
   it("a starved SESSION LOOKUP on a protected keyed mutation stays retryable", async () => {
-    const { deps } = await makeDeps();
-    // Every access throws, so `resolveSession` fails exactly where the first query would.
-    deps.db = new Proxy({}, {
-      get() { throw new DbAcquireTimeoutError(15_000); },
-    }) as unknown as typeof deps.db;
+    const { db, deps } = await makeDeps();
+    // Every statement throws, so `resolveSession` fails exactly where the first query would.
+    starve(db);
 
     const res = await createApp(protectedMutations).handle(
       req("POST", "/protected-keyed", {
@@ -173,10 +171,8 @@ describe("db_busy — a starved connection answers, it does not hang", () => {
    * server was briefly busy. No key is sent, deliberately: this must not depend on one.
    */
   it("a starved session lookup rescues a protected NON-idempotent, UNKEYED mutation", async () => {
-    const { deps } = await makeDeps();
-    deps.db = new Proxy({}, {
-      get() { throw new DbAcquireTimeoutError(15_000); },
-    }) as unknown as typeof deps.db;
+    const { db, deps } = await makeDeps();
+    starve(db);
 
     const res = await createApp(protectedMutations).handle(
       req("POST", "/protected-plain", { bearer: "the-lookup-never-completes" }), deps,
@@ -369,11 +365,14 @@ describe("db_busy — a starved connection answers, it does not hang", () => {
    * the real class's `name`.
    */
   it("the middleware's spelling of the error name still matches the real class", () => {
-    const source = readFileSync(new URL("../src/middleware.ts", import.meta.url), "utf8");
-    const declared = /const DB_ACQUIRE_TIMEOUT_ERROR = "([^"]+)"/.exec(source)?.[1];
-    expect(declared, "middleware.ts must declare DB_ACQUIRE_TIMEOUT_ERROR").toBeDefined();
-    expect(declared).toBe(new DbAcquireTimeoutError(1).name);
-    expect(declared).toBe("DbAcquireTimeoutError");
+    // Asked of the matcher itself, with the real classes: a rename on either side reads false here.
+    expect(isDbBusy(new DbAcquireTimeoutError(1))).toBe(true);
+    expect(isDbBusy(new DbConnectionCapError("pooler"))).toBe(true);
+    expect(new DbAcquireTimeoutError(1).name).toBe("DbAcquireTimeoutError");
+    // And only those: a near name, or any other throw, stays the opaque 500.
+    expect(isDbBusy(Object.assign(new Error("x"), { name: "DbAcquireTimeout" }))).toBe(false);
+    expect(isDbBusy(new Error("kaboom"))).toBe(false);
+    expect(isDbBusy(null)).toBe(false);
   });
 
   it("the middleware does not import the class it matches (the closure rule)", () => {
@@ -396,15 +395,15 @@ describe("db_busy — a starved connection answers, it does not hang", () => {
    * at all.
    */
   it("the middleware's spelling of the organizer refusals still matches the real classes", () => {
-    const source = readFileSync(new URL("../src/middleware.ts", import.meta.url), "utf8");
-    const declared = /const ORGANIZER_REFUSAL_ERRORS = \[([^\]]+)\]/.exec(source)?.[1];
-    expect(declared, "middleware.ts must declare ORGANIZER_REFUSAL_ERRORS").toBeDefined();
-    const names = [...declared!.matchAll(/"([^"]+)"/g)].map((m) => m[1]).sort();
-    expect(names).toEqual(
-      [new OrganizedElsewhereError("m", { kind: null, name: null, since: null }).name,
-        new MailboxNotFoundError("m").name].sort(),
-    );
-    expect(names).toEqual(["MailboxNotFoundError", "OrganizedElsewhereError"]);
+    // Asked of the matcher itself, with the real classes: a rename on either side reads false here.
+    const held = new OrganizedElsewhereError("m", { kind: null, name: null, since: null });
+    const gone = new MailboxNotFoundError("m");
+    expect(isOrganizerRefusal(held)).toBe(true);
+    expect(isOrganizerRefusal(gone)).toBe(true);
+    expect([gone.name, held.name]).toEqual(["MailboxNotFoundError", "OrganizedElsewhereError"]);
+    // The two families stay apart: a refusal is never answered as a busy database, nor the reverse.
+    expect(isDbBusy(held)).toBe(false);
+    expect(isOrganizerRefusal(new DbAcquireTimeoutError(1))).toBe(false);
   });
 
   /**
@@ -499,3 +498,19 @@ describe("/health under a starved connection", () => {
     expect(new DbAcquireTimeoutError(1).code).toBe("db_acquire_timeout");
   });
 });
+
+/**
+ * A STARVED POOL: every statement its handle is asked for raises the acquire ceiling's error. The
+ * hooks sit on the pool's own handle, the one the binder knows, so the handle the host mints for
+ * the request (a view of it) asks its statements through them; the binder itself is untouched.
+ */
+function starve(db: object): void {
+  for (const statement of [
+    "select", "selectDistinct", "selectDistinctOn", "insert", "update", "delete", "execute", "transaction", "with", "$count",
+  ]) {
+    Object.defineProperty(db, statement, {
+      configurable: true, writable: true,
+      value: () => { throw new DbAcquireTimeoutError(15_000); },
+    });
+  }
+}

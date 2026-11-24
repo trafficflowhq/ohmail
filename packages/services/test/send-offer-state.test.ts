@@ -6,7 +6,7 @@ import { changeLog, drafts, mailboxes, outboundSendFingerprints, outboundSends }
 import { mintMessageId, SendNotSubmitted } from "@trafficflow/core";
 import type { OpenSendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core";
 import {
-  SendService, SEND_AGAIN_HELD_SENTENCE, SEND_HELD_SENTENCE, SEND_STALE_AFTER_MS, SEND_SUBMISSION_CEILING_MS,
+  SendService, SEND_AGAIN_HELD_SENTENCE, SEND_HELD_SENTENCE, SEND_STALE_AFTER_MS, SEND_SUBMISSION_CEILING_MS, dbFor,
 } from "../src/index.js";
 import type { ServiceContext, ServiceError, StagedAttachmentSource } from "../src/index.js";
 
@@ -80,7 +80,7 @@ async function world() {
     accountId, provider: "imap", address: `me-${randomUUID().slice(0, 8)}@offer.test`, status: "connected",
   }).returning();
   let t = START.getTime();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => new Date(t), requestId: "offer" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(t), requestId: "offer" };
   const [d] = await db.insert(drafts).values({
     accountId, mailboxId: mb!.id, subject: "Re: the slow server", body: "Pressed before the close.",
     to: [{ name: "Mila", address: "mila@offer.test" }], status: "draft",
@@ -180,7 +180,8 @@ describe("a stale reservation that offered nothing", () => {
   it("forgetInherited forgets the last run's unoffered rows, keeps the rest, and only for its account", async () => {
     const w = await world();
     const { slow, first, left } = await quitDuringLogin(w, "k3");
-    const other: ServiceContext = { ...w.ctx, accountId: randomUUID() };
+    const stranger = randomUUID();
+    const other: ServiceContext = { ...w.ctx, accountId: stranger, db: dbFor(w.db, stranger) };
     const none = await svc.forgetInherited(other, [left.id]);
     expect(none).toEqual({ forgotten: 0, remaining: [left.id] });
     expect((await w.row("k3"))?.status, "another account's context forgets nothing").toBe("pending");
@@ -212,7 +213,8 @@ describe("a stale reservation that offered nothing", () => {
     const w = await world();
     const { slow, first, left } = await quitDuringLogin(w, "k4");
     w.advance(SEND_STALE_AFTER_MS + 1);
-    const other: ServiceContext = { ...w.ctx, accountId: randomUUID() };
+    const stranger = randomUUID();
+    const other: ServiceContext = { ...w.ctx, accountId: stranger, db: dbFor(w.db, stranger) };
     const out = await svc.resolveStale(other, left, w.mailboxId, null, "defer");
     expect(out.status).not.toBe("forgotten");
     expect((await w.row("k4"))?.status).toBe("pending");

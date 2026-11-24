@@ -2,6 +2,7 @@ import { commitChange, planChange, type ProcessResult, type StorageCap } from ".
 import type { AppendedSent } from "./send.js";
 import type { Change, RepoPort, RoutingPort } from "./ports.js";
 import type { WorkerRepo } from "./adapters/drizzle-repo.js";
+import type { Logger } from "./log.js";
 
 /**
  * Record-at-send: project the Sent-folder copy this send just made. A PROJECTION OF A WRITE
@@ -37,6 +38,8 @@ export interface RecordSentDeps {
   withTx<T>(
     run: (txRepo: RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState" | "applyExternalFlag">) => Promise<T>,
   ): Promise<T>;
+  /** The caller's log, for what the commit says (a copy kept without its invitation row). */
+  log?: Logger;
 }
 
 /**
@@ -73,6 +76,8 @@ export async function recordSentMessage(
   // organizes.
   const plan = await planChange(change, { repo, accountId, mailboxId, readerMode: false });
   return deps.withTx((txRepo) =>
-    commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap: deps.storageCap }),
+    commitChange(plan, {
+      repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap: deps.storageCap, ...(deps.log !== undefined ? { log: deps.log } : {}),
+    }),
   );
 }

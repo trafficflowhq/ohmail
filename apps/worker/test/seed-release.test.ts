@@ -7,7 +7,7 @@ import {
 } from "@trafficflow/db";
 import { confirmSeed } from "@trafficflow/services/mail";
 import type { ServiceContext } from "@trafficflow/services";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 
 /**
  * ═══ CONFIRMING THE SEED RELEASES WHAT THE GATE IS HOLDING FROM THOSE PEOPLE ══════════════
@@ -85,10 +85,10 @@ async function seed(): Promise<World & { held: string; ohbox: string; hand: stri
       createdAt: IMPORTED, nativeLocator: { folder: o.folder ?? o.desired, ref: `1:${i}` },
     }).returning();
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null, headers: o.headers ?? {},
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: o.headers ?? {},
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: o.desired, observedFolder: o.observed ?? o.desired,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: o.desired, observedFolder: o.observed ?? o.desired,
       lastSetBy: o.lastSetBy,
       reconcileStatus: (o.observed ?? o.desired) === o.desired ? "reconciled" : "pending",
       conflict: false,

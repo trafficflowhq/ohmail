@@ -7,8 +7,8 @@
  * The window counted from the press, the pill from its own layout, so the pill still offered Undo
  * after the window had sent the rule. Driven here through the real window, engine and wire.
  */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import { type EngineMessage, type RuleDTO } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
@@ -134,7 +134,7 @@ describe("a Move whose letter waits on the organizer", () => {
       windowOver(s, 60_000);
       s.fake.queueNextForOrganizer("POST", "/messages/m1/move");
       await s.actions.move(row(s), "reads");
-      expect(offer(s).say).toBe("Für Studio laptop vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach News.");
+      expect(offer(s).say).toBe("Für Studio laptop vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: News.");
     } finally { s.close(); }
   });
 });

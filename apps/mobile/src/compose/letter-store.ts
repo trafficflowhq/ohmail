@@ -40,6 +40,7 @@ export interface Letter {
   bcc: string;
   subject: string;
   body: string;
+  html?: string | null;
   /** A reply's derived recipients and subject, so it can be kept when its original is gone. */
   envelope: { to: LetterAddress[]; cc: LetterAddress[]; subject: string } | null;
   files: LetterFile[];
@@ -92,8 +93,8 @@ export function rowHoldsLetter(l: Pick<Letter, "files" | "forwardKept">): boolea
 }
 
 /** The words a draft row holds, compared to tell an edit from what was saved. */
-export function wordsOf(l: Pick<Letter, "to" | "cc" | "bcc" | "subject" | "body">): string {
-  return JSON.stringify([l.to, l.subject, l.body, l.cc, l.bcc]);
+export function wordsOf(l: Pick<Letter, "to" | "cc" | "bcc" | "subject" | "body" | "html">): string {
+  return JSON.stringify([l.to, l.subject, l.body, l.cc, l.bcc, ...(l.html ? [l.html] : [])]);
 }
 
 export function letterDoor(journal: LetterJournal): LetterDoor {

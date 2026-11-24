@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { ImapFlow } from "imapflow";
 import { afterEach, describe, expect, it } from "vitest";
-import { HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineMessage } from "@ohmail/client-engine";
+import { HttpAdapter, MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
 import { approvals, changeLog, folderState, mailboxCredentials, messages, routingDecisions } from "@trafficflow/db";
 import { and, eq, sql } from "drizzle-orm";
 import { connectOverStdio, type StdioClient } from "../src/client.js";

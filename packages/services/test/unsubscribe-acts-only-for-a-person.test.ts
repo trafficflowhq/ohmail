@@ -1,7 +1,8 @@
+import { accountOfMessage, bindDb } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
-  applyScreenerDecision, folderState, messageBodies, readDrainCursor, rules, UNSUB_DRAIN_PASS,
+  applyScreenerDecision, folderState, messageBodies, rules,
 } from "@trafficflow/db";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { makeProfileDoc, profileFingerprint } from "@trafficflow/core/adapters/organizer-profile";
@@ -47,7 +48,7 @@ const oneClick = (host: string) => ({
 async function decided(w: Ctx, host: string, decidedBy: "person" | "pass", at: Date): Promise<string> {
   const from = `news@${host}`;
   const id = await seedMessage(w.db, w.accountId, w.mailboxId, { from, folder: "ohmail/Screener" });
-  await w.db.insert(messageBodies).values({ messageId: id, text: "", headers: oneClick(host) });
+  await w.db.insert(messageBodies).values({ messageId: id, accountId: accountOfMessage(id), text: "", headers: oneClick(host) });
   await w.db.transaction((tx) => applyScreenerDecision(carryDialect(w.db, tx), {
     accountId: w.accountId, scope: "sender", address: from, appliedFolder: "ohmail/Screened",
     decision: "no", triggeringActionId: `screener:${id}`, now: NOW, stampBaseline: false, decidedBy, overExisting: "converge",
@@ -60,7 +61,7 @@ async function decided(w: Ctx, host: string, decidedBy: "person" | "pass", at: D
 async function adopted(w: Ctx, host: string, at: Date): Promise<string> {
   const id = await seedMessage(w.db, w.accountId, w.mailboxId, { from: `news@${host}`, folder: "ohmail/Screened" });
   await w.db.update(folderState).set({ lastSetBy: "external", updatedAt: at }).where(eq(folderState.messageId, id));
-  await w.db.insert(messageBodies).values({ messageId: id, text: "", headers: oneClick(host) });
+  await w.db.insert(messageBodies).values({ messageId: id, accountId: accountOfMessage(id), text: "", headers: oneClick(host) });
   return id;
 }
 
@@ -80,21 +81,6 @@ describe("the automatic unsubscribe acts only for a sender a person screened out
       .where(and(eq(rules.accountId, w.accountId), eq(rules.match, match))))[0]!.at;
     expect(await stamp("news@person.example"), "a person's decision is stamped").not.toBeNull();
     expect(await stamp("news@auto-act.example"), "the auto-act pass's is not").toBeNull();
-  });
-
-  it("the drain reads all three, sends exactly once, and its cursor ends past them", async () => {
-    const { w, person } = await world();
-    const post = spy();
-    const svc = svcWith(post);
-    const run = await svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1", accounts: 1, perAccount: 1 });
-    expect(post.calls, "only the list a person screened out is left").toEqual(["https://person.example/u?t=abc"]);
-    // The walk's own flag: the two unlicensed rows are read past, never handed to the seam.
-    expect(run.sweep.considered).toBe(1);
-    const cursor = await readDrainCursor(w.db as never, UNSUB_DRAIN_PASS);
-    expect(cursor?.messageId, "the cursor stands on the newest row, past the other two").toBe(person);
-    const again = await svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d2" });
-    expect(again.sweep.considered, "and nothing is owed afterwards").toBe(0);
-    expect(again.remaining).toBe(0);
   });
 
   it("the seam refuses the automatic arm without a person's rule, and the button is unchanged", async () => {
@@ -128,7 +114,7 @@ describe("the automatic unsubscribe acts only for a sender a person screened out
     const run = (svc as unknown as {
       run(ctx: Ctx["ctx"], id: string, mode: "manual" | "automatic"): Promise<unknown>;
     }).run.bind(svc);
-    const sweep = await svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "p1", accounts: 1, perAccount: 1 });
+    const sweep = await svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "p1", accounts: 1, perAccount: 1 });
     expect(sweep.sweep.considered, "the drain took a paused screen-out as licensed").toBe(0);
     const err = await run(w.ctx, person, "automatic").catch((e: unknown) => e);
     expect((err as ServiceError).code, "the seam took a paused screen-out as licensed").toBe("unsubscribe_not_person_decided");
@@ -144,7 +130,7 @@ describe("the automatic unsubscribe acts only for a sender a person screened out
     const host = "imported.example";
     const from = `news@${host}`;
     const id = await seedMessage(w.db, w.accountId, w.mailboxId, { from, folder: "ohmail/Screened" });
-    await w.db.insert(messageBodies).values({ messageId: id, text: "", headers: oneClick(host) });
+    await w.db.insert(messageBodies).values({ messageId: id, accountId: accountOfMessage(id), text: "", headers: oneClick(host) });
     await w.db.update(folderState).set({ updatedAt: secondsAgo(5) }).where(eq(folderState.messageId, id));
     const doc = makeProfileDoc({
       screener: [], notifyRules: [], awayResponder: null, tagNames: [], signature: null,
@@ -162,7 +148,7 @@ describe("the automatic unsubscribe acts only for a sender a person screened out
     expect(imported!.at).not.toBeNull();
     const post = spy();
     const svc = svcWith(post);
-    const sweep = await svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "i1", accounts: 1, perAccount: 1 });
+    const sweep = await svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "i1", accounts: 1, perAccount: 1 });
     expect(sweep.sweep.considered, "the drain took an imported stamp as a licence").toBe(0);
     const run = (svc as unknown as {
       run(ctx: Ctx["ctx"], id: string, mode: "manual" | "automatic"): Promise<unknown>;

@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
 const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome");
-const { resetSessionTruthForTests } = await import("../app/shell/session-truth");
+const { resetSessionTruthForTests } = await import("@ohmail/app-logic/session/session-truth");
 
 const ACCOUNT = "acct_predicate_1";
 /**
@@ -86,6 +86,18 @@ afterEach(async () => {
 });
 
 describe("owner — the server named an account", () => {
+  it("supplies the verified address and profile name to the signed-in frame when it asks", async () => {
+    wire(() => json(fullBody, 200));
+    expect(await resolveOwnerOutcome({ includeAddress: true })).toEqual({
+      kind: "owner", accountId: ACCOUNT, address: fullBody.user.email, displayName: fullBody.user.displayName,
+    });
+  });
+
+  it("withholds an unverified address even when the account itself is confirmed", async () => {
+    wire(() => json({ ...fullBody, user: { ...fullBody.user, emailVerified: false } }, 200));
+    expect(await resolveOwnerOutcome({ includeAddress: true })).toEqual({ kind: "owner", accountId: ACCOUNT });
+  });
+
   it("200 with scope full and an account id", async () => {
     wire(() => json(fullBody, 200));
     expect(await resolveOwnerOutcome()).toEqual({ kind: "owner", accountId: ACCOUNT });

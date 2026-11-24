@@ -67,7 +67,7 @@ async function newWorld(senders: number, each: number): Promise<World> {
       nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -207,7 +207,7 @@ describe.skipIf(!PG_UP)("domain scope — the bulk write, on real Postgres", () 
         async onScreenOut(_c, ids) { seen.push(...ids); return { considered: ids.length }; },
       },
     });
-    await svc.decide(ctx(w.accountId), w.atDomain[0]!, { decision: "no", scope: "domain" });
+    await svc.decide(ctx(w.accountId), w.atDomain[0]!, { decision: "no", scope: "domain", unsubscribeIds: w.atDomain });
 
     expect(new Set(seen)).toEqual(new Set(w.atDomain));
     expect(seen).toHaveLength(24);

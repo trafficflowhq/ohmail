@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages,
+  awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages, bindDb,
 } from "@trafficflow/db";
 import type { OutboundMessage, SendAdapter } from "@trafficflow/core";
 import type { AwayPile } from "@trafficflow/core/away-scope";
@@ -165,7 +165,7 @@ async function arrive(w: World, opts: {
   }).returning();
   if (!opts.noBody) {
     await w.db.insert(messageBodies).values({
-      messageId: m!.id, text: "hello", headers: opts.headers ?? {},
+      messageId: m!.id, accountId: m!.accountId, text: "hello", headers: opts.headers ?? {},
     });
   }
   if (opts.folder !== null) {
@@ -178,7 +178,7 @@ async function arrive(w: World, opts: {
     // NOT NULL. `observed_folder` = `desired_folder` is the settled shape — a row mid-reconcile
     // would be a different fixture, and the pass does not read it either way.
     await w.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
     });
   }
   return m!.id;
@@ -191,7 +191,7 @@ const ledger = async (w: World, messageId: string) => {
 };
 
 const run = (w: World, fake: Fake, now: Date = NOW) =>
-  runAwayResponderPass(w.db, { openSendAdapter: fake.factory, now: () => now });
+  runAwayResponderPass(bindDb(w.db, { account: null }), { openSendAdapter: fake.factory, now: () => now });
 
 describe("the away responder answers a candidate, once", () => {
   it("sends one reply and records it as `sent` with the minted id", async () => {
@@ -398,7 +398,7 @@ describe("the mailbox filter — `undefined`, a list, and the empty list", () =>
     const w = await world();
     await arrive(w);
     const fake = fakeAdapter();
-    const r = await runAwayResponderPass(w.db, {
+    const r = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: fake.factory, now: () => NOW, mailboxIds: [],
     });
     expect(r).toMatchObject({ accounts: 0, examined: 0 });
@@ -409,7 +409,7 @@ describe("the mailbox filter — `undefined`, a list, and the empty list", () =>
     const w = await world();
     await arrive(w);
     const fake = fakeAdapter();
-    const r = await runAwayResponderPass(w.db, {
+    const r = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: fake.factory, now: () => NOW, mailboxIds: [w.readerMailboxId],
     });
     expect(r.examined).toBe(0);
@@ -569,7 +569,7 @@ describe("a message whose body has not arrived is not a candidate yet", () => {
     const id = await arrive(w, { noBody: true });
     await run(w, fakeAdapter());
 
-    await w.db.insert(messageBodies).values({ messageId: id, text: "hello", headers: {} });
+    await w.db.insert(messageBodies).values({ messageId: id, accountId: w.accountId, text: "hello", headers: {} });
     const good = fakeAdapter();
     await run(w, good, new Date(NOW.getTime() + 60_000));
 
@@ -791,7 +791,7 @@ describe("the suspension gate", () => {
     const id = await arrive(w);
     const fake = fakeAdapter();
 
-    const r = await runAwayResponderPass(w.db, {
+    const r = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: fake.factory, now: () => NOW,
       accountEligible: async () => false,
     });
@@ -817,7 +817,7 @@ describe("the send budget", () => {
     for (let i = 0; i < 4; i += 1) await arrive(w, { from: `p${i}@them.test`, subject: `s${i}` });
     const fake = fakeAdapter();
 
-    const r = await runAwayResponderPass(w.db, {
+    const r = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: fake.factory, now: () => NOW, sendsPerRun: 2,
     });
 
@@ -862,7 +862,7 @@ describe("a pass stops delivering when its caller says the mailbox is no longer 
        repair three vacuous assertions already, so the control is written first. */
     const w = await twoCandidates("control");
     const fake = fakeAdapter();
-    await runAwayResponderPass(w.db, { openSendAdapter: fake.factory, now: () => NOW });
+    await runAwayResponderPass(bindDb(w.db, { account: null }), { openSendAdapter: fake.factory, now: () => NOW });
     expect(
       fake.delivered.length,
       "the fixture does not produce two replies, so the cancellation case asserts nothing",
@@ -872,7 +872,7 @@ describe("a pass stops delivering when its caller says the mailbox is no longer 
   it("sends exactly ONE reply when the mailbox changes hands after the first delivery", async () => {
     const w = await twoCandidates("cancel");
     const fake = fakeAdapter();
-    await runAwayResponderPass(w.db, {
+    await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: fake.factory,
       now: () => NOW,
       /* OURS until the first reply has gone out, somebody else's immediately after — the shape a
@@ -1164,7 +1164,7 @@ describe("the chosen end date", () => {
       enabledAt: ENABLED_AT, endsAt: new Date(NOW.getTime() - 1000), updatedAt: ENABLED_AT,
     });
 
-    const r = await runAwayResponderPass(mine.db, {
+    const r = await runAwayResponderPass(bindDb(mine.db, { account: null }), {
       openSendAdapter: fakeAdapter().factory, now: () => NOW,
       mailboxIds: [theirMailbox!.id],
     });

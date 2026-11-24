@@ -2,10 +2,10 @@
  * The single-origin decision: what does `https://ohmail.app/` serve? A stranger gets the marketing
  * page; a signed-in browser gets the mail client, same URL, no redirect, no flash. A pure function
  * of (cookie, query, armed-or-not, a `fetch`); `middleware.ts` is the only caller and just turns
- * the answer into a rewrite (a pending sign-out's into a redirect to the sign-in page). The network
- * call is not optional: `tf_session` is an OPAQUE token — nothing at the edge can read it — and a
- * presence check would render the app shell for an expired or revoked cookie, a signed-in-looking
- * chrome around nothing. The anonymous path reads a cookie that is not there and returns
+ * the answer into a rewrite (a pending sign-out's into a redirect to the sign-in page). `tf_session`
+ * is an OPAQUE token — nothing at the edge can read it — so presence alone never draws mail: either
+ * the network call answers, or (with `firstPageUnasked`, off unless set) the app's empty document is
+ * served and the browser's own check decides what it draws. The anonymous path reads a cookie that is not there and returns
  * immediately, so `/` stays a cacheable marketing page; the cost lands only on requests that claim
  * a session.
  */
@@ -15,13 +15,17 @@
  * credential-free) says otherwise. THE GATE NEVER ROUTES A FAULT TO A WRITE: with the marker, no
  * token or a CODED 401 means resume (the splash spends the refresh token); a present token the API
  * could not vouch for — timeout, network, 5xx, 429, an uncoded 401 — means `app`, whose own check
- * verifies with backoff and keeps the warm mirror. A throttled token-holder is served `app` without
+ * verifies with backoff before showing the warm mirror. A throttled token-holder is served `app` without
  * a probe. No marker: the landing, whatever the fault. `?demo=1` is answered before the cookie.
  */
+import { isOwnerShaped } from "@ohmail/app-logic/storage/owner-cookie";
 import { isDemoBuild, isDemoRequested } from "./demo-mode";
 
 /** The access-token cookie. Set by the API, host-only, `SameSite=Strict`. */
 export const SESSION_COOKIE = "tf_session";
+
+/** Written only by middleware after a full session probe. */
+export const FIRST_PAGE_OWNER_HEADER = "x-ohmail-first-page-owner";
 
 /**
  * The INTERNAL route the signed-in `/` is rewritten to.
@@ -98,7 +102,15 @@ export function looksLikeSessionToken(token: string): boolean {
  * with a redirect to the sign-in page, which finishes the sign-out behind its form; `door` with the
  * same redirect, where the page says why the sign-in ended.
  */
-export type Surface = "marketing" | "app" | "demo" | "resume" | "sign-out" | "door";
+export type Surface = "marketing" | "app" | "app-unasked" | "demo" | "resume" | "sign-out" | "door";
+
+/**
+ * The setting `OHMAIL_FIRST_PAGE_NO_PROBE`, read once by `middleware.ts`: on only when it is exactly `1`. Absent, empty
+ * or any other spelling is off, which is today's probe.
+ */
+export function firstPageUnasked(value: string | undefined): boolean {
+  return value === "1";
+}
 
 export interface GateInput {
   /** The raw `tf_session` cookie value, or null when the browser sent none. */
@@ -136,6 +148,11 @@ export interface GateInput {
    * resumed (the person said no).
    */
   signOutPending?: boolean;
+  /**
+   * {@link firstPageUnasked}: a shape-valid token WITH the resume marker is answered `app-unasked` without a probe. The
+   * page then draws nothing of a mailbox until the browser's own check has answered (`EngineProvider`, `drawMail`).
+   */
+  firstPageUnasked?: boolean;
   /** {@link SIGNED_OUT_COOKIE} is in the jar: a jar with no session is sent to the sign-in page (`door`). */
   signedOutJustNow?: boolean;
   /** Injectable so the tests can assert the ZERO-fetch branches by counting calls. */
@@ -155,13 +172,20 @@ export interface GateInput {
  */
 interface SessionBody {
   scope?: unknown;
-  user?: { userId?: unknown } | null;
+  user?: { userId?: unknown; accountId?: unknown } | null;
 }
 
 /**
  * Decide what `/` serves. Never throws: every failure is an answer of `"marketing"`.
  */
 export async function resolveSurface(input: GateInput): Promise<Surface> {
+  const answer = await resolveFirstPage(input);
+  return typeof answer === "string" ? answer : "app";
+}
+
+export type FirstPageAnswer = Surface | { account: string };
+
+export async function resolveFirstPage(input: GateInput): Promise<FirstPageAnswer> {
   const env = input.env ?? {};
 
   // 1. The demo wins over everything and costs nothing. Before the cookie, before the
@@ -198,6 +222,10 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
   //    on presence alone is the one shortcut this file refuses to take.
   if (!input.apiOrigin) return "marketing";
 
+  // 3a. The first page the edge does not ask about: the setting, a token that could be one, and the marker. The token
+  //     goes nowhere; the document answered draws nothing until the browser's check has spoken.
+  if (input.firstPageUnasked === true && resumable) return "app-unasked";
+
   // 3b. Throttled: no probe, and never the splash. Only a token-holder reaches this line.
   if (input.throttled === true) return resumable ? "app" : "marketing";
 
@@ -222,7 +250,7 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
   } catch {
     // Timeout, DNS, TLS, an aborted edge invocation: the API did not ANSWER, so nothing about the
     // session was learned. The shell asks again on the browser's own clock and keeps the warm
-    // mirror; the splash would spend a rotation the jar did not need and, while the API stays
+    // mirror behind its check; the splash would spend a rotation the jar did not need and, while the API stays
     // busy, loop into a sign-in card over a live session. Without the marker there is no
     // standing to assume a session, which also keeps this branch worthless to a cookie sprayer.
     return resumable ? "app" : "marketing";
@@ -254,7 +282,8 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
   // make it full, and mid-onboarding belongs on `/join`, not in a resume loop.
   if (body?.scope !== "full") return "marketing";
   if (typeof body?.user?.userId !== "string") return "marketing";
-  return "app";
+  const account = body.user.accountId;
+  return typeof account === "string" && isOwnerShaped(account) ? { account } : "app";
 }
 
 /** Did this 401 come from OUR envelope (`{error: {code}}`) rather than from a platform? */

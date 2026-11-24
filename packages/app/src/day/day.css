@@ -1,0 +1,13 @@
+/* The day: its sheet fills the view's height; a line said above it takes its own height. Placement only. */
+.cd-day {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  height: 100%;
+  min-height: 0;
+}
+.cd-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}

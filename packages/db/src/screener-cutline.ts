@@ -1,7 +1,7 @@
 import { sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { Dialect } from "./dialect/index.js";
 import { NEWS_FOLDER, LEGACY_NEWS_FOLDER } from "./screener-apply.js";
-import { ruleMatchKeySql, ruleNamesSenderSql } from "./rule-match-sql.js";
+import { ruleMatchKeySql, ruleNamesSenderSql, ruleSetNamesSenderSql } from "./rule-match-sql.js";
 import { SCREENER_ACT_TRIGGER_PREFIX } from "./rule-decided-by.js";
 
 /**
@@ -189,28 +189,58 @@ function andNotGone(d: Dialect, mailboxExpr: SQL, gone: readonly string[]): SQL 
  */
 export function senderIsActiveSql(
   d: Dialect, accountId: string, senderExpr: SQL, set: CutlineSet, gone: readonly string[],
+  opts: { candidates?: SQL } = {},
 ): SQL {
-  const folders = sql`(${sql.join(CUTLINE_PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
-  const at = cutlineInstant({ date: sql`mc.date`, arrivedAt: sql`mc.created_at` });
+  const sender = sql`and lower(mc.from_address) = ${senderExpr}`;
+  const exists = sql`exists (select 1 ${activeSenderRowsSql(d, accountId, set, gone, sender)})`;
+  if (d.name !== "pg" || !opts.candidates) return exists;
+  // A role under PostgreSQL row security cannot seek the index on lower(from_address).
+  // Keep the indexed probe on stores where the role can use it.
+  return sql`case when pg_catalog.row_security_active('public.messages')
+    then ${senderExpr} in (${activeSenderKeysSql(d, accountId, set, gone, opts.candidates)})
+    else ${exists} end`;
+}
+
+/** One set of active senders, for a queue read where RLS prevents a per-sender index seek. */
+export function activeSenderKeysSql(
+  d: Dialect, accountId: string, set: CutlineSet, gone: readonly string[], candidates?: SQL,
+): SQL {
+  const sender = candidates ? sql`and lower(mc.from_address) in (${candidates})` : sql``;
+  return sql`select distinct lower(mc.from_address) as sender ${activeSenderRowsSql(d, accountId, set, gone, sender)}`;
+}
+
+/** A presented message can make its sender active under the window of its own mailbox. */
+export function activeSenderMessageSql(
+  d: Dialect, set: CutlineSet, row: { at: SQL; unread: SQL; mailboxId: SQL },
+): SQL {
   const activeAt = (c: ResolvedCutline): SQL => activeSenderExpr(d, c, {
-    anyUnread: sql`mc.unread`,
-    anyUnreadInWindow: sql`(mc.unread and ${at} is not null and ${at} >= ${d.ts(c.cutoff)})`,
-    newest: at,
+    anyUnread: row.unread,
+    anyUnreadInWindow: sql`(${row.unread} and ${row.at} is not null and ${row.at} >= ${d.ts(c.cutoff)})`,
+    newest: row.at,
   });
   const split = cutlineArms(set);
-  const active = "one" in split ? activeAt(split.one) : perMailboxSql(d, split.arms, sql`mc.mailbox_id`, activeAt);
+  return "one" in split ? activeAt(split.one) : perMailboxSql(d, split.arms, row.mailboxId, activeAt);
+}
+
+function activeSenderRowsSql(
+  d: Dialect, accountId: string, set: CutlineSet, gone: readonly string[], sender: SQL,
+): SQL {
+  const account = d.castUuid(accountId);
+  const folders = sql`(${sql.join(CUTLINE_PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
+  const at = cutlineInstant({ date: sql`mc.date`, arrivedAt: sql`mc.created_at` });
+  const active = activeSenderMessageSql(d, set, { at, unread: sql`mc.unread`, mailboxId: sql`mc.mailbox_id` });
+  const split = cutlineArms(set);
   // With a baseline both arms need the window, so it is also a top-level conjunct: a range of mail
   // 0157's index under a generic plan and on the device store, where the planner never merges it.
   const window = "one" in split && split.one.baselined && !split.one.allTime
     ? sql` and ${at} >= ${d.ts(split.one.cutoff)}` : sql``;
-  return sql`exists (
-    select 1 from messages mc
-      join folder_state fsc on fsc.message_id = mc.id
-     where mc.account_id = ${d.castUuid(accountId)}
-       and lower(mc.from_address) = ${senderExpr}${window}${andNotGone(d, sql`mc.mailbox_id`, gone)}
+  const folderAccount = d.name === "pg" ? sql`and fsc.account_id = ${account}` : sql``;
+  return sql`from messages mc
+      join folder_state fsc on fsc.message_id = mc.id ${folderAccount}
+     where mc.account_id = ${account}
+       ${sender}${window}${andNotGone(d, sql`mc.mailbox_id`, gone)}
        and ${active}
-       and fsc.desired_folder in ${folders}
-  )`;
+       and fsc.desired_folder in ${folders}`;
 }
 
 /**
@@ -267,23 +297,24 @@ export function destinationIsDecisionSql(destination: SQL): SQL {
  * the set this excludes is the set a rule moves.
  */
 export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
-  const claims = ruleNamesSenderSql(d, { kind: sql`rd.kind`, match: sql`rd.match`, destination: sql`rd.destination` }, senderExpr);
-  const ruleFor = (side: SQL): SQL => sql`exists (
-    select 1 from rules rd
+  const kind = sql`rd.kind`;
+  const match = sql`rd.match`;
+  const destination = sql`rd.destination`;
+  const ruleFor = (side: SQL): SQL => {
+    const source = sql`from rules rd
      where rd.account_id = ${d.castUuid(accountId)}
        and rd.enabled
-       and rd.kind in ('sender', 'domain')
-       and ${side}
-       and ${claims}
-  )`;
+       and ${side}`;
+    return d.name === "pg" ? ruleSetNamesSenderSql(d, { kind, match, destination }, senderExpr, source)
+      : sql`exists (select 1 ${source} and ${ruleNamesSenderSql(d, { kind, match, destination }, senderExpr)})`;
+  };
+  const contacts = sql`from contacts cd where cd.account_id = ${d.castUuid(accountId)}`;
+  const known = d.name === "pg"
+    ? sql`(${senderExpr} in (select lower(cd.address) ${contacts})) is true`
+    : sql`exists (select 1 ${contacts} and lower(cd.address) = ${senderExpr})`;
   return sql`(
-       ${ruleFor(destinationIsDecisionSql(sql`rd.destination`))}
-    or (exists (
-          select 1 from contacts cd
-           where cd.account_id = ${d.castUuid(accountId)}
-             and lower(cd.address) = ${senderExpr}
-        )
-        and not ${ruleFor(sql`rd.destination = ${CUTLINE_GATE_FOLDER}`)})
+    ${ruleFor(destinationIsDecisionSql(destination))}
+    or (${known} and not ${ruleFor(sql`${destination} = ${CUTLINE_GATE_FOLDER}`)})
   )`;
 }
 
@@ -354,10 +385,10 @@ export function heldClaimInsideSql(
  */
 export function heldArrivedInsideSql(
   d: Dialect,
-  r: { folder: SQL; deletedAt: SQL; date: SQL; arrivedAt: SQL; recordedAt: SQL; mailboxId: SQL },
+  r: { folder: SQL; deletedAt: SQL; date: SQL; arrivedAt: SQL; recordedAt: SQL; mailboxId: SQL; importDone?: SQL },
   set: CutlineSet,
 ): SQL {
-  const importDone = sql`(select mbi.initial_import_completed_at from mailboxes mbi where mbi.id = ${r.mailboxId})`;
+  const importDone = r.importDone ?? sql`(select mbi.initial_import_completed_at from mailboxes mbi where mbi.id = ${r.mailboxId})`;
   const inside = (c: ResolvedCutline | null): SQL => {
     const held = sql`${r.folder} = ${CUTLINE_GATE_FOLDER} and ${r.deletedAt} is null and ${r.arrivedAt} is not null`;
     const window = c === null || c.allTime ? sql`` : sql` and ${d.arrivalKey(r.date, r.arrivedAt)} >= ${d.ts(c.cutoff)}`;
@@ -400,19 +431,43 @@ export function senderHasHeldClaimSql(
   d: Dialect, accountId: string, senderExpr: SQL, cutoff: Date | CutlineSet, screening: readonly string[],
   gone: readonly string[],
 ): SQL {
+  const sender = sql`and lower(hm.from_address) = ${senderExpr}`;
+  return sql`exists (select 1 ${heldClaimRowsSql(d, accountId, senderExpr, cutoff, screening, gone, sender)})`;
+}
+
+/** All senders with a waiting claim, found through the held-folder index once per page. */
+export function heldClaimKeysSql(
+  d: Dialect, accountId: string, cutoff: CutlineSet, screening: readonly string[], gone: readonly string[],
+): SQL {
+  const account = d.castUuid(accountId);
+  const sender = sql`lower(hm.from_address)`;
+  const held = sql`and hf.desired_folder = ${CUTLINE_GATE_FOLDER} and hf.account_id = ${account}`;
+  const marked = heldForIdentitySql({ senderCheck: sql`sender_check`, unconfirmed: sql`unconfirmed_hold` });
+  // Evaluate the consent predicates after selecting the account's marked letters.
+  return sql`with marked as materialized (
+    select account_id, id, mailbox_id, from_address, sender_check, sender_check_by, date,
+      arrived_at, created_at, deleted_at, auth_verdict, sender_check_brand, unconfirmed_hold
+    from messages where account_id = ${account} and deleted_at is null and ${marked}
+    ${andNotGone(d, sql`mailbox_id`, gone)}
+  )
+  select distinct ${sender} as sender ${heldClaimRowsSql(d, accountId, sender, cutoff, screening, [], held, sql`marked`)}`;
+}
+
+function heldClaimRowsSql(
+  d: Dialect, accountId: string, fromAddress: SQL, cutoff: Date | CutlineSet,
+  screening: readonly string[], gone: readonly string[], extra: SQL, source: SQL = sql`messages`,
+): SQL {
   const waits = heldClaimWaitsSql(d, accountId, {
     folder: sql`hf.desired_folder`, deletedAt: sql`hm.deleted_at`, senderCheck: sql`hm.sender_check`,
     by: sql`hm.sender_check_by`, date: sql`hm.date`, arrivedAt: sql`hm.arrived_at`,
-    recordedAt: sql`hm.created_at`, mailboxId: sql`hm.mailbox_id`, sender: senderExpr, auth: sql`hm.auth_verdict`,
+    recordedAt: sql`hm.created_at`, mailboxId: sql`hm.mailbox_id`, sender: fromAddress, auth: sql`hm.auth_verdict`,
     brand: sql`hm.sender_check_brand`, unconfirmed: sql`hm.unconfirmed_hold`,
   }, cutoff, screening);
-  return sql`exists (
-    select 1 from messages hm
+  return sql`from ${source} hm
       join folder_state hf on hf.message_id = hm.id
      where hm.account_id = ${d.castUuid(accountId)}
-       and lower(hm.from_address) = ${senderExpr}${andNotGone(d, sql`hm.mailbox_id`, gone)}
-       and ${waits}
-  )`;
+       ${extra}${andNotGone(d, sql`hm.mailbox_id`, gone)}
+       and ${waits}`;
 }
 
 /**

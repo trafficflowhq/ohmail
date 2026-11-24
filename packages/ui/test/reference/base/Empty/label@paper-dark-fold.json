@@ -1,0 +1,45 @@
+{
+  "component": "Empty",
+  "state": "label",
+  "look": "paper-dark-fold",
+  "place": "cell",
+  "target": [73.3281, 53.7969, 151.3438, 90.3906],
+  "clip": [73, 53, 152, 92],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "fold",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "22px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "26.4px",
+      "letterSpacing": "-0.484px",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [{ "backgroundColor": "rgb(246, 241, 233)", "borderRadius": "999px" }],
+  "nodes": [],
+  "loose": {
+    "text": [{ "said": "All read", "type": 0 }],
+    "surfaces": [{ "box": [111.9, 44.5, 7.5, 7.5], "paint": 0 }]
+  }
+}

@@ -7,7 +7,7 @@ import type { HostResolver } from "@trafficflow/core/net";
 import { startWorkerWithLock } from "../src/index.js";
 import { acquireLeaderLock } from "../src/leader-lock.js";
 import { makeDialHostGuard } from "../src/dial-host-guard.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 /**
@@ -35,7 +35,7 @@ async function seed(db: Db, accountId: string, host: string): Promise<string> {
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "u@attach.example" }).returning();
   const enc = await KP.encrypt("fixture");
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host, port: 993, secure: true, user: "u@attach.example" },
   });
   return mb!.id;

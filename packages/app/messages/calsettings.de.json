@@ -1,0 +1,91 @@
+{
+  "calsettings": {
+    "unread": "Der Kalender kann auf diesem Gerät nicht gelesen werden.",
+    "noSettings": "Die Einstellungen sind auf diesem Gerät nicht da",
+    "notSaved": "Nicht gesichert.",
+    "notChecked": "Nicht geprüft.",
+    "notRemoved": "Nicht entfernt.",
+    "way": {
+      "icloud": "iCloud",
+      "caldav": "CalDAV",
+      "ics": "Abo",
+      "google": "Google",
+      "microsoft": "Microsoft 365"
+    },
+    "accounts": {
+      "useCalendar": "ohcal verwenden",
+      "add": "Kalender-Account hinzufügen",
+      "addAccount": "Account hinzufügen",
+      "none": "Kein Kalender-Account",
+      "noneShort": "Keiner",
+      "signInAgain": "Neu anmelden",
+      "state": {
+        "inStep": "Aktuell",
+        "signedOut": "Abgemeldet",
+        "failing": "Nicht geprüft",
+        "removing": "Wird entfernt"
+      },
+      "calendarCount": "{count, plural, one {# Kalender} other {# Kalender}}",
+      "checkedAt": "Geprüft {when}",
+      "calendars": "Kalender",
+      "show": "{name} zeigen",
+      "newEventsHere": "Neue Termine kommen hierhin",
+      "viewOnly": "Nur ansehen",
+      "checked": "Geprüft",
+      "never": "Noch nicht",
+      "checkNow": "Jetzt prüfen",
+      "connectedWith": "Verbunden über",
+      "remove": "Entfernen",
+      "removeAsk": "{name} entfernen?",
+      "rename": "Hier umbenennen",
+      "nameHere": "Name hier",
+      "save": "Sichern",
+      "title": "Kalenderzugänge"
+    },
+    "view": {
+      "opensIn": "Startansicht",
+      "startsOn": "Woche beginnt am",
+      "weekends": "Wochenenden",
+      "showDeclined": "Abgelehnte Termine zeigen",
+      "deviceSummary": "{view} · {day}",
+      "opens": { "agenda": "Agenda", "day": "Tag", "week": "Woche", "month": "Monat", "year": "Jahr" },
+      "starts": { "0": "Montag", "5": "Samstag", "6": "Sonntag" },
+
+      "newEvents": "Neue Termine kommen in",
+      "noWritable": "Kein Kalender zum Schreiben",
+      "week": "Woche",
+      "weekNumbers": "Kalenderwochen",
+      "on": "Ein",
+      "off": "Aus",
+      "hours": "Stunden im Blick",
+      "from": "Von",
+      "to": "Bis",
+      "hourRange": "{from} – {to}",
+      "summary": "Woche · Montag",
+      "scheduleSummary": "{hours} · {calendar}",
+      "hourEarlier": "Eine Stunde früher",
+      "hourLater": "Eine Stunde später",
+      "time": "Zeit",
+      "zone": "Zeitzone",
+      "secondZone": "Zweite Zeitzone",
+      "noSecondZone": "Keine",
+      "findZone": "Zeitzone finden",
+      "title": "Ansicht",
+      "followsDevice": "Folgt diesem Gerät"
+    },
+    "group": "Kalender",
+    "close": "Einstellungen schließen",
+    "mail": {
+      "readForEvents": "Nach Terminen lesen",
+      "noMailbox": "Kein Postfach",
+      "phoneOfferNote": "Wähle, aus welchen Postfächern Terminvorschläge auf diesem Telefon erscheinen.",
+      "offered": "Vorgeschlagen",
+      "evidence": { "calendar": "Kalendereinladungen", "data": "Termine in strukturierten E-Mails" },
+      "onCalendar": "Im Kalender",
+
+      "title": "Mail und Kalender",
+      "fromMail": "Aus Mail",
+      "open": "Öffnen"
+    }
+  }
+}

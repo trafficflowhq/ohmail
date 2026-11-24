@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { FocusFollows } from "../../webapp/app/shell/focus-follows";
+import { FocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;

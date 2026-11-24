@@ -1,0 +1,79 @@
+/* The Year's placement: four months a row on a wide sheet, three, two as the sheet itself narrows. */
+.cal-yr {
+  container-type: inline-size;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+.cal-yr-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3) var(--s6) 0;
+}
+.cal-yr-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s5) var(--s6);
+  padding: var(--s5) var(--s6);
+  align-content: start;
+}
+@container (max-width: 1000px) {
+  .cal-yr-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@container (max-width: 700px) {
+  .cal-yr-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s4);
+    padding: var(--s4);
+  }
+}
+.cal-yr-month {
+  min-width: 0;
+}
+.cal-yr-head {
+  margin: 0 0 var(--s1);
+}
+.cal-yr-name {
+  display: inline-flex;
+  align-items: baseline;
+  padding: 0 var(--s2);
+  border: 0;
+  border-radius: var(--r-pill);
+  font: inherit;
+  line-height: 32px;
+  color: var(--ink);
+  background: none;
+}
+.cal-yr-name:hover {
+  background: var(--hover);
+}
+@container (max-width: 460px) {
+  .cal-yr-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.cal-yr {
+  border-radius: var(--r-sheet);
+  background: var(--sheet);
+  box-shadow: 0 0 0 var(--ringw) var(--ring);
+}
+.cal-yr[data-device="phone"] {
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  scroll-padding-block-end: var(--cal-phone-sheet-foot);
+}
+.cal-yr[data-device="phone"] .cal-yr-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s3) var(--s4);
+  padding: var(--s2) var(--s3) var(--cal-phone-sheet-foot);
+}
+
+/* At enlarged text sizes there is room for only one legible month on a narrow phone. */
+@container (max-width: 320px) {
+  .cal-yr[data-device="phone"] .cal-yr-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

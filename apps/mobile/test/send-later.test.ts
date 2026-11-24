@@ -607,7 +607,7 @@ describe("the composer's affordance and the Scheduled screen — the shapes that
        `test/send-later-not-on-this-phone.test.ts`; what is asserted HERE is that the markup asks
        that predicate, which is what makes the forward rule reach the button at all. */
     expect(actions).toMatch(/const laterOffered = sendLaterOffered\(\{\s*standalone: w\.standalone, forward, hasAttachments: attachments\.length > 0, filesKept: filesKept\?\.kept === true,\s*\}\)/);
-    expect(actions).toMatch(/\{laterOffered \? \(\s*<Button\s*label=\{Copy\.sendLater\}/);
+    expect(actions).toMatch(/const laterButton = laterOffered \? \(\s*<Button\s*label=\{Copy\.sendLater\}/);
   });
 
   it("Send later rides the SAME lock as Send — one predicate owns both buttons", () => {
@@ -639,7 +639,7 @@ describe("the composer's affordance and the Scheduled screen — the shapes that
     // `sigText` is derived ABOVE the picker state and handed to `send` regardless of it, so a
     // signature hidden while a time is chosen is still sealed into the scheduled message.
     expect(actions).toMatch(/const sigText =\s*w\.signatures === null \|\| sendFrom === null \? null : effectiveSignature\(/);
-    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\s+baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\)\)/);
+    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\s+baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\), \.\.\.markupArgs\)/);
   });
 
   it("the Scheduled screen never claims emptiness over an unsettled mirror", () => {

@@ -21,7 +21,8 @@
  *     link knows exactly one human to ask, so the form says that, instead of the service's
  *     anonymous "whoever minted it".
  *
- * The real `InviteScreen`, the real `api-client`, only `fetch` and the router stubbed — the
+ * The real route (`InviteRoute`: the invite page over its ceremony), the real `api-client`, only `fetch` and the
+ * router stubbed, blanks found by the names their labels give them — the
  * setup suite's exact harness.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -104,19 +105,26 @@ afterEach(async () => {
 
 async function mountAt(url: string): Promise<HTMLElement> {
   window.history.replaceState(null, "", url);
-  const { InviteScreen } = await import("../app/(product)/join/invite/InviteScreen.js");
+  const { InviteRoute } = await import("../app/(product)/join/invite/InviteRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(InviteScreen) }),
+      h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(InviteRoute) }),
     );
     await Promise.resolve();
   });
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
   return host;
 }
+
+/** A blank, by the name its label gives it. */
+function blank(c: HTMLElement, name: string): HTMLInputElement | null {
+  const label = [...c.querySelectorAll("label")].find((l) => l.textContent === name);
+  return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+}
+const W = messages.joinInvite;
 
 async function type(input: HTMLInputElement, value: string): Promise<void> {
   await act(async () => {
@@ -127,9 +135,9 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
 }
 
 async function fillAndSubmit(c: HTMLElement, email = "mara@family.example"): Promise<void> {
-  await type(c.querySelector<HTMLInputElement>("#invite-email")!, email);
-  await type(c.querySelector<HTMLInputElement>("#invite-name")!, "Mara");
-  await type(c.querySelector<HTMLInputElement>("#invite-pw")!, "correct horse battery staple");
+  await type(blank(c, W.emailLabel)!, email);
+  await type(blank(c, W.nameLabel)!, "Mara");
+  await type(blank(c, W.passwordLabel)!, "correct horse battery staple");
   await act(async () => {
     c.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await Promise.resolve();
@@ -141,10 +149,12 @@ describe("the token: fragment in, scrubbed at once, never in any request URL", (
   it("a fragment token renders the form and leaves the address bar clean", async () => {
     const c = await mountAt(`/join/invite#${TOKEN}`);
     expect(c.textContent).toContain("You're invited");
-    expect(c.querySelector("#invite-email"), "the form is up").not.toBeNull();
+    expect(blank(c, W.emailLabel), "the form is up").not.toBeNull();
     // Scrubbed: out of the visible URL, out of an abandoned tab's address bar.
     expect(window.location.hash).toBe("");
     expect(window.location.pathname).toBe("/join/invite");
+    // The page is drawn without the secret: the ceremony holds it, no element or attribute carries it.
+    expect(c.innerHTML, "the page carried the link's token").not.toContain(TOKEN);
   });
 
   it("the token rides ONLY the redeem's JSON body — no fetch URL ever carries it", async () => {
@@ -165,13 +175,13 @@ describe("the token: fragment in, scrubbed at once, never in any request URL", (
 
   it("a QUERY-borne token is refused — the incomplete-link screen, no form", async () => {
     const c = await mountAt(`/join/invite?token=${TOKEN}`);
-    expect(c.querySelector("#invite-email"), "no form for a token in the query").toBeNull();
+    expect(blank(c, W.emailLabel), "no form for a token in the query").toBeNull();
     expect(c.textContent).toContain("This link is incomplete");
   });
 
   it("no token at all is the same honest screen", async () => {
     const c = await mountAt("/join/invite");
-    expect(c.querySelector("#invite-email")).toBeNull();
+    expect(blank(c, W.emailLabel)).toBeNull();
     expect(c.textContent).toContain("This link is incomplete");
   });
 });
@@ -184,7 +194,7 @@ describe("Strict Mode — the scrub must not eat the token on the replayed mount
     // `pnpm dev`. Review finding, fixed red-first: the token is captured once, in a ref
     // the replay re-reads.
     window.history.replaceState(null, "", `/join/invite#${TOKEN}`);
-    const { InviteScreen } = await import("../app/(product)/join/invite/InviteScreen.js");
+    const { InviteRoute } = await import("../app/(product)/join/invite/InviteRoute.js");
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -192,14 +202,14 @@ describe("Strict Mode — the scrub must not eat the token on the replayed mount
       root!.render(
         h(NextIntlClientProvider, {
           locale: "en", messages, timeZone: "UTC",
-          children: h(React.StrictMode, null, h(InviteScreen)),
+          children: h(React.StrictMode, null, h(InviteRoute)),
         }),
       );
       await Promise.resolve();
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-    expect(host.querySelector("#invite-email"), "the form survives the replay").not.toBeNull();
+    expect(blank(host, W.emailLabel), "the form survives the replay").not.toBeNull();
     expect(host.textContent).not.toContain("This link is incomplete");
     expect(window.location.hash).toBe("");
   });
@@ -234,7 +244,7 @@ describe("the ceremony — one submit drives redeem, then register with the mint
     expect(alert!.textContent).toContain("person who invited you");
     // No register rode behind the failed redeem, and the form survives for a fresh link.
     expect(calls.some((r) => r.url.includes("/auth/register"))).toBe(false);
-    expect(c.querySelector("#invite-email")).not.toBeNull();
+    expect(blank(c, W.emailLabel)).not.toBeNull();
   });
 
   it("a register refusal AFTER a successful redeem keeps the minted code — the retry never re-burns the token", async () => {
@@ -245,7 +255,7 @@ describe("the ceremony — one submit drives redeem, then register with the mint
     expect(c.querySelector('[role="alert"]')!.textContent).toContain("password");
 
     answers["/api/auth/register"] = REGISTERED;
-    await type(c.querySelector<HTMLInputElement>("#invite-pw")!, "a much longer correct password");
+    await type(blank(c, W.passwordLabel)!, "a much longer correct password");
     await act(async () => {
       c.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await Promise.resolve();
@@ -271,7 +281,7 @@ describe("the ceremony — one submit drives redeem, then register with the mint
     expect(c.querySelector('[role="alert"]')!.textContent).toContain("password");
 
     answers["/api/auth/register"] = REGISTERED;
-    await type(c.querySelector<HTMLInputElement>("#invite-pw")!, "a much longer correct password");
+    await type(blank(c, W.passwordLabel)!, "a much longer correct password");
     await fillAndSubmit(c, "Mara@Family.example"); // same address, different case
 
     expect(calls.filter((r) => r.url.includes("/pair/redeem")), "one redeem, ever").toHaveLength(1);

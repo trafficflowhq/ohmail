@@ -1,18 +1,15 @@
 /** @vitest-environment jsdom */
+import { act, cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage, MessageBody, TagDTO, FeedPartition } from "@ohmail/client-engine";
-import messages from "../messages/en.json";
-import { ReadsView } from "../app/views/ReadsView";
-import { ReceiptsView } from "../app/views/ReceiptsView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { readFileSync } from "node:fs";
+import { issue, mountStreamFrame, receipt } from "../../../packages/app/test/streams/registered-world.js";
+import { STREAM_CARD_FALLBACK_PX } from "@ohmail/ui";
+import { stubDom } from "./_draft-shell.js";
 import {
   STREAM_CARD_ESTIMATE_PX,
   STREAM_WINDOW_MAX,
   openingCount,
-} from "../app/shell/stream-window";
+} from "@ohmail/app-logic/lists/stream-window";
 
 /** The opening window jsdom gets: the window's height stands in for the column (no layout). */
 const OPENING = (): number => openingCount(window.innerHeight);
@@ -39,71 +36,33 @@ const OPENING = (): number => openingCount(window.innerHeight);
 
 const ISO = "2026-08-04T09:00:00.000Z";
 const N = 5000;
-const tags: TagDTO[] = [];
+type Make = typeof issue;
 
-const message = (i: number): EngineMessage =>
-  ({
-    id: `m${i}`, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: `subject of m${i}`, from: { name: `Sender ${i}`, address: `s${i}@x.invalid` },
-    to: [], cc: [], date: ISO, folder: "INBOX", snippet: `snippet of message ${i}`,
-    unread: false, hasAttachments: false, attachmentCount: 0, sensitivity: {}, triage: null,
-    labels: [], remoteContent: "none", updatedAt: ISO,
-  }) as unknown as EngineMessage;
-
-const body = (): MessageBody =>
-  ({ text: "body", state: "snippet", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null } as unknown as MessageBody);
-
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-let roots: Root[] = [];
-
-async function mount(node: React.ReactNode): Promise<HTMLElement> {
-  const host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  roots.push(root);
-  await act(() => {
-    root.render(
-      <NextIntlClientProvider locale="en" messages={messages} now={new Date(ISO)} timeZone="UTC">
-        <KeymapProvider>{node}</KeymapProvider>
-      </NextIntlClientProvider>,
-    );
+function letters(make: Make, count: number) {
+  return Array.from({ length: count }, (_, i) => {
+    const date = new Date(Date.parse(ISO) - i * 1000).toISOString();
+    return make(`m${i}`, 1, { date, arrivedAt: date, unread: false });
   });
-  return host;
+}
+
+async function visit(make: Make, count: number, jumpTo?: string) {
+  const news = make === issue;
+  const base = news ? "#/reads" : "#/receipts";
+  const at = jumpTo ? `${base}/m/${jumpTo}` : base;
+  const seat = mountStreamFrame({ at, letters: letters(make, count) });
+  await act(async () => {});
+  const host = screen.getByRole("region", { name: news ? "News stream" : "Receipts stream" });
+  return { ...seat, host };
 }
 
 const cardIndices = (host: HTMLElement): number[] =>
-  [...host.querySelectorAll(".scast[data-sid]")].map((n) =>
-    Number((n.getAttribute("data-sid") ?? "m-1").slice(1)),
+  [...host.querySelectorAll<HTMLElement>("[data-stream-item]")].map((node) =>
+    Number(node.dataset.streamItem!.slice(1)),
   );
 
-/** A contiguous ascending run — the property the scroll-spy's top-to-bottom walk relies on. */
 const expectContiguous = (idx: number[]): void => {
   for (let i = 1; i < idx.length; i++) expect(idx[i]).toBe(idx[i - 1]! + 1);
 };
-
-const reads = (count: number, jumpTo: string | null = null) => {
-  const fresh = Math.floor(count / 4);
-  const freshRows = Array.from({ length: fresh }, (_, i) => message(i));
-  const partition: FeedPartition = {
-    waterline: null,
-    fresh: freshRows,
-    seen: Array.from({ length: count - fresh }, (_, i) => message(i + fresh)),
-    newCount: freshRows.filter((m) => m.unread).length,
-  };
-  return (
-    <ReadsView settled owed={false} partition={partition} tags={tags} now={new Date(ISO)} cur={null} onCur={() => {}}
-      aiChip={null} chipState={null} onChipState={() => {}} markSeen={() => {}}
-      bodyOf={body} hydrateBody={() => {}} jumpTo={jumpTo} onJumped={() => {}} onAction={() => {}} />
-  );
-};
-
-const receipts = (count: number, jumpTo: string | null = null) => (
-  <ReceiptsView settled owed={false} messages={Array.from({ length: count }, (_, i) => message(i))} tags={tags} now={new Date(ISO)}
-    cur={null} onCur={() => {}} unreadCount={0} isUnread={() => false} markSeen={() => {}}
-    bodyOf={body} hydrateBody={() => {}} jumpTo={jumpTo} onJumped={() => {}} onAction={() => {}} />
-);
 
 /**
  * Give the stream a browser's geometry: a viewport, a scroll position, and card rects that
@@ -112,7 +71,13 @@ const receipts = (count: number, jumpTo: string | null = null) => (
  * `data-sid`, so window moves re-stub themselves.
  */
 function armGeometry(host: HTMLElement, viewport: number): HTMLElement {
-  const scroller = host.querySelector(".stream") as HTMLElement;
+  const scroller = host.matches("[data-reading-scroll]") ? host
+    : host.querySelector<HTMLElement>("[data-reading-scroll]")!;
+  Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: N * STREAM_CARD_ESTIMATE_PX });
+  scroller.scrollTo = (options?: ScrollToOptions | number, y?: number) => {
+    scroller.scrollTop = (typeof options === "number" ? y : options?.top) ?? scroller.scrollTop;
+    scroller.dispatchEvent(new Event("scroll"));
+  };
   Object.defineProperty(scroller, "clientHeight", { configurable: true, value: viewport });
   let top = 0;
   Object.defineProperty(scroller, "scrollTop", {
@@ -126,8 +91,8 @@ function armGeometry(host: HTMLElement, viewport: number): HTMLElement {
   const proto = HTMLElement.prototype;
   const original = proto.getBoundingClientRect;
   proto.getBoundingClientRect = function (this: HTMLElement) {
-    const sid = this.dataset?.sid;
-    if (sid && this.classList.contains("scast")) {
+    const sid = this.dataset?.streamWindowItem ?? this.dataset?.streamItem;
+    if (sid) {
       const i = Number(sid.slice(1));
       const y = i * STREAM_CARD_ESTIMATE_PX - top;
       return { top: y, bottom: y + STREAM_CARD_ESTIMATE_PX, height: STREAM_CARD_ESTIMATE_PX } as DOMRect;
@@ -162,39 +127,22 @@ const frames = async (n: number): Promise<void> => {
   for (let i = 0; i < n; i++) await act(async () => { vi.advanceTimersByTime(17); });
 };
 
-describe("the reading stream is a sliding window", () => {
-  beforeEach(() => {
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true, writable: true,
-      value: (q: string) => ({ matches: false, media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
-    });
-    // jsdom ships no `CSS`; the post-commit scroll (`pendingScroll`) reaches
-    // `StreamShell.scrollTo`, which escapes the id. Identity is enough — no selector is
-    // matched against real layout here.
-    (globalThis as unknown as { CSS?: { escape: (s: string) => string } }).CSS ??= {
-      escape: (s: string) => s,
-    };
-    // jsdom has no layout and no element scrolling; the post-commit scroll only needs to not
-    // throw — what is asserted is which cards are IN the DOM, never scroll geometry.
-    (HTMLElement.prototype as unknown as { scrollTo?: () => void }).scrollTo ??= () => {};
-    vi.spyOn(console, "error").mockImplementation(() => {});
-  });
-  afterEach(async () => {
-    for (const r of roots) await act(() => r.unmount());
-    roots = [];
-    restoreRect?.();
-    restoreRect = null;
-    document.body.innerHTML = "";
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-  });
+beforeEach(() => stubDom());
+afterEach(() => {
+  cleanup();
+  restoreRect?.();
+  restoreRect = null;
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
+describe("the reading stream is a sliding window", () => {
   for (const [name, render] of [
-    ["News", reads],
-    ["Receipts", receipts],
+    ["News", issue],
+    ["Receipts", receipt],
   ] as const) {
     it(`${name}: a switch mounts one screen of cards at ${N}, not ${N}`, async () => {
-      const host = await mount(render(N));
+      const host = (await visit(render, N)).host;
       const idx = cardIndices(host);
       // The load-bearing assertion — mapping the whole pile again makes this the pile's length,
       // and the old sixty-card opening run several screens of it.
@@ -206,7 +154,7 @@ describe("the reading stream is a sliding window", () => {
     it(`${name}: under a Text size zoom the opening screen is counted in CSS px`, async () => {
       document.documentElement.style.setProperty("--ui-zoom", "2");
       try {
-        const host = await mount(render(N));
+        const host = (await visit(render, N)).host;
         expect(cardIndices(host).length).toBe(openingCount(window.innerHeight / 2));
         expect(openingCount(window.innerHeight / 2)).toBeLessThan(OPENING());
       } finally {
@@ -216,22 +164,22 @@ describe("the reading stream is a sliding window", () => {
 
     it(`${name}: a short pile mounts whole, with no spacers`, async () => {
       const short = OPENING() - 1;
-      const host = await mount(render(short));
+      const host = (await visit(render, short)).host;
       expect(cardIndices(host).length).toBe(short);
-      expect(host.querySelector(".stream [data-stream-tail]")).toBeNull();
-      expect(host.querySelector(".stream [data-stream-head]")).toBeNull();
+      expect(host.querySelector("[data-stream-tail]")).toBeNull();
+      expect(host.querySelector("[data-stream-head]")).toBeNull();
     });
 
     it(`${name}: a pile past one screen reserves the rest as height, not cards`, async () => {
-      const host = await mount(render(24));
+      const host = (await visit(render, 24)).host;
       expect(cardIndices(host).length).toBe(OPENING());
-      expect(host.querySelector(".stream [data-stream-head]")).toBeNull();
-      const tail = host.querySelector<HTMLElement>(".stream [data-stream-tail]");
+      expect(host.querySelector("[data-stream-head]")).toBeNull();
+      const tail = host.querySelector<HTMLElement>("[data-stream-tail]");
       expect(tail?.style.height).toBe(`${(24 - OPENING()) * STREAM_CARD_ESTIMATE_PX}px`);
     });
 
     it(`${name}: a jump beyond the window REPOSITIONS it around the target`, async () => {
-      const host = await mount(render(N, "m3000"));
+      const host = (await visit(render, N, "m3000")).host;
       // jumpTo schedules on a frame; let it run.
       await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
       const idx = cardIndices(host);
@@ -243,13 +191,13 @@ describe("the reading stream is a sliding window", () => {
       expect(idx[0]).toBeGreaterThan(2000);
       expectContiguous(idx);
       // Both sides of the pile are reserved height now, not DOM.
-      expect(host.querySelector(".stream [data-stream-head]")).not.toBeNull();
-      expect(host.querySelector(".stream [data-stream-tail]")).not.toBeNull();
+      expect(host.querySelector("[data-stream-head]")).not.toBeNull();
+      expect(host.querySelector("[data-stream-tail]")).not.toBeNull();
     });
   }
 
   it("scrolling deep SLIDES the window: cards left behind unmount, the count stays bounded", async () => {
-    const host = await mount(reads(N));
+    const host = (await visit(issue, N)).host;
     const scroller = armGeometry(host, 800);
 
     // Deep into the pile: the window follows the viewport there.
@@ -261,7 +209,7 @@ describe("the reading stream is a sliding window", () => {
     expect(idx[0]).toBeGreaterThan(2000);
     expect(idx.some((i) => i >= 2500)).toBe(true);
     expectContiguous(idx);
-    expect(host.querySelector(".stream [data-stream-head]")).not.toBeNull();
+    expect(host.querySelector("[data-stream-head]")).not.toBeNull();
 
     // Half a pile further: still bounded, still near the viewport.
     await scrollTo(scroller, 4500 * STREAM_CARD_ESTIMATE_PX);
@@ -279,15 +227,19 @@ describe("the reading stream is a sliding window", () => {
   });
 
   it("the end-of-pile line is only claimed while the last card is mounted", async () => {
-    const big = await mount(reads(N));
-    expect(big.querySelector(".stream .tail-row")).toBeNull();
+    const big = (await visit(issue, N)).host;
+    expect(within(big).queryByText("No older unread items.")).toBeNull();
     const scroller = armGeometry(big, 800);
     await scrollTo(scroller, (N - 3) * STREAM_CARD_ESTIMATE_PX);
     expect(cardIndices(big)).toContain(N - 1);
-    expect(big.querySelector(".stream .tail-row")).not.toBeNull();
+    // The stream shows no end-of-pile sentence.
+    expect(within(big).queryByText("No older unread items.")).toBeNull();
 
-    const small = await mount(reads(OPENING() - 1));
-    expect(small.querySelector(".stream .tail-row")).not.toBeNull();
+    cleanup();
+    restoreRect?.();
+    restoreRect = null;
+    const small = (await visit(issue, OPENING() - 1)).host;
+    expect(within(small).queryByText("No older unread items.")).toBeNull();
   });
 
   /* End in News: WebKit animates the stream over a dozen frames, each far past the mounted
@@ -296,7 +248,7 @@ describe("the reading stream is a sliding window", () => {
   it("a flight holds the window and commits once, where it stops", async () => {
     vi.useFakeTimers();
     try {
-      const host = await mount(reads(N));
+      const host = (await visit(issue, N)).host;
       const scroller = armGeometry(host, 800);
       await frames(6); // the post-paint growth settles
       const held = cardIndices(host);
@@ -319,7 +271,7 @@ describe("the reading stream is a sliding window", () => {
   it("a hand scroll still moves the window while it scrolls", async () => {
     vi.useFakeTimers();
     try {
-      const host = await mount(reads(N));
+      const host = (await visit(issue, N)).host;
       const scroller = armGeometry(host, 800);
       await frames(6);
       for (let top = 300; top <= 12_000; top += 300) await step(scroller, top);
@@ -333,42 +285,10 @@ describe("the reading stream is a sliding window", () => {
 });
 
 describe("the window under a pile that changes size", () => {
-  beforeEach(() => {
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true, writable: true,
-      value: (q: string) => ({ matches: false, media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
-    });
-    (globalThis as unknown as { CSS?: { escape: (s: string) => string } }).CSS ??= { escape: (s: string) => s };
-    (HTMLElement.prototype as unknown as { scrollTo?: () => void }).scrollTo ??= () => {};
-    vi.spyOn(console, "error").mockImplementation(() => {});
-  });
-  afterEach(async () => {
-    for (const r of roots) await act(() => r.unmount());
-    roots = [];
-    document.body.innerHTML = "";
-    vi.restoreAllMocks();
-  });
-
   it("a view mounted MID-DRAIN grows its opening window as the pile arrives — no scroll needed", async () => {
-    // The drain lands pages after the view is up: the first render sees a near-empty pile.
-    const host = document.createElement("div");
-    document.body.append(host);
-    const root = createRoot(host);
-    roots.push(root);
-    const paint = async (count: number) =>
-      act(() => {
-        root.render(
-          <NextIntlClientProvider locale="en" messages={messages} now={new Date(ISO)} timeZone="UTC">
-            <KeymapProvider>{reads(count)}</KeymapProvider>
-          </NextIntlClientProvider>,
-        );
-      });
-    await paint(2);
+    const { host, replaceEngine } = await visit(issue, 2);
     expect(cardIndices(host).length).toBe(2);
-    // The pile fills in. Without a scroll event (there may never be one), the resting window
-    // must widen to the opening size — a window pinned at two cards is a mailbox that looks
-    // two messages long.
-    await paint(N);
+    await act(async () => { replaceEngine("acct-1", letters(issue, N)); });
     expect(cardIndices(host).length).toBe(OPENING());
     expect(cardIndices(host)).toEqual(Array.from({ length: OPENING() }, (_, i) => i));
   });
@@ -377,31 +297,15 @@ describe("the window under a pile that changes size", () => {
 describe("the never-measured estimate is DERIVED from the stylesheets, not conjoined by hand", () => {
   /**
    * `STREAM_CARD_ESTIMATE_PX` is the OUTER height of a card the browser has not rendered:
-   * the `contain-intrinsic-size` box guess (app.css) plus `.scast`'s standing bottom margin
-   * (stream.css) — two "taste" numbers in two files, and nothing else ties the three
-   * together. This pin reddens the day either moves, so the estimate follows it instead of
-   * silently drifting into the per-card spacer shortfall it exists to prevent.
+   * the intrinsic size fallback plus the mounted card wrapper's bottom margin.
+   * The window's unmeasured spacer must reserve the same outer height.
    */
   it("equals the intrinsic-size guess plus the card's bottom margin, read from the CSS", () => {
-    const { readFileSync } = require("node:fs") as typeof import("node:fs");
-    const { join } = require("node:path") as typeof import("node:path");
-    const app = readFileSync(join(__dirname, "..", "app", "app.css"), "utf8");
-    const stream = readFileSync(
-      join(__dirname, "..", "..", "..", "packages", "ui", "src", "composites", "stream.css"),
-      "utf8",
-    );
-    /* THE GUESS IS A CUSTOM PROPERTY NOW, and its FALLBACK is what this constant twins.
-       `contain-intrinsic-size: auto var(--sc-est, 200px)`: `StreamCard` writes `--sc-est` per
-       card from that card's own subject and preview and from the column width the stream
-       measured, so there is no single number for a card any more — but the fallback is what a
-       card reserves where nothing could be measured (jsdom, and a first commit before the width
-       is known), and it is the number this cache's own fallback has to mean the same thing as.
-       Either spelling is accepted so the derivation keeps working whichever way the rule is
-       written. */
-    const box = /contain-intrinsic-size:\s*auto\s+(?:var\(--sc-est,\s*(\d+)px\)|(\d+)px)/.exec(app);
-    const margin = /\.scast\{[^}]*margin:\s*0 auto (\d+)px/.exec(stream);
-    expect(box, "app.css lost its contain-intrinsic-size guess").toBeTruthy();
-    expect(margin, "stream.css lost .scast's bottom margin").toBeTruthy();
-    expect(STREAM_CARD_ESTIMATE_PX).toBe(Number(box![1] ?? box![2]) + Number(margin![1]));
+    const css = readFileSync("packages/app/src/stream/stream.css", "utf8");
+    const margin = /\.st-window-card\s*\{[^}]*margin-block-end:\s*var\((--[\w-]+)\)/.exec(css);
+    const tokens = readFileSync("packages/tokens/src/design/tokens.css", "utf8");
+    const gap = margin ? new RegExp(`${margin[1]}:\\s*(\\d+)px`).exec(tokens) : null;
+    expect(gap, "the streamed card lost its bottom margin token").toBeTruthy();
+    expect(STREAM_CARD_ESTIMATE_PX).toBe(STREAM_CARD_FALLBACK_PX + Number(gap![1]));
   });
 });

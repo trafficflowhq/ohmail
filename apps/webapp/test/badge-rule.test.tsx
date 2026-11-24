@@ -11,6 +11,8 @@
  * length, not a third derivation. The phone tabs read the same engine fields
  * (`(tabs)/_layout.tsx#badgeOf`); their own sentence is the mobile parity lane's row.
  */
+import { within } from "@testing-library/react";
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -19,13 +21,15 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import {
+  installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
+  scriptSync, sessionFull, syncPage, teardownConfirmEnv,
+} from "./fixtures/cloud-confirm-shell";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
@@ -67,6 +71,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
   document.body.innerHTML = "";
@@ -143,7 +148,7 @@ const ROSTER: MailboxFacts[] = [{
 async function shell(
   onUnread: (n: number) => void, engine?: OhmailEngine,
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   engine ??= engineOver(await storeWith());
   const container = document.createElement("div");
@@ -155,7 +160,7 @@ async function shell(
       locale: "en", messages, timeZone: "UTC", now: NOW,
       children: h(ThemeProvider, {
         children: h(ToastHost, {
-          children: h(AppShell as never, {
+          children: h(MailShell as never, {
             demo: false,
             engine,
             onUnread,
@@ -165,30 +170,36 @@ async function shell(
       }),
     }));
   });
-  await waitFor(() => container.querySelectorAll(".row[data-id]").length > 0, "rows in the Ohbox");
+  await waitFor(() => within(container).queryAllByRole("option").length > 0, "rows in the Ohbox");
   return container;
 }
 
 async function waitFor(predicate: () => boolean, what: string, timeout = 3000): Promise<void> {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
-  }
-  throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
+  await vi.waitFor(() => {
+    if (!predicate()) throw new Error(`waiting for: ${what}`);
+  }, { timeout, interval: 25 });
 }
 
 describe("the badge rule", () => {
-  it("the app-icon sink and the rail's Ohbox count both read OHBOX UNREAD — the stated number", async () => {
-    const calls: number[] = [];
-    const container = await shell((n) => calls.push(n));
-    await waitFor(() => calls.length > 0, "the unread sink to be fed");
-    // Two unread of three listed: unread, not list length — the claim's first half.
-    expect(calls[calls.length - 1]).toBe(2);
-    const ohboxItem = [...container.querySelectorAll(".rail .ritem")]
-      .find((b) => (b.textContent ?? "").includes("Ohbox"));
-    expect(ohboxItem, "the rail's Ohbox item").toBeTruthy();
-    expect(ohboxItem!.querySelector(".cnt")?.textContent).toBe("2");
+
+  it("the sentence is on the notifications pane, stating the rule", async () => {
+    installConfirmEnv();
+    try {
+      scriptSession(sessionFull);
+      scriptRefresh(refresh204);
+      scriptSync(() => syncPage("Badge rule fixture"));
+      rememberOwner();
+      window.location.hash = "#/settings/notifications";
+      const container = await mountCloudShell();
+      await waitFor(
+        () => (container.textContent ?? "").includes("The numbers mean the same thing on every device"),
+        "the badge-rule sentence to render",
+      );
+      expect(container.textContent).toContain("unread mail in your Ohbox");
+      expect(container.textContent).toContain("first-time senders waiting");
+    } finally {
+      await teardownConfirmEnv();
+    }
   });
 
   it("a letter brought back by Resurface > Now counts on the rail as in the header, after a reload too", async () => {
@@ -201,34 +212,34 @@ describe("the badge rule", () => {
       await engine.mutate({ kind: "triage_set", messageId: "m1", state: "resurfaced" });
     });
     const counts = () => {
-      const rail = [...container.querySelectorAll(".rail .ritem")].find((b) => (b.textContent ?? "").includes("Ohbox"));
+      const rail = [...container.querySelectorAll("[data-rail-id] button")].find((b) => (b.textContent ?? "").includes("Ohbox"));
       return {
-        rail: rail?.querySelector(".cnt")?.textContent,
-        header: container.querySelector(".vhead .meta")?.textContent,
-        markAll: container.querySelector(".mark-all-read")?.getAttribute("aria-label"),
+        rail: rail?.querySelector(".oh-railentry-count")?.textContent,
+        /* The head's Mark all read, named with the count it marks. */
+        markAll: within(container).queryByRole("button", { name: /^Mark all \d+ unread messages read$/ })?.getAttribute("aria-label"),
         sink: calls[calls.length - 1],
       };
     };
-    const want = { rail: "2", header: "2 unread", markAll: "Mark all 2 unread messages read", sink: 2 };
-    await waitFor(() => container.querySelector(".row[data-id=\"m1\"]") !== null, "the resurfaced row listed");
+    const want = { rail: "2", markAll: "Mark all 2 unread messages read", sink: 2 };
+    await waitFor(() => within(container).queryByRole("option", { name: /Subject m1/ }) !== null, "the resurfaced row listed");
     expect(counts()).toEqual(want);
     // A reload: a fresh engine and shell over the same mirror.
     await act(async () => { roots.pop()!.unmount(); });
     document.body.innerHTML = "";
     container = await shell((n) => calls.push(n), engineOver(store));
-    await waitFor(() => counts().header === "2 unread", "the header after the reload");
+    await waitFor(() => counts().markAll === want.markAll, "the header after the reload");
     expect(counts()).toEqual(want);
   });
 
-  it("the sentence is on the notifications pane, stating the rule", async () => {
-    const container = await shell(() => {});
-    window.location.hash = "#/settings/notifications";
-    await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
-    await waitFor(
-      () => (container.textContent ?? "").includes("The numbers mean the same thing on every device"),
-      "the badge-rule sentence to render",
-    );
-    expect(container.textContent).toContain("unread mail in your Ohbox");
-    expect(container.textContent).toContain("first-time senders waiting");
+  it("the app-icon sink and the rail's Ohbox count both read OHBOX UNREAD — the stated number", async () => {
+    const calls: number[] = [];
+    const container = await shell((n) => calls.push(n));
+    await waitFor(() => calls.length > 0, "the unread sink to be fed");
+    // Two unread of three listed: unread, not list length — the claim's first half.
+    expect(calls[calls.length - 1]).toBe(2);
+    const ohboxItem = [...container.querySelectorAll("[data-rail-id] button")]
+      .find((b) => (b.textContent ?? "").includes("Ohbox"));
+    expect(ohboxItem, "the rail's Ohbox item").toBeTruthy();
+    expect(ohboxItem!.querySelector(".oh-railentry-count")?.textContent).toBe("2");
   });
 });

@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { accounts, mailboxes, messages, type AccessVerdict, type SpendOutcome } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import type { ClassifierInput, ClassifierPort, ClassifierResult, DraftInput, DraftPort } from "@trafficflow/core";
-import { DraftingService, ScreenerService, type ServiceContext } from "../src/index.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { DraftingService, ScreenerService, dbFor, type ServiceContext } from "../src/index.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
 
 /**
@@ -82,7 +82,7 @@ const refusals = () => lines.filter((l) => l.event === "screener_suggest_refused
 const contradictions = () => lines.filter((l) => l.event === "refusal_contradicted_by_access");
 
 async function screenerPress(outcome: SpendOutcome, access?: ReturnType<typeof accessAnswering>) {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "refusal" });
   await seedMessage(w.db, w.accountId, w.mailboxId, { from: "stranger@example.com" });
   const svc = new ScreenerService({
@@ -103,7 +103,7 @@ async function draftPress(outcome: SpendOutcome, access?: ReturnType<typeof acce
     accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: dedup,
     subject: "s", fromAddress: "sender@example.com", snippet: "hi", date: NOW,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   const drafter: DraftPort = { async draft(_i: DraftInput) { throw new Error("the model was reached"); } };
   return new DraftingService().draftFromMessage(ctx, m!.id, {
     drafter,
@@ -172,6 +172,15 @@ describe("a state refusal the access view contradicts is a fault, not a bill", (
     expect(await statusOf(screenerPress({ verdict: "insufficient", reason: "out_of_credits" }, access)))
       .toEqual({ status: 402, code: "insufficient_credits" });
     expect(access.asks, "an empty balance asked the access half about itself").toEqual([]);
+  });
+
+  it("…and a draft on an empty balance is the same 402, the model never reached", async () => {
+    // The drafter double throws a plain error if it is called, which no refusal carries: a press
+    // that went on to the model answers with no status at all.
+    const access = accessAnswering(ACTIVE);
+    expect(await statusOf(draftPress({ verdict: "insufficient", reason: "out_of_credits" }, access)))
+      .toEqual({ status: 402, code: "insufficient_credits" });
+    expect(access.asks).toEqual([]);
   });
 
   it("the account's own off switch is still 409, and asks nobody either", async () => {

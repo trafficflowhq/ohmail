@@ -38,6 +38,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { engineUnitFiles } from "../../../test/support/engine-unit.js";
 
 import {
   BUNDLE, IMAPFLOW_CLOSE_MARKER, IMAPFLOW_REARM_MARKER, METAFILE, OUT_DIR, nodeSpecifiersIn, externalsIn, REPO,
@@ -79,7 +80,7 @@ function metafile(): Metafile {
 function newestSourceTime(): number {
   const watched = [
     join(REPO, "apps", "sidecar", "src", "mobile.ts"),
-    join(REPO, "apps", "sidecar", "src", "engine.ts"),
+    ...engineUnitFiles(),
     join(REPO, "apps", "sidecar", "src", "phone", "aliases.js"),
     join(REPO, "apps", "mobile", "src", "engine", "shims"),
   ];
@@ -126,7 +127,7 @@ describe("the phone engine bundle reaches no Node builtin", () => {
     expect(inputs.length).toBeGreaterThan(600);
     expect(count((p) => p.startsWith("apps/") || p.startsWith("packages/"))).toBeGreaterThan(200);
     // And it is the ENGINE: the worker's sync loop and the local route table are in it.
-    expect(list((p) => p.includes("apps/worker/src/sync")).length).toBe(1);
+    expect(list((p) => p.includes("packages/organizer/src/sync")).length).toBe(1);
     expect(count((p) => /packages\/api\/(dist|src)\/local/.test(p))).toBeGreaterThan(0);
   });
 });
@@ -162,7 +163,7 @@ describe("the phone engine bundle contains no door and no desktop store", () => 
     expect(count((p) => p.includes("drizzle-orm/sqlite-proxy/"))).toBeGreaterThan(0);
   });
 
-  it("holds the phone's substitutes instead — all eighteen of them", () => {
+  it("holds the phone's substitutes instead — all twenty of them", () => {
     const substitutes = list((p) => p.includes("apps/sidecar/src/phone/"))
       .map((p) => p.split("/").pop());
     // `store-lanes.ts` joined the table with the desktop's store scheduler: it names its two lanes
@@ -172,11 +173,13 @@ describe("the phone engine bundle contains no door and no desktop store", () => 
     // three workspace twins with the Postgres schema markers, dialect and event stream, and
     // `attachment-file-route.ts` with the desktop's streamed save (a file the shell names; a phone names none),
     // `blank-repair.ts` and `blank-rows.ts` with the blank repair the phone composes off, and
-    // `host-pin-probe.ts` with the local door's reader of a loopback server's certificate (`node:tls`).
+    // `host-pin-probe.ts` with the local door's reader of a loopback server's certificate (`node:tls`),
+    // `calendar-erasure.ts` with a mailbox erasure's calendar step (a phone's own store keeps no calendar),
+    // `store-copies.ts` with the copies a desktop's store update keeps in its data folder (`node:fs`; a phone keeps none there).
     expect(substitutes.sort()).toEqual([
-      "ai-provider.ts", "attachment-file-route.ts", "blank-repair.ts", "blank-rows.ts", "cloud-probe.ts", "db.ts", "desktop-host.ts", "dialect-pg.ts",
+      "ai-provider.ts", "attachment-file-route.ts", "blank-repair.ts", "blank-rows.ts", "calendar-erasure.ts", "cloud-probe.ts", "db.ts", "desktop-host.ts", "dialect-pg.ts",
       "events.ts", "health-markers.ts", "host-lan-tls.ts", "host-lan.ts", "host-listener.ts", "host-pair-routes.ts",
-      "host-pin-probe.ts", "host-static.ts", "lan-routes.ts", "store-lanes.ts",
+      "host-pin-probe.ts", "host-static.ts", "lan-routes.ts", "store-copies.ts", "store-lanes.ts",
     ]);
   });
 

@@ -47,8 +47,8 @@ describe("the search ranking rule is shared, not copied", () => {
   });
 
   it("the VIEW that merges the two doors calls the rule", () => {
-    const src = read("apps/webapp/app/views/SearchView.tsx");
-    expect(importsRule(src), "apps/webapp/app/views/SearchView.tsx must import the shared rule").toBe(true);
+    const src = read("packages/app-logic/src/search/local-pass.ts");
+    expect(importsRule(src), "packages/app-logic/src/search/local-pass.ts must import the shared rule").toBe(true);
     // The merged list is where the composition happens, and it is the only place that can:
     // neither door can see the other's tier.
     expect(src).toContain("showSimilar(");
@@ -76,7 +76,7 @@ describe("the search ranking rule is shared, not copied", () => {
     // web and the phone say that arm's reach through the same function.
     expect(service).toContain("substringOpen(");
     expect(service).not.toMatch(/function (substringOpen|exactAsked)\(/);
-    expect(read("apps/webapp/app/views/SearchView.tsx")).toContain("substringOpen(");
+    expect(read("packages/app-logic/src/search/search-list.ts")).toContain("substringOpen(");
     expect(read("apps/mobile/src/state/search-count.ts")).toContain("substringOpen(");
   });
 
@@ -112,7 +112,7 @@ describe("the search ranking rule is shared, not copied", () => {
       }
     };
     for (const root of ["apps", "packages", "scripts"]) walk(root);
-    expect(callers.sort()).toEqual(["apps/mobile/src/state/live.ts", "apps/webapp/app/views/SearchView.tsx"]);
+    expect(callers.sort()).toEqual(["apps/mobile/src/state/live.ts", "packages/app-logic/src/search/local-pass.ts"]);
     /* AND NEITHER RE-ORDERS WHAT IT WAS GIVEN. The engine's answer is already ranked; a caller
        that sorted it would be the third ordering this file exists to prevent, and it would be
        invisible to the arm above. Asked over the call's own function body, not the whole file:
@@ -126,18 +126,13 @@ describe("the search ranking rule is shared, not copied", () => {
   });
 
   it("the mobile shell renders the engine's own order — it adds no ranking of its own", () => {
-    /*
-     * It forwards `searchServer` through its adapter in `boot.ts` and stops there — `copy.ts`
-     * says "Arrives in a later update" on the More screen. So the whole of mobile's search
-     * surface is one forwarding line, and this row states exactly that: the seam is allowed at
-     * that one path and the RESULT SHAPES are allowed nowhere, because reading them is what a
-     * renderer does. The day mobile grows a list it has to come here, and the rule is one
-     * import away.
-     */
     const FORWARDER = "apps/mobile/src/engine/boot.ts";
+    const CATALOGUE_READER = "apps/mobile/test/search-first-sync-said.test.ts";
+    const catalogueAssertion = /^[ \t]*expect\(search\.similarHead\)\.toBe\("Similar"\);[ \t]*$/m;
     const skip = new Set(["node_modules", "dist", ".expo", "build"]);
     const seam: string[] = [];
     const renderers: string[] = [];
+    const catalogueReaders: string[] = [];
     const walk = (rel: string): void => {
       for (const entry of readdirSync(join(ROOT, rel))) {
         if (skip.has(entry)) continue;
@@ -147,8 +142,13 @@ describe("the search ranking rule is shared, not copied", () => {
         else if (/\.(ts|tsx)$/.test(entry)) {
           const src = readFileSync(join(ROOT, child), "utf8");
           if (/\bsearchServer\b/.test(src)) seam.push(child);
-          // The shapes a result list has to read to exist.
-          if (/\bLocalSearchResult\b|\bSearchHit\b|\.similar\b|\bsimilarHead\b/.test(src)) renderers.push(child);
+          // The copy test reads a web catalogue key. Other result references in that test are
+          // still subject to the same renderer checks as every other file.
+          const readsCatalogue = child === CATALOGUE_READER &&
+            src.includes("const search = web.search;") && catalogueAssertion.test(src);
+          if (readsCatalogue) catalogueReaders.push(child);
+          const resultSource = readsCatalogue ? src.replace(catalogueAssertion, "") : src;
+          if (/\bLocalSearchResult\b|\bSearchHit\b|\.similar\b|\bsimilarHead\b/.test(resultSource)) renderers.push(child);
         }
       }
     };
@@ -157,8 +157,9 @@ describe("the search ranking rule is shared, not copied", () => {
        (`w.store.searchWalker`) — the forward alone, and no screen or door of the phone's. The
        other names are tests' fake stores answering the capability the walker reaches. */
     expect(seam.sort()).toEqual([
-      FORWARDER, "apps/mobile/test/search-estimate.test.ts", "apps/mobile/test/search-first-sync-said.test.ts",
+      FORWARDER, "apps/mobile/test/search-estimate.test.ts", CATALOGUE_READER,
     ]);
+    expect(catalogueReaders).toEqual([CATALOGUE_READER]);
     /* THE LIST ARRIVED, WHICH THIS ROW SAID IT WOULD. What is forbidden is not reading the result
        shapes — a screen that shows results must — but ORDERING them: the engine ranks, the phone
        renders. So the renderers are named, and each is asked whether it sorts. */

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dbFor } from "../src/context.js";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, folderState, mailboxes, messages } from "@trafficflow/db";
@@ -26,9 +27,9 @@ async function seed(at: string): Promise<{ db: Db; ctx: ServiceContext; id: stri
     fromAddress: "stranger@example.test", subject: "s", date: t0, bodyHash: "h", nativeLocator: { folder: at, ref: "1:1" },
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: at, observedFolder: at, lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: at, observedFolder: at, lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
   });
-  return { db, ctx: { db, accountId: a!.id, userId: null, now: () => t0, requestId: "r" } as ServiceContext, id: m!.id };
+  return { db, ctx: { db: dbFor(db, a!.id), accountId: a!.id, userId: null, now: () => t0, requestId: "r" } as ServiceContext, id: m!.id };
 }
 
 const desired = async (db: Db, id: string) =>

@@ -130,6 +130,8 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   // have no German twin on purpose — their text is binding and deliberately outside the
   // catalogue — so this is one path, not a mirrored tree.
   { path: "/de", edge: true, marketing: true, zone: true },
+  // `/ohcal` is the calendar's own marketing page, answered by the website deployment like the other marketing pages.
+  { path: "/ohcal", edge: true, marketing: true, zone: true },
   // `/resume` is INTERNAL like `/mailbox`: the rewrite target for a browser holding the
   // `tf_resume` marker but no usable access cookie. Middleware 308s a direct request back
   // to `/`, so it never appears in the address bar — but it is a path this deployment
@@ -139,6 +141,8 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   { path: "/login", edge: true },
   { path: "/join", edge: true },
   { path: "/verify-email", edge: true },
+  { path: "/forgot-password", edge: true },
+  { path: "/reset-password", edge: true },
   { path: "/link-desktop", edge: true },
   // `/authorize-desktop` is the CONFIRMATION in front of the native sign-in. `GET /oauth/authorize`
   // used to mint a credential from an ambient cookie and redirect straight back to the app; it now
@@ -163,6 +167,9 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   // `/subscribed` is where the payment page returns a person (`app/(product)/subscribed`): public,
   // no credential in it, matched for the canonical-host redirect like the marketing pages.
   { path: "/subscribed", edge: true },
+  // `/account/delete` deletes the account from a page of its own (`app/(product)/account/delete`); a second factor and
+  // the address are typed there, so middleware serves it as a credential page. The website's `/delete-account` is another.
+  { path: "/account/delete", edge: true },
   {
     // `/account/manage` mints a fresh account-page link and redirects to it (`manage-handoff.ts`).
     path: "/account/manage",
@@ -326,7 +333,7 @@ export const ZONE_CASE_SOURCE = `/((?:${ZONE_CASED.map((p) => anyCase(p.slice(1)
 
 /** The subset the middleware matcher must carry, and nothing else. */
 export const EDGE_PATHS = Object.freeze([
-  ...new Set([...OWN_ROUTES.filter((r) => r.edge).map((r) => r.path), ...ZONE_PATHS]),
+  ...new Set([...OWN_ROUTES.filter((r) => r.edge).map((r) => r.path), ...ZONE_PATHS, `${API_BASE}/:path*`]),
 ]);
 
 /**

@@ -18,6 +18,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile-store";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
+import type { ServiceErrorCode } from "@ohmail/wire";
 
 /**
  * THE PROFILE IMPORT — the answer side of the portable organizer profile: a versioned JSON
@@ -123,7 +124,7 @@ const REFUSAL_SENTENCE: Record<ProfileImportStatusRefusal, string> = {
 };
 
 /** The inline refusals keep the wire codes the clients already read. */
-const INLINE_REFUSAL: Record<ImportAskRefusal, { code: string; status: number }> = {
+const INLINE_REFUSAL: Record<ImportAskRefusal, { code: ServiceErrorCode; status: number }> = {
   changed: { code: "profile_changed", status: 409 },
   gone: { code: "profile_changed", status: 409 },
   newer: { code: "profile_newer", status: 409 },

@@ -5,8 +5,9 @@
  * session is opened as `world.tsx` opens it. A Move whose sender no rule places holds its press for
  * the window and no rule; its letter moved at the press, so its launch has nothing to finish.
  */
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryMirrorStore, ROUTING_JOURNAL_TYPE, type RoutingIntent, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, ROUTING_JOURNAL_TYPE, type RoutingIntent, type SyncChange } from "@ohmail/client-engine";
 import { refuse, sayArg } from "../src/refusal";
 import type { MobileEngineDeps } from "../src/engine/boot";
 import { planHeldRouting, type WorldView } from "../src/state/live";

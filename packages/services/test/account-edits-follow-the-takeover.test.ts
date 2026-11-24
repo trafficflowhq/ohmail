@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import {
@@ -23,7 +24,7 @@ async function readerUnder(state: "held" | "stopped", pressed = true) {
     organizedByKind: "local", organizedByName: "W-old",
   }).where(eq(mailboxes.id, w.mailboxId));
   await w.db.insert(mailboxCredentials).values({
-    mailboxId: w.mailboxId, transport: "imap", secretEnc: "sealed", keyVersion: 1,
+    mailboxId: w.mailboxId, accountId: accountOfMailbox(w.mailboxId), transport: "imap", secretEnc: "sealed", keyVersion: 1,
     meta: { host: "imap.example.test", port: 993, secure: true, user: "u" }, updatedAt: new Date(),
   });
   if (pressed) {

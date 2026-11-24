@@ -329,7 +329,7 @@ async function openImapUnderCap(
         ...dial,
         // Read-only attachment fetch: no SMTP. Auth via the shared builder — an oauth2 mailbox mints
         // an access token, a password mailbox is byte-for-byte unchanged.
-        auth: buildImapAuth(meta, secret, deps.oauth?.forMailbox(mailboxId)),
+        auth: buildImapAuth(meta, secret, deps.oauth?.forMailbox(mailboxId, deps.db)),
       });
     } catch (err) {
       // A decrypt that throws happens with both slots held and no adapter to close them through.

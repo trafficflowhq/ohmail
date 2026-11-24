@@ -7,15 +7,18 @@
  *
  * NO WORDMARK here: the chrome is navigation, and the space is the app's.
  */
+import { MailAppearance } from "../../src/theme/mail";
+import { useTheme } from "../../src/theme";
 import { router, Tabs } from "expo-router";
-import { useEffect, useState } from "react";
-import { Platform } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Platform, View } from "react-native";
 import { useWorld } from "../../src/state/world";
 import { beginMark, endMark } from "../../src/engine/ui-marks";
 import { Gated } from "../../src/ui/Gated";
 import { ProfileImportCard } from "../../src/ui/ProfileImportCard";
 import { SeedOfferCard } from "../../src/ui/SeedOfferCard";
 import { type IconName } from "../../src/ui/Icon";
+import { MailPlacesDrawer } from "../../src/ui/MailPlacesDrawer";
 import { GlassDock, type DockItem } from "../../src/ui/glass";
 import { dockFold, nextRoom } from "../../src/ui/glass/fold";
 import { publishFolded } from "../../src/ui/nav-fold";
@@ -69,20 +72,45 @@ export default function TabsLayout() {
       <ProfileImportCard />
       {/* The people this account wrote to, once that question is answered: one card at a time. */}
       <SeedOfferCard />
-      <Tabs
-        screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: "transparent" } }}
-        tabBar={(props) => <GlassNav {...props} />}
-      >
-        {TABS.map((tab) => (
-          <Tabs.Screen key={tab.name} name={tab.name} options={{ title: tab.label }} />
-        ))}
-      </Tabs>
+      <MailAppearance>
+        <MailTabs />
+      </MailAppearance>
     </Gated>
   );
 }
 
-function GlassNav({ state, navigation }: NavProps) {
+function MailTabs() {
+  const t = useTheme();
+  const [drawer, setDrawer] = useState(false);
+  const [active, setActive] = useState<string | null>("index");
+  const move = useRef<(place: string) => void>(() => undefined);
+  const close = useCallback(() => setDrawer(false), []);
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={{ flex: 1 }} accessibilityElementsHidden={drawer} importantForAccessibility={drawer ? "no-hide-descendants" : "auto"}>
+        <Tabs
+          screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: "transparent" } }}
+          tabBar={(props) => <GlassNav {...props} onMore={t.mail ? () => setDrawer(true) : undefined}
+            onActive={setActive} onNavigate={move} />}
+        >
+          {TABS.map((tab) => (
+            <Tabs.Screen key={tab.name} name={tab.name} options={{ title: tab.label }} />
+          ))}
+        </Tabs>
+      </View>
+      <MailPlacesDrawer open={drawer} active={active} onClose={close}
+        onPlace={(place) => move.current(place)} onCompose={() => router.push("/compose")} />
+    </View>
+  );
+}
+
+function GlassNav({ state, navigation, onMore, onActive, onNavigate }: NavProps & {
+  onMore?: () => void;
+  onActive: (active: string | null) => void;
+  onNavigate: { current: (place: string) => void };
+}) {
   const w = useWorld();
+  const t = useTheme();
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
   const readerRail = useReaderRail();
@@ -105,7 +133,7 @@ function GlassNav({ state, navigation }: NavProps) {
     more: 0,
   };
 
-  const fold = dockFold(state.routes.map((r) => r.name).filter((n) => TABS.some((x) => x.name === n)), room);
+  const fold = dockFold(state.routes.map((r) => r.name).filter((n) => TABS.some((x) => x.name === n)), room, t.mail);
   const foldedKey = fold.folded.join(",");
   const docked = plan.nav !== "bars" && plan.nav !== "rail" && !(plan.railCarriesReaderVerbs && readerRail !== null);
   useEffect(() => {
@@ -117,6 +145,7 @@ function GlassNav({ state, navigation }: NavProps) {
   useEffect(() => {
     if (activeId !== null) endMark("switch", activeId);
   }, [activeId]);
+  useEffect(() => onActive(activeId), [activeId, onActive]);
   /* More carries what folded: `on` while the active route is one of them, a quiet count of their new mail. */
   const foldedCount = fold.folded.reduce((n, id) => n + (badgeOf[id] ?? 0), 0);
   const items: DockItem[] = fold.kept.flatMap((name) => {
@@ -129,12 +158,16 @@ function GlassNav({ state, navigation }: NavProps) {
         icon: tab.icon,
         label: count ? Copy.ariaLabelCount(tab.label, count) : tab.label,
         badge: count,
-        badgeHot: name === "screener" || name === "index",
+        badgeHot: name === "screener" || (!t.mail && name === "index"),
       },
     ];
   });
   const shownActive = activeId !== null && fold.folded.includes(activeId) ? "more" : activeId;
   const press = (id: string) => {
+    if (id === "more" && onMore) {
+      onMore();
+      return;
+    }
     const route = state.routes.find((r) => r.name === id);
     if (!route) return;
     const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
@@ -143,6 +176,8 @@ function GlassNav({ state, navigation }: NavProps) {
       navigation.navigate(id);
     }
   };
+
+  onNavigate.current = press;
 
   /* Search, in the navigation on every posture — the pill opens the mirror-search screen
      (`app/search.tsx`). */

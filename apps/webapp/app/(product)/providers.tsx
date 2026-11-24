@@ -1,46 +1,76 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { ThemeProvider, ToastHost, themeInitScript } from "@ohmail/ui";
-import { columnsBootScript } from "../shell/column-store";
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { ConfirmBrowserFaceOwner } from "./confirm-browser-face-owner";
+import { setViewTransitions, ThemeProvider, themeInitScript } from "@ohmail/ui";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
+import { columnsBootScript } from "@ohmail/app-logic/lists/column-store";
 // One door per host, at module scope; its face mirror names the account it was written for.
-import { THEME_DOOR } from "../shell/face-mirror";
+import { ownerBeforePaint } from "@ohmail/app-logic/storage/owner-cookie";
+import { accountThemeDoor, currentFaceOwner, FACE_ACCOUNT_OWNER_KEY } from "../shell/face-mirror";
+import { listenBrowserSession } from "../signed-out-signal";
 import { textSizeBootScript } from "../shell/text-size";
+import { frameBootScript } from "@ohmail/app/frame/boot";
 // Every product page hears a revoke and finishes a wipe a closed page left (`revoked-door.ts`),
 // and drops the copy of an account the server says was erased (`erased-door.ts`).
 import "../revoked-door";
 import "../erased-door";
 
-export function Providers({ children, nonce }: { children: ReactNode; nonce?: string }) {
+// A document view transition captures pointer input. Fade the theme colors with the controls still live.
+if (typeof window !== "undefined") setViewTransitions(false);
+
+type AppearanceProps = {
+  nonce?: string;
+  deferLinuxFace?: boolean;
+  owner?: string | null;
+  /** Only set while resuming a remembered session. Null means the request carried no owner cookie. */
+  rememberedOwner?: string | null;
+};
+
+/** Set the saved appearance before the browser can paint the document's canvas. */
+export function AppearanceBoot({ nonce, deferLinuxFace, owner = null, rememberedOwner }: AppearanceProps) {
+  const expected = owner ?? rememberedOwner;
+  const accountFaceOwner = {
+    storageKey: FACE_ACCOUNT_OWNER_KEY,
+    read: expected === undefined ? null : ownerBeforePaint(expected),
+  };
   return (
     <>
-      {/* Stamps the persisted theme on <html> before first paint — SSR'd
-          at the top of <body>, executed as the HTML parses (contract
-          shared with ThemeProvider: absent attribute = follow system).
-
-          `nonce` is the one middleware minted for this request, handed down by
-          the layout. Under the strict policy this group is served with
-          (`script-src 'self' 'nonce-…'` — see app/security-headers.ts) an inline
-          script without it does not run at all, and the page paints in the wrong
-          theme until hydration corrects it. */}
-      <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeInitScript("ohmail.theme", { faces: true }) }} />
-      {/* …and the same contract for the THREE COLUMNS' widths. A separate script rather than a
-          fourth axis inside `themeInitScript` because these are not appearance: they are two
-          geometry properties this app's own stylesheet reads, and `packages/ui` — which every
-          other host mounts — has no business knowing the shell's grid. Same nonce, same
-          reason: without the pre-paint stamp the first frame is 224/400 and the second is the
-          width somebody chose, which is the layout jump the boot skeleton exists to prevent.
-          The desktop window and the served host client re-state this from their own bundles
-          (`stampColumns`), exactly as they re-state the theme stamp above. */}
-      <script nonce={nonce} dangerouslySetInnerHTML={{ __html: columnsBootScript() }} />
-      {/* …and Settings → Text size, the same way and for the same reason: the first frame is
-          drawn at the chosen size, never at 100% and then again (`shell/text-size.ts`). */}
+      <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeInitScript("ohmail.theme", { faces: true, deferLinuxFace, accountFaceOwner }) }} />
       <script nonce={nonce} dangerouslySetInnerHTML={{ __html: textSizeBootScript() }} />
-      {/* `faces` — the paper/ohmarchy axis is ACTIVE on the product door only: this is the
-          host that wired the face controls (Settings → Look, the Option B offer). The
-          landing and the admin mount the same provider and deliberately do not pass it. */}
-      <ThemeProvider storageKey="ohmail.theme" faces storage={THEME_DOOR}>
-        <ToastHost>{children}</ToastHost>
+      <script nonce={nonce} dangerouslySetInnerHTML={{ __html: frameBootScript() }} />
+    </>
+  );
+}
+
+export function Providers({ children, nonce, deferLinuxFace, owner = null, rememberedOwner }: AppearanceProps & { children: ReactNode }) {
+  const currentOwner = useSyncExternalStore(listenBrowserSession, currentFaceOwner, () => owner);
+  const [confirmed, confirm] = useState<string | null>(null);
+  const verified = confirmed ?? owner;
+  const faceOwner = verified === currentOwner ? verified : null;
+  const pendingOwner = verified === null ? rememberedOwner : undefined;
+  const appearanceOwner = pendingOwner === null || pendingOwner === currentOwner ? currentOwner : faceOwner;
+  const storage = useMemo(() => accountThemeDoor(faceOwner, pendingOwner), [faceOwner, pendingOwner]);
+  return (
+    <>
+      {/* Restore the column widths before the first server-drawn controls. */}
+      <script nonce={nonce} dangerouslySetInnerHTML={{ __html: columnsBootScript() }} />
+      {/* The face controls live on the product door. The landing and admin leave faces disabled. */}
+      <ThemeProvider
+        storageKey="ohmail.theme"
+        faces
+        deferLinuxFace={deferLinuxFace}
+        preferAccountFace={deferLinuxFace}
+        accountFaceScope={faceOwner}
+        accountFaceReadScope={appearanceOwner}
+        storage={storage}
+      >
+        <portalRenderer.Provider value={createPortal}>
+          <ConfirmBrowserFaceOwner.Provider value={confirm}>
+            {children}
+          </ConfirmBrowserFaceOwner.Provider>
+        </portalRenderer.Provider>
       </ThemeProvider>
     </>
   );

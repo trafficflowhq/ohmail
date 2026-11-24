@@ -1,0 +1,325 @@
+/**
+ * The one way a byte leaves this package or enters it. Every address, typed by a person or fixed in
+ * code, passes the product's address gate before a socket opens; the connection is pinned to the
+ * addresses the gate cleared; a redirect is a second address and passes the gate again. The request
+ * carries a list of headers of its own and nothing of the caller's, asks for no packing, and is
+ * bounded in bytes and in time.
+ *
+ * Two policies, and the program that composes this package names one; there is no default.
+ * `cloud`: https only, public addresses only. `own-network`: a person's own computer or server, which
+ * may also reach this machine and private addresses, and those alone without encryption.
+ */
+import {
+  MAX_PINNED_ADDRESSES, SsrfRefusal, assertPublicHttpUrl, isBlockedAddress,
+  isPrivateNetworkAddress, resolvePinUnchecked, type HostResolver, type PinnedRequestOptions, type PinnedResponse,
+} from "@trafficflow/core/net";
+import { FETCH_BODY_MAX_BYTES, MAX_URL_CHARS, MAX_VALIDATOR_CHARS } from "../limits.js";
+import type { ProviderRefusal } from "../refusals.js";
+import { readCapped } from "./capped-body.js";
+import { sendableTag, type HttpAnswer, type HttpPort, type HttpRequest } from "./index.js";
+import { hopOf, originOf, shapeRefusal, type AddressPolicy } from "./shape.js";
+
+export type { AddressPolicy } from "./shape.js";
+
+export interface GuardLimits {
+  /** From a hop's start to its answer's head, the name's lookup included. */
+  readonly connectMs: number;
+  /** The whole call: every hop and the body. */
+  readonly totalMs: number;
+  /** Redirects followed. With 0 a redirect is handed back as the answer it is. */
+  readonly maxRedirects: number;
+  readonly maxBodyBytes: number;
+}
+
+export interface GuardDeps {
+  /** The lookup of a name. Required: a default would ship the permitting branch never run. */
+  readonly resolver: HostResolver;
+  /** The pinned request. The package's makers hand in the product's own and nothing else. */
+  readonly request: (url: string, opts: PinnedRequestOptions) => Promise<PinnedResponse>;
+  readonly policy: AddressPolicy;
+  readonly limits: GuardLimits;
+  /** A provider's fixed hosts: no other host is dialled. `null` for a host a person named. */
+  readonly hosts: ReadonlySet<string> | null;
+  /**
+   * Whether this port may write (PUT, PATCH, DELETE). The worker's composition says yes; a program
+   * that only reads says no. No default: an absent word must not open the writing branch.
+   */
+  readonly writes: boolean;
+}
+
+const USER_AGENT = "ohmail-Calendar/2.0";
+const ADAPTER_HEADERS: ReadonlySet<string> = new Set(["accept", "content-type", "depth", "prefer", "destination", "overwrite"]);
+const REDIRECTS: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
+/** The methods that change something at the provider. Each needs a sign-in and a precondition, and none follows a redirect. */
+const WRITING: ReadonlySet<string> = new Set(["PUT", "PATCH", "DELETE", "MOVE"]);
+const PRINTABLE = /^[\x20-\x7e]*$/;
+const TOKEN = /^[\x21-\x7e]+$/;
+
+/** A socket's or a lookup's failure, by its code. Anything else is a fault of this program and is thrown on. */
+export const TRANSPORT_CODES: ReadonlySet<string> = new Set([
+  "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH",
+  "ENETDOWN", "EPIPE", "EADDRNOTAVAIL", "EHOSTDOWN", "ERR_SOCKET_CONNECTION_TIMEOUT", "ERR_SOCKET_CLOSED", "ERR_STREAM_PREMATURE_CLOSE",
+  // A handshake that is no TLS at all (a plain server on the port) fails as a protocol error of the socket.
+  "EPROTO",
+  // A certificate that failed its check: the platform's list of what one can fail with has these beside the
+  // families below, and `UNSPECIFIED` for a fault its table does not name.
+  "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "INVALID_CA", "INVALID_PURPOSE", "PATH_LENGTH_EXCEEDED", "HOSTNAME_MISMATCH",
+  "OUT_OF_MEM", "UNSPECIFIED",
+]);
+/** The families of such failures, each matched by the start of its code. */
+export const TRANSPORT_PREFIXES: readonly string[] = ["CERT_", "CRL_", "UNABLE_TO_", "ERROR_IN_", "ERR_TLS_", "ERR_SSL_", "ERR_OSSL_", "HPE_"];
+const isTransportFailure = (err: unknown): boolean => {
+  const code = typeof err === "object" && err !== null ? (err as { code?: unknown }).code : undefined;
+  return typeof code === "string" && (TRANSPORT_CODES.has(code) || TRANSPORT_PREFIXES.some((prefix) => code.startsWith(prefix)));
+};
+
+function parse(text: string, against?: string): URL | null {
+  try {
+    return new URL(text, against);
+  } catch {
+    // No address: the caller answers with its own word for that.
+    return null;
+  }
+}
+
+type Cleared = { readonly pin: readonly string[] } | { readonly refused: ProviderRefusal };
+
+/**
+ * The address rules, in order, each before any lookup that a later one needs. The answer is the pin.
+ * What the shape alone decides comes first, by the one rule a door that dials nothing asks too
+ * (`shape.ts`); what follows is the lookup, which only this port makes.
+ */
+async function clear(url: URL, deps: GuardDeps): Promise<Cleared> {
+  const shape = shapeRefusal(url, deps.policy, deps.hosts);
+  if (shape !== null) return { refused: shape };
+  const https = url.protocol === "https:";
+
+  // Whether the gate refused a name for what it resolved to, or for resolving to nothing, is read
+  // off the lookup itself and not off the gate's wording.
+  let asked = false;
+  let answered = false;
+  const resolver: HostResolver = {
+    async resolve(name) {
+      asked = true;
+      const addresses = await deps.resolver.resolve(name);
+      answered = addresses.length > 0;
+      return addresses;
+    },
+  };
+  try {
+    if (deps.policy.kind === "cloud") {
+      const pin = await assertPublicHttpUrl(url.href, resolver, { httpsOnly: true, allowExplicitPort: true });
+      return { pin: pin.slice(0, MAX_PINNED_ADDRESSES) };
+    }
+    const pin = await resolvePinUnchecked(url.href, resolver);
+    // Public or private, each of them: a link-local, a shared or a reserved address is neither.
+    if (!pin.every((a) => isPrivateNetworkAddress(a) || !isBlockedAddress(a))) return { refused: "address_not_allowed" };
+    if (!https && !pin.every(isPrivateNetworkAddress)) return { refused: "address_not_allowed" };
+    return { pin: pin.slice(0, MAX_PINNED_ADDRESSES) };
+  } catch (err) {
+    if (!(err instanceof SsrfRefusal)) throw err;
+    return { refused: asked && !answered ? "host_unresolved" : "address_not_allowed" };
+  }
+}
+
+/** `p`, or `"late"` once the signal has aborted. The work behind `p` is not ended; the wait is. */
+function unlessAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T | "late"> {
+  if (signal.aborted) {
+    // The work goes on unwaited: a failure of it later is heard here, or it would be nobody's and end the program.
+    void p.catch(() => undefined);
+    return Promise.resolve("late");
+  }
+  return new Promise((resolve, reject) => {
+    const late = (): void => resolve("late");
+    signal.addEventListener("abort", late, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", late));
+  });
+}
+
+const base64 = (text: string): string => btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+
+/** The request's lines for one hop, made new each time: nothing of an earlier hop rides along. `null`: the credential is no line. */
+function headersFor(req: HttpRequest, body: Uint8Array | null, hop: number): Record<string, string> | null {
+  const headers: Record<string, string> = { "user-agent": USER_AGENT, accept: req.headers.accept ?? "*/*", "accept-encoding": "identity" };
+  for (const name of ["content-type", "depth", "prefer", "destination", "overwrite"] as const) {
+    const value = req.headers[name];
+    if (value !== undefined) headers[name] = value;
+  }
+  if (body !== null) headers["content-length"] = String(body.byteLength);
+  if (req.auth !== null) {
+    const c = req.auth.credential;
+    if (c.kind === "bearer") {
+      if (!TOKEN.test(c.token)) return null;
+      headers.authorization = `Bearer ${c.token}`;
+    } else {
+      // The one place a password is revealed: this line, for this hop, for a host that is admitted.
+      if (c.user === "" || c.user.includes(":")) return null;
+      headers.authorization = `Basic ${base64(`${c.user}:${c.password()}`)}`;
+    }
+  }
+  const v = hop === 0 ? req.validators : null;
+  const usable = (text: string | null): text is string => text !== null && text !== "" && text.length <= MAX_VALIDATOR_CHARS && PRINTABLE.test(text);
+  if (v !== null && usable(v.etag)) headers["if-none-match"] = v.etag;
+  else if (v !== null && usable(v.lastModified)) headers["if-modified-since"] = v.lastModified;
+  // A write never follows a redirect, so its precondition is only ever the first hop's.
+  if (hop === 0 && req.precondition !== undefined) {
+    if (req.precondition.kind === "new") headers["if-none-match"] = "*";
+    else if (req.precondition.kind === "unchanged") headers["if-match"] = req.precondition.tag;
+  }
+  return headers;
+}
+
+/**
+ * A write as the port takes it, or a fault of the program that asked: the port must be one that
+ * writes, the write must carry a sign-in and a precondition that is an entity tag or "new" (or, for
+ * a DELETE alone, that what goes is a notice channel of this program's own), and no reading's
+ * validators; a precondition on any other method is a fault too. Asked before any lookup.
+ */
+function assertWriteShape(deps: GuardDeps, req: HttpRequest, url: string): boolean {
+  const conditionalCancel = req.method === "POST" && req.precondition?.kind === "unchanged" &&
+    /^https:\/\/[^/?#]+\/[^?#]*\/events\/[^/?#]+\/cancel$/.test(url);
+  const writing = WRITING.has(req.method) || conditionalCancel;
+  if (!writing) {
+    if (req.precondition !== undefined) throw new TypeError(`a calendar ${req.method} may not carry a precondition`);
+    return false;
+  }
+  if (!deps.writes) throw new TypeError("a calendar request port made for reading was asked to write");
+  if (req.auth === null) throw new TypeError("a calendar write carries no sign-in");
+  if (req.precondition === undefined) throw new TypeError("a calendar write carries no precondition");
+  if (req.validators !== null) throw new TypeError("a calendar write carries a reading's validators");
+  if (req.precondition.kind === "unchanged" && !sendableTag(req.precondition.tag)) throw new TypeError("a calendar write's version is no entity tag");
+  // Only a notice channel is removed without a version, and only removed: nothing is ever changed or made without one.
+  if (req.precondition.kind === "own-channel" && req.method !== "DELETE") throw new TypeError("only the removal of a notice channel goes without a version");
+  return true;
+}
+
+const headerOf = (res: PinnedResponse, name: string): string | null => {
+  const value = res.headers[name.toLowerCase()];
+  return value === undefined ? null : Array.isArray(value) ? value.join(", ") : value;
+};
+
+async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<HttpAnswer> {
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (!ADAPTER_HEADERS.has(name) || !PRINTABLE.test(value)) throw new TypeError(`a calendar request may not carry the header ${name} as given`);
+  }
+  if (req.method === "MOVE") {
+    const from = new URL(first);
+    const destination = req.headers.destination && new URL(req.headers.destination);
+    if (!destination || destination.origin !== from.origin || destination.username || destination.password ||
+      destination.hash || req.headers.overwrite !== "F" || req.precondition?.kind !== "unchanged")
+      throw new TypeError("a calendar move needs a version and a same-origin destination without overwrite");
+  } else if (req.headers.destination !== undefined || req.headers.overwrite !== undefined) {
+    throw new TypeError("only a calendar move can carry a destination");
+  }
+  const writing = assertWriteShape(deps, req, first);
+  const refused = (reason: ProviderRefusal): HttpAnswer => ({ arrived: false, reason });
+  if (req.signal.aborted) return refused("timeout");
+  const body = req.body === null ? null : new TextEncoder().encode(req.body);
+  // A body nobody may send is refused before anyone is asked about the address.
+  if (body !== null && body.byteLength > FETCH_BODY_MAX_BYTES) return refused("too_large");
+
+  // One signal for the whole call: the caller's, the whole call's clock and each hop's.
+  const ac = new AbortController();
+  const end = (): void => ac.abort();
+  req.signal.addEventListener("abort", end, { once: true });
+  const whole = setTimeout(end, deps.limits.totalMs);
+  /** What a failed request or body is called: the clock's word once the signal fired, a network's by its code. */
+  const failure = (err: unknown): ProviderRefusal => {
+    if (ac.signal.aborted) return "timeout";
+    if (isTransportFailure(err)) return "connection_failed";
+    throw err;
+  };
+
+  try {
+    let current = first;
+    let cameByHttps = false;
+    /** The origin whose redirect sent the request on to `current`; `null` while that is the address the caller asked for. */
+    let sentOnBy: string | null = null;
+    for (let hop = 0; ; hop++) {
+      // What is wrong with an address has the address's word on every hop; what is wrong with the
+      // redirect itself (no address, too long, a step down to http) is the redirect's.
+      const noAddress: ProviderRefusal = hop === 0 ? "address_invalid" : "redirect_invalid";
+      if (current.length > MAX_URL_CHARS) return refused(noAddress);
+      const url = parse(current);
+      if (url === null) return refused(noAddress);
+      if (cameByHttps && url.protocol === "http:") return refused("redirect_invalid");
+      // A sign-in for TLS alone: the step down a redirect makes is refused above, and this is the one no redirect
+      // makes, an address that is plain from its first request. Before any lookup.
+      if (req.auth !== null && req.auth.tlsOnly && url.protocol === "http:") return refused("address_not_allowed");
+
+      const head = setTimeout(end, deps.limits.connectMs);
+      let res: PinnedResponse;
+      try {
+        // Before any lookup: an address the credential may not travel to is not asked about either. The sign-in's own
+        // rule is asked of every hop, with the scheme, host and port of the address and with who sent the request there.
+        if (req.auth !== null && !req.auth.admits(hopOf(url, sentOnBy))) return refused("host_changed");
+        const cleared = await unlessAborted(clear(url, deps), ac.signal);
+        if (cleared === "late") return refused("timeout");
+        if ("refused" in cleared) return refused(cleared.refused);
+        const headers = headersFor(req, body, hop);
+        if (headers === null) return refused("sign_in_refused");
+        // The wait is this call's, not the request's: the call ends at its own bound even with a request that never
+        // settles. The product's pinned request settles on every path; the bound does not lean on that.
+        const asking = deps.request(url.href, { method: req.method, headers, body: body ?? undefined, pin: cleared.pin, signal: ac.signal });
+        const answered = await unlessAborted(asking, ac.signal);
+        if (answered === "late") {
+          // An answer that still comes is nobody's: its connection is ended.
+          void asking.then((late) => late.stream.destroy(), () => undefined);
+          return refused("timeout");
+        }
+        res = answered;
+      } catch (err) {
+        return refused(failure(err));
+      } finally {
+        clearTimeout(head);
+      }
+
+      // Nothing is unpacked here, so nothing can grow after it was counted.
+      const encoding = headerOf(res, "content-encoding")?.trim().toLowerCase() ?? "";
+      if (encoding !== "" && encoding !== "identity") {
+        res.stream.destroy();
+        return refused("unreadable");
+      }
+
+      // The same request goes to the new address, method and body as they were: a calendar server's
+      // well-known address answers a PROPFIND with a redirect, and means that PROPFIND. A write never
+      // goes on: its 3xx is the answer, so a server cannot send a change or a removal to another path.
+      if (deps.limits.maxRedirects > 0 && REDIRECTS.has(res.status) && !writing) {
+        res.stream.destroy();
+        const location = headerOf(res, "location");
+        if (location === null) return refused("redirect_invalid");
+        if (hop === deps.limits.maxRedirects) return refused("too_many_redirects");
+        const next = parse(location, url.href);
+        if (next === null) return refused("redirect_invalid");
+        cameByHttps = url.protocol === "https:";
+        sentOnBy = originOf(url);
+        current = next.href;
+        continue;
+      }
+
+      let bytes: Uint8Array | null;
+      try {
+        // The body is waited for the same way: a stream that neither ends nor fails is left at the call's bound.
+        const reading = readCapped(res.stream, headerOf(res, "content-length"), deps.limits.maxBodyBytes);
+        const read = await unlessAborted(reading, ac.signal);
+        if (read === "late") {
+          res.stream.destroy();
+          return refused("timeout");
+        }
+        bytes = read;
+      } catch (err) {
+        return refused(failure(err));
+      }
+      if (bytes === null) return refused("too_large");
+      return { arrived: true, status: res.status, header: (name) => headerOf(res, name), body: bytes, location: headerOf(res, "location"), url: url.href, hops: hop };
+    }
+  } finally {
+    clearTimeout(whole);
+    req.signal.removeEventListener("abort", end);
+  }
+}
+
+/** The request port over the gate. The package's two makers call it; a test may, with stand-ins. */
+export function guardedRequest(deps: GuardDeps): HttpPort {
+  return { request: (url, req) => run(deps, url, req) };
+}

@@ -1,8 +1,9 @@
+import type { MailboxDTO, MailboxFolderSummary } from "@ohmail/wire";
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
-  assertOrganizerRole,
+  assertOrganizerRole, carryBinding,
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings, messageFailures,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
@@ -37,7 +38,8 @@ import {
   leaveMailboxFilings, readMailboxFilings, retryMailboxFilings, type MailboxFilingsDTO,
 } from "./mailbox-filings.js";
 import type { KeyProvider } from "./auth/crypto.js";
-import type { FetchingDTO, MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
+import { holdLiveSession } from "./auth/session-lifecycle.js";
+import type { FetchingDTO } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
 // `dormancy_days` and `screening_scope` cannot disagree with the two cutlines that read them.
 import { DEFAULT_DORMANCY_DAYS, createLogger, providerAuthservIds, type ScreeningScope } from "@trafficflow/core/mail";
@@ -571,6 +573,16 @@ export interface ConnectOAuthMailboxInput {
 /** Required for the same reason {@link CreateMailboxOptions}'s is: a credential is tried before it is stored. */
 export interface ConnectOAuthOptions {
   probe: MailboxProbe;
+  /** The stored deadline for a device grant, which also requires its starting session. */
+  deviceGrantExpiresAt?: Date;
+}
+
+/** Rolls back a device connect and lets the poll route return its normal expired result. */
+export class DeviceGrantExpired extends Error {
+  constructor() {
+    super("Microsoft device sign-in expired");
+    this.name = "DeviceGrantExpired";
+  }
 }
 
 /**
@@ -855,7 +867,7 @@ export interface MailboxServiceDeps {
    * means nobody wired one, and the paid gate refuses rather than admitting an unbounded create.
    * See {@link MailboxService.access}.
    */
-  accessOf?: (accountId: string) => Promise<AccessVerdict>;
+  accessOf?: (accountId: string, opts: { fresh: true }) => Promise<AccessVerdict>;
   /**
    * How the organizer stands: when its last pass finished, for {@link MailboxDTO.filing}'s
    * `lastCycleAt`, and whether fetching is behind, for {@link MailboxDTO.fetching} and the pull
@@ -1151,7 +1163,7 @@ export class MailboxService {
     // the plan limit from any host that wired the paid gate and forgot this — the exact failure
     // `mailbox-allowance-registry.ts` refuses by name one seam over, reintroduced one seam up. The
     // paid gate refuses a `null`; the unmetered policy ignores it.
-    return this.deps.accessOf ? this.deps.accessOf(accountId) : null;
+    return this.deps.accessOf ? this.deps.accessOf(accountId, { fresh: true }) : null;
   }
 
   async list(ctx: ServiceContext, opts: ListMailboxesOptions = {}): Promise<MailboxDTO[]> {
@@ -1767,12 +1779,21 @@ export class MailboxService {
     // The access verdict, read BEFORE the transaction: answering it may be a network hop, and a
     // remote call under the account's row lock is the deadlock the send pass already records.
     const access = await this.access(ctx.accountId);
+    const grantDeadline = opts.deviceGrantExpiresAt?.getTime();
+    const assertDeviceGrantDeadline = () => {
+      if (grantDeadline !== undefined && ctx.now().getTime() >= grantDeadline) throw new DeviceGrantExpired();
+    };
 
     // `lock: "update"` for `create`'s reason one method up: the create branch below reaches the
     // allowance gate, which takes `accounts FOR UPDATE`. That strength IS the account row at the
     // head of the mailbox lock order — the order `delete` takes with its erasure fence — so this
     // door takes it once, here, and no second `lockAccountRow` inside.
     const out = await withAccountTx(ctx, async (tx) => {
+      // The provider and probe can outlast the session or the grant.
+      if (grantDeadline !== undefined) {
+        await holdLiveSession(tx, ctx);
+        assertDeviceGrantDeadline();
+      }
       const [existing] = await dialect(ctx.db).forUpdate(tx.select().from(mailboxes)
         .where(and(
           eq(mailboxes.accountId, ctx.accountId),
@@ -1818,6 +1839,7 @@ export class MailboxService {
         ));
 
         const [fresh] = await tx.select().from(mailboxes).where(eq(mailboxes.id, row.id)).limit(1);
+        assertDeviceGrantDeadline();
         return { created: false, row: fresh as MailboxRow };
       }
 
@@ -1841,6 +1863,7 @@ export class MailboxService {
       await this.upsertCredOn(tx, ctx, kp, created!.id, "imap", o.refreshToken, meta, MINTED_HERE);
       // Same hook, same transaction, as `create` — an OAuth connect of a NEW address is a
       // create in every sense that matters here (a reconnect returned above and grants nothing).
+      assertDeviceGrantDeadline();
       return { created: true, row: created as MailboxRow };
     }, { lock: "update" }).catch((err: unknown) => {
       if (isActiveAddressConflict(err)) throw addressTaken();
@@ -1901,7 +1924,7 @@ export class MailboxService {
 
     // The access verdict, read BEFORE the transaction: answering it may be a network hop, and a
     // remote call under the account's row lock is the deadlock the send pass already records.
-    const access = await this.access(ctx.accountId);
+    const access = patch.status && patch.status !== "disabled" ? await this.access(ctx.accountId) : null;
 
     return asTx(ctx).transaction(async (tx) => {
       // The account row FIRST, before any `mailboxes` row — the order `delete` takes with its
@@ -2021,7 +2044,7 @@ export class MailboxService {
       // commit. `credential-report-commit-side.test.ts` requires this marker on every derivation
       // outside `context.ts`, so the next one cannot arrive silently.
       return this.toDTO({
-        ...ctx, db: carryDialect(ctx.db, tx as object) as unknown as ServiceContext["db"],
+        ...ctx, db: carryBinding(ctx.db, carryDialect(ctx.db, tx as object)),
       }, row!);
     }).catch((err: unknown) => {
       // The RE-ENABLE path hits the same index: `disabled → connected` inserts a new entry
@@ -3080,7 +3103,7 @@ export class MailboxService {
     const meta = Object.keys(metaIn).length > 0 ? metaIn : undefined;
     const now = ctx.now();
     await tx.insert(mailboxCredentials).values({
-      mailboxId, transport, secretEnc: ciphertext, keyVersion,
+      mailboxId, accountId: ctx.accountId, transport, secretEnc: ciphertext, keyVersion,
       ...(meta ? { meta } : {}), updatedAt: now,
     }).onConflictDoUpdate({
       target: [mailboxCredentials.mailboxId, mailboxCredentials.transport],

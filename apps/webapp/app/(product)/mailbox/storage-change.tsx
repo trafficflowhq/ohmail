@@ -1,14 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { RefusalLine } from "@ohmail/ui/base";
+import { SettingNote } from "@ohmail/ui/mail";
 import { useLocale, useTranslations } from "next-intl";
 import { ApiError, account, accessFeedFor, accessStorage, apiConfigured, onAccessFeed } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
-import { readOwner } from "../../shell/owner-cookie";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import type { StorageChange } from "../../shell/StorageNotice";
 import type { StorageFacts } from "../../shell/storage-state";
-import { StepUpPrompt } from "./StepUpPrompt";
-import { leaveForManagePage } from "./SubscriptionSection";
+import { StepUp } from "./StepUp";
+import { leaveForManagePage } from "./manage-navigation";
 
 /** The account's storage block from the access feed the shell already asks; nothing on a self-host build. */
 export function useCloudStorage(): StorageFacts | null {
@@ -31,6 +33,7 @@ export function useStorageChange(): StorageChange {
   const [refusal, setRefusal] = useState<"failed" | "unverified" | null>(null);
   const [stepUp, setStepUp] = useState(false);
   const [discarded, setDiscarded] = useState(false);
+  const opener = useRef<HTMLButtonElement | null>(null);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -64,13 +67,15 @@ export function useStorageChange(): StorageChange {
   const note = (
     <>
       {refusal !== null ? (
-        <p className="acct-warn" role="alert">
+        <RefusalLine alert>
           {refusal === "unverified" ? tLock("mintUnverified") : t("storageChangeFailed")}
-        </p>
+        </RefusalLine>
       ) : null}
-      {discarded ? <p className="acct-warn" role="status">{td("stepUpCancelledNothingRan")}</p> : null}
+      {discarded ? <SettingNote said>{td("stepUpCancelledNothingRan")}</SettingNote> : null}
       {stepUp ? (
-        <StepUpPrompt
+        <StepUp
+          inline
+          returnFocus={() => opener.current}
           onVerified={() => {
             setStepUp(false);
             void run(true);
@@ -81,5 +86,12 @@ export function useStorageChange(): StorageChange {
       ) : null}
     </>
   );
-  return { press: () => { void run(false); }, busy: busy || stepUp, note };
+  return {
+    press: (event) => {
+      opener.current = event.currentTarget;
+      void run(false);
+    },
+    busy: busy || stepUp,
+    note,
+  };
 }

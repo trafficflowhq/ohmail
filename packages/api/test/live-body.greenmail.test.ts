@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -84,7 +85,7 @@ async function emptied(w: World, header: string, places: Array<{ folder: string;
     accountId: w.accountId, mailboxId: w.mailboxId, messageIdHeader: `<${header}>`, bodyHash: header, dedupKey: header,
     subject: "Kitchen plans", fromAddress: "tom@example.net", snippet: "Hi Sam",
   }).returning({ id: messages.id });
-  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, withheldReason: "storage_cap" });
+  await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", html: null, withheldReason: "storage_cap" });
   for (const p of places) {
     await w.db.insert(messageInstances).values({
       accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: p.folder,

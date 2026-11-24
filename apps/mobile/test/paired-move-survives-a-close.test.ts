@@ -5,8 +5,8 @@
  * The kill lands at the first frame that shows the Move; the next launch makes it once, under ONE
  * Idempotency-Key, and says so once. A replay the server refuses says the refusal.
  */
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RuleDTO } from "@ohmail/client-engine";
 import { refuse, sayArg } from "../src/refusal";
 import type { MobileEngineDeps } from "../src/engine/boot";
 import type { ToastOpts, WorldView } from "../src/state/live";

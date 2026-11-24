@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { drafts, mailboxes, messages, outboundSends, changeLog } from "@trafficflow/db";
+import { drafts, mailboxes, messages, outboundSends, changeLog, bindDb } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { createLogger, mintMessageId, normalizeMessageId } from "@trafficflow/core/mail";
 import type { OpenSendAdapter, OutboundMessage, SendAdapter } from "@trafficflow/core";
@@ -12,7 +12,7 @@ import {
   SEND_RECONCILE_GIVE_UP_MS,
   SEND_RECONCILE_SCAN_FACTOR, SEND_STALE_AFTER_MS,
   SEND_UNVERIFIED_RECHECK_MS, SEND_UNVERIFIED_MIRROR_MS, SEND_UNVERIFIED_PROBE_AT_MS, SEND_UNVERIFIED_PROBE_WINDOW_MS,
-  inUnverifiedProbeWindow,
+  dbFor, inUnverifiedProbeWindow,
   SEND_COPY_OWED_CALL_CEILING_MS, SEND_COPY_OWED_DIAL_DEADLINE_MS, SEND_COPY_OWED_FILES_CALL_CEILING_MS,
   SEND_COPY_OWED_FILES_FETCH_CEILING_MS, SEND_COPY_OWED_FILES_END_MS,
 } from "../src/index.js";
@@ -162,7 +162,7 @@ async function mirror(w: World, minted: string): Promise<void> {
 }
 
 const run = (w: World, deps: Parameters<typeof runSendReconcilePass>[1]) =>
-  runSendReconcilePass(w.db, { now: () => NOW, ...deps });
+  runSendReconcilePass(bindDb(w.db, { account: null }), { now: () => NOW, ...deps });
 
 const sendRow = async (w: World, id: string) =>
   (await w.db.select().from(outboundSends).where(eq(outboundSends.id, id)))[0]!;
@@ -1531,7 +1531,7 @@ describe("runSendReconcilePass — the second look at an unverified send", () =>
     expect(spy.opened, "the mirror answers without a login").toEqual([]);
     expect(await sendRow(w, sendId)).toMatchObject({ status: "sent", resolvedBy: "sent_folder" });
     const { sendService } = await import("../src/index.js");
-    const ctx = { db: w.db, accountId: w.accountId, userId: null, now: () => NOW, requestId: "r" };
+    const ctx = { db: dbFor(w.db, w.accountId), accountId: w.accountId, userId: null, now: () => NOW, requestId: "r" };
     expect(await sendService.send(ctx, draftId, randomUUID(), { openSendAdapter: spy.factory }).then((x) => x, (e: unknown) => e))
       .toMatchObject({ httpStatus: 409 });
     expect(spy.delivered).toEqual([]);

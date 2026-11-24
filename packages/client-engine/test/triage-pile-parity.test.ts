@@ -1,16 +1,14 @@
+import type { MessageStateDTO, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   OhmailEngine,
   triagePiles,
   type EngineAdapter,
-  type MessageStateDTO,
-  type MutationOutcome,
   type SyncChange,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * TRIAGE PILE PARITY THROUGH A TRANSITION — the badge and the pile are ONE number.

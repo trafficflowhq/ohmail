@@ -11,7 +11,7 @@ import { startPhoneEngine, type PhoneEngine, type PhoneSqlExecutor, type PhoneSq
  * THE PHONE'S STORE PRUNES ITS CHANGE LOG TOO. The phone runs the same drain over SQLite, so its
  * upkeep runs the same retention in the device store's dialect: rows 40 days old, a relaunch (the
  * pass runs at a launch's first drain), and the floor rises with each entity keeping one row; rows
- * 20 days old all survive. Measured only on the device store (`vitest.sqlite.config.ts`).
+ * 20 days old all survive. Measured only on the device store (`test/vitest.sqlite.config.ts`).
  */
 const sqlite = createRequire(import.meta.url)("node:sqlite") as {
   DatabaseSync: new (path: string) => {

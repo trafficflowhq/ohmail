@@ -1,13 +1,11 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingDoor, OnboardingFacts } from "../app/shell/onboarding";
+import { act, cleanup } from "@testing-library/react";
+import type { OnboardingDoor } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { RUNGS } from "../../../packages/app/src/mailboxes/first-run/words.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * "HOW FAR BACK" PRE-SELECTS THE ROW THAT CALLS ITSELF THE USUAL ONE.
@@ -40,13 +38,14 @@ import type { OnboardingDoor, OnboardingFacts } from "../app/shell/onboarding";
  * account (`"selfhost"`). The first draft of this file invented a door called `"standalone"` from
  * the row's own wording; `OnboardingDoor` is `"local" | "cloud" | "selfhost"` and the webapp
  * typechecks its tests, so it said so.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the re-run is the new frame's first-run stage at
+ * `#/first-run/again` (`_first-run-stage.tsx`), the window the account stored is the ground's
+ * `screening` (absent where nothing was stored), its words the stage's catalogue; a rung is the window's radio by
+ * its name (`words.ts` RUNGS); a re-render is the ground read again. Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-const t = messages.onboarding;
+const t = O;
 
 const CONNECTED = {
   organizerRole: "organizer" as const,
@@ -57,21 +56,17 @@ const CONNECTED = {
 };
 
 /** An account that has been through setup — the state a re-run is about. */
-const finished = (door: OnboardingDoor): OnboardingFacts => ({
-  door,
+const finished = () => ({
   mailbox: {
     ...CONNECTED,
-    organizeConsentedAt: "2026-03-01T10:00:00.000Z",
-    initialImportCompletedAt: "2026-03-01T11:00:00.000Z",
+    organizeConsentedAt: "2026-03-01T10:00:00.000Z" as string | null,
+    initialImportCompletedAt: "2026-03-01T11:00:00.000Z" as string | null,
   },
   account: { onboardingCompletedAt: "2026-03-01T11:30:00.000Z" },
-  ai: "off",
-  queuedSenders: 0,
 });
 
-const roots: Root[] = [];
 afterEach(() => {
-  for (const r of roots.splice(0)) r.unmount();
+  cleanup();
   document.body.innerHTML = "";
 });
 
@@ -82,10 +77,12 @@ interface Stage {
   rerender: () => Promise<void>;
   heading: () => string;
   /** The value of the checked rung, or null when the control shows no selection at all. */
-  checked: () => string | null;
+  checked: () => Promise<string | null>;
   /** The visible label of the checked rung ("One year · usual"). */
-  checkedLabel: () => string;
+  checkedLabel: () => Promise<string>;
   stored: Array<{ dormancyDays?: number; scope?: "window" | "all_time" }>;
+  /** Choose a rung, as a click on its radio. */
+  pick: (value: string) => Promise<void>;
 }
 
 /**
@@ -99,52 +96,28 @@ async function mount(o: {
 }): Promise<Stage> {
   const stored: Stage["stored"] = [];
   const door = o.door ?? "cloud";
-  let facts = finished(door);
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-
-  const host: FirstRunHost = {
+  let facts = finished();
+  const rowOf = (): FirstRunRow => ({ id: id("mb-1"), address: "me@example.invalid", ...facts.mailbox }) as FirstRunRow;
+  const st = await mountStage({
+    rows: [rowOf()],
+    at: "#/first-run/again?mailbox=mb-1",
     door,
-    ai: "off",
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async (_id, body) => {
-      if (body.screening) stored.push(body.screening);
-      facts = { ...facts, mailbox: { ...facts.mailbox!, organizeConsentedAt: "2026-09-02T09:00:00.000Z" } };
-      return "stored";
+    account: facts.account,
+    live: () => [rowOf()],
+    /* Absent means "nothing was ever chosen" — see the ground's `screening`. */
+    ...(o.screening ? { screening: o.screening } : {}),
+    verbs: {
+      ai: "off",
+      organize: async (_id, body) => {
+        if (body.screening) stored.push(body.screening as Stage["stored"][number]);
+        facts = { ...facts, mailbox: { ...facts.mailbox, organizeConsentedAt: "2026-09-02T09:00:00.000Z" } };
+        return "stored";
+      },
+      complete: async () => {},
+      setAiEnabled: async () => {},
     },
-    complete: async () => {},
-    setAiEnabled: async () => {},
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-
-  let bump: (() => void) | null = null;
-  const Host = () => {
-    const [, set] = React.useState(0);
-    bump = () => set((n) => n + 1);
-    return h(FirstRun, {
-      host,
-      facts,
-      onRefresh: () => set((n) => n + 1),
-      onLeave: () => {},
-      pull: { screened: 0, history: 0, pulled: 0 },
-      decide: null,
-      mailboxId: "mb-1",
-      rerun: true,
-      /* Absent means "nothing was ever chosen" — see `FirstRunProps.screening`. */
-      ...(o.screening ? { screening: o.screening } : {}),
-    });
-  };
-
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Host, null) }),
-    }));
   });
+  const el = st.el;
 
   const press = async (label: string) => {
     const button = [...el.querySelectorAll("button")]
@@ -153,29 +126,44 @@ async function mount(o: {
       throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `
         + [...el.querySelectorAll("button")].map((b) => JSON.stringify(b.textContent)).join(", "));
     }
-    await act(async () => { (button as HTMLButtonElement).click(); });
+    await act(async () => { (button as HTMLButtonElement).click(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
   };
 
-  const rungs = (): HTMLInputElement[] =>
-    [...el.querySelectorAll<HTMLInputElement>("input[type=radio]")];
+  const rungs = async (): Promise<Array<{ el: HTMLElement; value: string; label: string; checked: boolean }>> => {
+    const slot = el.querySelector<HTMLButtonElement>('.oh-page-say button[aria-haspopup="menu"]');
+    if (slot && slot.getAttribute("aria-expanded") !== "true") await act(async () => { slot.click(); });
+    return [...el.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].map((r) => {
+      const name = r.querySelector(".oh-menu-word")?.textContent ?? "";
+      const note = r.querySelector(".oh-menu-item-note")?.textContent ?? "";
+      const rung = RUNGS.find((g) => name === t[g.label.slice("onboarding.".length) as keyof typeof t]);
+      return { el: r, value: rung?.value ?? name, label: note ? `${name} · ${note}` : name, checked: r.getAttribute("aria-checked") === "true" };
+    });
+  };
+  const checked = async () => {
+    const picked = (await rungs()).find((row) => row.checked);
+    const slot = el.querySelector<HTMLButtonElement>('.oh-page-say button[aria-haspopup="menu"]');
+    if (slot?.getAttribute("aria-expanded") === "true") await act(async () => { slot.click(); });
+    return picked;
+  };
 
   return {
     el, press, stored,
-    rerender: async () => { await act(async () => { bump?.(); }); },
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
-    checked: () => rungs().find((i) => i.checked)?.value ?? null,
-    checkedLabel: () => {
-      const on = rungs().find((i) => i.checked);
-      return (on?.closest("label")?.querySelector("b")?.textContent ?? "").trim();
+    rerender: async () => { await st.move([rowOf()]); },
+    heading: st.heading,
+    checked: async () => (await checked())?.value ?? null,
+    checkedLabel: async () => (await checked())?.label ?? "",
+    pick: async (value: string) => {
+      const rung = (await rungs()).find((i) => i.value === value);
+      expect(rung, `the screen offers no ${value}-day rung`).toBeDefined();
+      await act(async () => { rung!.el.click(); });
     },
   };
 }
 
-/** Walk the re-run from its opening screen to "How far back". */
+/** The re-run opens with the folder map and the import window together. */
 async function toWindow(s: Stage): Promise<void> {
-  expect(s.heading(), "the re-run did not open on the consent statement").toBe(t.consentTitle);
-  await s.press(t.continue);
-  expect(s.heading(), "Continue did not reach the window screen").toBe(t.windowTitle);
+  expect(s.el.textContent).toContain(t.mapOhbox);
+  expect(s.heading()).toContain(t.organizeLast.split(" the last")[0]!);
 }
 
 describe("the window screen agrees with its own label", () => {
@@ -183,42 +171,42 @@ describe("the window screen agrees with its own label", () => {
     const s = await mount({});
     await toWindow(s);
 
-    expect(s.checked(), "the pre-selected rung").toBe("365");
+    expect(await s.checked(), "the pre-selected rung").toBe("365");
     /* THE CONTRADICTION, in one assertion: the checked row must be the one carrying the word.
        Reading the value alone would pass a build that moved the label to another rung. */
-    expect(s.checkedLabel()).toContain(t.winDefault);
-    expect(s.checkedLabel()).toBe(`${t.win365} · ${t.winDefault}`);
+    expect(await s.checkedLabel()).toContain(t.winDefault);
+    expect(await s.checkedLabel()).toBe(`${t.win365} · ${t.winDefault}`);
   });
 
   it("…on the standalone install too, where a re-run is the only way in", async () => {
     const s = await mount({ door: "local" });
     await toWindow(s);
-    expect(s.checked()).toBe("365");
-    expect(s.checkedLabel()).toContain(t.winDefault);
+    expect(await s.checked()).toBe("365");
+    expect(await s.checkedLabel()).toContain(t.winDefault);
   });
 
   it("…and on a self-host account, the other door the row names", async () => {
     const s = await mount({ door: "selfhost" });
     await toWindow(s);
-    expect(s.checked()).toBe("365");
-    expect(s.checkedLabel()).toContain(t.winDefault);
+    expect(await s.checked()).toBe("365");
+    expect(await s.checkedLabel()).toContain(t.winDefault);
   });
 
   it("a real choice is kept: 90 stored opens on 90, and the label moves off it", async () => {
     const s = await mount({ screening: { dormancyDays: 90, scope: "window" } });
     await toWindow(s);
 
-    expect(s.checked()).toBe("90");
-    expect(s.checkedLabel()).toBe(t.win90);
+    expect(await s.checked()).toBe("90");
+    expect(await s.checkedLabel()).toBe(t.win90);
     /* The usual-row label stays where it belongs rather than following the selection —
        "usual" is a fact about the product, not about this account. */
-    expect(s.checkedLabel()).not.toContain(t.winDefault);
+    expect(await s.checkedLabel()).not.toContain(t.winDefault);
   });
 
   it("all-time stored opens on all-time", async () => {
     const s = await mount({ screening: { dormancyDays: 90, scope: "all_time" } });
     await toWindow(s);
-    expect(s.checked()).toBe("all");
+    expect(await s.checked()).toBe("all");
   });
 
   it("A STORED 60 SNAPS TO 90 — which is why the shell must withhold, not pass the resting values", async () => {
@@ -229,8 +217,8 @@ describe("the window screen agrees with its own label", () => {
        top of this file — and the two together are what tell the halves apart. */
     const s = await mount({ screening: { dormancyDays: 60, scope: "window" } });
     await toWindow(s);
-    expect(s.checked()).toBe("90");
-    expect(s.checkedLabel()).not.toContain(t.winDefault);
+    expect(await s.checked()).toBe("90");
+    expect(await s.checkedLabel()).not.toContain(t.winDefault);
   });
 });
 
@@ -238,19 +226,16 @@ describe("a pick survives", () => {
   it("choosing 90 on a fresh screen holds across a re-render, and it is 90 that gets stored", async () => {
     const s = await mount({});
     await toWindow(s);
-    expect(s.checked()).toBe("365");
+    expect(await s.checked()).toBe("365");
 
-    const ninety = [...s.el.querySelectorAll<HTMLInputElement>("input[type=radio]")]
-      .find((i) => i.value === "90");
-    expect(ninety, "the screen offers no 90-day rung").toBeDefined();
-    await act(async () => { ninety!.click(); });
-    expect(s.checked()).toBe("90");
+    await s.pick("90");
+    expect(await s.checked()).toBe("90");
 
     /* A RE-RENDER, NOT A REMOUNT. The shell re-renders this stage whenever the facts come back,
        and a screen that re-derived its value from the props on every render would silently drop
        the pick here and store the default instead. */
     await s.rerender();
-    expect(s.checked(), "the pick did not survive a re-render").toBe("90");
+    expect(await s.checked(), "the pick did not survive a re-render").toBe("90");
 
     await s.press(t.agree);
     expect(s.stored).toEqual([{ dormancyDays: 90, scope: "window" }]);

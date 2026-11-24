@@ -1,6 +1,7 @@
+import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  MemoryMirrorStore, OhmailEngine, type EngineMessage, type EngineMutation, type Folder, type SyncChange,
+  MemoryMirrorStore, OhmailEngine, type SyncChange,
 } from "@ohmail/client-engine";
 import { liveActions, liveOhbox, liveScreener, presentedOf, screeningAnswered, type WorldView } from "../src/state/live";
 

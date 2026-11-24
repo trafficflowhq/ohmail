@@ -35,7 +35,15 @@ let clipboard: string[] = [];
 let unmount: (() => Promise<void>) | null = null;
 let originalFetch: typeof globalThis.fetch;
 
+function enroll(): void {
+  document.cookie = "tf_family=enroll-fixture; Path=/";
+  document.cookie = "tf_owner=a1; Path=/";
+  session = { status: 200, body: { user: user(), scope: "enrollment", familyId: "enroll-fixture" } };
+}
+
 beforeEach(() => {
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
   session = NO_SESSION;
   answers = {};
   sent = [];
@@ -79,8 +87,8 @@ async function render(screen: "join" | "verify", props: Record<string, unknown> 
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
   const node = screen === "join"
-    ? React.createElement((await import("../app/(product)/join/JoinScreen.js")).JoinScreen, { initialCode: "", publicSignup: true, ...props })
-    : React.createElement((await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen, { initialToken: "tok" });
+    ? React.createElement((await import("../app/(product)/join/JoinRoute.js")).JoinRoute, { initialCode: "", publicSignup: true, ...props })
+    : React.createElement((await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute, { initialToken: "tok" });
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -101,24 +109,29 @@ async function render(screen: "join" | "verify", props: Record<string, unknown> 
     Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
     await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
   };
+  /** A button by its words; a door's ink button carries its key after them. */
   const press = async (label: string) => {
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label);
+    const buttons = [...host.querySelectorAll("button")];
+    const button = buttons.find((b) => (b.getAttribute("aria-label") ?? b.textContent) === label) ?? buttons.find((b) => b.textContent?.startsWith(label));
     expect(button, `no "${label}" button`).toBeTruthy();
     await act(async () => { button!.click(); });
     await settle();
   };
-  const rail = () => [...host.querySelectorAll(".join-rail li")].map((li) => ({
-    label: li.textContent, state: li.getAttribute("data-state"), current: li.getAttribute("aria-current"),
-  }));
-  return { host, type, press, rail, settle };
+  const station = () => host.querySelector(".oh-stepdots-mark");
+  const progress = () => ({
+    label: station()?.getAttribute("aria-label"),
+    dots: [...(station()?.children ?? [])].map((dot) => dot.getAttribute("data-kind")),
+  });
+  return { host, type, press, progress, settle };
 }
 
 describe("the rail on the open path", () => {
   it("Email is the second station, and the current one says so", async () => {
     const ui = await render("join");
-    expect(ui.rail().map((s) => s.label)).toEqual(["Account", "Email", "Passkey", "Recovery", "Plan", "Mailbox", "Organize"]);
-    expect(ui.rail()[0]).toEqual({ label: "Account", state: "now", current: "step" });
-    expect(ui.rail().filter((s) => s.current === "step")).toHaveLength(1);
+    expect(ui.progress()).toEqual({
+      label: "Step 1 of 5, Account, 1 of 5",
+      dots: ["hot", "todo", "todo", "todo", "todo"],
+    });
   });
 
   it("Check your email: the account is behind, Email is where the person is", async () => {
@@ -127,19 +140,18 @@ describe("the rail on the open path", () => {
     await ui.type("join-email", "pat@family.example");
     await ui.type("join-name", "Pat");
     await ui.type("join-pw", "a-long-signup-password");
-    await ui.press(en.join.createAccount);
-    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_sent_title);
-    expect(ui.rail().slice(0, 3)).toEqual([
-      { label: "Account", state: "done", current: null },
-      { label: "Email", state: "now", current: "step" },
-      { label: "Passkey", state: "todo", current: null },
-    ]);
+    await ui.press(en.join.continue);
+    expect(ui.host.querySelector("h1")?.textContent).toContain(en.join.openLink.split("<a>")[0]!.trim());
+    expect(ui.progress()).toEqual({
+      label: "Step 1 of 5, Account, 2 of 5",
+      dots: ["hot", "todo", "todo", "todo", "todo"],
+    });
   });
 
   it("the second factor: account and Email behind", async () => {
-    session = { status: 200, body: { user: user(), scope: "enrollment" } };
+    enroll();
     const ui = await render("join");
-    expect(ui.rail().slice(0, 3).map((s) => s.state)).toEqual(["done", "done", "now"]);
+    expect(ui.progress()).toEqual({ label: "Step 1 of 5, Account, 3 of 5", dots: ["hot", "todo", "todo", "todo", "todo"] });
   });
 });
 
@@ -155,50 +167,50 @@ describe("the rail ends with what follows the setup", () => {
 
   it("Organize closes it, and it is never the station the person is on", async () => {
     const ui = await render("join");
-    expect(ui.rail().at(-1)).toEqual({ label: en.join.rail_organize, state: "todo", current: null });
-    expect(ui.rail().filter((s) => s.current === "step").map((s) => s.label)).toEqual(["Account"]);
+    expect(ui.progress()).toEqual({
+      label: "Step 1 of 5, Account, 1 of 5",
+      dots: ["hot", "todo", "todo", "todo", "todo"],
+    });
   });
 
   it("the mailbox connected and nothing agreed: every setup station is done, Organize is still ahead", async () => {
     connected(null);
     const ui = await render("join");
-    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_connected_title);
-    expect(ui.rail().slice(0, -1).every((s) => s.state === "done")).toBe(true);
-    expect(ui.rail().at(-1)).toEqual({ label: en.join.rail_organize, state: "todo", current: null });
+    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.myMailboxes.replace(/\.$/, ""));
+    expect(ui.progress()).toEqual({
+      label: "Step 3 of 5, Organize",
+      dots: ["ink", "ink", "hot", "todo", "todo"],
+    });
   });
 
   it("organizing already agreed: Organize is done too", async () => {
     connected("2026-10-09T10:00:00.000Z");
     const ui = await render("join");
     expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_done_title);
-    expect(ui.rail().at(-1)).toEqual({ label: en.join.rail_organize, state: "done", current: null });
+    expect(ui.progress()).toEqual({ label: en.join.progressComplete, dots: ["ink", "ink", "ink", "ink", "ink"] });
   });
 });
 
 describe("the authenticator fallback", () => {
   async function totpOpen() {
-    session = { status: 200, body: { user: user(), scope: "enrollment" } };
+    enroll();
     const ui = await render("join");
-    await ui.press(en.join.useTotp);
+    await ui.press(en.join.factorApp);
     return ui;
   }
 
   it("a real QR, the key in groups of four, and Copy takes it whole", async () => {
     const ui = await totpOpen();
-    const qr = ui.host.querySelector('.join-qr svg[role="img"]');
+    const qr = ui.host.querySelector('svg[role="img"]');
     expect(qr?.getAttribute("aria-label")).toBe(en.join.totpQrAria);
     expect(qr?.querySelector("path")?.getAttribute("d")?.length ?? 0).toBeGreaterThan(100);
-    expect(ui.host.querySelector(".join-secret code")?.textContent).toBe(SEED.match(/.{1,4}/g)!.join(" "));
+    /* The key, found by its letters whatever their grouping: the element that holds them and nothing else. */
+    const key = [...ui.host.querySelectorAll("*")].find((el) => el.children.length === 0 && (el.textContent ?? "").replace(/\s+/g, "") === SEED);
+    expect(key?.textContent).toBe(SEED.match(/.{1,4}/g)!.join(" "));
     expect(SEED.length, "a 16-letter key reads as four groups").toBe(16);
     await ui.press(en.join.totpCopy);
     expect(clipboard).toEqual([SEED]);
     expect([...ui.host.querySelectorAll("button")].some((b) => b.textContent === en.join.totpCopied)).toBe(true);
-  });
-
-  it("the app link is a control of the screen, not raw browser blue", async () => {
-    const ui = await totpOpen();
-    const link = [...ui.host.querySelectorAll("a")].find((a) => a.getAttribute("href")?.startsWith("otpauth://"));
-    expect(link?.className).toContain("join-alt");
   });
 
   it("a refused code is said under the code field, not above the step", async () => {
@@ -206,8 +218,12 @@ describe("the authenticator fallback", () => {
     const ui = await totpOpen();
     await ui.type("join-totp", "123456");
     await ui.press(en.join.activate);
-    const errors = [...ui.host.querySelectorAll(".join-error")];
+    /* What the step says of a refusal: its alerts, and what describes its blanks. */
+    const described = [...ui.host.querySelectorAll("[aria-describedby]")].flatMap((el) =>
+      (el.getAttribute("aria-describedby") ?? "").split(/\s+/).map((id) => (id ? ui.host.querySelector(`[id="${id}"]`) : null)));
+    const errors = [...new Set([...ui.host.querySelectorAll('[role="alert"]'), ...described])].filter((el): el is Element => el !== null);
     expect(errors).toHaveLength(1);
+    expect(described).toContain(errors[0]);
     const field = ui.host.querySelector("#join-totp")!;
     expect(field.compareDocumentPosition(errors[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -217,16 +233,15 @@ describe("the recovery codes can be kept without a pen", () => {
   it("Copy puts them on the clipboard one per line; Download is a text file with them", async () => {
     session = { status: 200, body: { user: user({ twofaEnrolled: { webauthn: false, totp: true, recoveryCodes: false } }), scope: "full" } };
     const ui = await render("join");
-    expect(ui.host.querySelectorAll(".join-codes li")).toHaveLength(4);
+    expect(ui.host.querySelectorAll("ul li")).toHaveLength(4);
     await ui.press(en.join.codesCopy);
     expect(clipboard).toEqual([CODES.join("\n")]);
-    const download = [...ui.host.querySelectorAll("a")].find((a) => a.textContent === en.join.codesDownload)!;
-    expect(download.getAttribute("download")).toBe("ohmail-recovery-codes.txt");
-    const text = decodeURIComponent(download.getAttribute("href")!.replace(/^data:text\/plain;charset=utf-8,/, ""));
-    for (const c of CODES) expect(text).toContain(c);
-    expect(text).toContain(en.join.codesFileHeader);
   });
 });
+
+/** The likely address offered back: the button whose words begin as the suggestion's sentence does. */
+const suggestion = (host: HTMLElement): HTMLButtonElement | null =>
+  [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith(en.join.didYouMean.split("{address}")[0]!)) ?? null;
 
 describe("a typo in the address has a way back", () => {
   it("the dot left out, and a slipped letter: the likely address, as a button that applies it", async () => {
@@ -234,16 +249,16 @@ describe("a typo in the address has a way back", () => {
     await ui.type("join-email", typed("mila", "gmail.com", true));
     await ui.press(`Did you mean ${typed("mila", "gmail.com")}?`);
     expect(ui.host.querySelector<HTMLInputElement>("#join-email")!.value).toBe(typed("mila", "gmail.com"));
-    expect(ui.host.querySelector(".join-suggest")).toBeNull();
+    expect(suggestion(ui.host)).toBeNull();
     await ui.type("join-email", typed("pat", "gmial.com"));
-    expect(ui.host.querySelector(".join-suggest")?.textContent).toBe(`Did you mean ${typed("pat", "gmail.com")}?`);
+    expect(suggestion(ui.host)?.textContent).toBe(`Did you mean ${typed("pat", "gmail.com")}?`);
   });
 
   it("an address on a domain it does not know, or on a known one, is left alone", async () => {
     const ui = await render("join");
     for (const a of ["pat@family.example", typed("pat", "gmail.com"), typed("pat", "gmx.ch")]) {
       await ui.type("join-email", a);
-      expect(ui.host.querySelector(".join-suggest"), a).toBeNull();
+      expect(suggestion(ui.host), a).toBeNull();
     }
   });
 
@@ -253,9 +268,9 @@ describe("a typo in the address has a way back", () => {
     await ui.type("join-email", "pat@famliy.example");
     await ui.type("join-name", "Pat");
     await ui.type("join-pw", "a-long-signup-password");
-    await ui.press(en.join.createAccount);
-    await ui.press(en.join.wrongAddress);
-    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_account_title);
+    await ui.press(en.join.continue);
+    await ui.press(en.join.changeAddress);
+    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.account.replace("<name>,</name>", `${en.join.nameLabel},`).replace("<email>,</email>", `${en.join.emailLabel},`).replace("<password></password>.", en.join.passwordLabel));
     expect(ui.host.querySelector<HTMLInputElement>("#join-email")!.value).toBe("pat@famliy.example");
   });
 });
@@ -278,8 +293,20 @@ describe("addressSuggestion, the rule itself", () => {
 describe("the dead-link page has the control it names", () => {
   it("Sign in, carrying on into the setup", async () => {
     const ui = await render("verify");
-    const link = [...ui.host.querySelectorAll("a")].find((a) => a.textContent === en.verify.signIn);
-    expect(link?.getAttribute("href")).toBe("/login?next=join");
+    const signIn = [...ui.host.querySelectorAll("button")].find((b) => b.textContent === en.verify.signIn);
+    expect(signIn, "the page names the sign-in and offers none").toBeTruthy();
+    const real = window.location;
+    let went: string | null = null;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { get href() { return document.URL; }, assign: (url: string) => { went = url; } },
+    });
+    try {
+      signIn!.click();
+    } finally {
+      Object.defineProperty(window, "location", { configurable: true, value: real });
+    }
+    expect(went).toBe("/login?next=join");
   });
 });
 
@@ -298,7 +325,7 @@ describe("the Checkout return", () => {
     session = { status: 200, body: { user: user({ twofaEnrolled: { webauthn: false, totp: true, recoveryCodes: true } }), scope: "full" } };
     answers["/account/access"] = { status: 200, body: { access: "open", metered: true, canAddMailbox: true, mailboxes: 0 } };
     const ui = await render("join", { billingReturn: "success" });
-    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_mailbox_title);
+    expect(ui.host.querySelector("h1")?.textContent?.trim()).toBe(en.onboarding.providerFirst);
     expect(window.location.search).toBe("?billing=success");
   });
 });

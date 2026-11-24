@@ -1,10 +1,11 @@
+import type { AttachmentWire } from "@ohmail/wire";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   OhmailEngine,
   INLINE_IMAGE_MAX_BYTES,
   INLINE_IMAGE_MAX_PARTS,
 } from "../src/engine.js";
-import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
  * ── EMBEDDED (`cid:`) IMAGES: FETCHED FROM THE PART'S OWN BYTES, MINTED AS `data:` URIs ─────

@@ -146,6 +146,51 @@ describe("point 3 — response bodies STREAM (the SSE case)", () => {
     expect(new TextDecoder().decode(second.value)).toContain("data: two");
     expect((await reader.read()).done).toBe(true);
   });
+
+  it("ends event streams cleanly during shutdown while an ordinary response drains", async () => {
+    const eventStreamShutdown = new AbortController();
+    let ordinaryStarted: () => void = () => {};
+    let completeOrdinary: () => void = () => {};
+    const ordinaryRequest = new Promise<void>((resolve) => { ordinaryStarted = resolve; });
+    const ordinaryResponse = new Promise<void>((resolve) => { completeOrdinary = resolve; });
+    let ordinaryAborted = false;
+    const port = await listen(async (req) => {
+      if (new URL(req.url).pathname === "/ordinary") {
+        ordinaryStarted();
+        await ordinaryResponse;
+        ordinaryAborted = req.signal.aborted;
+        return new Response("finished");
+      }
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("event: ready\ndata: {}\n\n"));
+          req.signal.addEventListener("abort", () => controller.close(), { once: true });
+        },
+      });
+      return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8" } });
+    }, { ...OPTS, eventStreamShutdown: eventStreamShutdown.signal });
+
+    const events = await fetch(`http://127.0.0.1:${port}/events`);
+    const reader = events.body!.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain("event: ready");
+    const ordinary = fetch(`http://127.0.0.1:${port}/ordinary`);
+    await ordinaryRequest;
+
+    const server = servers.at(-1)!;
+    const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+    eventStreamShutdown.abort();
+    const grace = setTimeout(() => server.closeAllConnections(), 500);
+    completeOrdinary();
+
+    try {
+      expect(await (await ordinary).text()).toBe("finished");
+      expect(ordinaryAborted).toBe(false);
+      expect((await reader.read()).done).toBe(true);
+      await closed;
+    } finally {
+      clearTimeout(grace);
+    }
+  });
 });
 
 describe("the proxy-header trust boundary (review follow-ups)", () => {

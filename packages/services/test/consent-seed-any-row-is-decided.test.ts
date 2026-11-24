@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { messageBodies, rules } from "@trafficflow/db";
@@ -16,7 +17,7 @@ type World = Awaited<ReturnType<typeof makeCtx>>;
 /** One of the account's own sent messages to `X`, with the header the review reads. */
 async function wroteTo(w: World): Promise<void> {
   const id = await seedMessage(w.db, w.accountId, w.mailboxId, { from: "mila@lichtgrat.example", folder: "Sent", subject: "a note" });
-  await w.db.insert(messageBodies).values({ messageId: id, headers: { to: [X] } });
+  await w.db.insert(messageBodies).values({ messageId: id, accountId: accountOfMessage(id), headers: { to: [X] } });
 }
 
 const underTheKey = async (w: World) => (await w.db.select().from(rules)

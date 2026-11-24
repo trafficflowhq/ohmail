@@ -20,7 +20,7 @@ import { awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
 import { PROFILE_IMPORT_MAX, profileImportService, type ProfileImportApplied } from "../src/profile-import-service.js";
 import { mailboxService } from "../src/mailbox-service.js";
 import { ServiceError } from "../src/errors.js";
-import type { Db, ServiceContext } from "../src/context.js";
+import { dbFor, type Db, type ServiceContext } from "../src/context.js";
 
 /**
  * The confirm's INLINE answer. Every read in this file fits the request, so a hand-over to the
@@ -63,8 +63,8 @@ async function world(): Promise<World> {
     accountId, provider: "imap", address: `${accountId.slice(0, 8)}@trafficflow.test`,
   }).returning();
   // A mailbox this install can reach: the card's question offers nothing for one it cannot.
-  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
-  const ctx = { db, accountId, now: () => NOW } as unknown as ServiceContext;
+  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
+  const ctx = { db: dbFor(db, accountId), accountId, now: () => NOW } as unknown as ServiceContext;
   return { db, ctx, accountId, mailboxId: mb!.id };
 }
 
@@ -143,7 +143,7 @@ const neverReader = (): (() => Promise<ProfileReadResult>) => async () => {
   throw new Error("the mailbox must not be dialled on this path");
 };
 
-/** Seed the organizer's found-marker exactly as `apps/worker/src/profile.ts#writeMarker` shapes it. */
+/** Seed the organizer's found-marker exactly as `packages/organizer/src/profile.ts#writeMarker` shapes it. */
 async function seedHeldMarker(w: World, d: OrganizerProfileDoc, signature?: number, copyReceipt?: string): Promise<string> {
   const fingerprint = profileCopyKey(d, "someone-elses-install");
   await w.db.insert(auditLog).values({
@@ -462,7 +462,7 @@ describe("apply — natural keys, one transaction, convergence", () => {
     const after = await w.db.select({ signature: mailboxes.signature, signatureHtml: mailboxes.signatureHtml })
       .from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
     expect(after[0], "the import erased the signature typed on this mailbox").toEqual(TYPED);
-    expect((await effectiveMailboxSignatures(w.db, w.accountId)).signatures[w.mailboxId]).toBe(TYPED.signature);
+    expect((await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId)).signatures[w.mailboxId]).toBe(TYPED.signature);
     expect(await profileImportWriteReleased(w.db as unknown as Tx, {
       accountId: w.accountId, mailboxId: w.mailboxId, fingerprint: profileFingerprint(d),
     }), "the organizer's hold never ends").toBe(true);
@@ -949,7 +949,7 @@ describe("the away responder's pile scope travels in the published profile", () 
   it("a document written BEFORE the field does not converge, and that outcome is already covered", async () => {
     /**
      * THE COMPATIBILITY COST, STATED. Leaving a stored scope alone means `local ⊃ document`, so
-     * the fingerprints never meet — not a new state: `apps/worker/src/profile.ts` treats it as the
+     * the fingerprints never meet — not a new state: `packages/organizer/src/profile.ts` treats it as the
      * MERGED import and releases the hold on the `imported` row (`profileImportWriteReleased`),
      * moving the held fingerprint to `seenForeignFingerprints` so the next write supersedes the
      * document. Asserted so the difference is a measured property of this design rather than a
@@ -1405,7 +1405,7 @@ describe("the screen-outs an import writes reach the mail this organizer held at
       nativeLocator: { folder: at, ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
     await w.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: at, observedFolder: at,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: at, observedFolder: at,
       lastSetBy: o.setBy ?? "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -1538,6 +1538,25 @@ describe("a takeover import retires the rule rows the copy records as removed th
     expect((await w.db.select().from(rules).where(eq(rules.accountId, w.accountId))).some((r) => r.match === "anna@example.com")).toBe(true);
     expect((await readRuleRemovals(w.db as unknown as Tx, w.accountId)).map((r) => r.match)).toEqual(["kept@example.com"]);
   });
+
+  /* THE COPY IS ANYONE'S TO WRITE: the written form also spells years before 1, which no store holds. A removal
+     dated before 1970 is no removal: the Import lands, retires nothing by it and records nothing of it. */
+  it.each(["0000-06-15T00:00:00.000Z", "-000001-01-01T00:00:00.000Z", "-271821-04-20T00:00:00.000Z"])(
+    "a removal a planted copy dates %s retires nothing and is not recorded, and the rest of the copy arrives",
+    async (at) => {
+      const w = await world();
+      const id = await dead(w);
+      const removedAt = new Date(DOC_AT.getTime() - HOUR);
+      const raw = formatProfileMessage(doc(PAYLOAD, { removed: [{ match: DEAD.match, at: removedAt }, { match: "elsewhere@example.com", at: removedAt }] }), { installId: THERE })
+        .replaceAll(removedAt.toISOString(), at);
+      const parsed = parseProfileMessage(raw);
+      if (parsed === null || isMalformedProfile(parsed) || parsed.doc === undefined) throw new Error("the planted copy was not read");
+      expect((await apply(w, parsed.doc)).retiredRules).toBe(0);
+      expect(await stillThere(w, id)).toBe(true);
+      expect(await readRuleRemovals(w.db as unknown as Tx, w.accountId)).toEqual([]);
+      expect((await w.db.select().from(rules).where(eq(rules.accountId, w.accountId))).map((r) => r.match)).toContain("anna@example.com");
+    },
+  );
 
   it("a removal the copy also names a rule for, dated after the copy or ahead of this clock retires nothing", async () => {
     const w = await world();

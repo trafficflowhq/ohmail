@@ -6,7 +6,7 @@ import { mailboxes, drafts, outboundSends } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { SendNotSubmitted } from "@trafficflow/core";
 import {
-  SendService, SEND_LOGIN_REFUSED_SENTENCE, SEND_NOT_SECURED_SENTENCE, ServiceError,
+  SendService, SEND_LOGIN_REFUSED_SENTENCE, SEND_NOT_SECURED_SENTENCE, ServiceError, dbFor,
 } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import {
@@ -45,7 +45,7 @@ async function setup(scheduledKey?: string) {
   const db = await makeTestDb();
   const accountId = randomUUID();
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "owner@example.test" }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   const [d] = await db.insert(drafts).values({
     accountId, mailboxId: mb!.id, subject: "Hello", body: "Body",
     to: [{ name: null, address: "you@example.test" }], status: "draft",
@@ -80,7 +80,7 @@ describe("mailServerRefusalOf — what the person's mail server did to a dial", 
   it("CONTROL: our faults and typed refusals stay unclassified", () => {
     expect(mailServerRefusalOf(shaped({ code: "EAUTH" }))).toBeNull();
     expect(mailServerRefusalOf(new TypeError("x is undefined"))).toBeNull();
-    expect(mailServerRefusalOf(Object.assign(new ServiceError("x", 502, "y"), { code: "ECONNREFUSED" }))).toBeNull();
+    expect(mailServerRefusalOf(Object.assign(new ServiceError("upstream_unavailable", 502, "y"), { code: "ECONNREFUSED" }))).toBeNull();
     expect(mailServerRefusalOf("ECONNREFUSED")).toBeNull();
     expect(mailServerRefusalOf(null)).toBeNull();
   });

@@ -1,17 +1,15 @@
+import type { EngineMessage, MessageBodyRecord, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it, vi } from "vitest";
 import {
-  FixturesAdapter,
   HttpAdapter,
   MemoryMirrorStore,
   OhmailEngine,
   bodyOf,
   type EngineAdapter,
-  type EngineMessage,
-  type MessageBodyRecord,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * SLICE THE HYDRATION SEAM.

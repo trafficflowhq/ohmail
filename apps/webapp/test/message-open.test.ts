@@ -1,12 +1,14 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { FixturesAdapter, type EngineMessage, type EngineMutation } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { openTargetFor } from "../app/shell/AppShell";
+import { openTargetFor } from "@ohmail/app-logic/search/open-target";
+import { openLetter } from "./ohbox/_finders.js";
 
 /**
  * ═══ OPEN IT WHERE IT LIVES (slice gaps the residue and) ═══════════════
@@ -29,6 +31,9 @@ import { openTargetFor } from "../app/shell/AppShell";
  *   2. The shell, driven from the keyboard, for what only exists once it is wired: the
  *      search bindings that did not exist at all, and the reader that could not be opened
  *      on anything but an Ohbox message.
+ *
+ * The Ohbox's own cases of the second level (↵ at a split width and at 390, a phone's tap, a verb over the open
+ * reader) stand in `message-open-ohbox.test.ts`, over the new shell's door.
  */
 
 // See `sync-liveness-shell.test.ts` for why React is published as a global.
@@ -42,12 +47,14 @@ process.env.NEXT_PUBLIC_API_BASE = "/api";
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let sent: EngineMutation[] = [];
 
 function setViewport(mobile: boolean): void {
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: mobile ? 390 : 1024 });
   (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
     ({
       matches: mobile && query.includes("max-width"),
@@ -67,7 +74,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -77,7 +84,7 @@ async function mountShell(): Promise<void> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
@@ -91,11 +98,12 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
       new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
     );
   });
+  await act(async () => { vi.advanceTimersByTime(1); });
 };
 
 /** Type into the search box the way a person does — React's own onChange path. */
 const typeSearch = async (text: string): Promise<void> => {
-  const input = host!.querySelector<HTMLInputElement>(".view-search input")!;
+  const input = host!.querySelector<HTMLInputElement>(`input[aria-label="${messages.search.aria}"]`)!;
   await act(async () => {
     const setter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype, "value",
@@ -117,27 +125,12 @@ const typeSearch = async (text: string): Promise<void> => {
  */
 const SEEDS = "the";
 
-const hits = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".view-search .hit-w")];
-const cursorHit = (): HTMLElement | null => host!.querySelector<HTMLElement>(".view-search .hit-w.cur");
+const hits = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>('[role="listitem"][data-hit]')];
+const cursorHit = (): HTMLElement | null =>
+  host!.querySelector<HTMLElement>('[role="listitem"][data-hit][aria-current="true"]');
 
-/**
- * THE ID OF THE MESSAGE THAT IS OPEN, in whichever pile the shell landed in.
- *
- * The list-shaped piles (Ohbox, Receipts, History, a tag, a folder) mark the open message with
- * `.row.sel`; Reads is a STREAM and marks it by expanding its card. This helper asks both,
- * because "the hit opened where it lives" is a claim about every pile and the assertion should
- * not quietly become a claim about the row-shaped ones.
- *
- * It used to be the `.row.sel` query alone, and it passed for a reason that was not the rule:
- * the second search hit for this query happened to be an Ohbox message. Search now breaks a
- * relevance tie by recency, which reordered two equally-scoring hits and put a Reads message
- * there instead — a real message, opened correctly, in a pile the selector could not see.
- */
 function openedMessageId(): string | undefined {
-  const row = host!.querySelector<HTMLElement>(".view .row.sel");
-  if (row?.dataset.id) return row.dataset.id;
-  const open = host!.querySelector<HTMLElement>('.view-reads .scast .sc-x[aria-expanded="true"]');
-  return open?.closest<HTMLElement>(".scast")?.dataset.sid;
+  return host!.querySelector<HTMLElement>('[data-hit]:has(.oh-row[data-open])')?.dataset.hit;
 }
 
 /** A message shaped enough for the routing decision, in `folder`. */
@@ -148,7 +141,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   /*
    * jsdom implements no scrolling, so `Element.scrollIntoView` is undefined — and the Reads
-   * view calls it when it reveals a message (`ReadsView.tsx`). This file only ever landed in
+   * view calls it when it reveals a message (`packages/app/src/stream`). This file only ever landed in
    * row-shaped piles until search's tie-break reordered two equally-scoring hits and put a
    * Reads message under the cursor, at which point the view threw into its own error boundary
    * and the assertion below read as "the message did not open". It had opened; the environment
@@ -172,6 +165,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await unmount();
+  setViewport(false);
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -272,8 +266,6 @@ describe("the keyboard opens a search result", () => {
   });
 
   it("↵ opens the hit under the cursor, in the pile it lives in", async () => {
-    // The report, as an assertion: pressing ↵ on a result leaves search and lands
-    // on the message. `openMessage` is what routes it; this pins that the KEY reaches it.
     await mountShell();
     window.location.hash = "#/search";
     await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
@@ -287,10 +279,7 @@ describe("the keyboard opens a search result", () => {
     expect(target).not.toBe(hits()[0]!.dataset.hit);
     await key("Enter");
 
-    expect(window.location.hash, "still on search").not.toContain("search");
-    // THE CURSOR of the pile it landed in, not merely "the row exists somewhere on screen":
-    // every Ohbox row is on screen whichever one was opened, so presence alone would hold
-    // for an implementation that opened `shown[0]` and ignored ↑/↓ entirely.
+    expect(window.location.hash).toContain(`#/search/m/${target}`);
     expect(openedMessageId(), `↵ did not open the hit under the cursor`).toBe(target);
   });
 
@@ -310,9 +299,6 @@ describe("the keyboard opens a search result", () => {
   });
 
   it("j and k are NOT rebound here — they keep their pile meaning", async () => {
-    // The ruling is explicit that a search-session cursor must not survive navigation. If
-    // `j` were bound in this view it would be a second meaning for the most-used key in
-    // the product, live only on one surface.
     await mountShell();
     window.location.hash = "#/search";
     await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
@@ -325,98 +311,6 @@ describe("the keyboard opens a search result", () => {
 });
 
 describe("a remaining case — the reader opens on a message, not on a pile", () => {
-  it("↵ AT A SPLIT WIDTH opens in the column — nothing is raised over it", async () => {
-    /**
-     * A live walk at 1440 found the reading experience rendered TWICE: the message in the
-     * split's 752px column AND a 660px sheet over it, with the ghost of that column — and a
-     * second action bar — legible behind. `OhboxView.open` called `onEnterReader`
-     * unconditionally while `openReply` and `openMessage` had both been asking
-     * `readColumnHidden()` since that change.
-     *
-     * THE GUARD: revert `onEnterReader={enterReader}` in `AppShell` to `setReaderFor` and
-     * the first expectation goes red — the sheet is back over a pane already showing the
-     * same mail. `beforeEach` runs `setViewport(false)`, so this is the desktop arm.
-     */
-    await mountShell();
-    await key("j");
-    const cursor = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!.dataset.id!;
-    await key("Enter");
-
-    expect(
-      host!.querySelector(".reader"),
-      "a sheet opened over a reading column that is already showing this message",
-    ).toBeNull();
-
-    // …and "opened" still means something: the column IS showing the row under the cursor.
-    // Without this the assertion above would hold for a build that opened nothing at all.
-    // (Selector updated by the viewer redesign — the subject lives in the header's
-    // `.msg-subject` line now, not a 24px `h2`. The assertion is untouched, here and in the
-    // two reader-path reads below.)
-    const paneSubject =
-      host!.querySelector<HTMLElement>(".view-ohbox .read-col .msg .msg-subject")?.textContent ?? "";
-    const rowSubject =
-      host!.querySelector<HTMLElement>(`.view-ohbox .row[data-id="${cursor}"] .subj`)
-        ?.textContent ?? "";
-    expect(rowSubject).not.toBe("");
-    expect(paneSubject).toContain(rowSubject.trim().slice(0, 12));
-
-    // And no control offers the sheet from here. `ReadingPane` renders `.msg-open` when it
-    // is given `onEnterReader`, and the split column was the one caller that passed it —
-    // at exactly the widths where the sheet duplicates the pane the button sits in.
-    expect(
-      host!.querySelector(".view-ohbox .read-col .msg-open"),
-      "the split pane still offers to open the sheet it duplicates",
-    ).toBeNull();
-  });
-
-  it("…and at 390px ↵ opens the READER on the row under the cursor", async () => {
-    // The path that must survive under 700px `app.css` sets `display:none` on the
-    // reading column, so the sheet is what "opened" means. Delete the `readColumnHidden()`
-    // arm of `enterReader` — make it open nowhere — and this goes red with no reader.
-    //
-    // THE GUARD for the staleness the id fixes, kept here. `OhboxView.open` calls
-    // `onSelect(id)` and `onEnterReader(id)` in the SAME tick, so a shell reading its own
-    // `selectedOhbox` here would render the PREVIOUS row. Close `enterReader` over
-    // `selectedOhbox` instead of taking the id and this goes red with the first row's
-    // subject.
-    setViewport(true);
-    await mountShell();
-    await key("j");
-    const cursor = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!.dataset.id!;
-    await key("Enter");
-
-    const reader = host!.querySelector(".reader");
-    expect(reader, "no reader opened").toBeTruthy();
-    const subject = host!.querySelector<HTMLElement>(".reader .msg .msg-subject")?.textContent ?? "";
-    const rowSubject =
-      host!.querySelector<HTMLElement>(`.view-ohbox .row[data-id="${cursor}"] .subj`)
-        ?.textContent ?? "";
-    expect(rowSubject).not.toBe("");
-    expect(subject).toContain(rowSubject.trim().slice(0, 12));
-  });
-
-  it("a mobile tap opens the reader on the row that was TAPPED", async () => {
-    // THE GUARD for the id travelling. `OhboxView.open` calls `onSelect(id)` and
-    // `onEnterReader(id)` in the SAME tick, so a shell that answered with its own
-    // `selectedOhbox` would render the PREVIOUSLY selected message — and on a phone the
-    // reader is the only thing on screen, so the user simply gets the wrong mail. It has to
-    // be a tap on a row that is NOT already the cursor: with the cursor already there the
-    // stale value happens to be right, which is why `↵` alone does not catch it.
-    setViewport(true);
-    await mountShell();
-    const target = [...host!.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")][2]!;
-    const wanted = target.dataset.id!;
-    await act(async () => {
-      target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-
-    expect(host!.querySelector(".reader"), "no reader opened").toBeTruthy();
-    const subject = host!.querySelector<HTMLElement>(".reader .msg .msg-subject")?.textContent ?? "";
-    const rowSubject = target.querySelector<HTMLElement>(".subj")?.textContent ?? "";
-    expect(rowSubject).not.toBe("");
-    expect(subject, `the reader is not showing ${wanted}`).toContain(rowSubject.trim().slice(0, 12));
-  });
-
   it("at 390px an Ohbox search hit OPENS — it does not just move a hidden cursor", async () => {
     // Under 700px `app.css` sets `display:none` on the reading column, so the desktop
     // behaviour ("select the row, the pane shows it") is a no-op on a phone: the user
@@ -433,47 +327,33 @@ describe("a remaining case — the reader opens on a message, not on a pile", ()
     const ohboxHit = hits().find((w) => (w.textContent ?? "").includes("Ohbox"));
     expect(ohboxHit, "no Ohbox result to open").toBeTruthy();
     await act(async () => {
-      ohboxHit!.querySelector("button")!.dispatchEvent(
+      ohboxHit!.querySelector('[role="button"]')!.dispatchEvent(
         new MouseEvent("click", { bubbles: true, cancelable: true }),
       );
     });
+    await act(async () => { vi.advanceTimersByTime(1); });
 
-    expect(window.location.hash).toContain("ohbox");
-    expect(host!.querySelector(".reader"), "the reader did not survive the navigation").toBeTruthy();
+    expect(window.location.hash).toMatch(/^#\/search\/m\//);
+    expect(openLetter(document), "the reader did not survive the navigation").toBeTruthy();
+    expect(window.location.hash).toContain(`/m/${encodeURIComponent(ohboxHit!.dataset.hit!)}`);
   });
+});
 
-  it("a message verb acts on the message in the open reader", async () => {
-    // Honest about what this does and does not prove: `focused` consults `readerMessage`
-    // first, and NO mutation of that line goes red today, because every path that opens the
-    // reader also sets the pile cursor to the same message. What this pins is the behaviour
-    // a user would notice — a verb pressed over an open message acts on that message —
-    // and it would be the first thing to fail if the reader were ever opened over a pile
-    // with a cursor of its own. See `focused` in `AppShell.tsx`.
-    //
-    // AT 390px SINCE that change, because that is now the only width at which the reader opens
-    // over the Ohbox at all. The claim under test is unchanged — it was never about the
-    // width — and the verbs it exercises are the shell's GLOBAL bindings, which are the
-    // same ones at every width.
-    setViewport(true);
-    await mountShell();
-    // THREE presses, and the count matters. The first is the one the shell used to perform on
-    // the reader's behalf — its Ohbox selection resolved through `?? allOhbox[0]`, so the top
-    // row was "selected" before anybody chose it; with that gone the first `j` lands there. The
-    // other two walk to the same third row this test has always used, which is a row the
-    // fixture has NOT already queued: on an already-queued message `a` correctly toasts instead
-    // of dispatching, and this would then measure the wrong refusal.
-    await key("j");
-    await key("j");
-    await key("j");
-    const opened = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!.dataset.id!;
-    await key("Enter");
-    expect(host!.querySelector(".reader")).toBeTruthy();
-
-    sent = [];
-    await key("a");
-    expect(
-      sent.filter((m) => m.kind === "triage_set"),
-      "`a` did not act on the message in the reader",
-    ).toEqual([expect.objectContaining({ messageId: opened, state: "reply_later" })]);
+it("centers the chosen Ohbox result and marks its arrival until the reader moves on", async () => {
+  await mountShell();
+  await act(async () => {
+    window.location.hash = "#/search";
+    window.dispatchEvent(new Event("hashchange"));
   });
+  await typeSearch(SEEDS);
+  const [first, second] = hits();
+  expect(second).toBeTruthy();
+  for (const hit of [first!, second!]) {
+    const id = hit.dataset.hit!;
+    await act(async () => hit.querySelector<HTMLElement>('[role="button"]')!.click());
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(openedMessageId()).toBe(id);
+    expect(window.location.hash).toContain(`#/search/m/${id}`);
+    expect(hits().map((row) => row.dataset.hit)).toContain(first!.dataset.hit);
+  }
 });

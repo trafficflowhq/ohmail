@@ -1,0 +1,31 @@
+{
+  "invitations": {
+    "title": "Invitations",
+    "close": "Close",
+    "unreadable": "The calendar cannot be read on this device.",
+    "position": "{group} · {index} of {count}",
+    "previous": "The one before",
+    "next": "The next",
+    "noZone": "The invitations cannot be listed: this device does not know its time zone.",
+    "group": {
+      "toAnswer": "To answer",
+      "changed": "Changed",
+      "answered": "Answered"
+    },
+    "answer": {
+      "label": "Answer",
+      "accepted": "Yes",
+      "tentative": "Maybe",
+      "declined": "No"
+    },
+    "cancelled": "cancelled",
+    "mark": "oh",
+    "allAnswered": "{count, plural, one {# answered} other {# answered}}",
+    "allDay": "all day",
+    "span": "{from}–{to}",
+    "from": "From",
+    "calendar": "Calendar",
+    "sendAgain": "Try again",
+    "letGo": "Let go"
+  }
+}

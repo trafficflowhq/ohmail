@@ -1,10 +1,11 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import { IndexedDbMirrorStore, clearAllMirrors } from "../src/idb.js";
 import { OhmailEngine } from "../src/engine.js";
 import { isFromSomeone, isOwnSent, ohboxView } from "../src/selectors.js";
 import { recordedSentFolderOf, replaceRecordedSentFolders } from "../src/sent-folders.js";
-import { MAILBOX_TYPE, type EngineAdapter, type EngineMessage, type SyncChange } from "../src/types.js";
+import { MAILBOX_TYPE, type EngineAdapter, type SyncChange } from "../src/types.js";
 
 /**
  * ═══ THE DEVICE ALREADY HAS THE MAIL. THE SCREEN HAS TO BE TOLD. ═══════════════════════════

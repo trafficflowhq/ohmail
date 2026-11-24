@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { drafts, mailboxes, messages } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
-import { DraftsService, SyncService } from "../src/index.js";
+import { DraftsService, SyncService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 const svc = new DraftsService();
@@ -16,8 +16,8 @@ async function setup() {
   const [mbA] = await db.insert(mailboxes).values({ accountId: A, provider: "imap", address: "a@x-ch.example" }).returning();
   const [mbB] = await db.insert(mailboxes).values({ accountId: B, provider: "imap", address: "b@x-ch.example" }).returning();
   const now = new Date("2026-07-28T12:00:00Z");
-  const ctxA: ServiceContext = { db, accountId: A, userId: null, now: () => now, requestId: "r" };
-  const ctxB: ServiceContext = { db, accountId: B, userId: null, now: () => now, requestId: "r" };
+  const ctxA: ServiceContext = { db: dbFor(db, A), accountId: A, userId: null, now: () => now, requestId: "r" };
+  const ctxB: ServiceContext = { db: dbFor(db, B), accountId: B, userId: null, now: () => now, requestId: "r" };
   return { db, A, B, mbA: mbA!.id, mbB: mbB!.id, ctxA, ctxB };
 }
 

@@ -3,23 +3,29 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { StaticKeyProvider, type KeyProvider } from "@trafficflow/core/mail";
 import { eq } from "drizzle-orm";
+import type { AnswerOf, SyncResponse } from "@ohmail/wire";
 import { mailboxes, recordMailboxRemoved, type LedgerTx, type Tx } from "@trafficflow/db";
 import { deleteMailboxRows } from "./local-mirror.js";
+import { wipeCalendarCopy } from "./cloud-mirror-calendar.js";
+import { calendarFeed } from "@trafficflow/services/calendar";
+import { hostedDevices } from "./cloud-mirror-devices.js";
 import {
-  resolveSession, syncService, ServiceError, isUuid,
-  type EntityType, type ServiceContext, type SyncResponse,
+  resolveSession, syncService, ServiceError, dbFor, isUuid,
+  type EntityType, type ServiceContext,
 } from "@trafficflow/services/mail";
 import {
   closeAfterFailedStart, openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress,
   type OpenLocalDb,
 } from "./db.js";
 import { ensureLocalWorld, type LocalWorld } from "./identity.js";
+import { unboundOf } from "./store-binding.js";
 import { launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.js";
 import {
   createCloudAuth, openSealedTokens, readSessionMarker, sealTokens, ACCOUNT_ERASED, REFUSAL_CODES,
   REUSE_CAUSE, SESSION_MARKER_FILE, type CloudAuth, type CloudSessionReading, type CloudTokens, type SealOpen,
 } from "./cloud-auth.js";
 import { removeAtomic, writeAtomic } from "./fs-atomic.js";
+import { forgetStoreCopies, markProven, storeCopiesStand } from "./store-copies.js";
 import { readMachineBinding } from "./machine-binding.js";
 import {
   cloudIdentity,
@@ -167,6 +173,8 @@ export interface CloudSidecarConfig {
    * `main.ts` writes it as a `mailbox` frame. Awaited before any answer that depends on it goes out.
    */
   onServedMailbox?: (mailboxId: string) => Promise<void>;
+  /** The same signed-in state /health reports, on activation and loss. */
+  onSignedIn?: (signedIn: boolean) => void;
   /** A sign-in's or pairing's wait for that name — {@link PAIR_SERVED_WAIT_MS}; a test shortens it. */
   pairServedWaitMs?: number;
 }
@@ -258,7 +266,8 @@ export async function queueAheadOfTheCopy(
   }
   if (body === null || typeof body !== "object" || !Array.isArray((body as { items?: unknown }).items)) return res;
   mirror.askRulesRefresh();
-  return json({ ...(body as object), copyBehind: true }, res.status);
+  // The mark is the wire's own name for it: renamed there alone, or here alone, this line does not compile.
+  return json({ ...(body as object), copyBehind: true } satisfies Pick<AnswerOf<"GET /screener">, "copyBehind">, res.status);
 }
 
 /**
@@ -596,9 +605,11 @@ export function enforceMirrorOwner(
    * the comparison on the record missed — that profile kept its seal and had the hosted bearer
    * activated against whatever server the door pointed at; a genuinely empty directory is adopted.
    */
+  /* A COPY OF A STORE, OR A FOLDER ONE WAS MOVED ASIDE INTO, IS STATE TOO (`store-copies.ts`): a
+     directory holding nothing else is judged by it, never adopted as empty. */
   const holdsCloudState = ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"].some((f) =>
     existsSync(join(dataDir, f)),
-  );
+  ) || storeCopiesStand(dataDir);
   const serverChanged = mirrorIsForeign(priorRecord, holdsCloudState, servedBase ?? cloudUrl.trim());
   /* ── A DISCARD THE LAST RUN ASKED FOR, EXPLICITLY ────────────────────────────────────────────
      A pairing told to start over cannot throw the mirror away itself: at redeem time `pgdata` is an
@@ -623,9 +634,18 @@ export function enforceMirrorOwner(
   /* A REVOKED SESSION'S COPY, owed by the record (a run that removed the mail and stopped short of
      its files) or by a kept revoke with no seal beside it (a crash before the discard, an older
      build): gone before anything opens it. The rewrite below drops the flag once the files are gone. */
+  let revokedCopyLeft = false;
   if (!foreign && (priorRecord?.revoked === true || refusalOwesCopy(dataDir))) {
     for (const name of REVOKED_COPY_FILES) rmSync(join(dataDir, name), { recursive: true, force: true });
-    markRefusalCopyRemoved(dataDir);
+    /* …AND EVERY EARLIER COPY OF THAT MAIL BESIDE IT, before either flag is dropped. One that
+       cannot be removed keeps both flags, so the next launch comes back here. */
+    try {
+      forgetStoreCopies(dataDir, "session_revoked", log);
+      markRefusalCopyRemoved(dataDir);
+    } catch {
+      /* A copy left: said by the removal's own line; the record keeps `revoked` and the next launch returns here. */
+      revokedCopyLeft = true;
+    }
     log?.("cloud_revoked_copy_removed", {
       reason: "the hosted session was revoked, so the database it left on this computer was removed before this launch opened it",
     });
@@ -654,6 +674,10 @@ export function enforceMirrorOwner(
     for (const name of stale) {
       rmSync(join(dataDir, name), { recursive: true, force: true });
     }
+    /* EVERY EARLIER COPY OF THE PREVIOUS WORLD'S MAIL GOES WITH ITS MIRROR, before the record below
+       names the new owner: no account inherits a copy another account's mail was kept in. One
+       that cannot be removed fails this launch here, with the record still naming the old world. */
+    forgetStoreCopies(dataDir, addressChanged || serverChanged ? "owner_changed" : "started_over", log);
     // Never the addresses, and never the two SERVERS either. Which mailbox was served before and
     // which is served now are the exact identifying signal the sidecar log census exists to keep
     // off the line — and an operator's own hostname identifies them at least as sharply as their
@@ -704,6 +728,7 @@ export function enforceMirrorOwner(
       // AN ERASED ACCOUNT IS SAID ACROSS THE DISCARD that removed its mirror, until a session writes
       // a record of its own. Another address or server is another world with nothing to say.
       !addressChanged && !serverChanged && priorRecord?.erased === true,
+      revokedCopyLeft,
     ),
     { mode: 0o600 },
   );
@@ -795,9 +820,13 @@ function markRefusalCopyRemoved(dataDir: string): void {
   }
 }
 
-/** A revoked session's database files, then the record's flag and the kept refusal's mark, in that order. */
-function removeRevokedCopy(dataDir: string): void {
+/**
+ * A revoked session's database files and every earlier copy of that mail beside them, then the
+ * record's flag and the kept refusal's mark, in that order: a copy left keeps both.
+ */
+function removeRevokedCopy(dataDir: string, log?: Diagnostic): void {
   for (const name of REVOKED_COPY_FILES) rmSync(join(dataDir, name), { recursive: true, force: true });
+  forgetStoreCopies(dataDir, "session_revoked", log);
   clearMirrorRevoked(dataDir);
   markRefusalCopyRemoved(dataDir);
 }
@@ -876,6 +905,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     ...(log ? { log } : {}),
     ...(config.onPhase ? { onPhase: config.onPhase } : {}),
     ...(config.onStoreFatal ? { onFatal: config.onStoreFatal } : {}),
+    /* A MIRROR 1.0 FILLED IS SET ASIDE WHOLE, never moved in place: the account's server is its
+       master, so 2.0 fills a new one from it, and the old one is kept until that fill's first
+       window has landed. */
+    transition: { way: "set-aside" },
     underLock: () => {
       enforceMirrorOwner(config.dataDir, config.address, cloudBase, log, {
         identityPending: config.identityPending !== undefined,
@@ -907,6 +940,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const windowOutbox = createWindowOutbox({
       dataDir: config.dataDir, authorized: async () => true, log: log ?? (() => undefined), scope: () => served,
       owner: { address: config.address ?? null, base: cloudBase },
+      calendar: config.address !== null,
     });
     /* The window's writes the account answered 2xx, for this engine's life: their rows wait only for
        their echo, so the count leaves them out. The count is null when the file cannot be read, and
@@ -1201,6 +1235,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         world,
         auth,
         onMailboxes: nameServedMailbox,
+        /* A mailbox erased on the account: no earlier copy of this install's mirror keeps its mail. */
+        onMailboxErased: () => forgetStoreCopies(config.dataDir, "mailbox_erased", log),
+        /* The new mirror's first window has landed: the 1.0 mirror set aside for it is done with,
+           and the next start removes it. */
+        onFirstWindow: () => markProven(config.dataDir, "refill"),
         cursorPath: join(config.dataDir, "cloud-cursor.json"),
         ...(log ? { log } : {}),
         now,
@@ -1241,6 +1280,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         auth, mirror, proxy, wake: started,
         staged: createStagedUploads({ ...(injectedFetch ? { fetchImpl: injectedFetch } : {}), ...(log ? { log } : {}) }),
       };
+      config.onSignedIn?.(true);
       return authed;
     };
 
@@ -1291,7 +1331,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     }
 
     const ctxFor = (accountId: string, userId: string | null, sessionId: string | null): ServiceContext => ({
-      db,
+      db: dbFor(db, accountId),
       accountId,
       userId,
       sessionId,
@@ -1314,6 +1354,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const signOut = async (): Promise<void> => {
       const live = authed;
       authed = null;
+      if (live) config.onSignedIn?.(false);
       holdApproval(null);
       // THE SPENT SEAL GOES FIRST — before the awaits, not after them. This teardown's tail
       // used to remove the seal after waiting out the mirror, and a sign-in completing inside
@@ -1365,6 +1406,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             await deleteMailboxRows(tx as unknown as Tx, row.id, { unsentDrafts: "delete" });
             await recordMailboxRemoved(tx as unknown as LedgerTx, world.accountId, row.id);
           }
+          // The calendar's copy hangs on no mailbox: it goes whole, each record told to the local feed.
+          await wipeCalendarCopy(tx, world.accountId);
           count = rows.length;
         });
         return { count };
@@ -1389,6 +1432,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         });
       }
       await windowOutbox.discard().catch(() => undefined);
+      /* Every earlier copy of that account's mail goes now too; one that cannot is removed with
+         the database at the next start, by the staged discard this stamps below. */
+      try {
+        forgetStoreCopies(config.dataDir, "account_erased", log);
+      } catch { /* said by the removal's own line; it stays owed */ }
       const prior = readMirrorRecordRaw(config.dataDir);
       const record = prior === null ? null : decodeMirrorRecord(prior);
       writeFileSync(
@@ -1417,6 +1465,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           err: removed.err, reason: "the revoked session's mail could not be removed now; its database is removed at the stop",
         });
       }
+      /* Every earlier copy of that mail goes now too; one that cannot is removed with the database's
+         files, at the stop or before the next launch opens anything, while the record's flag stands. */
+      try {
+        forgetStoreCopies(config.dataDir, "session_revoked", log);
+      } catch { /* said by the removal's own line; it stays owed */ }
       const prior = readMirrorRecordRaw(config.dataDir);
       const record = prior === null ? null : decodeMirrorRecord(prior);
       writeFileSync(
@@ -1542,7 +1595,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       const decided = token ? await session.decide(token, now()) : "unknown";
       if (decided === "refused") return launchSessionExpiredResponse();
       const core = !token ? null
-        : decided === "unknown" ? await resolveSession(db, token, now()) : decided.held;
+        : decided === "unknown" ? await resolveSession(unboundOf(db), token, now()) : decided.held;
       if (!core) return json({ error: { code: "unauthorized", message: "authentication required" } }, 401);
 
       // A PERSON'S INPUT AT THE WINDOW: `queued` already took it as a person's request (`personSeen`).
@@ -1558,9 +1611,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
          so a paired window's failed pull and failed consent read reached no log at all. */
       if (req.method === "POST" && (path === WINDOW_SYNC_FAILED_ROUTE || path === WINDOW_CONSENT_READ_FAILED_ROUTE)) {
         const deps = { authorized: async () => true, log: log ?? (() => undefined) };
-        return path === WINDOW_SYNC_FAILED_ROUTE
-          ? handleWindowSyncFailure(req, deps)
-          : handleWindowConsentReadFailure(req, deps);
+        if (path === WINDOW_SYNC_FAILED_ROUTE) return handleWindowSyncFailure(req, deps);
+        return handleWindowConsentReadFailure(req, deps);
       }
 
       /* THE WINDOW'S QUEUED CHANGES, kept on this machine (`window-outbox.ts`). Every write on this
@@ -2320,6 +2372,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               since,
               ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
               ...(types && types.length > 0 ? { types } : {}),
+              // This copy's calendar, served to the window by the hosted switch it copied.
+              calendar: calendarFeed,
+              // The hosted account's devices, as the mirror last read them (`cloud-mirror-devices.ts`).
+              devices: hostedDevices,
             });
           };
           let result = await ask();
@@ -2509,7 +2565,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
            removal cut short is found again by the next launch, before it opens anything. */
         if (readMirrorRevoked(config.dataDir)) {
           try {
-            removeRevokedCopy(config.dataDir);
+            removeRevokedCopy(config.dataDir, log);
             log?.("cloud_revoked_copy_removed", {
               reason: "the hosted session was revoked, so the database it left on this computer was removed at the stop",
             });

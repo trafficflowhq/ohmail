@@ -15,12 +15,14 @@ import {
   DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, SSE_DISABLED_REFUSAL, type HeartbeatGet, type PostJson,
 } from "@trafficflow/db/cloud";
 import { DEFAULT_SYNC_BATCH_MAX_MESSAGES, type MailboxAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
+import { SsrfRefusal, assertPublicHttpUrlShape } from "@trafficflow/core/net";
 import { buildIdentityOf, buildVersionOf, type BuildIdentitySource } from "./build-version.js";
 import type { MailboxSelection } from "./mailboxes.js";
 import type { ThreadBackfillPass } from "./thread-backfill.js";
 import { dialHostGuardFromEnv, type DialHostGuard } from "./dial-host-guard.js";
 import type { PlatformSignalConfig } from "./platform-signal-poll.js";
-import type { IngestRunBounds } from "./sync.js";
+import type { ApiCronTarget } from "./api-cron.js";
+import type { IngestRunBounds } from "@ohmail/organizer/sync";
 
 /** One IMAP IDLE connection per mailbox lives in this process — cap it. */
 export const DEFAULT_MAX_MAILBOXES = 64;
@@ -424,6 +426,8 @@ export interface WorkerConfig {
   /** How often the leader RE-READS the roster so a mailbox registered (or disabled)
    *  after startup is picked up (or dropped) without a restart. */
   rosterIntervalMs?: number;
+  /** The kick scan's floor; absent is `SYNC_KICK_EVERY_MS`. Test-only: no setting names it. */
+  syncKickFloorMs?: number;
   /** Letters one slice of the agree's sweep moves; absent is the core's bound. Test-only. */
   agreeSweepSlice?: number;
   /** How often the leader proves it still holds its advisory lock (split-brain guard); after
@@ -660,7 +664,11 @@ export interface WorkerConfig {
    * ⇒ a NAMED refusal — like the Telegram pair, one being set can only mean somebody meant to arm it,
    * and a half-armed schedule that quietly does nothing is the dark-cron failure this replaces.
    */
-  apiCron?: { baseUrl: string; secret: string };
+  apiCron?: {
+    baseUrl: string; secret: string;
+    /** TEST SEAM: the rows and the jitter's source; absent is the shipped table. No setting names it. */
+    schedule?: { targets?: readonly ApiCronTarget[]; random?: () => number };
+  };
   /**
    * The 5xx poll (`platform-signal-poll.ts`), armed by this worker's OWN platform credential:
    * `TF_SIGNAL_VERCEL_TOKEN` + `TF_SIGNAL_VERCEL_TEAM_ID`, `TF_SIGNAL_PROJECTS` (default `ohmail-api`)
@@ -692,7 +700,7 @@ export interface WorkerConfig {
     staleAfterMs?: number;
     /**
      * How often the portable organizer profile is re-serialized and compared against what the
-     * mailbox holds, at most (`apps/worker/src/profile.ts`). `TF_PROFILE_FLUSH_MS` exists for
+     * mailbox holds, at most (`packages/organizer/src/profile.ts`). `TF_PROFILE_FLUSH_MS` exists for
      * tests, which cannot wait out the five-minute default.
      */
     profileFlushIntervalMs?: number;
@@ -711,6 +719,87 @@ export interface WorkerConfig {
   logger?: Logger;
   /** TEST SEAM: injected webhook transport, so the suite never opens a socket. */
   alertPost?: PostJson;
+  /**
+   * The calendar's passes, or `null` (also absent) where this deployment keeps no calendar: then no
+   * provider is made and no timer runs. `loadConfig` writes it from {@link calendarConfigFrom}.
+   */
+  calendar?: WorkerCalendarConfig | null;
+}
+
+/**
+ * The calendar's settings as the worker reads them. No calendar package is named here, not even a
+ * type: the start file composes the providers from these words.
+ */
+export interface WorkerCalendarConfig {
+  /** What the calendar's requests may reach: `cloud` on a managed worker whatever any variable says. */
+  readonly policy: "cloud" | "own-network";
+  /** Google's registration, or `null`: Google's calendars are then not served. */
+  readonly google: { readonly clientId: string; readonly clientSecret: string } | null;
+  /** Microsoft's switch; `graphBase` is `null` for Microsoft's own address. `null`: not served. */
+  readonly microsoft: { readonly graphBase: string | null } | null;
+  /** The public origin a provider's notices are sent to, or `null`: no channel is opened, polling is all. */
+  readonly noticeOrigin: string | null;
+}
+
+/**
+ * THE CALENDAR'S SETTINGS. `OHMAIL_CALENDAR=1` is the word, the server's own name for it; without it
+ * the worker keeps no calendar. The rest only shape a calendar that is on:
+ *
+ * - `OHCAL_ALLOW_PRIVATE=1` lets a person's own server reach their own network (`own-network`). Read
+ *   only on a worker that is not managed, and only as exactly `1`; a managed worker is `cloud`.
+ * - `OHCAL_GOOGLE_CLIENT_ID` and `OHCAL_GOOGLE_CLIENT_SECRET`: both, or a refused start.
+ * - `OHCAL_MICROSOFT=1` serves Microsoft's calendars. `OHCAL_MS_GRAPH_BASE` names another address for
+ *   its API, for a bench or a self-hosted test only: refused on a managed worker, and without the switch.
+ * - `OHCAL_NOTICE_ORIGIN`: a bare https origin with a public name, or a refused start. Absent: polling.
+ *
+ * Never the values in a message: each refusal names its variable.
+ */
+export function calendarConfigFrom(env: NodeJS.ProcessEnv, o: { readonly managed: boolean }): WorkerCalendarConfig | null {
+  const word = (env.OHMAIL_CALENDAR ?? "").trim();
+  if (word !== "" && word !== "0" && word !== "1") {
+    throw new WorkerConfigError("OHMAIL_CALENDAR", "OHMAIL_CALENDAR must be 1 (the calendar on) or unset");
+  }
+  if (word !== "1") return null;
+  const clientId = (env.OHCAL_GOOGLE_CLIENT_ID ?? "").trim();
+  const clientSecret = (env.OHCAL_GOOGLE_CLIENT_SECRET ?? "").trim();
+  if ((clientId === "") !== (clientSecret === "")) {
+    const missing = clientId === "" ? "OHCAL_GOOGLE_CLIENT_ID" : "OHCAL_GOOGLE_CLIENT_SECRET";
+    throw new WorkerConfigError(missing, `${missing} is missing while its pair is set — Google's calendar needs both or neither`);
+  }
+  const microsoftOn = (env.OHCAL_MICROSOFT ?? "").trim() === "1";
+  const graphBase = (env.OHCAL_MS_GRAPH_BASE ?? "").trim();
+  if (graphBase !== "" && o.managed) {
+    throw new WorkerConfigError("OHCAL_MS_GRAPH_BASE",
+      "OHCAL_MS_GRAPH_BASE is for a bench or a self-hosted test; a managed worker reaches Microsoft's own address only");
+  }
+  if (graphBase !== "" && !microsoftOn) {
+    throw new WorkerConfigError("OHCAL_MS_GRAPH_BASE", "OHCAL_MS_GRAPH_BASE is set while OHCAL_MICROSOFT is not 1");
+  }
+  return {
+    policy: !o.managed && env.OHCAL_ALLOW_PRIVATE === "1" ? "own-network" : "cloud",
+    google: clientId === "" ? null : { clientId, clientSecret },
+    microsoft: microsoftOn ? { graphBase: graphBase === "" ? null : graphBase } : null,
+    noticeOrigin: noticeOriginFrom(env.OHCAL_NOTICE_ORIGIN),
+  };
+}
+
+/** `OHCAL_NOTICE_ORIGIN` as a bare https origin with a public name; unset is `null`. */
+function noticeOriginFrom(raw: string | undefined): string | null {
+  const value = (raw ?? "").trim();
+  if (value === "") return null;
+  const refused = (): never => {
+    throw new WorkerConfigError("OHCAL_NOTICE_ORIGIN",
+      "OHCAL_NOTICE_ORIGIN must be a bare https origin with a public name — no path, query, fragment or user part");
+  };
+  try {
+    assertPublicHttpUrlShape(value, { httpsOnly: true });
+  } catch (err) {
+    if (err instanceof SsrfRefusal) refused();
+    throw err;
+  }
+  const url = new URL(value);
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "" || value.endsWith("?") || value.endsWith("#")) refused();
+  return url.origin;
 }
 
 /**
@@ -1240,11 +1329,15 @@ export function loadConfig(
     throw new WorkerConfigError("OHMAIL_INGEST_RUNS", "OHMAIL_INGEST_RUNS must be unset or off");
   }
   const ring = kekRingFrom(env);
+  // Managed is the billing marker, the worker's one: a worker beside the billing plane is never
+  // handed its own network, whatever OHCAL_ALLOW_PRIVATE says.
+  const calendar = calendarConfigFrom(env, { managed: entitlements !== null });
   return {
     blankRepair,
     ingestRuns,
     databaseUrl: url,
     entitlements,
+    calendar,
     // BOOTSTRAP-ONLY. It pairs with TF_MAILBOX_ID for the one-shot env-creds seed and
     // scopes the single-mailbox reconcile backstop; it can NOT shrink the worker's roster.
     accountId: env.TF_ACCOUNT_ID,

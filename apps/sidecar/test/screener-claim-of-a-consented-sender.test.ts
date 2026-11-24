@@ -6,9 +6,9 @@ import {
   accounts, accountSettings, contacts, folderState, mailboxes, messageBodies, messages, rules, type Tx,
 } from "@trafficflow/db";
 import { ScreenerService, cutlineCounts, type ServiceContext } from "@trafficflow/services";
-import { senderCheckBackfillPass } from "@trafficflow/worker/sender-check-backfill";
-import { ruleRetroPass } from "@trafficflow/worker/rule-retro";
-import { screenerCorrespondentRetroPass } from "@trafficflow/worker/screener-correspondent-retro";
+import { senderCheckBackfillPass } from "@ohmail/organizer/sender-check-backfill";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
+import { screenerCorrespondentRetroPass } from "@ohmail/organizer/screener-correspondent-retro";
 
 /**
  * HELD MAIL OF BEFORE THE UPDATE DOES NOT COME BACK TO THE WAITING LIST WHEN THE IDENTITY CHECK STAMPS
@@ -48,9 +48,9 @@ async function world() {
       date: r.date, arrivedAt: r.arrivedAt, unread: r.unread ?? false, createdAt: r.createdAt ?? ago(9 * D),
       nativeLocator: { folder: GATE, ref: `1:${++n}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };
   const contact = (address: string, source: "inferred" | "person") => db.insert(contacts).values({ accountId, address, source });

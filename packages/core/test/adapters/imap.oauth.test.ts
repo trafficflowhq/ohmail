@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import { EventEmitter } from "node:events";
 import {
   ImapAdapter, imapFlowOptions, smtpTransportOptions, resolveImapAuth, isOAuthAuth,
   type ImapConfig,
 } from "../../src/adapters/imap.js";
 import { SendNotSubmitted } from "../../src/send.js";
+import { watchTransporters } from "./_smtp-door.js";
 
 /**
  * OAUTH2 AT THE ADAPTER — the freshness story, proven at the line.
@@ -113,6 +114,9 @@ class SendFakeClient extends EventEmitter {
 }
 
 describe("ImapAdapter.send — OAuth is a PER-MESSAGE override, fetched at send time", () => {
+  let smtp: ReturnType<typeof watchTransporters> | undefined;
+  afterEach(() => { smtp?.restore(); smtp = undefined; });
+
   it("fetches a token at send time and hands nodemailer message-level OAuth2 auth", async () => {
     let sendCalls = 0;
     const client = new SendFakeClient();
@@ -124,14 +128,14 @@ describe("ImapAdapter.send — OAuth is a PER-MESSAGE override, fetched at send 
       },
       { client },
     );
+    smtp = watchTransporters();
     await adapter.connect();
     // connect() resolved one token for IMAP…
     expect(sendCalls).toBe(1);
 
     // …now intercept the transporter to capture what send() hands nodemailer.
     const sent: Array<Record<string, unknown>> = [];
-    (adapter as unknown as { transporter: { sendMail: (m: Record<string, unknown>) => Promise<unknown> } })
-      .transporter.sendMail = async (m) => { sent.push(m); return { messageId: m.messageId }; };
+    smtp.last().sendMail = (async (m: Record<string, unknown>) => { sent.push(m); return { messageId: m.messageId }; }) as never;
 
     await adapter.send({ from: "u@contoso-com.example", to: "b@example.net", subject: "s", text: "t", messageId: "<x@contoso-com.example>" });
 
@@ -154,9 +158,10 @@ describe("ImapAdapter.send — OAuth is a PER-MESSAGE override, fetched at send 
       },
       { client: new SendFakeClient() },
     );
+    smtp = watchTransporters();
     await adapter.connect();
     let offered = 0;
-    (adapter as unknown as { transporter: { sendMail: () => Promise<unknown> } }).transporter.sendMail = async () => { offered += 1; return {}; };
+    smtp.last().sendMail = (async () => { offered += 1; return {}; }) as never;
     const err = await adapter.send({ from: "u@contoso-com.example", to: "b@example.net", subject: "s", text: "t", messageId: "<t@contoso-com.example>" })
       .then(() => null, (e: unknown) => e);
     expect(err).toBeInstanceOf(SendNotSubmitted);
@@ -174,10 +179,10 @@ describe("ImapAdapter.send — OAuth is a PER-MESSAGE override, fetched at send 
       },
       { client },
     );
+    smtp = watchTransporters();
     await adapter.connect();
     const sent: Array<Record<string, unknown>> = [];
-    (adapter as unknown as { transporter: { sendMail: (m: Record<string, unknown>) => Promise<unknown> } })
-      .transporter.sendMail = async (m) => { sent.push(m); return { messageId: m.messageId }; };
+    smtp.last().sendMail = (async (m: Record<string, unknown>) => { sent.push(m); return { messageId: m.messageId }; }) as never;
     await adapter.send({ from: "u@example.net", to: "b@example.net", subject: "s", text: "t", messageId: "<y@example.net>" });
     expect(sent[0].auth).toBeUndefined();
   });

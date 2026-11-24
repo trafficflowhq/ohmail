@@ -1,7 +1,8 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   ohboxView, screenerSegments, arrivalMs,
-  type EngineMessage, type EntityReader,
+  type EntityReader,
 } from "@ohmail/client-engine";
 
 /**

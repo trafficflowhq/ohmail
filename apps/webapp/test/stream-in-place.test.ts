@@ -1,6 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type { EngineMessage } from "@ohmail/client-engine";
-import { keepInPlace, streamHostOf } from "../app/shell/stream-in-place";
+import { keepInPlace, streamHostOf } from "@ohmail/app-logic/streams";
 
 /**
  * WHICH LETTER A READING STREAM ANSWERS IN PLACE, AND HOW LONG IT STAYS THERE — the two rules

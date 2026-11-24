@@ -34,7 +34,7 @@
  * ── IT RUNS UNDER THE SQLITE PROJECT, AND NAMES A CLOSED PORT ─────────────────────────────
  *
  * `phone-hand-back.imap.test.ts`'s reason verbatim: this composes the whole engine over the DEVICE
- * store, so it needs `vitest.sqlite.config.ts`'s schema substitution. Under the default project it
+ * store, so it needs `test/vitest.sqlite.config.ts`'s schema substitution. Under the default project it
  * asserts the premise rather than skipping in silence, and a server that is not answering is a
  * named refusal rather than a green run measuring nothing.
  */

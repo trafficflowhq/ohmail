@@ -1,5 +1,5 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { createHash } from "node:crypto";
-import type { EmailAddress } from "@trafficflow/core/mail";
 
 /**
  * WHICH VERSION OF A DRAFT A CLIENT IS LOOKING AT — the token a send names to say which row it was

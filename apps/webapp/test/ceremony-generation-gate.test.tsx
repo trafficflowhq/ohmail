@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -7,7 +8,7 @@ import { ToastHost } from "@ohmail/ui";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * BACK AND CANCEL END THE CEREMONY EVERYWHERE, NOT ONLY AT THE ACCOUNT ERASE.
@@ -46,7 +47,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {}, replace: () => {} }),
 }));
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({
     state: { mailboxes: null, mirrored: 0, freshness: { state: "unknown", asOf: null } } as unknown as MailState,
     refresh: () => {},
@@ -288,22 +289,33 @@ describe("MailboxSection: a factor landing after Cancel removes no mailbox", () 
 
 // ── 2. The desktop-link screen: a cancelled step-up mints nothing ───────────────────────────
 
-describe("LinkDesktopScreen: a factor landing after Cancel mints no code", () => {
+const dialogButton = (el: HTMLElement, label: string): HTMLElement => {
+  const found = [...el.querySelectorAll<HTMLElement>('[role="dialog"] button')].filter((b) =>
+    [...b.childNodes].filter((n) => n.nodeName !== "KBD").map((n) => n.textContent ?? "").join("").trim() === label);
+  expect(found, `exactly one "${label}" button in the dialog`).toHaveLength(1);
+  return found[0]!;
+};
+
+describe("LinkDesktopRoute: a factor landing after Cancel mints no code", () => {
+  /** The one step-up dialog's code field, and one of its buttons by its label (its key hint aside). */
+  const codeField = (el: HTMLElement): HTMLInputElement | null => el.querySelector<HTMLInputElement>('[role="dialog"] input');
+
+
   async function toTheFactorInFlight(): Promise<HTMLElement> {
-    const { LinkDesktopScreen } = await import("../app/(product)/link-desktop/LinkDesktopScreen.js");
-    const el = await render(h(LinkDesktopScreen, {}));
-    // The first mint is refused for a closed step-up window, which is what opens the prompt.
+    const { LinkDesktopRoute } = await import("../app/(product)/link-desktop/LinkDesktopRoute.js");
+    const el = await render(h(LinkDesktopRoute, {}));
+    // The first mint is refused for a closed step-up window, which is what opens the dialog.
     await click(byText(el, link.mint!)!);
-    await waitFor(() => el.querySelector("#stepup-code") != null, "the step-up prompt");
-    await typeInto(el.querySelector("#stepup-code"), "123456");
-    await submit(el.querySelector("#stepup-code")!.closest("form"));
+    await waitFor(() => codeField(el) != null, "the step-up dialog");
+    await typeInto(codeField(el), "123456");
+    await submit(codeField(el)!.closest("form"));
     await waitFor(() => rig.settle != null, "the factor to be in flight");
     return el;
   }
 
   it("Cancel, then the factor lands — no pairing code is minted, and the screen says so", async () => {
     const el = await toTheFactorInFlight();
-    await click(only(el, "button", dev.cancel!));
+    await click(dialogButton(el, en.stepUp.cancel));
     await landTheVerify();
 
     expect(rig.calls, "a cancelled step-up must mint nothing")
@@ -378,22 +390,22 @@ describe("StepUpPrompt: the gate is the generation, not the host dropping the pa
    */
   it("through DevicesSection: Cancel unmounts the prompt, the factor lands, and the PANE says nothing ran", async () => {
     const { DevicesSection } = await import("../app/(product)/mailbox/DevicesSection.js");
-    const el = await render(h(DevicesSection));
+    const el = await render(h(WithReport, { view: DevicesSection }));
 
     await waitFor(() => byText(el, dev.addAction!) != null, "the add-a-device verb");
     await click(byText(el, dev.addAction!)!);
     await waitFor(
-      () => el.querySelector('[data-testid="step-up-prompt"]') != null,
-      "the inline factor prompt",
+      () => el.querySelector('[role="dialog"]') != null,
+      "the factor dialog",
     );
 
-    await typeInto(el.querySelector("#stepup-code"), "123456");
-    await submit(el.querySelector("#stepup-code")!.closest("form"));
+    await typeInto(el.querySelector('[role="dialog"] input[autocomplete="one-time-code"]'), "123456");
+    await submit(el.querySelector('[role="dialog"] input[autocomplete="one-time-code"]')!.closest("form"));
     await waitFor(() => rig.settle != null, "the step-up to be in flight");
     rig.calls = [];
 
-    await click(byText(el, dev.cancel!)!);
-    expect(el.querySelector('[data-testid="step-up-prompt"]'), "the host dropped the prompt").toBeNull();
+    await click(dialogButton(el, en.stepUp.cancel));
+    expect(el.querySelector('[role="dialog"]'), "the host dropped the prompt").toBeNull();
     await landTheVerify();
 
     expect(rig.calls, "the parked verb must not run after Cancel").not.toContain("pair.mintDevice");

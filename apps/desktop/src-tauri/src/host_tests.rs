@@ -1609,3 +1609,11 @@ fn a_stand_down_for_a_shell_transition_is_a_quit_and_tells_the_engine_nothing() 
     let frames = frames_read_before(&|h| respawn_for_shell_transition(h, Some(3311)));
     assert_eq!(frames, Vec::<serde_json::Value>::new(), "a switch-away or sign-out kept the claim");
 }
+
+/// The tailnet route is one per computer. A preview that armed it would take an installed
+/// ohmail's, so it refuses, and the released app is not asked the question.
+#[test]
+fn a_preview_does_not_take_this_computers_tailnet_route() {
+    assert!(preview_arm_refusal(true).is_some_and(|why| why.contains("preview")));
+    assert_eq!(preview_arm_refusal(false), None);
+}

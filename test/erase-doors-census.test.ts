@@ -9,14 +9,15 @@ import { bracketSpan, withoutComments, withoutCommentsAndLiterals } from "../scr
  *
  * An erase that read the account after `DELETE /account` had expired the session found nobody,
  * refused its own answer, and left the whole mirror in the browser with no receipt. The client
- * doors are counted here by their CALLS: one, the web's Settings → Account, because the desktop
- * and the phone send the person to the web (a paired bearer cannot pass step-up). The server
- * doors all run `deleteAccount`, whose mailbox lock is measured in the services pg suite.
+ * door is counted here by its call from `/account/delete`. Settings → Account leads to that page,
+ * and the desktop and phone send the person to the web (a paired bearer
+ * cannot pass step-up). The server doors all run `deleteAccount`, whose mailbox lock is measured
+ * in the services pg suite.
  */
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 /** The client roots, and the directories a walk skips: build output and installed packages. */
-const CLIENT_ROOTS = ["apps/webapp/app", "apps/desktop/src", "apps/mobile/src", "apps/mobile/app", "packages/client-engine/src"];
+const CLIENT_ROOTS = ["apps/webapp/app", "packages/app/src", "packages/app-logic/src", "packages/letter-body/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/src", "apps/mobile/app", "packages/client-engine/src"];
 const SKIPPED = new Set(["node_modules", "dist", "build", ".next"]);
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -47,7 +48,7 @@ function callsIn(roots: readonly string[], re: RegExp): string[] {
 
 const ERASE_CALL = /\baccount\s*\.\s*erase\s*\(/g;
 const ACCOUNT_DELETE = /["'`]\/account["'`]\s*,\s*\{\s*method\s*:\s*["']DELETE["']/g;
-const SECTION = "apps/webapp/app/(product)/mailbox/AccountSection.tsx";
+const PAGE = "apps/webapp/app/(product)/account/delete/use-delete-account-door.ts";
 
 describe("erase doors", () => {
   it("the walk reads every client root it names", () => {
@@ -57,14 +58,14 @@ describe("erase doors", () => {
     }
   });
 
-  it("the client has ONE erase door, the web's, and one request behind it", () => {
+  it("the delete page is the only client that sends the account erase", () => {
     const calls = callsIn(CLIENT_ROOTS, ERASE_CALL);
-    expect(calls.map((c) => c.replace(/:\d+$/, "")), "a new erase door must take its owner first and call forgetThisBrowser").toEqual([SECTION]);
+    expect(calls.map((c) => c.replace(/:\d+$/, "")), "a new erase door must take its owner first and call forgetThisBrowser").toEqual([PAGE]);
     expect(callsIn(CLIENT_ROOTS, ACCOUNT_DELETE).map((c) => c.replace(/:\d+$/, ""))).toEqual(["apps/webapp/app/api-client.ts"]);
   });
 
-  it("the web door erases with the account owner it was handed, then wipes this browser's copy of that account", () => {
-    const raw = readFileSync(join(ROOT, SECTION), "utf8");
+  it("account deletion wipes only the browser copy of the account selected before the request", () => {
+    const raw = readFileSync(join(ROOT, PAGE), "utf8");
     const code = withoutComments(raw);
     const blank = withoutCommentsAndLiterals(raw);
     const open = code.indexOf("const erase = useCallback(async (owner: string");

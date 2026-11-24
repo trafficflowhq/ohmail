@@ -1,10 +1,11 @@
-import { and, count, eq, gt, isNull, isNotNull, desc, type SQL } from "drizzle-orm";
-import { carryDialect } from "@trafficflow/db/dialect";
+import { and, asc, count, eq, gt, inArray, isNull, isNotNull, desc, type SQL } from "drizzle-orm";
+import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import { type Tx } from "@trafficflow/db";
-import { pairingTokens, users } from "@trafficflow/db";
+import { accountOfUser, devices, pairingTokens, refreshTokens, sessions } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";
-import { PAIRED_DEVICE_KINDS, holdLiveSession, lockUserRow, type PairedDeviceKind } from "./auth/session-lifecycle.js";
-import { bridgeTx, runInTransaction, type ServiceContext } from "./context.js";
+import { PAIRED_DEVICE_KINDS, holdLiveSession, lockUserRow, refuseCrossAccountCredential, type PairedDeviceKind } from "./auth/session-lifecycle.js";
+import { ringDeviceMade } from "./auth/device-doorbell.js";
+import { bridgeTx, credentialContext, keyedCredentialDb, runInTransaction, type ServiceContext } from "./context.js";
 import type { OAuthTokens } from "./auth/types.js";
 import { ServiceError } from "./errors.js";
 
@@ -20,6 +21,25 @@ import { ServiceError } from "./errors.js";
  */
 
 export type PairingGrant = "invite" | "device-pair";
+
+/**
+ * THE THIRD GRANT, never in {@link GRANTS}: `POST /pair` can neither mint nor redeem it. One phone app's code for its
+ * sibling app on the same phone ({@link mintAppHandoff}), bound to the receiver's SHA-256 challenge and to the device
+ * of the session that minted it, and redeemed only through {@link redeemAppHandoff}.
+ */
+export const APP_HANDOFF_GRANT = "app-handoff";
+/** Every grant the one burn knows: the two public ones and the handoff. */
+type BurnGrant = PairingGrant | typeof APP_HANDOFF_GRANT;
+/** A handoff code's lifetime: one switch between two apps on one phone, the receiver's round trip included. */
+export const APP_HANDOFF_TTL_MS = 60_000;
+/** Handoff codes one person may mint in an hour, and handed-off sessions that may live at once. */
+export const APP_HANDOFF_PER_HOUR = 6;
+export const APP_HANDOFF_LIVE_MAX = 8;
+/** The app a handoff signs in, by its word. */
+export type AppHandoffTarget = "ohmail" | "ohcal";
+const TARGETS: ReadonlySet<string> = new Set<AppHandoffTarget>(["ohmail", "ohcal"]);
+const MOBILE_KINDS: ReadonlySet<string> = new Set<PairedDeviceKind>(["mobile-android", "mobile-ios"]);
+const HOUR_MS = 60 * 60_000;
 
 /** Runtime whitelist behind the type, for JavaScript callers and wire input. */
 const GRANTS: ReadonlySet<string> = new Set<PairingGrant>(["invite", "device-pair"]);
@@ -130,23 +150,26 @@ export async function mintPairingToken(
   const now = ctx.now();
   const mint = { createdByUserId, grant, label, ttlMs, now };
   // The first-boot mint carries no session and writes as it always has.
-  if (!ctx.sessionId) return writePairingToken(asTx(ctx), mint);
+  if (!ctx.sessionId) return writePairingToken(asTx(ctx), mint) as Promise<PairingTokenMinted>;
   // A session's mint takes its creator's user row first ({@link lockUserRow}) and lands only while
   // that session is live, proved last ({@link holdLiveSession}): a revoke of that user either waits
   // for it and voids the code, or runs first and leaves this mint refused.
   return runInTransaction(ctx, async (txCtx) => {
     const tx = asTx(txCtx);
     if (createdByUserId !== null) await lockUserRow(tx, createdByUserId);
-    const minted = await writePairingToken(tx, mint);
+    const minted = await writePairingToken(tx, mint) as PairingTokenMinted;
     await holdLiveSession(tx, txCtx);
     return minted;
   }, { fence: ctx.accountId ? { accountId: ctx.accountId } : undefined });
 }
 
-/** {@link mintPairingToken}'s writes: the growth bound, then the row. */
+/** {@link mintPairingToken}'s writes: the growth bound, then the row. A handoff's binding rides in `bound`. */
 async function writePairingToken(
-  tx: Tx, o: { createdByUserId: string | null; grant: PairingGrant; label: string; ttlMs: number; now: Date },
-): Promise<PairingTokenMinted> {
+  tx: Tx, o: {
+    createdByUserId: string | null; grant: BurnGrant; label: string; ttlMs: number; now: Date;
+    bound?: { challengeHash: string; handoffFromDeviceId: string };
+  },
+): Promise<Omit<PairingTokenMinted, "grant"> & { grant: BurnGrant }> {
   const { createdByUserId, grant, label, ttlMs, now } = o;
 
   // The growth bound. A soft read (READ COMMITTED lets two concurrent mints both see cap-1),
@@ -172,10 +195,13 @@ async function writePairingToken(
   const expiresAt = new Date(now.getTime() + ttlMs);
   const [row] = await tx.insert(pairingTokens).values({
     createdByUserId,
+    // The creator's account, and none where there is no creator (the first setup token).
+    accountId: createdByUserId === null ? null : accountOfUser(createdByUserId),
     grant,
     tokenHash: hashToken(token),
     label,
     expiresAt,
+    ...(o.bound ? { challengeHash: o.bound.challengeHash, handoffFromDeviceId: o.bound.handoffFromDeviceId } : {}),
   }).returning({ id: pairingTokens.id });
 
   return { id: row!.id, token, grant, label, expiresAt };
@@ -212,7 +238,8 @@ export async function listPairingTokens(ctx: ServiceContext): Promise<PairingTok
     consumedAt: pairingTokens.consumedAt,
     revokedAt: pairingTokens.revokedAt,
   }).from(pairingTokens)
-    .where(eq(pairingTokens.createdByUserId, userId))
+    // The two public grants: a handoff code is no pairing a person minted, and is never listed or revoked by id.
+    .where(and(eq(pairingTokens.createdByUserId, userId), inArray(pairingTokens.grant, ["invite", "device-pair"])))
     .orderBy(desc(pairingTokens.createdAt))
     // Newest hundred: the live set is capped at PAIRING_LIVE_TOKENS_MAX, so everything past
     // this bound is spent/expired history. Reaping that history is maintenance's job (the
@@ -266,6 +293,12 @@ export interface PairingConsumed {
   createdByUserId: string | null;
 }
 
+/** A spent handoff code: its row, and the device of the session that minted it. */
+export interface HandoffConsumed extends Omit<PairingConsumed, "grant"> {
+  grant: typeof APP_HANDOFF_GRANT;
+  handoffFromDeviceId: string | null;
+}
+
 /**
  * The atomic burn — the single statement the module header froze. `null` means "no live token
  * of this grant matches", with every cause deliberately indistinguishable. Exported for the
@@ -277,15 +310,23 @@ export interface PairingConsumed {
  */
 export async function consumePairingToken(
   ctx: ServiceContext, input: { token: string; grant: PairingGrant },
-): Promise<PairingConsumed | null> {
+): Promise<PairingConsumed | null>;
+export async function consumePairingToken(
+  ctx: ServiceContext, input: { token: string; grant: typeof APP_HANDOFF_GRANT; verifier: string },
+): Promise<HandoffConsumed | null>;
+export async function consumePairingToken(
+  ctx: ServiceContext, input: { token: string; grant: BurnGrant; verifier?: string },
+): Promise<PairingConsumed | HandoffConsumed | null> {
   const raw = typeof input.token === "string" ? input.token.trim() : "";
   // Bounded before it reaches sha256, `claimDesktopLink`'s reason: this value arrives from an
   // anonymous caller and an unbounded body is free work. A real token is 43 characters.
   if (raw.length === 0 || raw.length > 512) return null;
-  if (!GRANTS.has(input.grant)) return null;
+  const handoff = input.grant === APP_HANDOFF_GRANT;
+  if (!handoff && !GRANTS.has(input.grant)) return null;
+  if (handoff && !isVerifier(input.verifier)) return null;
   const now = ctx.now();
 
-  const conditions = liveTokenConditions(raw, input.grant, now);
+  const conditions = liveTokenConditions(raw, input.grant, now, handoff ? hashToken(input.verifier!) : undefined);
   const [row] = await asTx(ctx).update(pairingTokens)
     .set({ consumedAt: now })
     .where(and(...conditions))
@@ -294,13 +335,20 @@ export async function consumePairingToken(
       grant: pairingTokens.grant,
       label: pairingTokens.label,
       createdByUserId: pairingTokens.createdByUserId,
+      // Asked of a handoff's burn alone: the two public grants' statement stays as it was.
+      ...(handoff ? { handoffFromDeviceId: pairingTokens.handoffFromDeviceId } : {}),
     });
   if (!row) return null;
-  return { ...row, grant: row.grant as PairingGrant };
+  return handoff
+    ? { ...row, grant: APP_HANDOFF_GRANT, handoffFromDeviceId: (row as { handoffFromDeviceId?: string | null }).handoffFromDeviceId ?? null }
+    : { ...row, grant: row.grant as PairingGrant };
 }
 
-/** The burn's conjuncts, one list: the redeem's account read asks exactly what the burn will. */
-function liveTokenConditions(raw: string, grant: PairingGrant, now: Date): SQL[] {
+/**
+ * The burn's conjuncts, one list: the redeem's account read asks exactly what the burn will. A handoff's burn also
+ * asks for its challenge, the hash of the verifier presented: a wrong verifier matches no row and burns nothing.
+ */
+function liveTokenConditions(raw: string, grant: BurnGrant, now: Date, challengeHash?: string): SQL[] {
   const conditions: SQL[] = [
     eq(pairingTokens.tokenHash, hashToken(raw)),
     eq(pairingTokens.grant, grant),
@@ -309,7 +357,15 @@ function liveTokenConditions(raw: string, grant: PairingGrant, now: Date): SQL[]
     gt(pairingTokens.expiresAt, now),
   ];
   if (grant === "device-pair") conditions.push(isNotNull(pairingTokens.createdByUserId));
+  if (grant === APP_HANDOFF_GRANT) {
+    conditions.push(isNotNull(pairingTokens.createdByUserId), eq(pairingTokens.challengeHash, challengeHash ?? ""));
+  }
   return conditions;
+}
+
+/** An SHA-256 verifier as RFC 7636 shapes it: 43 to 128 unreserved characters. */
+function isVerifier(v: unknown): v is string {
+  return typeof v === "string" && /^[A-Za-z0-9._~-]{43,128}$/.test(v);
 }
 
 /** What a device-pair link's hash reads as, without spending it. `unknown` for every miss. */
@@ -328,7 +384,7 @@ export async function pairingLinkState(ctx: ServiceContext, tokenHash: unknown):
   if (typeof tokenHash !== "string" || !TOKEN_HASH_SHAPE.test(tokenHash)) {
     throw new ServiceError("validation_failed", 400, "tokenHash must be the link's sha256, base64url");
   }
-  const [row] = await asTx(ctx).select({
+  const [row] = await bridgeTx(keyedCredentialDb(ctx, tokenHash)).select({
     expiresAt: pairingTokens.expiresAt,
     consumedAt: pairingTokens.consumedAt,
     revokedAt: pairingTokens.revokedAt,
@@ -353,7 +409,7 @@ export async function pairingLinkState(ctx: ServiceContext, tokenHash: unknown):
  */
 export interface PairedDeviceSessionMinter {
   establishPairedDevice(
-    ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind },
+    ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind; handedOffFrom?: string | null },
   ): Promise<{ tokens: OAuthTokens }>;
 }
 
@@ -384,20 +440,147 @@ export async function redeemDevicePair(
   // before anything is spent; the burn then has to name the same creator.
   const raw = typeof input.token === "string" ? input.token.trim() : "";
   if (raw.length === 0 || raw.length > 512) throw pairingInvalid();
-  const [owner] = await asTx(ctx).select({ userId: users.id, accountId: users.accountId })
-    .from(pairingTokens).innerJoin(users, eq(users.id, pairingTokens.createdByUserId))
-    .where(and(...liveTokenConditions(raw, "device-pair", ctx.now())))
-    .limit(1);
-  if (!owner) throw pairingInvalid();
-  return runInTransaction(ctx, async (txCtx) => {
+  const [row] = await bridgeTx(keyedCredentialDb(ctx, hashToken(raw)))
+    .select({ userId: pairingTokens.createdByUserId, accountId: pairingTokens.accountId })
+    .from(pairingTokens).where(and(...liveTokenConditions(raw, "device-pair", ctx.now()))).limit(1);
+  if (!row?.accountId || !row.userId) throw pairingInvalid();
+  const { accountId, userId } = row;
+  refuseCrossAccountCredential(ctx, accountId);
+  const owner = credentialContext(ctx, accountId);
+  const paired = await runInTransaction(owner, async (txCtx) => {
     const consumed = await consumePairingToken(txCtx, { token: input.token, grant: "device-pair" });
-    if (!consumed || consumed.createdByUserId !== owner.userId) throw pairingInvalid();
+    if (!consumed || consumed.createdByUserId !== userId) throw pairingInvalid();
     return auth.establishPairedDevice(txCtx, {
       userId: consumed.createdByUserId,
       label: consumed.label.length > 0 ? consumed.label : "Paired device",
       kind,
     });
-  }, { fence: { accountId: owner.accountId } });
+  }, { fence: { accountId } });
+  // The device is made and committed: the account's other clients are told (`device-doorbell.ts`).
+  await ringDeviceMade(owner, accountId);
+  return paired;
+}
+
+/** Where a handoff's mint is written down: `SessionLifecycle` implements it over its audit trail. */
+export interface AppHandoffAuditor {
+  noteAppHandoffIssued(ctx: ServiceContext, o: { userId: string; deviceId: string; target: AppHandoffTarget }): Promise<void>;
+}
+
+/** The refusals of a handoff's mint, each a `ServiceError` code the route answers beside the rotated pair. */
+function handoffRefused(): ServiceError {
+  return new ServiceError("handoff_refused", 403, "this session cannot hand its sign-in to another app");
+}
+
+/** A label's own words for the app it came from, taken off before the target's word is put on. */
+const APP_PREFIX = /^(?:ohmail|ohcal) · /;
+
+/**
+ * MINT A HANDOFF: the code one phone app hands its sibling on the same phone, so the sibling signs in with a device
+ * session of its own. `renewed` is the refresh token the native rotation has JUST answered (`POST /pair/handoff`
+ * rotates first): an access token alone mints nothing, and a thief's mint is seen at the rightful phone's next
+ * renewal as a thief's renewal is. Bound to the receiver's SHA-256 `challenge` (never minted unbound) and to the
+ * device of this session; 60 seconds, single use, {@link APP_HANDOFF_PER_HOUR} an hour per person, at most
+ * {@link APP_HANDOFF_LIVE_MAX} handed-off sessions live. The session must be full and a named phone's.
+ */
+export async function mintAppHandoff(
+  ctx: ServiceContext, auditor: AppHandoffAuditor,
+  input: { renewed: string; challenge: string; target: AppHandoffTarget },
+): Promise<{ token: string; expiresIn: number }> {
+  if (typeof input.challenge !== "string" || !TOKEN_HASH_SHAPE.test(input.challenge)) {
+    throw new ServiceError("validation_failed", 400, "challenge must be a SHA-256 challenge, base64url");
+  }
+  if (typeof input.target !== "string" || !TARGETS.has(input.target)) {
+    throw new ServiceError("validation_failed", 400, 'target must be "ohmail" or "ohcal"');
+  }
+  const now = ctx.now();
+  const digest = hashToken(String(input.renewed ?? ""));
+  const [held] = await bridgeTx(keyedCredentialDb(ctx, digest)).select({
+    sessionId: refreshTokens.sessionId, userId: refreshTokens.userId, accountId: refreshTokens.accountId,
+  }).from(refreshTokens).where(and(
+    eq(refreshTokens.tokenHash, digest),
+    isNull(refreshTokens.revokedAt),
+    isNull(refreshTokens.consumedAt),
+    gt(refreshTokens.expiresAt, now),
+  )).limit(1);
+  if (!held) throw handoffRefused();
+  refuseCrossAccountCredential(ctx, held.accountId);
+  return runInTransaction(credentialContext(ctx, held.accountId), async (txCtx) => {
+    const tx = asTx(txCtx);
+    await lockUserRow(tx, held.userId);
+    const [session] = await dialect(tx).forUpdate(tx.select({
+      deviceId: sessions.deviceId, scope: sessions.scope,
+    }).from(sessions).where(and(eq(sessions.id, held.sessionId), isNull(sessions.revokedAt))).limit(1), { mode: "share" });
+    if (!session || session.scope !== "full" || session.deviceId === null) throw handoffRefused();
+    const [device] = await tx.select({ kind: devices.kind, label: devices.label })
+      .from(devices).where(and(eq(devices.id, session.deviceId), eq(devices.userId, held.userId))).limit(1);
+    if (!device || !MOBILE_KINDS.has(device.kind)) throw handoffRefused();
+    // Minted within the hour, read by the expiry this service stamped (never the store's own clock).
+    const [minted] = await tx.select({ n: count() }).from(pairingTokens).where(and(
+      eq(pairingTokens.createdByUserId, held.userId),
+      eq(pairingTokens.grant, APP_HANDOFF_GRANT),
+      gt(pairingTokens.expiresAt, new Date(now.getTime() - HOUR_MS + APP_HANDOFF_TTL_MS)),
+    ));
+    if ((minted?.n ?? 0) >= APP_HANDOFF_PER_HOUR) {
+      throw new ServiceError("handoff_rate_limited", 429, "too many handoffs this hour", undefined, true);
+    }
+    const [children] = await tx.select({ n: count() }).from(sessions)
+      .innerJoin(devices, eq(devices.id, sessions.deviceId))
+      .where(and(eq(sessions.userId, held.userId), isNull(sessions.revokedAt), isNotNull(devices.handedOffFrom)));
+    if ((children?.n ?? 0) >= APP_HANDOFF_LIVE_MAX) {
+      throw new ServiceError("handoff_limit", 409, "too many apps signed in by a handoff: take one back in Devices");
+    }
+    const label = `${input.target} · ${device.label.replace(APP_PREFIX, "")}`.slice(0, PAIRING_LABEL_MAX);
+    const written = await writePairingToken(tx, {
+      createdByUserId: held.userId, grant: APP_HANDOFF_GRANT, label, ttlMs: APP_HANDOFF_TTL_MS, now,
+      bound: { challengeHash: input.challenge, handoffFromDeviceId: session.deviceId },
+    });
+    await auditor.noteAppHandoffIssued(txCtx, { userId: held.userId, deviceId: session.deviceId, target: input.target });
+    return { token: written.token, expiresIn: APP_HANDOFF_TTL_MS / 1000 };
+  }, { fence: { accountId: held.accountId } });
+}
+
+/**
+ * REDEEM A HANDOFF: {@link redeemDevicePair}'s shape for the third grant. The kind is a phone's, checked before the
+ * burn; the verifier is checked for shape before any query, and the burn asks for its hash as the challenge, so a
+ * wrong one matches nothing and burns nothing. After the burn, inside the same transaction, a live session of the
+ * minting device must still exist (a code is spent only while the session that minted it lives). The new session is
+ * a pairing's own, full, with no step-up time; its device records whose child it is.
+ */
+export async function redeemAppHandoff(
+  ctx: ServiceContext, auth: PairedDeviceSessionMinter, input: { token: string; verifier: string; kind: PairedDeviceKind },
+): Promise<{ tokens: OAuthTokens }> {
+  if (typeof input.kind !== "string" || !MOBILE_KINDS.has(input.kind)) {
+    throw new ServiceError("validation_failed", 400, 'device kind must be "mobile-android" or "mobile-ios"');
+  }
+  const raw = typeof input.token === "string" ? input.token.trim() : "";
+  if (raw.length === 0 || raw.length > 512 || !isVerifier(input.verifier)) throw pairingInvalid();
+  const [row] = await bridgeTx(keyedCredentialDb(ctx, hashToken(raw)))
+    .select({ userId: pairingTokens.createdByUserId, accountId: pairingTokens.accountId })
+    .from(pairingTokens).where(and(...liveTokenConditions(raw, APP_HANDOFF_GRANT, ctx.now(), hashToken(input.verifier)))).limit(1);
+  if (!row?.accountId || !row.userId) throw pairingInvalid();
+  const { accountId, userId } = row;
+  refuseCrossAccountCredential(ctx, accountId);
+  const owner = credentialContext(ctx, accountId);
+  const handed = await runInTransaction(owner, async (txCtx) => {
+    const consumed = await consumePairingToken(txCtx, { token: input.token, grant: APP_HANDOFF_GRANT, verifier: input.verifier });
+    if (!consumed || consumed.createdByUserId !== userId || consumed.handoffFromDeviceId === null) throw pairingInvalid();
+    const tx = asTx(txCtx);
+    const [parent] = await dialect(tx).forUpdate(tx.select({ id: sessions.id }).from(sessions).where(and(
+      eq(sessions.deviceId, consumed.handoffFromDeviceId),
+      eq(sessions.userId, userId),
+      isNull(sessions.revokedAt),
+    )).orderBy(asc(sessions.id)).limit(1), { mode: "share" });
+    if (!parent) throw pairingInvalid();
+    return auth.establishPairedDevice(txCtx, {
+      userId,
+      label: consumed.label,
+      kind: input.kind,
+      handedOffFrom: consumed.handoffFromDeviceId,
+    });
+  }, { fence: { accountId } });
+  // A handed-off app is a device of its own in Devices: made and committed, and told as a pairing is.
+  await ringDeviceMade(owner, accountId);
+  return handed;
 }
 
 function requireUser(ctx: ServiceContext): string {

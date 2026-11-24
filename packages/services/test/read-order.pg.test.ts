@@ -1,14 +1,12 @@
+import type { MessageDTO } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { mailboxes, messages, folderState, messageStates, changeLog, recordChange } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
-import { messageService, syncService } from "@trafficflow/services";
-import type { MessageDTO, ServiceContext } from "@trafficflow/services";
+import { dbFor, messageService, syncService } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
 import { pgTestUrl } from "@trafficflow/db/testing";
 
 /**
@@ -36,8 +34,9 @@ import { pgTestUrl } from "@trafficflow/db/testing";
  * and the ones naming that writer go red.
  */
 const URL = pgTestUrl(import.meta.url);
-const client = postgres(URL, { max: 5 });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(URL);
+const db = owned.db;
 
 const NOW = new Date("2026-08-07T12:00:00.000Z");
 const LATER = new Date("2026-08-07T12:05:00.000Z");
@@ -45,7 +44,7 @@ const ACCOUNT = randomUUID();
 let mailboxId = "";
 
 function ctx(now: Date = NOW): ServiceContext {
-  return { db, accountId: ACCOUNT, userId: null, now: () => now, requestId: "read-order" };
+  return { db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => now, requestId: "read-order" };
 }
 
 /** A message that has arrived and never been read — `last_read_at` NULL, as ingest leaves it. */
@@ -58,7 +57,7 @@ async function freshMessage(tag: string): Promise<string> {
       nativeLocator: { folder: "INBOX", ref: `1:${tag}` },
     }).returning();
     await tx.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     });
     await recordChange(tx, {
       accountId: ACCOUNT, entityType: "message", entityId: m!.id, op: "create", meta: null,
@@ -82,7 +81,7 @@ describe("read order reaches the client on every route (real Postgres)", () => {
     mailboxId = mb!.id;
   }, 120_000);
 
-  afterAll(async () => { await client.end({ timeout: 5 }); });
+  afterAll(async () => { await owned.close(); });
 
   it("ingest leaves it NULL — arriving is not reading", async () => {
     const id = await freshMessage("ingest");

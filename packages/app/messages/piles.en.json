@@ -1,0 +1,74 @@
+{
+  "triage": {
+    "title": "Triage",
+    "meta": "{count, plural, one {1 item} other {# items}}",
+    "pilesAria": "Triage piles",
+    "segLabel": "{name} {count}",
+    "replyLater": "Answer Later",
+    "setAside": "Parked",
+    "resurface": "Resurface",
+    "hintReply": "Answered one at a time in Reply Run.",
+    "hintAside": "Held here until you come back for it.",
+    "hintResurface": "Returns to the Ohbox at the set time.",
+    "emptyReply": "Nothing to answer later.",
+    "emptyAside": "Nothing parked.",
+    "emptyResurface": "Nothing set to come back.",
+    "cta": "Reply Run",
+    "ctaNote": "Steps through the Answer Later pile, one message per screen.",
+    "frDone": "Done → next",
+    "frSkip": "Skip",
+    "frEmptyTitle": "Answer Later is empty.",
+    "frEmptyCta": "Back to Triage",
+    "keyReplyRun": "Start the Reply Run",
+    "runAria": "Reply run",
+    "runEmpty": "Answer Later is empty.",
+    "runBack": "Back to Triage",
+    "runProgress": "{step} of {total}",
+    "runPlaceholder": "Your reply",
+    "runReplyAria": "Reply",
+    "runExit": "exit",
+    "pileResurfaces": "resurfaces {when}",
+    "list": {
+      "menu": "List",
+      "unread": "{count, plural, one {1 unread} other {# unread}}"
+    }
+  },
+  "later": {
+    "summary": "{count, number} to answer",
+    "title": "Answer Later",
+    "empty": "Nothing to answer later",
+    "switch": {
+      "label": "Piles",
+      "segment": "{name} {count}"
+    },
+    "run": {
+      "start": "Reply Run",
+      "label": "Reply run",
+      "progress": "{step} of {total}",
+      "done": "Done → next",
+      "skip": "Skip",
+      "exit": "Exit",
+      "empty": "Nothing to answer later"
+    },
+    "row": {
+      "done": "Done"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    },
+    "step": {
+      "up": "Previous",
+      "down": "Next"
+    }
+  },
+  "parked": {
+    "summary": "{count, number} parked",
+    "title": "Parked",
+    "empty": "Nothing parked"
+  },
+  "resurface": {
+    "summary": "{count, number} set to come back",
+    "title": "Resurface",
+    "empty": "Nothing set to come back"
+  }
+}

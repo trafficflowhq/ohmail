@@ -21,9 +21,10 @@
 
 import { ApiError, auth } from "../api-client";
 import { csrfToken } from "../csrf";
+import { readSessionFamily } from "../signed-out-signal";
 import { lastRefreshOutcome, sessionMints } from "../session-refresh";
 import type { OwnerOutcome } from "../shell/engine";
-import { healOwner } from "../shell/owner-cookie";
+import { healOwner } from "@ohmail/app-logic/storage/owner-cookie";
 
 /** No answer, with no advice about when to come back. */
 const UNKNOWN: OwnerOutcome = { kind: "unknown", retryAfterMs: null };
@@ -44,7 +45,7 @@ export async function resolveOwnerOutcome(
    * amount of ignoring the answer undoes a `Set-Cookie`. An abort surfaces here as a
    * non-`ApiError` throw and is classified `unknown`, which is what it is.
    */
-  opts: { signal?: AbortSignal } = {},
+  { includeAddress = false, ...opts }: { signal?: AbortSignal; includeAddress?: boolean } = {},
 ): Promise<OwnerOutcome> {
   try {
     /*
@@ -57,7 +58,7 @@ export async function resolveOwnerOutcome(
      */
     const held = csrfToken() !== null;
     const mints = sessionMints();
-    const { user, scope } = await auth.session({ ...opts, ceremony: true });
+    const { user, scope, familyId } = await auth.session({ ...opts, ceremony: true });
     /*
      * A 200 THAT IS NOT OUR ANSWER. A captive portal, a proxy interstitial and a cache with
      * ideas of its own all return 200 with a body this client can parse into an object with
@@ -86,8 +87,15 @@ export async function resolveOwnerOutcome(
       // this check renewed into: no answer, ask again.
       if ((held || sessionMints() !== mints) && csrfToken() === null) return UNKNOWN;
       // The server no longer writes the marker here; a silent jar gets the name back, and only a silent one.
+      const currentFamily = readSessionFamily();
+      if (familyId !== undefined && currentFamily !== null && familyId !== currentFamily) return UNKNOWN;
       healOwner(accountId);
-      return { kind: "owner", accountId };
+      const family = familyId === undefined ? {} : { familyId };
+      return includeAddress && user.emailVerified === true && typeof user.email === "string" && user.email.trim()
+        ? { kind: "owner", accountId, address: user.email, ...family,
+            ...(typeof user.displayName === "string" && user.displayName.trim()
+              ? { displayName: user.displayName.trim() } : {}) }
+        : { kind: "owner", accountId, ...family };
     }
     /*
      * `scope: "full"` with no account id is our server answering something it cannot mean.

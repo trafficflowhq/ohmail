@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 /* The client refuses every call on a build with no server behind it, so the base is set before
    the module is imported — the same line every api-client test in this directory carries. */
 process.env.NEXT_PUBLIC_API_BASE = "/api";
-const { account, forgetAccess } = await import("../app/api-client");
-import { OWNER_COOKIE } from "../app/shell/owner-cookie";
+const { account, accessFeedFor, forgetAccess } = await import("../app/api-client");
+import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
 
 /**
  * ═══ ONE ACCESS READ PER SESSION, NOT ONE PER MOUNT ═══════════════════════════════════════
@@ -65,7 +65,7 @@ describe("the access verdict is read once for the session", () => {
   it("`fresh` re-asks — the gate reads that the entitlement is mutable from outside this tab", async () => {
     await account.access();
     // Past the door's join window: a fresh ask inside it is the answer in hand (api-client.ts).
-    const { RETURN_DEBOUNCE_MS } = await import("../app/shell/wall-lift");
+    const { RETURN_DEBOUNCE_MS } = await import("@ohmail/app-logic/doors/wall-lift");
     const t = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(t + RETURN_DEBOUNCE_MS);
     await account.access({ fresh: true });
@@ -81,6 +81,19 @@ describe("the access verdict is read once for the session", () => {
     asOwner("acct-two");
     await account.access();
     expect(calls.filter((u) => u.includes("/account/access"))).toHaveLength(2);
+  });
+
+  it("does not restore a cleared credit balance when an access read is still in flight", async () => {
+    let finish!: (response: Response) => void;
+    answer = () => new Promise<Response>((resolve) => { finish = resolve; });
+    const pending = account.access();
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    forgetAccess();
+    finish(new Response(JSON.stringify({
+      metered: true, access: "open", aiCredits: { remaining: 40, total: 1000 },
+    }), { headers: { "content-type": "application/json" } }));
+    await pending.catch(() => undefined);
+    expect(accessFeedFor("acct-one")).toBeNull();
   });
 
   it("a refusal is not the session's answer", async () => {

@@ -6,8 +6,8 @@
  * window: nothing leaves inside it, Undo sends nothing, and the close sends the decision re-read
  * from the mirror. Driven on the real engine over the loopback wire, read on the wire.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";

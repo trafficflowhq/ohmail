@@ -1,0 +1,102 @@
+{
+  "component": "ReadingHead",
+  "state": "rest",
+  "look": "ohmarchy-dark-foldl",
+  "place": "block",
+  "target": [425, -19, 406, 82.2656],
+  "clip": [425, 0, 406, 64],
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
+  "variant": {
+    "device": "foldl",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 841,
+    "height": 673,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 841, "clientWidth": 841, "scrollHeight": 673 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(19, 20, 28) 0px -4px 0px 0px, rgb(62, 64, 82) 0px 1px 0px 0px" },
+    { "boxShadow": "rgb(83, 87, 108) 0px 0px 0px 1px inset" },
+    { "boxShadow": "rgb(105, 110, 135) 0px 0px 0px 2px inset" },
+    { "backgroundColor": "rgb(95, 100, 128)" },
+    { "backgroundColor": "rgb(122, 162, 247)" },
+    { "boxShadow": "rgb(138, 147, 185) 0px 0px 0px 1px" }
+  ],
+  "nodes": [
+    {
+      "role": "banner",
+      "name": "",
+      "box": [0, 0, 406, 82.3],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(19, 20, 28)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "9px",
+        "paddingRight": "18px",
+        "paddingBottom": "12px",
+        "paddingLeft": "20px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "Glaze order #2291", "type": 0 }],
+      "surfaces": [{ "box": [0, 0, 406, 82.3], "paint": 0 }]
+    },
+    {
+      "role": "group",
+      "name": "5 messages, 2 unread",
+      "box": [272, 38.3, 116, 32],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(26, 27, 38)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "surfaces": [
+        { "box": [272, 38.3, 116, 32], "paint": 1 },
+        { "box": [285, 49.3, 10, 10], "paint": 2 },
+        { "box": [305, 49.3, 10, 10], "paint": 3 },
+        { "box": [325, 49.3, 10, 10], "paint": 2 },
+        { "box": [345, 49.3, 10, 10], "paint": 4 },
+        { "box": [365, 49.3, 10, 10], "paint": 4 },
+        { "box": [362, 46.3, 16, 16], "paint": 5 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

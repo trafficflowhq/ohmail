@@ -7,12 +7,12 @@ import {
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
-import { MessageService, type ServiceContext } from "@trafficflow/services";
-import { reconcileMailbox } from "../src/sync.js";
-import { legacyNewsRepairPass } from "../src/news-repair.js";
-import { RECONCILE_BACKOFF_MINUTES } from "../src/reconcile-refusal.js";
-import { FIXTURE_LEASE } from "./_door.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
+import { MessageService, type ServiceContext, dbFor, type Db as ServicesDb } from "@trafficflow/services";
+import { reconcileMailbox } from "@ohmail/organizer/sync";
+import { legacyNewsRepairPass } from "../../../packages/organizer/src/news-repair.js";
+import { RECONCILE_BACKOFF_MINUTES } from "../../../packages/organizer/src/reconcile-refusal.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
 
 /**
  * SIX LEGACY FILINGS, AND THE FILING PATH AROUND THEM — the real adapter over an in-memory IMAP
@@ -154,9 +154,9 @@ async function world(n: number, seed: Seed = {}) {
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `t-${accountId.slice(0, 8)}@example.test` }).returning();
   const mailboxId = mb!.id;
   await db.insert(mailboxFolders).values([
-    { mailboxId, folder: "ohmail/News", uidvalidity: 4n, uidnext: 107n, highestmodseq: 1n },
-    { mailboxId, folder: "ohmail/Reads", uidvalidity: 1n, uidnext: 7n, highestmodseq: 1n },
-    { mailboxId, folder: "ohmail/Receipts", uidvalidity: 3n, uidnext: 1n, highestmodseq: 1n },
+    { mailboxId, accountId, folder: "ohmail/News", uidvalidity: 4n, uidnext: 107n, highestmodseq: 1n },
+    { mailboxId, accountId, folder: "ohmail/Reads", uidvalidity: 1n, uidnext: 7n, highestmodseq: 1n },
+    { mailboxId, accountId, folder: "ohmail/Receipts", uidvalidity: 3n, uidnext: 1n, highestmodseq: 1n },
   ]);
   const ids: string[] = [];
   for (let i = 1; i <= n; i++) {
@@ -171,7 +171,7 @@ async function world(n: number, seed: Seed = {}) {
       await db.insert(messageInstances).values({ accountId, mailboxId, messageId: m!.id, folder: "ohmail/News", uidvalidity: 4n, uid: 100 + i, isPrimary: false });
     }
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: seed.desired ?? "ohmail/Receipts", observedFolder: seed.observed ?? "ohmail/Reads",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: seed.desired ?? "ohmail/Receipts", observedFolder: seed.observed ?? "ohmail/Reads",
       lastSetBy: "us", reconcileStatus: "pending", conflict: true, attempts: seed.attempts ?? 1,
       lastErrorClass: seed.errorClass === undefined ? "refused" : seed.errorClass, nextAttemptAt: null,
     });
@@ -317,7 +317,7 @@ describe("honest classes on the filing path", () => {
     const refused = await w.states();
     const rungEnds = Date.now() + TOP_RUNG_MS;
 
-    const ctx: ServiceContext = { db: w.db as never, accountId: w.accountId, userId: null, now: () => new Date(), requestId: "refused" };
+    const ctx: ServiceContext = { db: dbFor(w.db as unknown as ServicesDb, w.accountId), accountId: w.accountId, userId: null, now: () => new Date(), requestId: "refused" };
     expect(await new MessageService().move(ctx, w.ids[0]!, { folder: "INBOX" })).not.toHaveProperty("pending");
     expect(await new MessageService().delete(ctx, w.ids[1]!)).not.toHaveProperty("pending");
     // Sent at once under #206's fresh intent (mail 0163), else when the rung ends; never later.

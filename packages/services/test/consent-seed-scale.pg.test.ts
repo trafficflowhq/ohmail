@@ -1,18 +1,16 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, sql } from "drizzle-orm";
 import {
   accounts, accountSettings, accountSyncState, changeLog, contacts, mailboxes,
   messageBodies, messages, rules,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { buildSeedReview, confirmSeed } from "../src/consent-seed.js";
-import type { ServiceContext } from "../src/context.js";
+import { dbFor, type ServiceContext } from "../src/context.js";
 
 /**
  * THE SENT-MAIL SEED AT THE SIZE REAL MAILBOXES ARE, AND THE FAILURE THAT WAS NOT ABOUT SIZE.
@@ -42,8 +40,9 @@ import type { ServiceContext } from "../src/context.js";
  */
 
 const AVAILABLE = await realPgAvailable();
-const client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(PG_TEST_URL);
+const db = owned.db;
 
 const NOW = new Date("2026-08-05T09:00:00.000Z");
 
@@ -81,14 +80,14 @@ async function world(count: number): Promise<World> {
       snippet: "",
     }))).returning({ id: messages.id });
     await db.insert(messageBodies).values(rows.map((r, i) => ({
-      messageId: r.id,
+      messageId: r.id, accountId: accountOfMessage(r.id),
       headers: { to: [`"Person ${part[i]}" <person${part[i]}@example.com>`] },
     })));
   }
 
   return {
     accountId, own,
-    ctx: { db, accountId, userId: null, now: () => NOW, requestId: "seed-scale" },
+    ctx: { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "seed-scale" },
   };
 }
 
@@ -100,7 +99,7 @@ const seqsFor = async (accountId: string): Promise<bigint[]> => {
 
 describe.skipIf(!AVAILABLE)("the sent-mail seed confirms at the size real mailboxes are", () => {
   beforeAll(async () => { await runMigrations(PG_TEST_URL); });
-  afterAll(async () => { await client.end(); });
+  afterAll(async () => { await owned.close(); });
 
   it("confirms 191 people even when the account's seq counter has fallen behind its own log", async () => {
     const w = await world(191);
@@ -176,7 +175,7 @@ describe.skipIf(!AVAILABLE)("the sent-mail seed confirms at the size real mailbo
       nativeLocator: { folder: "Sent", uid: 9999 }, snippet: "",
     }).returning({ id: messages.id });
     await db.insert(messageBodies).values({
-      messageId: m!.id, headers: { to: ["newcomer@example.com"] },
+      messageId: m!.id, accountId: accountOfMessage(m!.id), headers: { to: ["newcomer@example.com"] },
     });
 
     const second = await buildSeedReview(w.ctx);

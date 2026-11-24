@@ -2,7 +2,7 @@
  * THE SUBSCRIPTION PANE ON THE CLOUD DOOR — the same one row the browser tab shows. This window used to
  * render the plan, the renewal date, a storage meter and a managed-AI switch; none of that is this
  * program's business, and the entitlements port answers where the operator's own page is. A pane and not
- * an omission, for `DesktopWebSection`'s reason: an absent entry reads as "this product does not have
+ * an omission: an absent entry reads as "this product does not have
  * that". Absent when there is no page to link to — see {@link useDesktopManageOffer} for why that
  * decision is the GATE's. THE ADDRESS IS MINTED BY THE PRESS: it used to be minted by the MOUNT, so
  * every launch asked for a link nobody had asked to follow. The offer is read without minting; the
@@ -12,14 +12,16 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSection } from "@ohmail/ui";
+import { aiCreditsOf, type AiCredits } from "@ohmail/app/settings/ai";
+import { Button } from "@ohmail/ui/base";
+import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { StoragePane } from "../../webapp/app/shell/StoragePane";
 import type { StorageChange } from "../../webapp/app/shell/StorageNotice";
 import { openWeb } from "./native.js";
 
 import { ACCESS_REFUSED_STATUS, ACCOUNT_ACCESS_PATH, bridgeFetch } from "./bridge-fetch.js";
-import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "../../webapp/app/shell/wall-lift.js";
-import { linkHref, useRenderedLinks } from "../../webapp/app/shell/rendered-links";
+import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "@ohmail/app-logic/doors/wall-lift";
+import { linkHref, useRenderedLinks } from "@ohmail/letter-body/links";
 import { storageFactsOf, type StorageFacts } from "../../webapp/app/shell/storage-state";
 import { reuseSweepLinesOf, type ReuseSweepLine } from "../../webapp/app/shell/reuse-sweeps";
 
@@ -57,6 +59,7 @@ export interface ManageOffer {
   withdrawManage: () => void;
   /** The same answer's storage block (`storage-state.ts`), for the emptied-text notice; null for none. */
   storage: StorageFacts | null;
+  aiCredits: AiCredits | null;
   /** The same answer's lifecycle state. */
   lifecycleState: string | null;
   /** Ask again now, after a storage write (a dismissal, the mails switch). */
@@ -75,9 +78,10 @@ type OfferState = "unknown" | "offered" | "not-offered";
  * A return to the window asks again through the shell's own schedule: at once while unknown, else after
  * the quiet floor, which keeps the storage block (the emptied-text notice's facts) current.
  */
-export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
+export function useDesktopManageOffer(accountDoor: boolean, scope: string | null): ManageOffer {
   const [state, setState] = useState<OfferState>("unknown");
   const [storage, setStorage] = useState<StorageFacts | null>(null);
+  const [credits, setCredits] = useState<{ scope: string | null; value: AiCredits | null } | null>(null);
   const [lifecycleState, setLifecycleState] = useState<string | null>(null);
   /** The account door an answer belongs to: one for an earlier door is dropped. */
   const door = useRef(0);
@@ -92,7 +96,9 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
     const asked = door.current;
     const read = (async (): Promise<boolean> => {
       let next: OfferState | null = null;
-      let body = null as { metered?: unknown; storage?: unknown; lifecycle?: { state?: unknown } } | null;
+      let body = null as {
+        metered?: unknown; access?: unknown; aiCredits?: unknown; storage?: unknown; lifecycle?: { state?: unknown };
+      } | null;
       try {
         const res = await bridgeFetch(ACCOUNT_ACCESS_PATH);
         if (res.status === ACCESS_REFUSED) next = "offered";
@@ -105,12 +111,13 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
       answeredAt.current = Date.now();
       setState(withdrawn.current ? "not-offered" : next);
       setStorage(body?.metered === true ? storageFactsOf(body.storage) : null);
+      setCredits({ scope, value: body?.metered === true && body.access === "open" ? aiCreditsOf(body.aiCredits) : null });
       setLifecycleState(typeof body?.lifecycle?.state === "string" ? body.lifecycle.state : null);
       return true;
     })().finally(() => { if (flight.current === read) flight.current = null; });
     flight.current = read;
     return read;
-  }, []);
+  }, [scope]);
   useEffect(() => {
     door.current += 1;
     flight.current = null;
@@ -120,6 +127,7 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
        hosted account and no server holding this state, so asking would put a route on the wire
        that nothing behind this door serves. Any offer an earlier door made goes with it. */
     setStorage(null);
+    setCredits(null);
     setLifecycleState(null);
     if (!accountDoor) {
       setState("not-offered");
@@ -140,46 +148,53 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
   // A withdrawal holds for the session: a later answer does not bring the pane back.
   const withdrawManage = useCallback(() => { withdrawn.current = true; setState("not-offered"); }, []);
   const reread = useCallback(() => { void readOffer(); }, [readOffer]);
-  return { manageOffered: state === "offered", withdrawManage, storage, lifecycleState, reread };
+  return {
+    manageOffered: state === "offered", withdrawManage, storage, lifecycleState, reread,
+    aiCredits: accountDoor && scope !== null && credits?.scope === scope ? credits.value : null,
+  };
 }
 
 /** What the account door's one session read says: whose account, and the reuse sweeps to tell. */
 export interface HostedSessionRead {
   accountId: string | null;
+  address: string | null;
   reuseSweeps: readonly ReuseSweepLine[];
 }
 
-const NO_HOSTED_SESSION: HostedSessionRead = { accountId: null, reuseSweeps: [] };
+const NO_HOSTED_SESSION: HostedSessionRead = { accountId: null, address: null, reuseSweeps: [] };
 
 /**
  * The hosted account's id, for Help & contact's diagnostics, and the reuse sweeps this sign-in is
  * told of: one `GET /auth/session`, forwarded on the account door, and again on `recheck` (the
- * notice asks while shown). Nothing on any other door and until the account answers; never an address.
+ * notice asks while shown). The address is for the sign-out row in Desktop Settings.
  */
-export function useHostedSession(accountDoor: boolean): HostedSessionRead & { recheck: () => Promise<void> } {
-  const [read, setRead] = useState<HostedSessionRead>(NO_HOSTED_SESSION);
+export function useHostedSession(accountDoor: boolean, key: string | null): HostedSessionRead & { recheck: () => Promise<void> } {
+  const [read, setRead] = useState<{ key: string | null; value: HostedSessionRead } | null>(null);
   const door = useRef(0);
   const ask = useCallback(async (): Promise<void> => {
+    if (!accountDoor) return;
     const mine = door.current;
     try {
       const res = await bridgeFetch("/auth/session");
       const body = res.ok
-        ? ((await res.json()) as { user?: { accountId?: unknown }; reuseSweeps?: unknown } | null)
+        ? ((await res.json()) as { user?: { accountId?: unknown; email?: unknown }; reuseSweeps?: unknown } | null)
         : null;
       const named = body?.user?.accountId;
       if (door.current === mine && typeof named === "string" && named !== "") {
-        setRead({ accountId: named, reuseSweeps: reuseSweepLinesOf(body?.reuseSweeps) });
+        const email = body?.user?.email;
+        setRead({ key, value: { accountId: named, address: typeof email === "string" && email.trim() ? email : null,
+          reuseSweeps: reuseSweepLinesOf(body?.reuseSweeps) } });
       }
     } catch { /* no answer: the block keeps what it said */ }
-  }, []);
+  }, [accountDoor, key]);
   useEffect(() => {
     door.current += 1;
-    setRead(NO_HOSTED_SESSION);
+    setRead(null);
     if (!accountDoor) return undefined;
     void ask();
     return () => { door.current += 1; };
   }, [accountDoor, ask]);
-  return { ...read, recheck: ask };
+  return { ...(accountDoor && read?.key === key ? read.value : NO_HOSTED_SESSION), recheck: ask };
 }
 
 /** Nothing drawn yet. */
@@ -222,18 +237,23 @@ export function AccountPageLink(
 ): ReactElement {
   const link = useRef<HTMLAnchorElement>(null);
   useEffect(() => { link.current?.focus(); }, [href]);
-  return (
-    <a ref={link} className="btn primary" href={href} target="_blank" rel="noopener noreferrer" onClick={onFollow}>
-      {label}
-    </a>
-  );
+  return <Button ref={link} href={href} outside onFollow={onFollow}>{label}</Button>;
 }
 
-export function DesktopSubscription({ onNowhere }: { onNowhere: () => void }) {
+export function DesktopSubscription({
+  onNowhere, storageOffer, openStorage,
+}: {
+  onNowhere: () => void;
+  storageOffer?: NonNullable<StorageFacts["offer"]> | null;
+  openStorage?: () => Promise<void>;
+}) {
   const t = useTranslations("settings");
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const { href, show, followed } = useMintedPage();
+  const change = useDesktopStorageChange(openStorage);
+  const addon = storageOffer?.addon;
+  const current = storageOffer?.current;
   /** The pane can be left mid-press; nothing may set state after that. */
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -269,23 +289,24 @@ export function DesktopSubscription({ onNowhere }: { onNowhere: () => void }) {
   }, [onNowhere, show]);
 
   return (
-    <SettingsSection>
+    <SettingsSheet title={t("webBillingTitle")}>
       {failed ? <p className="acct-warn" role="alert">{t("subscriptionManageFailed")}</p> : null}
-      <SettingsRow
-        label={t("subscription")}
-        control={
-          /* A BUTTON until there is an address: an anchor with nowhere to point is the control
-             this pane exists to avoid. The answered press draws the address as the link. */
-          href !== null
-            ? <AccountPageLink href={href} label={t("subscriptionOpen")} onFollow={followed} />
-            : (
-              <button type="button" className="btn" disabled={busy} onClick={() => { void press(); }}>
-                {t("subscriptionManage")}
-              </button>
-            )
-        }
-      />
-    </SettingsSection>
+      {storageOffer?.canChange && addon && current && current.addonUnits < addon.maxUnits ? (
+        <SettingLine label={t("storageAddonName")} tag={t("storageTagAddon")}>
+          <Button kind="two" size="s" icon="plus" onPress={change.press}>{t("storageAddStorage")}</Button>
+        </SettingLine>
+      ) : null}
+      {change.note}
+      <SettingLine label={t("subscription")}>
+        {href !== null
+          ? <AccountPageLink href={href} label={t("subscriptionOpen")} onFollow={followed} />
+          : (
+            <Button kind="quiet" size="s" disabled={busy} onPress={() => void press()}>
+              {t("subscriptionManage")}
+            </Button>
+          )}
+      </SettingLine>
+    </SettingsSheet>
   );
 }
 
@@ -305,10 +326,10 @@ export async function writeStorageChoice(body: { dismiss: string } | { mail: boo
 
 /**
  * CHANGE PLAN AND ADD STORAGE in this window: the page that changes the plan is minted only after a
- * recent second factor, which this window cannot assert (`DesktopWebSection`). So the press opens
+ * recent second factor, which this window cannot assert. So the press opens
  * Settings → Storage in the browser, where the factor is asked and the page minted.
  */
-export function useDesktopStorageChange(): StorageChange {
+export function useDesktopStorageChange(openServer?: () => Promise<void>): StorageChange {
   const t = useTranslations("settings");
   const [noBrowser, setNoBrowser] = useState(false);
   const alive = useRef(true);
@@ -318,9 +339,10 @@ export function useDesktopStorageChange(): StorageChange {
   }, []);
   const press = useCallback(() => {
     setNoBrowser(false);
-    void openWeb("storage").catch(() => { if (alive.current) setNoBrowser(true); });
-  }, []);
-  const note = noBrowser ? <p className="acct-warn" role="alert">{t("webNoBrowser")}</p> : null;
+    const opened = openServer ? openServer() : openWeb("storage");
+    void opened.catch(() => { if (alive.current) setNoBrowser(true); });
+  }, [openServer]);
+  const note = noBrowser ? <p className="acct-warn" role="alert">{t(openServer ? "webNoBrowserServer" : "webNoBrowser")}</p> : null;
   return { press, busy: false, note };
 }
 
@@ -329,12 +351,13 @@ export function useDesktopStorageChange(): StorageChange {
  * over the bridge. A build that may not link out (the Mac App Store) gets the numbers and the plans
  * with no amount, no purchase button and no link.
  */
-export function DesktopStorage({ facts, linksOut, reread }: {
+export function DesktopStorage({ facts, linksOut, reread, openServer }: {
   facts: StorageFacts;
   linksOut: boolean;
   reread: () => void;
+  openServer?: () => Promise<void>;
 }): ReactElement {
-  const change = useDesktopStorageChange();
+  const change = useDesktopStorageChange(openServer);
   const [mail, setMail] = useState<{ on: boolean; busy: boolean; failed: boolean } | null>(null);
   const alive = useRef(true);
   useEffect(() => {

@@ -1,0 +1,37 @@
+/* The delete page's own: the address to type back set at the type scale's next step down where its line cannot hold
+   it at the sentence's size, and the ruler that reads it at each step, laid out for nobody. Own classes: `way-`. */
+.way-fit[data-step="head"] {
+  font-size: var(--t-head);
+}
+
+.way-fit[data-step="title"] {
+  font-size: var(--t-title);
+}
+
+.way-fit[data-step="read"] {
+  font-size: var(--t-read);
+}
+
+.way-fit[data-step="ui"] {
+  font-size: var(--t-ui);
+}
+
+/* The ruler's room: a point in the line, clipped, so the ruler is laid out at the sentence's size without taking room
+   or reaching past the window (a long address would otherwise scroll the page sideways). */
+.way-ruler-room {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  vertical-align: top;
+}
+
+.way-ruler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  white-space: pre;
+  pointer-events: none;
+}

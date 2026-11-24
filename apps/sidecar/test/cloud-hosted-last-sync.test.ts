@@ -1,8 +1,8 @@
+import type { MailboxDTO, SyncChange, SyncResponse } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { STALE_RESUME_MS } from "@trafficflow/core/drain-policy";
-import type { MailboxDTO, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld } from "../src/identity.js";
@@ -10,6 +10,7 @@ import { createCloudMirror as makeCloudMirror } from "../src/cloud-mirror.js";
 import type { CloudAuth } from "../src/cloud-auth.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 import { idleSession } from "./fixtures/cloud-auth-double.js";
 import { tearDown, tracked } from "./_teardown.js";
 
@@ -148,7 +149,7 @@ describe("the Cloud door's mailbox rows always carry it", () => {
   });
 
   it("the local door never puts it on a row", () => {
-    const local = readFileSync(resolve(process.cwd(), "apps/sidecar/src/engine.ts"), "utf8");
+    const local = readEngineAsOneText();
     expect(local).not.toContain("hostedLastSyncAt");
     const cloud = readFileSync(resolve(process.cwd(), "apps/sidecar/src/cloud-engine.ts"), "utf8");
     expect(cloud.match(/hostedLastSyncAt:/g)).toHaveLength(1);

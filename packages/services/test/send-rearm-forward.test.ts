@@ -6,7 +6,7 @@ import { attachments, drafts, outboundSends } from "@trafficflow/db";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { normalizeMime } from "@trafficflow/core/mail";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap-types";
-import { sendService, type ServiceContext } from "@trafficflow/services/mail";
+import { dbFor, sendService, type ServiceContext } from "@trafficflow/services/mail";
 import { ServiceError } from "../src/errors.js";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { FIXED_NOW, seedBody, seedMailbox, seedMessage, seedSession } from "../../api/test/helpers.js";
@@ -94,7 +94,7 @@ describe("a forward whose original's read dies once (GreenMail, through the faul
       to: [{ name: null, address: recipient }], cc: [], bcc: [], status: "draft",
       createdAt: FIXED_NOW, updatedAt: FIXED_NOW,
     }).returning();
-    const ctx: ServiceContext = { db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "rearm-forward" };
+    const ctx: ServiceContext = { db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "rearm-forward" };
     const deps = {
       rearmTransient: true,
       openFetchAdapter: async () => {

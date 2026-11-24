@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,11 +9,11 @@ import { serviceUp } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { LEGACY_NEWS_FOLDER, NEWS_FOLDER } from "@trafficflow/core/folder-name";
-import { MessageService, SearchService, readMailboxFilings, type ServiceContext } from "@trafficflow/services";
-import { runSyncCycle } from "../src/sync.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
-import { greenmailPorts } from "./_greenmail-ports.js";
+import { MessageService, SearchService, readMailboxFilings, type ServiceContext, dbFor } from "@trafficflow/services";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";
 import { world } from "../../../packages/api/test/_self-check-world.js";
 import { selfCheckMailbox } from "../../../packages/api/src/mailbox-self-check.js";
 
@@ -67,7 +68,7 @@ async function rig() {
     if (role === "organizer") await a.ensureFolders(FIXTURE_DOOR);
     return a;
   };
-  const ctx: ServiceContext = { db: w.db as never, accountId: w.accountId, userId: null, now: () => new Date(), requestId: "tail" };
+  const ctx: ServiceContext = { db: dbFor(w.db, w.accountId), accountId: w.accountId, userId: null, now: () => new Date(), requestId: "tail" };
   const live = async () => (await w.db.select({ s: messages.subject, d: messages.deletedAt }).from(messages)
     .where(eq(messages.mailboxId, w.mailboxId))).filter((r) => r.d === null).map((r) => r.s).sort();
   const listed = async () => (await new MessageService().list(ctx, { view: "all", limit: 50 })).items.length;
@@ -92,7 +93,7 @@ async function rig() {
       if (loc?.folder === NEWS_FOLDER) await db.update(messages).set({ nativeLocator: { ...loc, folder: LEGACY_NEWS_FOLDER } }).where(eq(messages.id, m.id));
       if (filed) {
         const row = { desiredFolder: LEGACY_NEWS_FOLDER, observedFolder: LEGACY_NEWS_FOLDER, lastSetBy: "us", reconcileStatus: "reconciled" } as const;
-        await db.insert(folderState).values({ messageId: m.id, ...row })
+        await db.insert(folderState).values({ messageId: m.id, accountId: accountOfMessage(m.id), ...row })
           .onConflictDoUpdate({ target: folderState.messageId, set: row });
       }
     }
@@ -271,7 +272,7 @@ describe("a deleted folder under a waiting filing, end to end", { timeout: 90_00
     const org = await settled(r);
     // No verb files into a folder of the person's; an intent naming one (an import's) is written as stored.
     const row = { desiredFolder: "Archive", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending" } as const;
-    await r.w.db.insert(folderState).values({ messageId: await idOf(r, "rename tail p1"), ...row })
+    await r.w.db.insert(folderState).values({ messageId: await idOf(r, "rename tail p1"), accountId: accountOfMessage(await idOf(r, "rename tail p1")), ...row })
       .onConflictDoUpdate({ target: folderState.messageId, set: row });
     await r.drain(org, "organizer");
 

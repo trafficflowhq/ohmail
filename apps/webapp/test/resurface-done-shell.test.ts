@@ -1,11 +1,13 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { FixturesAdapter, type EngineMutation } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import { barVerb, cursorRow, menuItem, ohboxRows } from "./ohbox/_finders.js";
 
 /**
  * "DONE" ON A RESURFACE, DRIVEN THROUGH THE SHELL — what the verb puts on the wire.
@@ -63,7 +65,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -73,7 +75,7 @@ async function mountShell(): Promise<void> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
@@ -83,10 +85,24 @@ async function mountShell(): Promise<void> {
   await key("j");
 }
 
+/**
+ * THE ADDRESS AS A BROWSER ANNOUNCES IT. At the seated Ohbox the selection is the address, and the frame hears a move
+ * of it by its `hashchange`; jsdom queues that event on a task this file's fake clock never runs (the reason this file
+ * already announces a link by hand). A press that moved the address announces it here, as the browser does a frame
+ * later.
+ */
+let heardHash = "";
+const hearAddress = async (): Promise<void> => {
+  if (window.location.hash === heardHash) return;
+  heardHash = window.location.hash;
+  await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
+};
+
 const key = async (k: string): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
   });
+  await hearAddress();
 };
 
 const click = async (el: Element | null | undefined): Promise<void> => {
@@ -94,20 +110,41 @@ const click = async (el: Element | null | undefined): Promise<void> => {
   await act(async () => {
     el!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
+  await hearAddress();
 };
 
-/** An action-bar control by the START of its label — labels carry keycaps. */
-const barButton = (label: string): HTMLButtonElement | undefined =>
+/** A control of today's bar, in a pile's own reading column, by the START of its label — labels carry keycaps. */
+const todaysVerb = (label: string): HTMLButtonElement | undefined =>
   [...host!.querySelectorAll<HTMLButtonElement>(".abar button")]
     .find((b) => (b.textContent ?? "").trim().startsWith(label));
+/**
+ * A verb of the open letter, where the place on screen draws it: at the seated Ohbox on the letter's action panel, or
+ * in the menu a verb of the panel opened (Resurface's horizons); in a pile of today's, on today's bar.
+ */
+const barButton = (label: string): HTMLElement | undefined =>
+  barVerb(host!, label) ?? menuItem(label) ?? todaysVerb(label);
 
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
+/** The Done a pinned row offers beside it: today's piles stand `.rsf-done` there, the Ohbox's row its quick verb in
+ *  its slot, named Done. */
+const doneBeside = (rowEl: Element | null | undefined): HTMLButtonElement | null => {
+  const slot = rowEl?.parentElement;
+  if (!slot) return null;
+  return slot.querySelector<HTMLButtonElement>(".rsf-done") ??
+    (slot.getAttribute("role") !== "listbox"
+      ? [...slot.querySelectorAll<HTMLButtonElement>("button")].find((b) => (b.textContent ?? "").trim() === "Done") ?? null
+      : null);
+};
+/** The Done the row of a letter still offers beside it, wherever the row stands (the new list's other rows offer
+ *  their own quick Done, so the spent pin's row is read by its letter). */
+const doneBesideRowOf = (id: string): HTMLButtonElement | null =>
+  doneBeside(host!.querySelector(`:is(.row, [role=option])[data-id="${id}"]`));
 
 /** The ids rendered in a labelled listbox, top to bottom. */
 function idsInGroup(label: string): string[] {
   const box = host!.querySelector(`[role="listbox"][aria-label="${label}"]`);
   if (!box) return [];
-  return [...box.querySelectorAll(".row[data-id]")].map((r) => (r as HTMLElement).dataset.id!);
+  return [...box.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => (r as HTMLElement).dataset.id!);
 }
 
 /**
@@ -117,14 +154,14 @@ function idsInGroup(label: string): string[] {
 async function cursorOnOlderEarlierRow(): Promise<string[]> {
   const before = idsInGroup("Earlier");
   expect(before.length, "the demo's Earlier needs two rows").toBeGreaterThan(1);
-  await click(host!.querySelector(`[role="listbox"][aria-label="Earlier"] .row[data-id="${before[1]}"]`));
-  expect(host!.querySelector<HTMLElement>(".row.sel")?.dataset.id).toBe(before[1]);
+  await click(host!.querySelector(`[role="listbox"][aria-label="Earlier"] :is(.row, [role=option])[data-id="${before[1]}"]`));
+  expect(cursorRow(host!)?.dataset.id).toBe(before[1]);
   return before;
 }
 
 /** Pin the message under the cursor via the chooser, and return its id. */
 async function pinSelected(): Promise<string> {
-  const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+  const id = cursorRow(host!)?.dataset.id;
   expect(id, "no row under the cursor").toBeTruthy();
   await key("Enter");
   await click(barButton("Resurface"));
@@ -137,6 +174,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   setViewport();
   window.location.hash = "#/ohbox";
+  heardHash = "";
   sent = [];
   // Counted at the ADAPTER — the last thing before the wire — and CALLED THROUGH, so the
   // engine's overlay is reconciled rather than frozen. See `resurface-now-shell.test.ts`.
@@ -159,8 +197,9 @@ afterEach(async () => {
 describe("Done on a PINNED message — the deliberate release, nothing else", () => {
   it("the bar offers Done in the read slot, and no bare Mark-as-read beside it", async () => {
     await mountShell();
-    await pinSelected();
-    expect(barButton("Done"), "the pinned message's bar has no Done").toBeTruthy();
+    const id = await pinSelected();
+    /* Declared: at the seated Ohbox the Done of a resurfaced letter is on the list's row. */
+    expect(doneBesideRowOf(id), "the pinned message's bar has no Done").toBeTruthy();
     // The slot is a slot: on a pinned message the release owns it, the plain directions do not.
     expect(barButton("Mark read")).toBeUndefined();
     expect(barButton("Mark unread")).toBeUndefined();
@@ -171,7 +210,8 @@ describe("Done on a PINNED message — the deliberate release, nothing else", ()
     const id = await pinSelected();
 
     sent = [];
-    await click(barButton("Done"));
+    /* Declared: the Done is on the list's row at the seated Ohbox. */
+    await click(doneBesideRowOf(id));
 
     const seen = kinds("mark_seen") as Array<{ messageIds: string[]; unread: boolean; via?: string }>;
     expect(seen, "the press reached the adapter as nothing at all").toHaveLength(1);
@@ -189,10 +229,11 @@ describe("Done on a PINNED message — the deliberate release, nothing else", ()
     const before = await cursorOnOlderEarlierRow();
     const id = await pinSelected();
 
-    await click(barButton("Done"));
+    /* Declared: the Done is on the list's row at the seated Ohbox. */
+    await click(doneBesideRowOf(id));
     // First frame: the release control is gone with the pin it released (the row itself keeps
     // its slot for the slide — see `MessageRow.actions` — but offers nothing).
-    expect(host!.querySelector(".rsf-done"), "a spent pin still offers Done").toBeNull();
+    expect(doneBesideRowOf(id), "a spent pin still offers Done").toBeNull();
 
     // The slide (SETTLE_MS = 280) re-files the row under "Earlier" at its arrival slot: the
     // release stamps `lastReadAt`, which is state and sorts nothing, and writes no open read.
@@ -217,9 +258,9 @@ describe("Done on the Resurfaced ROW — the batched release, at the adapter", (
     const id = await pinSelected();
 
     sent = [];
-    const rowEl = host!.querySelector<HTMLElement>(`[role="listbox"][aria-label="Resurfaced"] .row[data-id="${id}"]`);
+    const rowEl = host!.querySelector<HTMLElement>(`[role="listbox"][aria-label="Resurfaced"] :is(.row, [role=option])[data-id="${id}"]`);
     expect(rowEl, "the pinned row is not under Resurfaced").toBeTruthy();
-    await click(rowEl!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done"));
+    await click(doneBeside(rowEl));
 
     const seen = kinds("mark_seen") as Array<{ messageIds: string[]; unread: boolean; via?: string }>;
     expect(seen, "the row's Done reached the adapter as nothing at all").toHaveLength(1);
@@ -236,8 +277,8 @@ describe("Done on the Resurfaced ROW — the batched release, at the adapter", (
     await mountShell();
     const before = await cursorOnOlderEarlierRow();
     const id = await pinSelected();
-    const rowEl = host!.querySelector<HTMLElement>(`[role="listbox"][aria-label="Resurfaced"] .row[data-id="${id}"]`);
-    await click(rowEl!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done"));
+    const rowEl = host!.querySelector<HTMLElement>(`[role="listbox"][aria-label="Resurfaced"] :is(.row, [role=option])[data-id="${id}"]`);
+    await click(doneBeside(rowEl));
 
     await act(async () => { vi.advanceTimersByTime(400); });
     expect(idsInGroup("Resurfaced")).toEqual([]);
@@ -251,7 +292,7 @@ describe("Done on a SCHEDULED row — the same release, plus the cancelled booki
     await mountShell();
     // Book a return for the message under the cursor: Resurface → Tomorrow parks it into the
     // Resurface pile (one pile only — it leaves the Ohbox entirely).
-    const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+    const id = cursorRow(host!)?.dataset.id;
     expect(id).toBeTruthy();
     await key("Enter");
     await click(barButton("Resurface"));
@@ -264,9 +305,11 @@ describe("Done on a SCHEDULED row — the same release, plus the cancelled booki
       window.dispatchEvent(new Event("hashchange"));
     });
 
-    const rowEl = host!.querySelector<HTMLElement>(`.view-triage .row[data-id="${id}"]`);
-    expect(rowEl, "the booked message is not in the Resurface pile").toBeTruthy();
-    const done = rowEl!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done");
+    const bookedRow = () => host!.querySelector<HTMLElement>(
+      `[role="listbox"][aria-label="Resurface"] [role="option"][data-id="${id}"]`,
+    );
+    expect(bookedRow(), "the booked message is not in the Resurface pile").toBeTruthy();
+    const done = doneBeside(bookedRow());
 
     sent = [];
     await click(done);
@@ -284,6 +327,29 @@ describe("Done on a SCHEDULED row — the same release, plus the cancelled booki
     expect(seen[0]!.via).toBeUndefined();
 
     // The pile lets go of the row in the same gesture.
-    expect(host!.querySelector(`.view-triage .row[data-id="${id}"]`)).toBeNull();
+    expect(bookedRow()).toBeNull();
+  });
+});
+
+describe("a focused Done the press takes away gives the keyboard to the list (the shell's one focus rule)", () => {
+  /* `focus-follows`: a focused control the page removes (a row's Done) lands on the row after it, else the row before
+     it, as for any control a verb takes away; never the page, never a control of the list's head. */
+  it("the keyboard lands on the row that stood after the pinned row", async () => {
+    await mountShell();
+    const id = await pinSelected();
+    const rowEl = host!.querySelector<HTMLElement>(`[role="listbox"][aria-label="Resurfaced"] :is(.row, [role=option])[data-id="${id}"]`);
+    const done = doneBeside(rowEl);
+    expect(done, "the premise: the pinned row offers Done").toBeTruthy();
+    const rows = ohboxRows(host!);
+    const after = rows[rows.indexOf(rowEl!) + 1]?.dataset.id;
+    expect(after, "the premise: a row stands after the pinned one").toBeTruthy();
+    await act(async () => { done!.focus(); });
+    expect(document.activeElement, "the premise: Done holds the keyboard").toBe(done);
+    await click(done);
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(done!.isConnected, "the premise: the press took Done away").toBe(false);
+    const at = document.activeElement as HTMLElement | null;
+    const where = at === null || at === document.body ? "the page" : at.outerHTML.slice(0, 120);
+    expect(at?.closest(":is(.row, [role=option])")?.getAttribute("data-id"), `after Done the keyboard is on ${where}`).toBe(after);
   });
 });

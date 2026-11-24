@@ -7,11 +7,12 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser } from "@playwright/test";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { createSidecar, type Sidecar } from "../../sidecar/src/engine.js";
 import { startHostListener, type HostListener } from "../../sidecar/src/host-listener.js";
-import { fenced, HOST, type Person } from "../../../test/journeys/bench/web.js";
+import { fenced, type PlaywrightPerson } from "../../../test/journeys/bench/dom-playwright.js";
+import { HOST } from "../../../test/journeys/bench/seam.js";
 import { say } from "../../../test/journeys/vocabulary/catalogue.js";
 import { HOST_PANES } from "../../../test/journeys/vocabulary/panes.js";
 import { PLACES } from "../../../test/journeys/vocabulary/places.js";
@@ -50,7 +51,7 @@ async function freePort(): Promise<number> {
 }
 
 /** A phone's browser, paired: it opens the pairing address with a code this engine just minted. */
-async function paired(): Promise<Person> {
+async function paired(): Promise<PlaywrightPerson> {
   const minted = await sidecar.handle(new Request("http://sidecar/pair", {
     method: "POST", headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
     body: JSON.stringify({ grant: "device-pair" }),
@@ -103,6 +104,16 @@ describe.skipIf(!ENABLED)("journeys · the paired page · H", () => {
     await person.arrive("settings");
     await person.see("menu-settings-general");
     const menu = await person.listed("settings-menu", "button");
+    expect([...menu].sort()).toEqual(HOST_PANES.map((id) => say(PLACES[`settings-${id}`].landmark.key)).sort());
+    await person.act("press", "menu-settings-notifications");
+    await person.see("notify-master");
+    await person.act("press", "menu-settings-rules");
+    await person.readsWithDot("rules.empty");
+    await person.act("press", "menu-settings-tags");
+    await person.see("tag-new");
+    await person.act("press", "menu-settings-signatures");
+    await person.page.getByRole("textbox", { name: /^Signature: / }).click();
+    await person.see("signature-save");
     const record = process.env.TF_JOURNEYS_RECORD;
     if (record) {
       mkdirSync(join(record, "H"), { recursive: true });
@@ -119,7 +130,6 @@ describe.skipIf(!ENABLED)("journeys · the paired page · H", () => {
       }, null, 1));
       writeFileSync(join(record, "H", "settings.calls.json"), JSON.stringify([...new Set(asked)].sort(), null, 1));
     }
-    expect([...menu].sort()).toEqual(HOST_PANES.map((id) => say(PLACES[`settings-${id}`].landmark.key)).sort());
     expect(person.problems([/status of 40[14]/])).toEqual([]);
     await person.context.close();
   });

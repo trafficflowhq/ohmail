@@ -5,7 +5,7 @@
  * was flagged, and a message the local mirror does not hold has its body fetched first. The send
  * carries `forwardConfirmed` after the ask; the server refuses a `no_forward` forward without it.
  */
-import type { EngineMessage } from "./types.js";
+import type { EngineMessage } from "@ohmail/wire";
 
 /** Why the ask names the message: its sensitivity category, or the flag alone. */
 export type ForwardAsk = "otp" | "verification" | "password_reset" | "security_alert" | "sensitive";

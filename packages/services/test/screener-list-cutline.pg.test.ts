@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -11,7 +12,7 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { ScreenerService, type ServiceContext } from "@trafficflow/services";
 import {
   MemoryMirrorStore, consentPartition, presentationReader, screenerSegments,
-  type EngineMessage, type Folder, type RuleDTO, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { cutlineCounts } from "../src/consent-cutline.js";
 
@@ -106,7 +107,7 @@ async function seed(scope: string): Promise<{ accountId: string; retiredMessageI
       nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -187,7 +188,7 @@ describe.skipIf(!PG_UP)("the Screener list consults the cutline", () => {
         nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
     }
@@ -256,7 +257,7 @@ describe.skipIf(!PG_UP)("the Screener list consults the cutline", () => {
         nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
     };
@@ -343,7 +344,7 @@ async function seedRuled(): Promise<{ accountId: string; own: string }> {
       nativeLocator: { folder, ref: `1:${i}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };

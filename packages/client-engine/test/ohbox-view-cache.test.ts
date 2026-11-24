@@ -1,10 +1,9 @@
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   ohboxView,
-  type EngineMessage,
   type EntityReader,
-  type Folder,
   type SyncChange,
 } from "@ohmail/client-engine";
 

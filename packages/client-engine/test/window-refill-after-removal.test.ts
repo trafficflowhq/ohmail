@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome, SyncSnapshotPage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -6,12 +7,9 @@ import {
   STORE_POLICY_GENERATION_META,
   WINDOW_REFILL_OWED_META,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type StorePolicy,
   type SyncChange,
   type SyncResponse,
-  type SyncSnapshotPage,
 } from "../src/index.js";
 
 /**

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /** The planted file the classifier is shown: a path that names no real source, joined from two parts so
  *  the published tree's citation gate does not read it as a link to the private tree. */
@@ -60,6 +60,12 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../.
  *  · `organizeHere` reverted to its own `asTx(ctx).transaction(…)` → the call-site case red
  *    naming all three consent-settings writes, which is the door this census FOUND: the consent
  *    write was never among the four hand-written fence calls;
+ *  · the stamp's read taken out of the send's `settleLocks` → ONLY "a send's settle opens on the
+ *    account's stamp" goes red here, for the seam case's reason: the settle's write still sits
+ *    behind the call, and the helper's own source is what says the call reads the stamp. What
+ *    the read buys is behaviour: `send-settle-erasure.pg.test.ts` goes red on both its races;
+ *  · `settleLocks` taken out of the spellings → the allow-list case red naming the send service's
+ *    contacts write by line, which is how this spelling came to be learned;
  *  · `readAccountErasedAt`'s `{ mode: "share" }` deleted → nothing here moves, and the race pg
  *    test's CONCURRENT arm goes red. A lock is behaviour, not text: this file cannot see it, and
  *    saying so is why both guards exist.
@@ -157,7 +163,7 @@ function hits(src: string, re: string): Array<[number, RegExpExecArray]> {
 
 const lineOf = (src: string, at: number): number => src.slice(0, at).split("\n").length;
 
-const read = (f: string): string => readFileSync(path.join(ROOT, f), "utf8");
+const read = (f: string): string => readAsUnit(path.join(ROOT, f));
 
 const SWEEP = "packages/services/src/account-deletion-service.ts";
 const DOOR = "packages/services/src/context.ts";
@@ -277,7 +283,7 @@ function serverSources(): string[] {
   // `git ls-files` with a `**` pathspec matched a fraction of the tree when the dialect census was
   // written, so the listing is filtered here where the rule is readable.
   const out = execFileSync("git", ["ls-files", "apps", "packages"], { cwd: ROOT, encoding: "utf8" });
-  return out.split("\n").filter((f) => /^(apps|packages)\/[^/]+\/src\/.*\.ts$/.test(f));
+  return out.split("\n").filter((f) => /^(apps|packages)\/[^/]+\/src\/.*\.ts$/.test(f) && !isEnginePart(path.join(ROOT, f)));
 }
 
 /**
@@ -324,21 +330,34 @@ function sameBlock(from: readonly number[], to: readonly number[]): boolean {
  *
  * A `{` belongs to the type while angle brackets are open, or where the previous non-space
  * character still demands one; anything else opens the body. `;` or `=` first means there is no
- * body at all — an overload signature, or a property.
+ * body at all — an overload signature, or a property. So does the END OF THE STATEMENT written
+ * without a semicolon: the method arm takes any line that starts with a name and `(`, a call or an
+ * interface's member too, and a scan that ran on through its `}` or `)` took the next class's or
+ * namespace's brace for its body. A closer nothing in the scan opened, or a declaration word,
+ * ends it; a type's own brackets are passed over whole, so their closers are never met.
+ *
+ * ITS ONE CONTRACT: `from` is the first character AFTER the argument list's closing paren. Asked
+ * from the paren itself, the scan meets a closer it did not open and finds no body.
  */
 function bodyBrace(src: string, from: number): number {
   let angle = 0;
-  let prev = "";
+  let prev = ")";   // as if the paren were just read: a `{` met first is the body, never a type
   for (let i = from; i < src.length; i++) {
     const c = src[i]!;
     if (/\s/.test(c)) continue;
     if (c === "<") { angle++; prev = c; continue; }
     if (c === ">") { if (angle > 0) angle--; prev = c; continue; }
     if (c === ";" || c === "=") return -1;
+    if (c === "}" || c === ")") return -1;   // closes what the statement's line was inside: it has ended
+    if (c === "(") { const [, end] = span(src, i); i = end; prev = ")"; continue; }   // `(A | B)`: one type
+    if (/[A-Za-z]/.test(c) && !/[\w$.]/.test(src[i - 1] ?? "")
+        && /^(?:class|namespace|module|interface|enum|function|export)(?![\w$.])/.test(src.slice(i, i + 10))) {
+      return -1;   // a new declaration begins: a return type never holds one
+    }
     if (c === "{") {
       if (angle === 0 && !":<,|&(".includes(prev)) return i;
       const [, end] = span(src, i, "{", "}");
-      i = end - 1;
+      i = end;   // past the type's own `}`, which would otherwise end the scan as a closer
       prev = "}";
       continue;
     }
@@ -373,8 +392,15 @@ function bodies(src: string): Array<[number, number]> {
   return out;
 }
 
-/** The seam and the two edge translations of it. One mechanism; these are its spellings. */
-const SEAM = String.raw`(?:fencedAccountWrite|withAccountTx|fenceErasedScope|fenceErasedAccount|fenceErased|readAccountErasedAt)`;
+/**
+ * The seam and the two edge translations of it. One mechanism; these are its spellings.
+ *
+ * `settleLocks` is the send service's: every settle of a send opens with it, and its first
+ * statement is the fence's own read. It is spelled here because a settle may not go through the
+ * door — the door refuses on a stamp, and a letter the server has accepted is recorded all the
+ * same — and the settle case below reads its source, as the seam case reads the seam's.
+ */
+const SEAM = String.raw`(?:fencedAccountWrite|withAccountTx|fenceErasedScope|fenceErasedAccount|fenceErased|readAccountErasedAt|settleLocks)`;
 
 /**
  * The MAILBOX ARM asked alone — its own pattern rather than another `SEAM` alternative, because
@@ -487,6 +513,8 @@ const ALLOWLIST: Record<string, string> = {
   // ── Before any session exists ──────────────────────────────────────────────────────────────
   "packages/services/src/auth/auth-service.ts insert users":
     "account creation: there is no account to fence against until this row exists",
+  "packages/services/src/auth/auth-service.ts insert accountSettings":
+    "initial settings share the account's creation transaction; erasure cannot stamp the new account before commit",
   "packages/services/src/auth/auth-service.ts insert webauthnChallenges":
     "a sign-in ceremony, started by an unauthenticated caller and keyed by a challenge, not by " +
     "an account; an erased account has no users left to finish one",
@@ -526,6 +554,34 @@ const ALLOWLIST: Record<string, string> = {
   "packages/services/src/mailbox-service.ts insert accountSettings":
     "written by `stampScreeningBaseline` / `writeScreeningAnswer` on the fenced transaction " +
     "`organizeHere` opens — asserted, not assumed, by the call-site case in this file",
+
+  // ── The calendar sync's turn (packages/organizer/src/calendar) ─────────────────────────────────────
+  // Each write runs on the transaction of one turn, which `inConnection` alone opens, through the
+  // store's `fencedConnectionWrite`: `fencedAccountWrite` first, then the connection's mailbox and
+  // row FOR SHARE. The four tables hang on composite `foreignKey({ … })` keys, which
+  // `foreignKeys()` does not read, so they are class (c) here and not (b1). The calendar call-site
+  // case below asserts every link of the reason.
+  "packages/organizer/src/calendar/apply.ts insert calEvents":
+    "an event row, written on the turn's transaction that only `inConnection` opens, through the store's " +
+    "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
+    "the calendar call-site case",
+  "packages/organizer/src/calendar/apply.ts insert calAttendees":
+    "an event's invitees, written on the turn's transaction that only `inConnection` opens, through the store's " +
+    "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
+    "the calendar call-site case",
+  "packages/organizer/src/calendar/apply.ts insert calAlarms":
+    "an event's reminders, written on the turn's transaction that only `inConnection` opens, through the store's " +
+    "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
+    "the calendar call-site case",
+  "packages/organizer/src/calendar/calendars.ts insert calCalendars":
+    "a listed calendar, written on the turn's transaction that only `inConnection` opens, through the store's " +
+    "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
+    "the calendar call-site case",
+  "apps/worker/src/calendar/notice-channels.ts insert calPushChannels":
+    "a provider's notice channel, written by the worker's channel pass on the transaction that only `inConnection` " +
+    "(`@ohmail/organizer/calendar-sync`) opens, through the store's `fencedConnectionWrite`, which opens it with " +
+    "`fencedAccountWrite`, the account's erasure fence; the row's key (connection_id, account_id) also hangs on a " +
+    "connection the sweep deletes",
 
   // ── db-layer primitives: they write inside the CALLER's transaction ────────────────────────
   // Each takes a handle it did not open. The fence belongs to the door that opened it, which is
@@ -595,11 +651,24 @@ const ALLOWLIST: Record<string, string> = {
   // after the sweep never reaches this write" is true of a run that STARTS after it and says
   // nothing about the run already past that read — which is the one that stamps. The pass pages
   // through an account over minutes; an erasure landing inside that window met an UPSERT into a
-  // table the sweep empties. It is fenced now, and pinned below.
-  "apps/worker/src/gap-catchup.ts insert auditLog": "a background pass, no session",
+  // table the sweep empties. It is fenced now. Its stamp is a row of `pass_progress` since mail
+  // 0203, written through that table's one door inside the pass's own fenced transaction; the pin
+  // is `gate-release-erasure-fence.pg.test.ts`, which lands the sweep inside the window.
+  //
+  // THE ONE DOOR TO `pass_progress` (mail 0203). Every pass's marks are written by this one
+  // statement, and no call of the account fence is in its file, which is all this census reads.
+  // What the statement does itself: it writes a mailbox's mark only from the mailbox's own row,
+  // read FOR SHARE and not erased, so a removal waits for it and then deletes the row; it writes
+  // an account's mark only while the account is not erased; and both sweeps delete the table
+  // after the rows a pass holds while it writes. `pass-progress.test.ts` and
+  // `pass-progress-move.pg.test.ts` hold each half. A pass whose stamp trails its work takes the
+  // account fence at the head of its own transaction, as the gate release does.
+  "packages/db/src/pass-progress.ts insert passProgress":
+    "the door's own statement asks for its subject: a mailbox's row FOR SHARE and not erased, an account not erased",
+  "packages/organizer/src/gap-catchup.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/ohbox-tidy.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/redacted-restore.ts insert auditLog": "a background pass, no session",
-  "apps/worker/src/rule-retro.ts insert auditLog": "a background pass, no session",
+  "packages/organizer/src/rule-retro.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/sensitive-backfill.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/workflow-cron.ts insert workflowRuns":
     "the workflow cron, which enqueues only for a workflow row the sweep deletes",
@@ -644,6 +713,12 @@ const MAILBOX_ALLOWLIST: Record<string, string> = {
     + "Asserted by the case below rather than trusted. A fence here was written and REVERTED: it "
     + "takes a `mailboxes` row lock, and this transaction is built not to block on one — "
     + "`send-disabled-mailbox.pg.test.ts` timed out on it, which is the design saying so",
+  "packages/services/src/calendar/connect.ts insert calConnections":
+    "the connect door makes a connection that rides NO mailbox: this insert never names one (a "
+    + "connection that rides a mailbox's sign-in is made with that mailbox, not at this door), so no "
+    + "mailbox's erasure owns the row. The account's does, and the account is what the seam fences. "
+    + "Held by behaviour: every connection the door makes answers `grantMailboxId: null` "
+    + "(`packages/api/test/calendar-connect-routes.test.ts`, the three ways)",
 };
 
 /**
@@ -720,6 +795,33 @@ describe("the erasure fence census", () => {
     const body = src.slice(at, src.indexOf("\n}\n", at));
     expect(body, "the services door opens its own transaction again").not.toContain(".transaction(");
     expect(body, "the services door no longer goes through the seam").toContain("fencedAccountWrite(");
+  });
+
+  it("a send's settle opens on the account's stamp — `settleLocks` reads it before it takes a row", () => {
+    /**
+     * WHAT MAKES `settleLocks` A SPELLING OF THE FENCE, read off its own body as the seam's is
+     * above. A settle writes what became of a letter the server may already have accepted, so it
+     * READS the stamp and is never refused on it; the read is `readAccountErasedAt`, FOR SHARE,
+     * ahead of the draft row and of everything else the settle takes. What a settle then does with
+     * the answer is behaviour, and `send-settle-erasure.pg.test.ts` holds it against
+     * `deleteAccount` in both orders.
+     */
+    const file = "packages/services/src/send-service.ts";
+    // ONE declaration: the spelling is a name, and a second function of that name anywhere in the
+    // server would be read as fenced for carrying it.
+    expect(serverSources().filter((f) => /\bfunction\s+settleLocks\s*\(/.test(withoutComments(read(f)))),
+      "`settleLocks` is declared once, in the send service").toEqual([file]);
+    const src = withoutComments(read(file));
+    const at = src.indexOf("async function settleLocks(");
+    const body = src.slice(at, src.indexOf("\n}", at));
+    const fence = body.indexOf("readAccountErasedAt(");
+    expect(fence, "`settleLocks` no longer reads the account's stamp").toBeGreaterThan(-1);
+    // The one `await` up to the read is the read's own: no row is locked in front of the account's.
+    expect(body.slice(0, fence).match(/\bawait\b/g) ?? []).toHaveLength(1);
+    // …and the write this spelling was learned for is SEEN, once, and reads as fenced by position:
+    // the contacts a delivered letter teaches, behind the settle's own call.
+    expect(DOORS.filter((d) => d.file === file && d.op === "insert" && d.table === "contacts").map((d) => d.cls))
+      .toEqual(["a-fenced"]);
   });
 
   it("every unfenced writer is on the written allow-list — a new one is red by name", () => {
@@ -919,6 +1021,90 @@ describe("the erasure fence census", () => {
       .map((d) => `${d.table} ${d.cls}`))
       .toEqual(["snippets c-unfenced"]);
 
+    /* NO RETURN TYPE AT ALL — the other side of the same scan. It starts just past the argument
+       list, and a `{` met there first is the body: read as a type, the body was skipped and the
+       scan ran on to the next brace it would take. Driven both ways again: a fenced door with no
+       return type reads fenced, and a helper with none, followed by a class, does not hand the
+       class's body over as "a body" — where a fence in one method fenced a write in the next. */
+    const untypedReturn = `
+      import { snippets, fenceErased } from "@trafficflow/db";
+      export async function untypedDoor(tx: Tx, accountId: string) {
+        await fenceErased(tx, dialect(tx), { accountId });
+        await tx.insert(snippets).values({ accountId, title: "t", body: "b" });
+      }
+    `;
+    expect(classify(PLANTED, untypedReturn)
+      .map((d) => `${d.table} ${d.cls}`))
+      .toEqual(["snippets a-fenced"]);
+
+    const untypedThenClass = `
+      import { snippets, fenceErased } from "@trafficflow/db";
+      export function helper(n: number) {
+        return n + 1;
+      }
+      export class Svc {
+        async check(tx: Tx, accountId: string) {
+          await fenceErased(tx, dialect(tx), { accountId });
+        }
+        async write(tx: Tx, accountId: string) {
+          await tx.insert(snippets).values({ accountId, title: "t", body: "b" });
+        }
+      }
+    `;
+    expect(classify(PLANTED, untypedThenClass)
+      .map((d) => `${d.table} ${d.cls}`))
+      .toEqual(["snippets c-unfenced"]);
+
+    /* A STATEMENT THAT ENDS WITHOUT A SEMICOLON — the same scan, one step on. The method arm
+       takes any line that starts with a name and `(`, so a call on its own line, an interface's
+       member, an arrow's body on the next line and a parenthesised return reach the scan too. It
+       stopped only at `;` or `=`, ran through the statement's own `}` or `)` to the next class's
+       or namespace's brace, and that body became "a body": the fence in one method fenced the
+       insert in a later one. Nothing in the repository enforces semicolons. */
+    const laterClass = `
+      export class Svc {
+        async check(tx: Tx, accountId: string) {
+          await fenceErased(tx, dialect(tx), { accountId });
+        }
+        async write(tx: Tx, accountId: string) {
+          await tx.insert(snippets).values({ accountId, title: "t", body: "b" });
+        }
+      }
+    `;
+    const laterNamespace = `
+      export namespace Svc {
+        export async function check(tx: Tx, accountId: string) {
+          await fenceErased(tx, dialect(tx), { accountId });
+        }
+        export async function write(tx: Tx, accountId: string) {
+          await tx.insert(snippets).values({ accountId, title: "t", body: "b" });
+        }
+      }
+    `;
+    const noSemicolon: Record<string, string> = {
+      "a call": `
+      register(1)${laterClass}`,
+      "a call, then a namespace": `
+      register(1)${laterNamespace}`,
+      "an interface's member": `
+      interface Q {
+        foo(a: number): void
+      }${laterClass}`,
+      "an arrow's body on the next line": `
+      export const h = (n: number) =>
+        wrap(n)${laterClass}`,
+      "a return in parentheses": `
+      export function h(n: number): number {
+        return (
+          wrap(n)
+        )
+      }${laterClass}`,
+    };
+    expect(Object.entries(noSemicolon).flatMap(([what, before]) =>
+      classify(PLANTED, `import { snippets, fenceErased } from "@trafficflow/db";${before}`)
+        .map((d) => `${what}: ${d.table} ${d.cls}`)))
+      .toEqual(Object.keys(noSemicolon).map((what) => `${what}: snippets c-unfenced`));
+
     // An ALIASED planted insert, which is the hole this census carried until now.
     const aliased = `
       import { snippets as snip } from "@trafficflow/db";
@@ -1052,7 +1238,7 @@ describe("the erasure fence census", () => {
     // The merge fences its mailbox with the account itself, and its callers open the door it runs
     // in: this is the check that both do. Two callers, each inside its door; a third, or one
     // outside a door, is red by file and line.
-    const callers = ["packages/services/src/profile-import-service.ts", "apps/worker/src/profile.ts"];
+    const callers = ["packages/services/src/profile-import-service.ts", "packages/organizer/src/profile.ts"];
     const loose: string[] = [];
     for (const file of callers) {
       const src = withoutComments(read(file));
@@ -1113,10 +1299,9 @@ describe("the erasure fence census", () => {
       // allow-list entry somebody could re-add without noticing what it admits.
       "packages/services/src/away-responder-pass.ts insert awayReplies",
       "packages/services/src/away-responder-pass.ts insert awaySenderState",
-      "apps/worker/src/gate-release.ts insert accountSettings",
       // The profile marker now rings the settings doorbell in the same transaction, so it is
       // fenced with it: a late marker must not append a change row to an erased account's log.
-      "apps/worker/src/profile.ts insert auditLog",
+      "packages/organizer/src/profile.ts insert auditLog",
     ]) expect(fenced, `${k} is no longer fenced`).toContain(k);
   });
 
@@ -1185,6 +1370,132 @@ describe("the erasure fence census", () => {
     const loose = calls.filter(([at]) => !doors.some(([a, b]) => at > a && at < b))
       .map(([at, m]) => `${file}:${lineOf(src, at)} ${m[0]}`);
     expect(loose, "a rule written outside the fenced door").toEqual([]);
+  });
+
+  it("the calendar sync writes only on a turn's transaction, and only the erasure fence opens one", () => {
+    /**
+     * The four calendar rows in ALLOWLIST are claims about OTHER code: the write sits in a helper
+     * or a callback on a transaction the turn's door opened. Checked as the consent and the
+     * ceremony helpers are, link by link: (i) `inConnection` opens its transaction through
+     * `fencedConnectionWrite` and nothing else, and runs the caller inside it; (ii)
+     * `fencedConnectionWrite` opens through the seam, `fencedAccountWrite`, whose fence the seam
+     * case above reads; (iii) nothing else under the folder opens a transaction or holds a handle
+     * one could be opened on, and every insert there into a table the sweep empties is reached
+     * only from inside an `inConnection` call. A later writer in the folder that goes around the
+     * door is red here by file and line, whatever its table's row says.
+     */
+    const FOLDER = "packages/organizer/src/calendar/";
+    const CONNECTION = `${FOLDER}connection.ts`;
+    const FENCE = "packages/db/src/calendar/fence.ts";
+    const OPENERS = String.raw`\.transaction\s*\(|\b(?:withAccountTx|fencedAccountWrite|fencedConnectionWrite)\s*\(`;
+    const declared = (src: string, i: number) => /\bfunction\s+$/.test(src.slice(Math.max(0, i - 24), i));
+    const bodyOf = (src: string, head: string): [number, number] => {
+      const at = src.indexOf(head);
+      return [at, at === -1 ? -1 : src.indexOf("\n}", at)];
+    };
+
+    // (i) THE TURN'S DOOR.
+    const conn = withoutComments(read(CONNECTION));
+    const [inAt, inEnd] = bodyOf(conn, "export async function inConnection");
+    expect(inAt, "inConnection has moved or been renamed").toBeGreaterThan(-1);
+    const inBody = conn.slice(inAt, inEnd);
+    const inOpens = hits(inBody, OPENERS);
+    expect(inOpens.map(([, m]) => m[0].replace(/\s/g, "")),
+      "inConnection opens its transaction through fencedConnectionWrite and nothing else").toEqual(["fencedConnectionWrite("]);
+    const inDoor = span(inBody, inOpens[0]![0] + inOpens[0]![1][0].length - 1);
+    const inRuns = hits(inBody, String.raw`\bfn\s*\(`).map(([i]) => i);
+    expect(inRuns.length, "inConnection no longer runs the caller").toBeGreaterThanOrEqual(1);
+    expect(inRuns.every((i) => i > inDoor[0] && i < inDoor[1]),
+      "inConnection runs the caller outside the fenced transaction").toBe(true);
+    expect(read(CONNECTION), "inConnection's door is no longer the store's calendar fence")
+      .toMatch(/import\s*\{[^}]*\bfencedConnectionWrite\b[^}]*\}\s*from\s*"@trafficflow\/db\/calendar"/);
+    expect(read("packages/db/src/calendar/index.ts"), "the store's calendar entry no longer exports the fence")
+      .toMatch(/export\s*\{[^}]*\bfencedConnectionWrite\b[^}]*\}\s*from\s*"\.\/fence\.js"/);
+
+    // (ii) THE STORE'S CALENDAR FENCE IS THE SEAM.
+    const fence = withoutComments(read(FENCE));
+    const [fAt, fEnd] = bodyOf(fence, "export async function fencedConnectionWrite");
+    expect(fAt, "fencedConnectionWrite has moved or been renamed").toBeGreaterThan(-1);
+    const fBody = fence.slice(fAt, fEnd);
+    const fOpens = hits(fBody, OPENERS);
+    expect(fOpens.map(([, m]) => m[0].replace(/\s/g, "")),
+      "fencedConnectionWrite opens through fencedAccountWrite and nothing else").toEqual(["fencedAccountWrite("]);
+    const fDoor = span(fBody, fOpens[0]![0] + fOpens[0]![1][0].length - 1);
+    const fRuns = hits(fBody, String.raw`\bfn\s*\(`).map(([i]) => i);
+    expect(fRuns.length, "fencedConnectionWrite no longer runs the caller").toBeGreaterThanOrEqual(1);
+    expect(fRuns.every((i) => i > fDoor[0] && i < fDoor[1]),
+      "fencedConnectionWrite runs the caller outside the seam's transaction").toBe(true);
+    expect(read(FENCE), "the calendar fence's fencedAccountWrite is no longer the seam's")
+      .toMatch(/import\s*\{[^}]*\bfencedAccountWrite\b[^}]*\}\s*from\s*"\.\.\/erasure-fence\.js"/);
+
+    // (iii) NOTHING ELSE IN THE FOLDER OPENS A TRANSACTION OR HOLDS A HANDLE TO OPEN ONE ON.
+    const files = serverSources().filter((f) => f.startsWith(FOLDER));
+    expect(files, "the calendar sync's folder is gone").toContain(CONNECTION);
+    expect(files.length, "the folder listing looked at nothing").toBeGreaterThanOrEqual(10);
+    expect(conn, "the turn's handle symbols are exported")
+      .not.toMatch(/\bexport\s+(?:const|let|var)\s+(?:POOL|BOUND)\b|\bexport\s*\{[^}]*\b(?:POOL|BOUND)\b/);
+    const loose: string[] = [];
+    const turnWrites: string[] = [];
+    for (const f of files) {
+      const raw = read(f);
+      const src = withoutComments(raw);
+      const at = (i: number) => `${f}:${lineOf(src, i)}`;
+      for (const [i, m] of hits(src, OPENERS)) {
+        if (declared(src, i) || (f === CONNECTION && i > inAt && i < inEnd)) continue;
+        loose.push(`${at(i)} opens a transaction (${m[0].replace(/\s/g, "")}) outside inConnection`);
+      }
+      for (const [i] of hits(src, String.raw`\[\s*(?:BOUND|POOL)\s*\]`)) {
+        if (f !== CONNECTION) loose.push(`${at(i)} reaches the pool's raw handle`);
+      }
+      for (const [i, m] of hits(src, String.raw`\b(?:calendarPool|makeDb|makeOwnedDb|makePooledDb|drizzle)\s*\(`)) {
+        if (!declared(src, i)) loose.push(`${at(i)} makes a database handle (${m[0].replace(/\s/g, "")})`);
+      }
+      for (const [i] of hits(src, String.raw`\bunboundPool\s*\(`)) {
+        if (!declared(src, i) && f !== `${FOLDER}roster.ts`) loose.push(`${at(i)} takes the unbound pool outside the roster`);
+      }
+      if (f === `${FOLDER}roster.ts`) {
+        for (const [i, m] of hits(src, String.raw`\.(?:insert|update|delete|execute)\s*\(`)) {
+          loose.push(`${at(i)} the roster, on the unbound pool, writes (${m[0].replace(/\s/g, "")})`);
+        }
+      }
+      for (const [i] of hits(raw, String.raw`(?:^|\n)\s*import\s+(?!type\b)[^;]*?from\s*["']\.\.\/|\bimport\s*\(\s*["']\.\.\/`)) {
+        loose.push(`${f}:${lineOf(raw, i + 1)} imports a module from outside the folder`);
+      }
+
+      // Every insert into a table the sweep empties: inside an `inConnection` call, or in a private
+      // function every one of whose references is a call that is (followed to the door, in-file).
+      const turns = hits(src, String.raw`\binConnection\s*\(`).filter(([i]) => !declared(src, i))
+        .map(([i, m]) => span(src, i + m[0].length - 1));
+      const decls = hits(src, String.raw`(?:^|\n)[ \t]*(export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\(`)
+        .map(([d, m]) => {
+          // From the first character past the closing paren, as `bodies()` asks: a `{` met first
+          // there is the body.
+          const [, argEnd] = span(src, src.indexOf("(", d + m[0].length - 1));
+          const brace = bodyBrace(src, argEnd + 1);
+          return { name: m[2]!, exported: Boolean(m[1]), head: d, body: brace === -1 ? null : span(src, brace, "{", "}") };
+        })
+        .flatMap((d) => d.body === null ? [] : [{ ...d, body: d.body }]);
+      const onTurn = (i: number, seen: ReadonlySet<string>): boolean => {
+        if (turns.some(([a, b]) => i > a && i < b)) return true;
+        const inner = decls.filter((d) => i > d.body[0] && i < d.body[1]).sort((x, y) => y.body[0] - x.body[0])[0];
+        if (inner === undefined || inner.exported || seen.has(inner.name)) return false;
+        const refs = hits(src, String.raw`\b${inner.name.replace(/\$/g, "\\$")}\b`).filter(([r]) => r < inner.head || r >= inner.body[0]);
+        return refs.length > 0 && refs.every(([r, m]) =>
+          /^\s*\(/.test(src.slice(r + m[0].length)) && onTurn(r, new Set([...seen, inner.name])));
+      };
+      const alias = aliases(src);
+      for (const [i, m] of hits(src, String.raw`\.insert\(\s*([A-Za-z_$][\w$]*)\s*\)`)) {
+        const table = alias.get(m[1]!) ?? m[1]!;
+        if (!ERASED.has(table)) continue;
+        if (onTurn(i, new Set())) turnWrites.push(`${f} insert ${table}`);
+        else loose.push(`${at(i)} inserts ${table} off a turn's transaction`);
+      }
+    }
+    expect(loose, "a calendar writer, transaction or handle that goes around inConnection's fenced door").toEqual([]);
+    for (const k of [
+      `${FOLDER}apply.ts insert calAttendees`, `${FOLDER}apply.ts insert calAlarms`,
+      `${FOLDER}apply.ts insert calEvents`, `${FOLDER}calendars.ts insert calCalendars`,
+    ]) expect(turnWrites, `${k} is no longer found on a turn's transaction`).toContain(k);
   });
 
   it("proves the (b1) ordering it rests on, rather than asserting it", () => {

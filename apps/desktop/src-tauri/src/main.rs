@@ -163,8 +163,30 @@ mod allocator_arenas;
 // Linux. Always compiled: every build opens the same window (issue #14).
 mod text_scale;
 
+// Every sentence this process draws (menu, tray, update item and dialogs, the relaunch question),
+// in English and German. Always compiled and Tauri-free: every build draws a bar.
+mod words;
+
+// Which of those languages this run speaks: the window's choice, kept for the next launch. Always
+// compiled; only the engine build has the command that sets it, so the preview speaks English.
+mod shell_language;
+
+// The notice the window hands the shell, read closed, and the words the shell shows for it. Tauri-free;
+// only the engine build has the command that reads it.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+mod notice;
+
+// The calendar's alerts set ahead: read closed, rung under the mailbox served, worded by the shell.
+// Tauri-free; only the engine build has the command that fills its book and the thread that rings.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+mod alerts;
+
 // A run that vanished (a GTK or WebKit crash) is logged on the next start. Always compiled.
 mod unclean_exit;
+
+// The released app or a nightly preview of the next version, and the check that the bundler's
+// identifier and the cargo feature name the same one. Always compiled.
+mod variant;
 
 // The window's CSP per platform, read through Tauri's own config merge: each overlay names its
 // webview's one spelling of the command scheme, and the base stays closed.
@@ -218,6 +240,11 @@ fn main() {
     }
 
     let context = tauri::generate_context!();
+    // A preview's identifier and a preview's code go together or the app opens nothing: either
+    // half alone would read the released install's key or its folder (`variant.rs`).
+    if let Err(why) = variant::variant_agrees(&context.config().identifier, variant::PREVIEW) {
+        panic!("ohmail: {why}");
+    }
     // Other code's stderr to `stderr.log` beside the log, before setup starts a web process. The
     // identifier is the context's: the Flatpak overlay changes it.
     #[cfg(feature = "local-engine")]
@@ -225,6 +252,11 @@ fn main() {
     let app = builder
         .build(context)
         .expect("ohmail: failed to start the Tauri runtime");
+    // The language of the shell's own words, read once for the run: after the build (the app's
+    // folder is known) and before `setup` builds the bar and host mode the tray. The preview has
+    // no window command to choose one and speaks English.
+    #[cfg(feature = "local-engine")]
+    shell_language::settle(&app);
 
     // A Flatpak's home is the sandbox's own, so no save falls back to it.
     #[cfg(feature = "local-engine")]

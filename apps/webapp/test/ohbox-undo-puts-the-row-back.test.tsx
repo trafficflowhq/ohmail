@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -11,16 +11,15 @@ import {
   OhmailEngine,
   THREAD_READ_HOLD_MS,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
-import { UNDO_MS } from "../app/shell/delete-undo";
-import { LANDING_REST_MS } from "../app/shell/reader-seen";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { UNDO_MS } from "@ohmail/app-logic/press/delete-undo";
+import { LANDING_REST_MS } from "@ohmail/app-logic/reading/reader-seen";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
+import { cursorRow, reportPress, reportSays } from "./ohbox/_finders.js";
 
 /**
  * UNDO PUTS THE LIST BACK AS IT STOOD AT THE PRESS — the row's place in New, the cursor on it.
@@ -70,6 +69,8 @@ beforeEach(() => {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  /* jsdom draws no animation: the kit's report and rows ask `animate` (the lead's stub, `frame/seated-ohbox.test.tsx`). */
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}
@@ -102,7 +103,8 @@ const address = (id: string): string => `p${id}@example.invalid`;
 const msg = (id: string): EngineMessage => ({
   id, accountId: "a1", mailboxId: "mb1", threadId: `t-${id}`, folder: "INBOX",
   subject: `Subject ${id}`, from: { address: address(id), name: `Person ${id}` },
-  to: [], date: DATES[id] ?? "2026-09-03T09:00:00.000Z", unread: UNREAD.has(id),
+  to: [], cc: [], date: DATES[id] ?? "2026-09-03T09:00:00.000Z", unread: UNREAD.has(id),
+  labels: [],
   updatedAt: "2026-09-03T09:00:00.000Z",
 } as unknown as EngineMessage);
 
@@ -272,7 +274,7 @@ async function shell(
   history: string[] = [],
   consent: ConsentDouble = consentTransport,
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(IDS, history));
   lastEngine = engine;
@@ -329,8 +331,11 @@ const settle = async (): Promise<void> => {
 };
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll(".row[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
-const toastText = (): string => document.querySelector(".toast")?.textContent ?? "";
+  [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
+/* A verb's answer at the seated Ohbox is said in the frame's report, with its Undo (declared). */
+// The report’s end dot is drawn separately from its text.
+const reportCopy = (sentence: string): string => sentence.replace(/\.$/, "");
+const toastText = (): string => reportSays();
 const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_delete");
 
 
@@ -352,15 +357,15 @@ const EARLIER = messages.ohbox.previouslySeen;
 
 /** `<listbox label>#<index>` for the row, or `ABSENT`. */
 const where = (el: HTMLElement, id: string): string => {
-  const r = el.querySelector(`.row[data-id="${id}"]`);
+  const r = el.querySelector(`:is(.row, [role=option])[data-id="${id}"]`);
   if (!r) return "ABSENT";
   const lb = r.closest('[role="listbox"]');
-  const rows = lb ? [...lb.querySelectorAll(".row[data-id]")].map((x) => x.getAttribute("data-id")) : [];
+  const rows = lb ? [...lb.querySelectorAll(":is(.row, [role=option])[data-id]")].map((x) => x.getAttribute("data-id")) : [];
   return `${lb?.getAttribute("aria-label") ?? "?"}#${rows.indexOf(id)}`;
 };
 /** The CURSOR's row (`sel`), not the pick: a picked row publishes `aria-selected` too. */
 const selectedRow = (el: HTMLElement): string =>
-  el.querySelector(".row.sel[data-id]")?.getAttribute("data-id") ?? "none";
+  (cursorRow(el) ?? el.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]"))?.getAttribute("data-id") ?? "none";
 const sleep = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 const seen = (): number => sent.filter((m) => m.kind === "mark_seen").length;
 
@@ -371,12 +376,12 @@ const seen = (): number => sent.filter((m) => m.kind === "mark_seen").length;
 async function pressAndUndo(ms: number, k: string, how: "open" | "preview" = "open"): Promise<HTMLElement> {
   const c = await shell(ORGANIZER_ROSTER);
   expect(where(c, "w8")).toBe(`${NEW}#0`);
-  if (how === "open") await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+  if (how === "open") await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
   else await key("j");
   await sleep(ms);
   await key(k);
   await waitFor(() => !rowIds(c).includes("w8"), "the row to leave");
-  const undo = document.querySelector<HTMLButtonElement>(".toast-act");
+  const undo = reportPress();
   expect(undo, "the toast carried no Undo").not.toBeNull();
   await act(async () => { undo!.click(); });
   await waitFor(() => rowIds(c).includes("w8"), "the row to come back");
@@ -390,7 +395,7 @@ describe("a held Delete, undone", () => {
     expect(where(c, "w8")).toBe(`${NEW}#0`);
     expect(selectedRow(c)).toBe("w8");
     expect(seen()).toBe(0);
-    expect(toastText()).toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndone));
     expect(deletes()).toEqual([]);
   }, 30000);
 
@@ -399,7 +404,7 @@ describe("a held Delete, undone", () => {
     expect(where(c, "w8")).toBe(`${NEW}#0`);
     expect(selectedRow(c)).toBe("w8");
     expect(seen()).toBe(1);
-    expect(toastText()).toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndone));
     expect(deletes()).toEqual([]);
   }, 30000);
   for (const ms of [300, 1500, 3000]) {
@@ -408,14 +413,14 @@ describe("a held Delete, undone", () => {
       expect(where(c, "w8"), "Undo filed the row under Earlier").toBe(`${NEW}#0`);
       expect(selectedRow(c), "Undo left the cursor where the delete moved it").toBe("w8");
       expect(seen(), "the open's read").toBe(1);
-      expect(toastText()).toContain(messages.ohbox.deleteUndone);
+      expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndone));
       expect(deletes()).toEqual([]);
     }, 30000);
   }
 
   it("NOT UNDONE: the row stays gone and exactly one delete goes out when the window closes", async () => {
     const c = await shell(ORGANIZER_ROSTER);
-    await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+    await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
     await sleep(2300);
     await key("Backspace");
     await waitFor(() => !rowIds(c).includes("w8"), "the row to leave");
@@ -442,7 +447,7 @@ describe("the verbs beside it: Park and Answer later, undone after an open", () 
       const c = await pressAndUndo(2300, k);
       expect(where(c, "w8"), "Undo filed the row under Earlier").toBe(`${NEW}#0`);
       expect(selectedRow(c)).toBe("w8");
-      expect(toastText()).toContain(messages.ohbox.toastUndone);
+      expect(toastText()).toContain(reportCopy(messages.ohbox.toastUndone));
       expect(deletes()).toEqual([]);
     }, 30000);
     it(`${verb} advances to the next row, and Undo still puts the row back in New, selected`, async () => {
@@ -473,7 +478,8 @@ describe("a split view keeps its own cursor (measured: no Ohbox placement there)
     const at = selectedRow(c);
     await key("Backspace");
     await waitFor(() => !rowIds(c).includes(at), "the row to leave");
-    await act(async () => { document.querySelector<HTMLButtonElement>(".toast-act")!.click(); });
+    /* History is today's place: its Undo is today's capsule. */
+    await act(async () => { (reportPress() ?? document.querySelector<HTMLButtonElement>(".toast-act"))!.click(); });
     await sleep(400);
     expect(selectedRow(c)).toBe(at);
     expect(deletes()).toEqual([]);
@@ -487,14 +493,14 @@ async function goHash(hash: string): Promise<void> {
   await sleep(300);
 }
 const clickUndo = async (): Promise<void> => {
-  const undo = document.querySelector<HTMLButtonElement>(".toast-act");
+  const undo = reportPress();
   expect(undo, "the toast carried no Undo").not.toBeNull();
   await act(async () => { undo!.click(); });
 };
 /** Open w8 by a click (the read rule reads it), wait, take it away with `k`. */
 async function dwellAndPress(k: string): Promise<HTMLElement> {
   const c = await shell(ORGANIZER_ROSTER);
-  await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+  await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
   await sleep(2300);
   await key(k);
   await waitFor(() => !rowIds(c).includes("w8"), "the row to leave");
@@ -517,8 +523,8 @@ describe("a person who moved on is not dragged back (every door)", () => {
     expect(where(c, "w8")).toBe(`${EARLIER}#0`);
     expect(heldRow()).not.toBe("w8");
     expect(deletes()).toEqual([]);
-    expect(toastText()).toContain(messages.ohbox.deleteUndoneLeft);
-    expect(toastText()).not.toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndoneLeft));
+    expect(toastText()).not.toContain(reportCopy(messages.ohbox.deleteUndone));
   }, 30000);
 
   it("a URL opens another message inside the window, then Undo", async () => {
@@ -531,8 +537,8 @@ describe("a person who moved on is not dragged back (every door)", () => {
     expect(where(c, "w8")).toBe(`${EARLIER}#0`);
     expect(heldRow()).not.toBe("w8");
     expect(deletes()).toEqual([]);
-    expect(toastText()).toContain(messages.ohbox.deleteUndoneLeft);
-    expect(toastText()).not.toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndoneLeft));
+    expect(toastText()).not.toContain(reportCopy(messages.ohbox.deleteUndone));
   }, 30000);
 
   it("Back from a message opened by URL to the one before it, then Undo", async () => {
@@ -547,8 +553,8 @@ describe("a person who moved on is not dragged back (every door)", () => {
     expect(where(c, "w8")).toBe(`${EARLIER}#0`);
     expect(heldRow()).not.toBe("w8");
     expect(deletes()).toEqual([]);
-    expect(toastText()).toContain(messages.ohbox.deleteUndoneLeft);
-    expect(toastText()).not.toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndoneLeft));
+    expect(toastText()).not.toContain(reportCopy(messages.ohbox.deleteUndone));
   }, 30000);
 
   it("Back out of every message (the bare URL) inside the window, then Undo", async () => {
@@ -561,8 +567,8 @@ describe("a person who moved on is not dragged back (every door)", () => {
     expect(where(c, "w8")).toBe(`${EARLIER}#0`);
     expect(heldRow()).not.toBe("w8");
     expect(deletes()).toEqual([]);
-    expect(toastText()).toContain(messages.ohbox.deleteUndoneLeft);
-    expect(toastText()).not.toContain(messages.ohbox.deleteUndone);
+    expect(toastText()).toContain(reportCopy(messages.ohbox.deleteUndoneLeft));
+    expect(toastText()).not.toContain(reportCopy(messages.ohbox.deleteUndone));
   }, 30000);
 
   it("NOT STUCK IN NEW: Park after an open, j twice, Undo, then j on read rows", async () => {
@@ -590,7 +596,7 @@ describe("a person who moved on is not dragged back (every door)", () => {
 describe("Undo restores the cursor only for a row its verb took and whose reversal took", () => {
   it("a deselection no verb caused (Back), then a set's Park of that row, Undo: the cursor stays put", async () => {
     const c = await shell(ORGANIZER_ROSTER);
-    await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+    await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
     await sleep(2300);
     await key("x");
     await goHash("#/ohbox");
@@ -608,11 +614,12 @@ describe("Undo restores the cursor only for a row its verb took and whose revers
      be held, or it would stand in New the moment anything brought it back. */
   it("the open row's own reversal refused while another's took: no cursor on a row that is not there", async () => {
     const c = await shell(ORGANIZER_ROSTER);
-    await act(async () => { c.querySelector<HTMLElement>('.row[data-id="n1"]')!.click(); });
-    await key("x");
-    await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+    await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
     await sleep(2300);
     await key("x");
+    const n1 = c.querySelector<HTMLElement>('[role=option][data-id="n1"]')!;
+    const circle = within(n1.closest<HTMLElement>(".oh-row-slot")!).getByRole("button", { name: messages.ohbox.keyPick });
+    await act(async () => { circle.click(); });
     expect(selectedRow(c), "the premise: the cursor is on w8").toBe("w8");
     expect(heldRow(), "the premise: w8 is read and held").toBe("w8");
     await key("e");
@@ -629,7 +636,7 @@ describe("Undo restores the cursor only for a row its verb took and whose revers
 
   it("CONTROL: a set's Park of the open row, undone at once: back in New, selected", async () => {
     const c = await shell(ORGANIZER_ROSTER);
-    await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+    await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
     await sleep(2300);
     await key("x");
     await key("e");

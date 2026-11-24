@@ -344,8 +344,8 @@ describe("the rule-key lock precedes every mailbox lock, read from the outermost
     { file: "packages/services/src/held-release-service.ts", fn: "releaseHeld" },
     { file: "packages/services/src/hey-migration.ts", fn: "migrateFromObservations" },
     { file: "packages/services/src/screener-service.ts", fn: "applyAsOrganizer" },
-    { file: "apps/worker/src/screener-auto-act.ts", fn: "screenerAutoActPass" },
-    { file: "apps/worker/src/profile.ts", fn: "answerImportAsk" },
+    { file: "packages/organizer/src/screener-auto-act.ts", fn: "screenerAutoActPass" },
+    { file: "packages/organizer/src/profile.ts", fn: "answerImportAsk" },
     { file: "packages/services/src/profile-import-service.ts", fn: "apply" },
   ];
   for (const o of OPENERS) {

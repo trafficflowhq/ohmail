@@ -1,5 +1,6 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, mutationEffects, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, mutationEffects, type SyncChange } from "@ohmail/client-engine";
 
 /**
  * A ONE-PER-KEY DELETE'S OVERLAY TAKES THE KEY (OVERLAY-LAGS-ONE-DRAIN-AFTER-A-ONE-PER-KEY-DELETE).

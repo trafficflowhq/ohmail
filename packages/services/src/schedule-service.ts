@@ -1,8 +1,8 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { dialect } from "@trafficflow/db/dialect";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { assertOrganizerRole, drafts, mailboxes, recordChange, scheduledSendFiles, type Tx } from "@trafficflow/db";
-import type { EmailAddress } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { instantRefusal, readInstant } from "./instant.js";

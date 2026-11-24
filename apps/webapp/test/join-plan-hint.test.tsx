@@ -72,14 +72,20 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+const trialCopy = {
+  en: { title: "Start your 14-day trial", noCard: "No card" },
+  de: { title: "Starte deine 14-tägige Testphase", noCard: "Keine Karte" },
+};
+
 async function join(messages: typeof en, props: Record<string, unknown> = {}) {
+  const locale = messages === de ? "de" : "en";
   vi.resetModules();
   process.env.NEXT_PUBLIC_API_BASE = "/api";
   delete process.env.NEXT_PUBLIC_OHMAIL_FLAVOR;
   const React = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -88,14 +94,19 @@ async function join(messages: typeof en, props: Record<string, unknown> = {}) {
   const root = createRoot(host);
   await act(async () => {
     root.render(React.createElement(NextIntlClientProvider, {
-      locale: messages === de ? "de" : "en", messages, timeZone: "UTC",
+      locale, messages, timeZone: "UTC",
       children: React.createElement(JoinScreen, { initialCode: "", publicSignup: true, ...props }),
     }));
   });
   for (let i = 0; i < 10; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   const close = async () => { await act(async () => root.unmount()); host.remove(); };
   unmount = close;
-  const trial = () => host.querySelector('[data-testid="join-plan-trial"]')?.textContent ?? null;
+  const trial = () => {
+    const heading = host.querySelector("h1")?.textContent?.trim();
+    const tags = [...host.querySelectorAll(".oh-page-line .oh-tag")].map((el) => el.textContent ?? "");
+    const chosen = heading && heading !== trialCopy[locale].title && heading !== messages.join.step_plan_title;
+    return [chosen ? heading : null, ...tags].filter(Boolean).join(" · ");
+  };
   return { host, trial, close: async () => { await close(); unmount = null; } };
 }
 
@@ -129,26 +140,26 @@ describe("/join reads ?plan and ?interval from closed sets", () => {
 describe("the plan step names the site's choice beside the trial, and the account page is asked for it", () => {
   it("en: Pro, yearly: named, 14 days free, no card, no price; the mint carries {lang, plan, interval}", async () => {
     const { trial } = await join(en, { planHint: { plan: "pro", interval: "year" } });
-    expect(trial()).toBe("You chose Pro, billed yearly. 14 days free, no card.");
+    expect(trial()).toBe("Start 14 days on Pro · Billed yearly · No card");
     expect(trial()).not.toMatch(/[$€£]|CHF|\d+[.,]\d\d/);
     expect(mints).toEqual([{ lang: "en", plan: "pro", interval: "year" }]);
   });
 
   it("de: the same choice in German, and the page is asked for in German", async () => {
     const { trial } = await join(de, { planHint: { plan: "solo", interval: "month" } });
-    expect(trial()).toBe("Du hast Solo gewählt, mit monatlicher Abrechnung. 14 Tage gratis, ohne Karte.");
+    expect(trial()).toBe("Starte 14 Tage mit Solo · Monatliche Abrechnung · Keine Karte");
     expect(mints).toEqual([{ lang: "de", plan: "solo", interval: "month" }]);
   });
 
   it("a plan without an interval is named alone; no hint at all still says what the trial is", async () => {
     const one = await join(en, { planHint: { plan: "plus" } });
-    expect(one.trial()).toBe("You chose Plus. 14 days free, no card.");
+    expect(one.trial()).toBe("Start 14 days on Plus · No card");
     expect(mints).toEqual([{ lang: "en", plan: "plus" }]);
     await one.close();
     localStorage.clear();
     mints = [];
     const none = await join(en);
-    expect(none.trial()).toBe(en.join.planTrial);
+    expect(none.trial()).toBe(trialCopy.en.noCard);
     expect(mints).toEqual([{ lang: "en" }]);
   });
 });
@@ -159,7 +170,7 @@ describe("the choice survives the verification mail's round trip", () => {
     await first.close();
     mints = [];
     const back = await join(en);
-    expect(back.trial()).toBe("You chose Pro, billed yearly. 14 days free, no card.");
+    expect(back.trial()).toBe("Start 14 days on Pro · Billed yearly · No card");
     expect(mints).toEqual([{ lang: "en", plan: "pro", interval: "year" }]);
   });
 
@@ -167,12 +178,12 @@ describe("the choice survives the verification mail's round trip", () => {
     const week = 7 * 24 * 60 * 60 * 1000;
     localStorage.setItem(KEY, JSON.stringify({ plan: "pro", interval: "year", at: Date.now() - week - 60_000 }));
     const stale = await join(en);
-    expect(stale.trial()).toBe(en.join.planTrial);
+    expect(stale.trial()).toBe(trialCopy.en.noCard);
     await stale.close();
     localStorage.setItem(KEY, JSON.stringify({ plan: "enterprise", interval: "decade", at: Date.now() }));
     mints = [];
     const odd = await join(en);
-    expect(odd.trial()).toBe(en.join.planTrial);
+    expect(odd.trial()).toBe(trialCopy.en.noCard);
     expect(mints).toEqual([{ lang: "en" }]);
   });
 
@@ -191,6 +202,7 @@ describe("the choice survives the verification mail's round trip", () => {
  * ended or that has paid before, which the account page then asks to pay. The words follow the one
  * predicate the lock screen's never-started state uses, read from the service's own lifecycle.
  */
+
 describe("the plan step names a trial only for an account that never started one", () => {
   const ENDED = { ...NEVER_STARTED, closedReason: "trial_ended", closedAt: "2026-10-20T10:00:00.000Z", erasureAt: "2026-11-19T10:00:00.000Z" };
   const NO_TRIAL: Array<[string, unknown]> = [
@@ -203,17 +215,16 @@ describe("the plan step names a trial only for an account that never started one
     ["a reason this build does not know", { ...NEVER_STARTED, closedReason: "chargeback" }],
   ];
   const button = (host: HTMLElement): string | null =>
-    [...host.querySelectorAll("a.btn.primary")].map((a) => a.textContent ?? "")[0] ?? null;
+    [...host.querySelectorAll("a")].filter((a) => a.getAttribute("href") === "https://plane.example/manage?token=t").map((a) => a.textContent ?? "")[0] ?? null;
 
   for (const messages of [en, de]) {
     const lang = messages === de ? "de" : "en";
 
     it(`${lang}: never started: the trial, its button and the hint that it waits`, async () => {
       const { host, trial } = await join(messages);
-      expect(host.querySelector(".sub")?.textContent).toBe(messages.join.step_plan_lead);
-      expect(trial()).toBe(messages.join.planTrial);
+      expect(host.querySelector("h1")?.textContent).toBe(trialCopy[lang].title);
+      expect(trial()).toBe(trialCopy[lang].noCard);
       expect(button(host)).toBe(messages.join.planStartTrial);
-      expect(host.textContent).toContain(messages.join.planLaterHint);
     });
 
     for (const [what, block] of NO_TRIAL) {
@@ -221,12 +232,12 @@ describe("the plan step names a trial only for an account that never started one
         lifecycle = block;
         const { host, trial } = await join(messages, { planHint: { plan: "pro", interval: "year" } });
         expect(host.querySelector("h1")?.textContent).toBe(messages.join.step_plan_title);
-        expect(host.querySelector(".sub")?.textContent).toBe(messages.join.planLeadNoTrial);
+        expect(host.textContent).not.toContain(trialCopy[lang].title);
         expect(trial(), "the site's choice is still named, without a trial").toBe(
-          lang === "de" ? "Du hast Pro gewählt, mit jährlicher Abrechnung." : "You chose Pro, billed yearly.",
+          lang === "de" ? "Pro · Jährliche Abrechnung" : "Pro · Billed yearly",
         );
         expect(button(host)).toBe(messages.join.planContinue);
-        expect(host.textContent).not.toContain(messages.join.planTrial);
+        expect(host.textContent).not.toContain(trialCopy[lang].noCard);
         expect(host.textContent).not.toContain(messages.join.planLaterHint);
         expect(host.textContent).not.toMatch(/\b14\b/);
       });

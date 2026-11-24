@@ -1,4 +1,6 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
+import { dbFor } from "../src/context.js";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
@@ -10,7 +12,7 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import { namesAuthor } from "@trafficflow/core/rule-order";
 import { applicableProfileRule } from "@trafficflow/core/adapters/organizer-profile";
-import { consentIndex, type RuleDTO } from "@ohmail/client-engine";
+import { consentIndex } from "@ohmail/client-engine";
 import { ScreenerService } from "../src/screener-service.js";
 import { RulesService } from "../src/rules-service.js";
 import { ServiceError } from "../src/errors.js";
@@ -41,9 +43,9 @@ async function world(rule: { match: string; destination: string } | null) {
     senderCheck: "impersonation", senderCheckBrand: "PostFinance",
     date: RECENT, unread: true, createdAt: RECENT, nativeLocator: { folder: GATE, ref: "1:1" },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   if (rule) {
     await db.insert(rules).values({
@@ -51,7 +53,7 @@ async function world(rule: { match: string; destination: string } | null) {
     });
   }
   const ctx: ServiceContext = {
-    db: db as never, accountId, userId: null, now: () => NOW, requestId: `inert-${randomUUID().slice(0, 8)}`,
+    db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `inert-${randomUUID().slice(0, 8)}`,
   };
   return { db, accountId, messageId: m!.id, ctx };
 }

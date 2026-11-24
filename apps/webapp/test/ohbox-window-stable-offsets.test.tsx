@@ -1,12 +1,11 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
-import messages from "../messages/en.json";
-import { OhboxView } from "../app/views/OhboxView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { cleanup } from "@testing-library/react";
+import type { OhboxListInput } from "@ohmail/app-logic/ohbox";
+/* The Ohbox's own list, drawn from its model and redrawn with new groups (share ohbox-2's helper). */
+import { ohboxListRedrawable } from "./_ohbox-2-list.js";
 
 /**
  * THE OHBOX LIST HOLDS STILL UNDER THE READER. Reported live on 0.19.3: after a jump (the
@@ -45,6 +44,8 @@ const MAX_ITEM_PX = ROW_TWO_LINE_PX + PREVIEW_LINE_PX;
 const MIN_ITEM_PX = LABEL_PX;
 /** `useListWindow`'s own OVERSCAN_ROWS, which is not exported; asserted through the slice below. */
 const OVERSCAN = 8;
+/** useOhboxWindow's scrollStep: the slice is cut again after this many rows. */
+const STEP = 4;
 /** The most one row's price can be wrong by, so the most the overscan above the anchor can owe. */
 const LANDING_PX = OVERSCAN * (MAX_ITEM_PX - MIN_ITEM_PX);
 /** Past FULL_RANGE_MAX_ROWS, where the window runs, as a real Ohbox does. */
@@ -73,10 +74,10 @@ const message = (i: number, id = `m${i}`, preview = hasPreview(i)): EngineMessag
 const rowPx = (m: EngineMessage): number => ROW_TWO_LINE_PX + (m.snippet ? PREVIEW_LINE_PX : 0);
 
 const heightOf = (el: HTMLElement): number => {
-  if (el.classList.contains("row")) {
-    return ROW_TWO_LINE_PX + (el.querySelector(".prev") ? PREVIEW_LINE_PX : 0);
+  if (el.classList.contains("oh-row")) {
+    return ROW_TWO_LINE_PX + (el.querySelector(".oh-row-preview") ? PREVIEW_LINE_PX : 0);
   }
-  if (el.classList.contains("grouplabel")) return LABEL_PX;
+  if (el.classList.contains("ob-heading")) return LABEL_PX;
   const inline = el.style.height;
   if (inline.endsWith("px")) return Number.parseFloat(inline);
   let sum = 0;
@@ -87,7 +88,6 @@ const heightOf = (el: HTMLElement): number => {
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-let roots: Root[] = [];
 
 interface Fixture {
   newForYou: EngineMessage[];
@@ -128,35 +128,17 @@ const truthIndexAt = (f: Fixture, px: number): number => {
   return lo;
 };
 
-const ohbox = (f: Fixture): React.ReactElement => (
-  <OhboxView owed={false}
-    demo={false}
-    newForYou={f.newForYou}
-    previouslySeen={f.previouslySeen}
-    tags={tags} now={new Date(ISO)} selectedId={null} onSelect={() => {}} onEnterReader={() => {}}
-    onMarkSeen={() => {}} readerId={null} readSetFor={(id: string) => [id]} doorbellInitials={[]} doorbellCount={0} settled
-    onDoorbell={() => {}} onAction={() => {}} onAddTag={() => {}}
-    bulk={{ run: () => true, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => true }}
-    older={{ available: false, items: [], loading: false, error: null, exhausted: true, loadMore: () => {} }}
-  />
-);
-
-function mountRoot(): { host: HTMLElement; render: (node: React.ReactNode) => Promise<void> } {
-  const host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  roots.push(root);
-  const render = async (node: React.ReactNode): Promise<void> => {
-    await act(() => {
-      root.render(
-        <NextIntlClientProvider locale="en" messages={messages} now={new Date(ISO)} timeZone="UTC">
-          <KeymapProvider>{node}</KeymapProvider>
-        </NextIntlClientProvider>,
-      );
-    });
-  };
-  return { host, render };
-}
+/**
+ * The Ohbox's inputs over a fixture. RE-POINTED (share ohbox-2, the switch's older tests): today's harness
+ * (`./ohbox/_today` `prepareToday` under today's `KeymapProvider`) drew today's Ohbox view; the Ohbox's own list is
+ * drawn here from its model (`./_ohbox-2-list.tsx`: the seat's `useOhboxList` fed the same two groups, redrawn with
+ * new groups where mail arrives). The rig, the invariants and every expectation are as they stood.
+ */
+const ohbox = (f: Fixture): Partial<OhboxListInput> => ({
+  newForYou: f.newForYou,
+  previouslySeen: f.previouslySeen,
+  tags, now: new Date(ISO),
+});
 
 /**
  * One frame of the reader's scrolling: set the position, let the window sample and commit. It
@@ -196,7 +178,7 @@ const read = (scroller: HTMLElement): { items: Item[]; padTop: number; padBottom
       y += h;
       return;
     }
-    if (el.classList.contains("row") || el.classList.contains("grouplabel")) { y += heightOf(el); return; }
+    if (el.classList.contains("oh-row") || el.classList.contains("ob-heading")) { y += heightOf(el); return; }
     for (const c of [...el.children]) walk(c as HTMLElement);
   };
   for (const c of [...scroller.children]) walk(c as HTMLElement);
@@ -265,8 +247,7 @@ class Recorder {
   /**
    * I4. The frame that settles after a position is asked for is AT that position — the window may
    * owe only the overscan rows above the anchor, whose prices are all it can have got wrong — and
-   * the slice it renders is CENTRED there: the reader's row is the overscan-th item of it, never
-   * one the slice merely happens to cover. Which row is truly at a pixel is not a question a
+   * the slice it renders is CENTRED there within the window's scroll step. Which row is truly at a pixel is not a question a
    * window that has measured a handful of its rows can answer; I5 is what bounds its estimate.
    */
   private landed(n: number, s: number, request: number, start: number, underTop: Item | null, allowance: number): void {
@@ -274,8 +255,8 @@ class Recorder {
     if (Math.abs(off) > LANDING_PX + allowance) {
       this.red.I4.push(`frame ${n}: a ${request.toFixed(1)}px position settled at scrollTop ${s.toFixed(1)} — ${off.toFixed(1)}px out, past the ${LANDING_PX}px the overscan above the anchor can owe (truly index ${truthIndexAt(this.f, s)} where ${truthIndexAt(this.f, request)} was asked for)`);
     }
-    if (underTop && underTop.index - start > OVERSCAN) {
-      this.red.I4.push(`frame ${n}: the reader is on index ${underTop.index} and the slice starts at ${start}, ${underTop.index - start} items above it — the window is rendering around somewhere other than the reader`);
+    if (underTop && underTop.index - start > OVERSCAN + STEP - 1) {
+      this.red.I4.push(`frame ${n}: the reader is on index ${underTop.index} and the slice starts at ${start}, ${underTop.index - start} items above it — past the ${OVERSCAN} overscan rows plus the ${STEP}-row step`);
     }
   }
 
@@ -323,7 +304,7 @@ describe("the Ohbox list holds still under the reader while the window measures 
     });
     Object.defineProperty(HTMLElement.prototype, "clientHeight", {
       configurable: true,
-      get(this: HTMLElement) { return this.classList.contains("scroller") ? VIEWPORT_PX : heightOf(this); },
+      get(this: HTMLElement) { return this.classList.contains("ob-scroll") ? VIEWPORT_PX : heightOf(this); },
     });
     Object.defineProperty(window, "matchMedia", {
       configurable: true, writable: true,
@@ -331,17 +312,18 @@ describe("the Ohbox list holds still under the reader while the window measures 
     });
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
-  afterEach(async () => {
-    for (const r of roots) await act(() => r.unmount());
-    roots = [];
+  afterEach(() => {
+    cleanup();
     document.body.innerHTML = "";
     vi.restoreAllMocks();
   });
 
   const mountOhbox = async (f: Fixture, name: string) => {
-    const { host, render } = mountRoot();
-    await render(ohbox(f));
-    const scroller = host.querySelector(".list-col .scroller") as HTMLElement;
+    const { view, redraw } = ohboxListRedrawable(ohbox(f));
+    const render = redraw;
+    const host = view.container;
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    const scroller = host.querySelector(".ob-scroll") as HTMLElement;
     const rec = new Recorder(name, f);
     rec.record(scroller, await scrollTo(scroller, 0));
     return { scroller, rec, render };

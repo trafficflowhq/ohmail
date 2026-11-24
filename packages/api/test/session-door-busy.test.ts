@@ -46,12 +46,13 @@ async function seedRefresh(
 const app = createApp(apiRoutes);
 
 describe("the session doors under a busy pool", () => {
-  it("exactly the three session doors carry the shorter ceiling, the sign-out door among them", () => {
+  it("exactly the four session doors carry the shorter ceiling, the sign-out door and the handoff's rotation among them", () => {
     const carrying = apiRoutes
       .filter((r) => (r.options?.middleware ?? []).includes(withSessionAcquireCeiling))
       .map((r) => `${r.method} ${r.pattern}`)
       .sort();
-    expect(carrying).toEqual(["GET /auth/session", "POST /auth/refresh", "POST /auth/refresh/logout"]);
+    // A phone app's handoff rotates the refresh token as the refresh door's native branch does, on its ceiling.
+    expect(carrying).toEqual(["GET /auth/session", "POST /auth/refresh", "POST /auth/refresh/logout", "POST /pair/handoff"]);
   });
 
   it("the sign-out door answers 503 db_busy, Retry-After, sets no cookie, and ends the family on the next ask", async () => {
@@ -71,10 +72,13 @@ describe("the session doors under a busy pool", () => {
     const [row] = await db.select({ revokedAt: refreshTokens.revokedAt }).from(refreshTokens)
       .where(eq(refreshTokens.tokenHash, hashToken(refresh)));
     expect(row?.revokedAt, "a refused door ended the family anyway").toBeNull();
-    // The pool frees: the same jar's next ask ends it and clears the jar.
+    // The pool frees: the same jar's next ask revokes the family.
     const done = await app.handle(req("POST", "/auth/refresh/logout", { cookie: `tf_refresh=${refresh}` }), deps);
     expect(done.status).toBe(204);
-    expect(done.headers.getSetCookie().some((c) => /^tf_refresh=;/.test(c))).toBe(true);
+    expect(done.headers.getSetCookie()).toEqual([]);
+    const [ended] = await db.select({ revokedAt: refreshTokens.revokedAt }).from(refreshTokens)
+      .where(eq(refreshTokens.tokenHash, hashToken(refresh)));
+    expect(ended?.revokedAt instanceof Date).toBe(true);
   });
 
   it("GET /auth/session answers 503 db_busy, Retry-After, retryable, and sets no cookie", async () => {

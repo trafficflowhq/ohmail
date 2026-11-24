@@ -393,8 +393,51 @@ export function pgDialect(): Dialect {
         Array.isArray(r) ? r : fields.map((f) => (r as Record<string, unknown>)[f.name]));
     },
 
+    screenerActivityCandidates: async (tx, query) => {
+      const d = pgDialect();
+      await d.exec(tx, sql`set local jit = off`);
+      const keys = await d.exec(tx, query);
+      if (keys.length === 0) return sql`select null where false`;
+      const json = sql`cast(${JSON.stringify(keys.map(([key]) => key))} as text)`;
+      return sql`select value from jsonb_array_elements_text(${d.castJsonb(json)})`;
+    },
+
     // Truncated, not formatted: formatting every row costs more than the grouping it serves.
     monthBucket: (instant: SQL): SQL => sql`date_trunc('month', ${instant} at time zone 'UTC')`,
+
+    lockedMonths: async (db, instant, where, zone) => {
+      const d = pgDialect();
+      const [policy] = await d.exec(db, sql`select pg_catalog.row_security_active('messages')`);
+      if (policy?.[0] !== true) return null;
+
+      let normalized = "UTC";
+      try {
+        normalized = /^[+-]/.test(zone) ? new Intl.DateTimeFormat("en-US", { timeZone: zone }).resolvedOptions().timeZone : zone;
+      } catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+      }
+
+      // The account policy hides the arrival expression from index conditions. Choose each
+      // month's newest row and count its messages in one pass over the account.
+      const read = (zoneName: string) => {
+        const timeZone = /^[+-]/.test(zoneName) ? sql`${zoneName}::interval` : sql`${zoneName}::text`;
+        return d.exec(db, sql`
+          select distinct on (bucket) ${d.castInt(sql`count(*) over (partition by bucket)`)} as c,
+            instant as d, id, to_char(bucket, 'YYYY-MM') as month
+          from (
+            select m.id, ${instant} as instant, date_trunc('month', ${instant} at time zone ${timeZone}) as bucket
+            from messages m where ${where}
+          ) dated
+          order by bucket, instant desc nulls last, id desc`);
+      };
+      try {
+        return await read(normalized);
+      } catch (error) {
+        const failure = error as { code?: string; cause?: { code?: string } } | null;
+        if (normalized === "UTC" || (failure?.code ?? failure?.cause?.code) !== "22023") throw error;
+        return read("UTC");
+      }
+    },
 
     // IMMUTABLE throughout — `timestamptz - timestamptz` and an interval literal — so it indexes.
     arrivalKey: (date: SQL, arrivedAt: SQL): SQL => sql`(case when ${arrivedAt} is null then coalesce(${date}, 'epoch'::timestamptz) when ${date} is null then ${arrivedAt} when ${date} <= ${arrivedAt} and ${arrivedAt} - ${date} <= interval '48 hours' then ${date} else ${arrivedAt} end)`,
@@ -535,9 +578,10 @@ export function pgDialect(): Dialect {
       // so the planner reads the account and the words in one GIN.
       wordKey: (accountId: string): SQL => sql`((s.account_id)::text = (${accountId}::uuid)::text)`,
       letterTerms: (q: string): SQL[] | null => letterTermsOf(q),
-      // Textually the index's expression over `m` (mail 0154), or the planner cannot use it.
+      // The stored key (mail 0208), which the database generates from mail 0154's function: its GIN
+      // answers the containment, and a letter read another way is compared with the key it holds.
       recipient: ({ accountId, address }): SQL =>
-        sql`messages_recipient_keys(m.account_id, m.to_addresses, m.cc_addresses) @> array[${accountId}::text || ':' || lower(${address})]`,
+        sql`m.recipient_keys @> array[${accountId}::text || ':' || lower(${address})]`,
       searchSession: (opts): SQL | null => {
         const sets: SQL[] = [];
         if (opts.typoThreshold !== undefined) {

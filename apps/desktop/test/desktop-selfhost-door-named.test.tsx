@@ -4,20 +4,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as React from "react";
+import { waitFor, within } from "@testing-library/react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider, createTranslator } from "next-intl";
+import { IntlProvider, createTranslator } from "use-intl";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog, setActiveFormatZone } from "../../webapp/app/shell/locale";
-import { ManagedServiceContext } from "../../webapp/app/shell/managed-service";
-import { desktopFiler } from "../../webapp/app/shell/mail-state";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
+import { DesktopGate } from "../src/DesktopGate.js";
+import { plantShell } from "./_doors-harness.js";
+import { desktopFiler } from "@ohmail/app-logic/mail-state/mail-state";
 import { DOOR_COPY } from "../src/door-copy.js";
 import { CLOUD_URL, flavorOf, isManagedDoor } from "../src/doors.js";
 import { cloudSessionNotice } from "../src/cloud-session.js";
 import { DesktopAbout } from "../src/DesktopAbout.js";
 import { DesktopSettings } from "../src/DesktopSettings.js";
-import { DesktopScreening } from "../src/DesktopScreening.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import { readMailboxFactsVia } from "../src/mailbox-facts-wire.js";
 import { createCloudSidecar } from "../../sidecar/src/cloud-engine.js";
@@ -78,7 +81,7 @@ async function render(node: React.ReactNode, locale: "en" | "de" = "en"): Promis
   document.body.append(hostEl);
   root = createRoot(hostEl);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
+    root!.render(h(IntlProvider, {
       locale, messages: (locale === "en" ? en : de) as never, timeZone: "UTC", children: node,
     }));
   });
@@ -144,25 +147,27 @@ describe("the rail and the Screener's offline notes name the door's server", () 
     expect(DOOR_COPY.serverUnreachableTitle).not.toMatch(/Cloud/);
   });
 
-  /** The engine answers 503 for the preference: the hosted account cannot be reached. */
-  function offlineEngine(): void {
-    const meta = new TextEncoder().encode(JSON.stringify({ status: 503, statusText: "Service Unavailable", h: [] }));
-    const out = new Uint8Array(4 + meta.byteLength);
-    new DataView(out.buffer).setUint32(0, meta.byteLength, false);
-    out.set(meta, 4);
-    host.__TAURI_INTERNALS__ = { invoke: async (command) => {
-      if (command === "engine_request") return out;
-      throw new Error(`unexpected ${command}`);
-    } };
-  }
-
   it.each([true, false])("managed %s: the offline note names the account or the server", async (managed) => {
-    offlineEngine();
-    const text = await render(h(ManagedServiceContext.Provider, {
-      value: managed, children: h(DesktopScreening, { door: "cloud" }),
-    }));
-    expect(text).toContain(managed ? en.desktopScreener.offlineNote : en.desktopScreener.offlineNoteServer);
-    if (!managed) expect(text).not.toMatch(/Cloud/);
+    const status = managed ? MANAGED : SELF_HOSTED;
+    const bridge = plantShell(status, async (request) => {
+      switch (new URL(request.url).pathname) {
+        case "/health": return Response.json({ signedIn: true });
+        case "/mailboxes": return Response.json({ items: [{ id: status.mailboxId, address: status.address }] });
+        case "/account/screening": return Response.json({}, { status: 503 });
+        default: return Response.json({}, { status: 404 });
+      }
+    }, "fixture");
+    window.location.hash = "#/settings/screener";
+    try {
+      await render(h(ThemeProvider, { children: h(ToastHost, { children: h(DesktopGate) }) }));
+      const pane = await within(hostEl!).findByRole("region", { name: en.settings.screener });
+      const note = managed ? en.desktopScreener.offlineNote : en.desktopScreener.offlineNoteServer;
+      await waitFor(() => expect(pane.textContent).toContain(note));
+      if (!managed) expect(pane.textContent).not.toMatch(/Cloud/);
+      expect(bridge.asked).toContain("GET /account/screening");
+    } finally {
+      window.location.hash = "";
+    }
   });
 });
 
@@ -245,8 +250,13 @@ describe("the window's sync strip says when its server is not fetching new mail"
     setActiveFormatZone("UTC");
     const { MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
     const { EngineProvider } = await import("../../webapp/app/shell/engine");
-    const { MailStateProvider, FACTS_POLL_MS } = await import("../../webapp/app/shell/MailStateProvider");
-    const { SyncBar } = await import("../../webapp/app/shell/SyncBar");
+    const { MailStateContext, useMailStateBinding, FACTS_POLL_MS } = await import("@ohmail/app-logic/mail-state/mail-state-binding");
+    /* The mail state's mount, made here from the binding's own two exports: the provider's component stands in a
+       file of its own, and this file names the web app's folder no more often than it did. */
+    const MailStateProvider = ({ children, ...input }: { children: React.ReactNode }): React.ReactElement =>
+      h(MailStateContext.Provider, { value: useMailStateBinding(input as never) }, children);
+    // The strip's state, said in the frame's one notice slot.
+    const { TodaysNotice } = await import("../../webapp/test/_todays-notice");
     const store = new MemoryMirrorStore();
     await store.load();
     const engine = new OhmailEngine({
@@ -270,20 +280,27 @@ describe("the window's sync strip says when its server is not fetching new mail"
       for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
     };
     await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
+      root!.render(h(IntlProvider, {
         locale: "en", messages: en as never, timeZone: "UTC", now: NOW,
         children: h(ManagedServiceContext.Provider, {
           value: isManagedDoor(status),
           children: h(EngineProvider as never, {
             demo: false, engine,
-            children: h(MailStateProvider as never, { probe, mirrored: 12, children: h(SyncBar, { variant: "rail" }) } as never),
+            children: h(MailStateProvider as never, { scope: null, probe, mirrored: 12, children: h(TodaysNotice, null) } as never),
           } as never),
         }),
       } as never));
     });
     await settle();
+    // This notice fixture uses a no-network demo host. Its own ribbon is separate from what the
+    // mail connection feeder says, and remains when the server resumes fetching.
+    const ribbon = en.ribbon.label.replace(/<\/?b>/g, "");
+    const said = () => within(hostEl!).queryAllByRole("status")
+      .map((notice) => notice.textContent ?? "")
+      .filter((text) => !text.startsWith(ribbon))
+      .join("");
     return {
-      said: () => hostEl!.querySelector('[role="status"]')?.textContent ?? "",
+      said,
       nextPoll: async () => {
         await act(async () => { await vi.advanceTimersByTimeAsync(FACTS_POLL_MS + 50); });
         await settle();
@@ -301,11 +318,13 @@ describe("the window's sync strip says when its server is not fetching new mail"
   it("the managed door: it arrives with the server's time, and leaves when fetching runs again", async () => {
     served = [door.behind];
     const win = await strip(MANAGED);
-    expect(win.said()).toContain(tEn("behindTitle"));
-    expect(win.said()).toContain(tEn("behindLineCloud", { hasSince: "yes", since: "11:10" }));
+    const line = tEn("behindLineCloud", { hasSince: "yes", since: "11:10" });
+    const hideLabel = en.frame.notice.hide;
+    expect(win.said()).toBe(`New mail is late ${line}${hideLabel}`);
+    expect(within(hostEl!).getByRole("button", { name: hideLabel })).toBeDefined();
     served = [door.runs];
     await win.nextPoll();
-    expect(hostEl!.textContent ?? "").toBe("");
+    expect(win.said(), "the frame's connection notice").toBe("");
   });
 
   it("a self-hosted door names your ohmail server, never ohmail Cloud", async () => {
@@ -325,6 +344,6 @@ describe("the window's sync strip says when its server is not fetching new mail"
     served = [door[word]];
     const win = await strip(status);
     await win.nextPoll();
-    expect(hostEl!.textContent ?? "").toBe("");
+    expect(win.said(), "the frame's connection notice").toBe("");
   });
 });

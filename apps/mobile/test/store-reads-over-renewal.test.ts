@@ -1,5 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineMessage } from "@ohmail/client-engine";
+import { HttpAdapter, MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
 import { BearerManagerRN, type RefreshVault } from "../src/net/bearer";
 import {
   createSessionReask, storeSearchWalkerFor, storeWalkerFor,

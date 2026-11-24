@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -57,7 +58,7 @@ import type { Change } from "@trafficflow/core/mail";
  * ── WHY THIS CANNOT BE A PGlite TEST ──────────────────────────────────────────────────────
  *
  * Two reasons. The pipeline persist path is transactional (`allocateSeq` under a row lock, the
- * `message_bodies` upsert, threading) and CLAUDE.md's rule is not a style preference — three
+ * `message_bodies` upsert, threading) and AGENTS.md's rule is not a style preference — three
  * production bugs here were invisible to PGlite. And the endpoint is exercised over the REAL
  * router + middleware stack (`createApp`), so the route-resolution claim below — that
  * `/messages/bodies` is not swallowed by `/messages/:id` — is proven against the shipped
@@ -71,7 +72,7 @@ const app = createApp(apiRoutes);
 /** A full real-Postgres `ApiDeps`; `session: null` — the bearer resolves it through the stack. */
 function depsOn(db: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
+  return perRequest({
     db,
     now: () => FIXED_NOW,
     requestId: `pg-${randomUUID()}`,
@@ -107,7 +108,7 @@ function depsOn(db: Db): ApiDeps {
       workflows: workflowsService,
       proposals: proposalsService,
     },
-  };
+  });
 }
 
 /** An OTP email — sensitive in BOTH text and html; the html part is what lets the mutation-watch bite. */

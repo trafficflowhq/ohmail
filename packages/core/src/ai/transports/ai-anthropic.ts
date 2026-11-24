@@ -1,8 +1,9 @@
+import type { AiCallOptions } from "../../ai-call-report.js";
 import {
-  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA,
+  CLASSIFY_RESULT_SCHEMA, DRAFT_RESULT_SCHEMA,
   SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
-  declineOf, draftUserPayload, knownRequestRules,
+  declineOf, draftSystemPrompt, draftUserPayload, knownRequestRules,
 } from "../../mail.js";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult, ThinkingOff,
@@ -99,9 +100,10 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
    * the request is remade ONCE without the field, conditional on the endpoint naming `thinking` in
    * its refusal — an unrelated 400 stays a 400 and is not retried.
    */
-  const call = async (body: Record<string, unknown>, what: string): Promise<unknown> => {
+  const call = async (body: Record<string, unknown>, what: string, options?: AiCallOptions): Promise<unknown> => {
     const meter = usageMeter(opts.onUsage, String(body.model));
     const send = async (payload: Record<string, unknown>): Promise<Response> => {
+      if (options?.beforeDispatch) await options.beforeDispatch();
       meter.attempt();
       const res = await fetchWithDeadline(opts.fetchImpl, `${ANTHROPIC_BASE}/v1/messages`, {
         method: "POST",
@@ -150,7 +152,7 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
   };
 
   return {
-    async classify(input: ClassifierInput): Promise<ClassifierResult> {
+    async classify(input: ClassifierInput, options?: AiCallOptions): Promise<ClassifierResult> {
       // Screens for authentication material and THROWS before a payload exists. Shared with the
       // hosted classifier, deliberately: one sink, so there is one thing to get right.
       const userPayload = classifyUserPayload(input);
@@ -160,7 +162,7 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
         system: [{ type: "text", text: TAXONOMY_PREFIX, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: JSON.stringify(userPayload) }],
         ...shaped(thinkingOffShape(opts.classifyModel, {}), { type: "json_schema", schema: CLASSIFY_RESULT_SCHEMA }),
-      }, "classifier");
+      }, "classifier", options);
       return coerceClassifierResult(raw);
     },
 
@@ -174,7 +176,7 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
      * CLASSIFY model answers it — one call per first-contact sender, same size and difficulty, so a
      * model chosen for routing is chosen for this.
      */
-    async screen(input: ClassifierInput): Promise<ClassifierResult> {
+    async screen(input: ClassifierInput, options?: AiCallOptions): Promise<ClassifierResult> {
       const userPayload = classifyUserPayload(input);
       const raw = await call({
         model: opts.classifyModel,
@@ -182,22 +184,22 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
         system: [{ type: "text", text: SCREENING_PREFIX, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: JSON.stringify(userPayload) }],
         ...shaped(thinkingOffShape(opts.classifyModel, {}), { type: "json_schema", schema: SCREENING_RESULT_SCHEMA }),
-      }, "screener");
+      }, "screener", options);
       // A label outside the five piles becomes the gate, where a person decides — never a guess.
       return coerceScreeningResult(raw);
     },
 
-    async draft(input: DraftInput): Promise<DraftResult> {
+    async draft(input: DraftInput, options?: AiCallOptions): Promise<DraftResult> {
       // Asserts the redaction allow-list and THROWS before a payload exists. Also shared.
       const userPayload = draftUserPayload(input);
       const raw = await call({
         model: opts.draftModel,
         max_tokens: 2048,
-        system: [{ type: "text", text: DRAFT_PREFIX, cache_control: { type: "ephemeral" } }],
+        system: [{ type: "text", text: draftSystemPrompt(input), cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: JSON.stringify(userPayload) }],
         ...shaped(thinkingOffShape(opts.draftModel, { thinking: { type: "disabled" } }),
           { type: "json_schema", schema: DRAFT_RESULT_SCHEMA }),
-      }, "drafter");
+      }, "drafter", options);
       return coerceDraftResult(raw);
     },
 

@@ -1,0 +1,354 @@
+[
+  {
+    "key": "JumpBack/top@paper-light-fold",
+    "question": "picture",
+    "reason": "The reference stands over a list's rows; their text shows beside the circle.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "JumpBack/top@paper-light-foldl",
+    "question": "picture",
+    "reason": "The reference stands over a list's rows; their text shows beside the circle.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "JumpBack/top@paper-dark-fold",
+    "question": "picture",
+    "reason": "The reference stands over a list's rows; their text shows beside the circle.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "JumpBack/top@paper-dark-foldl",
+    "question": "picture",
+    "reason": "The reference stands over a list's rows; their text shows beside the circle.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RadioLines",
+    "reason": "The reference marks each line as a menu item; the kit says what it is, a radio in its group.",
+    "since": "2026-11-14",
+    "alike": [{ "role": "radio", "as": "menuitem" }]
+  },
+  {
+    "key": "Menu",
+    "reason": "The reference's menu has no name and marks a choice as a plain item with a check; the kit names every menu and says menuitemradio.",
+    "since": "2026-11-14",
+    "alike": [
+      { "role": "menu", "unnamed": true },
+      { "role": "menuitemradio", "as": "menuitem" }
+    ]
+  },
+  {
+    "key": "PhoneSheet",
+    "reason": "The reference's sheet is a menu without a name; the kit names it.",
+    "since": "2026-11-14",
+    "alike": [
+      { "role": "menu", "unnamed": true },
+      { "role": "dialog", "as": "menu", "unnamed": true }
+    ]
+  },
+  {
+    "key": "Menu/field",
+    "reason": "The reference's specimen is a still box without the menu's role; the kit's is the menu itself. The menu is read as that box, so its sheet, its rules and its words stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": ["[role=\"menu\"]"]
+  },
+  {
+    "key": "Menu/context",
+    "reason": "The reference's specimen is a still box without the menu's role; the kit's is the menu itself. The menu is read as that box, so its sheet, its rules and its words stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": ["[role=\"menu\"]"]
+  },
+  {
+    "key": "Menu/groups",
+    "reason": "The reference draws each group's title as a heading over its items and nothing around them; the kit holds each titled group in a group named by that title, so that a screen reader says the title as the keys enter it. The groups are read as plain boxes: their headings, items, words and surfaces stand where the reference's stand and every question still binds them.",
+    "since": "2026-11-17",
+    "plain": ["[role=\"group\"]"]
+  },
+  {
+    "key": "Menu/groups@paper-light-desktop",
+    "question": "picture",
+    "reason": "The reference's menu stands over a page's large sentence and starts on a fraction of a pixel, so the one pixel column at its left edge shows the letters behind it (56 pixels, from 93 to 149 under its top); the specimen stands on the plain ground. Names, boxes and drawn values bind, and the same menu in the other face is equal in its picture too.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Dialog/delete",
+    "reason": "The reference's specimen is a still box: no dialog role, and its sentence is a paragraph. The kit's dialog and its heading are read as such boxes, so their words, their dot and their sheet stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-overlay", ".oh-overlay h2"]
+  },
+  {
+    "key": "JumpBack/end@paper-light-phone",
+    "reason": "The reference reads the list's own way back as well: it lies behind this one, at the same place.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "button", "name": "Back to top" }]
+  },
+  {
+    "key": "JumpBack/end@paper-dark-phone",
+    "reason": "The reference reads the list's own way back as well: it lies behind this one, at the same place.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "button", "name": "Back to top" }]
+  },
+  {
+    "key": "Dialog",
+    "reason": "The reference's dialog has no name; the kit names every dialog by its sentence.",
+    "since": "2026-11-14",
+    "alike": [{ "role": "dialog", "unnamed": true }]
+  },
+  {
+    "key": "Dialog/keys",
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog. The heading is read as a paragraph, so its words and its dot stand in the dialog as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-overlay h2"]
+  },
+  {
+    "key": "Dialog/field",
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog. The heading is read as a paragraph, so its words and its dot stand in the dialog as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-overlay h2"]
+  },
+  {
+    "key": "Dialog/waiting",
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog. The heading is read as a paragraph, so its words and its dot stand in the dialog as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-overlay h2"]
+  },
+  {
+    "key": "Dialog/store",
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog. The heading is read as a paragraph, so its words and its dot stand in the dialog as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-overlay h2"]
+  },
+  {
+    "key": "NoticeSlot/listed",
+    "reason": "The reference's menu has no name; the kit names it by the line that opens it.",
+    "since": "2026-11-14",
+    "alike": [{ "role": "menu", "unnamed": true }]
+  },
+  {
+    "key": "Palette",
+    "reason": "The reference's line is a plain text box over an unnamed list; the kit's is a combobox that owns a named listbox and says it is open, so a screen reader hears the row the arrows are on.",
+    "since": "2026-11-15",
+    "alike": [
+      { "role": "combobox", "as": "textbox" },
+      { "role": "listbox", "unnamed": true },
+      { "role": "combobox", "unstated": ["expanded"] }
+    ]
+  },
+  {
+    "key": "Opening",
+    "reason": "The reference reads the app's own main column as well: it holds the part and is exactly as large. The landmark is the frame's, not this part's.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "main", "name": "" }]
+  },
+  {
+    "key": "Palette/typed@paper-light-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "Palette/typed@paper-dark-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RefusalLine/way@paper-light-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RefusalLine/way@paper-dark-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RefusalLine/way@ohmarchy-light-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RefusalLine/way@ohmarchy-dark-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RefusalLine/start@paper-light-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "InfoMark",
+    "reason": "The reference's (i) is a plain button; the kit's says whether its card is open (aria-expanded), as a disclosure does. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "SuggestionList/inline@paper-light-desktop",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "One mark of 25 pixels that touch, at the pin of the last row (under two ten-thousandths of the picture). The list's names, boxes and drawn values are the reference's; the same row is equal in the phone's two looks and the same pin is equal in every other state that draws it. The rows of this state are 49.25 high, so its third row stands a third of a pixel down, and the pin's small circle is drawn by that fraction."
+  },
+  {
+    "key": "Slot",
+    "reason": "The reference's slot is a plain button; the kit's opens its menu and says whether it is open (aria-expanded). The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "Sentence",
+    "reason": "The sentence's slots are the kit's Slot: each says whether its menu is open (aria-expanded), which the reference's plain buttons do not.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "NoticeSlot",
+    "reason": "The kit's way to the other notices says whether their list is open (aria-expanded); the reference's is a plain button.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "FieldStack/rest@paper-light-phone",
+    "question": "picture",
+    "reason": "A label's line is 18.19 high, so a row of the stack is 84.19 and every row after the first starts on a fraction of a pixel. The reference's page draws the three fields 24, 108 and 192 under the stack's top (the stack stands under a sentence that ends on a fraction there); a stack that starts on a whole pixel draws them at 24, 108 and 193: the third field and the switch under it one pixel lower, and a hair in the arcs of the two short fields. The same stack with a pointer, with the same fractions, is equal in its picture; names, boxes and drawn values are the reference's here too. No rule of the part makes both pages equal.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Field/refused",
+    "reason": "The kit marks a refused field invalid (aria-invalid), so a screen reader says it with the field; the reference's field carries only the line under it.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "textbox", "unstated": ["invalid"] }]
+  },
+  {
+    "key": "Page/refused",
+    "reason": "The reference's page is a plain block under its banner; the kit's is the page's main landmark. The landmark is read as that block, so its words and its dot stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": ["main"]
+  },
+  {
+    "key": "Count/plain",
+    "question": "drawn",
+    "reason": "The sheet's lone count specimen sets its digit without tabular figures; every place the sheet sets a count (a rail entry's, a segment's, the doorbell's, a row's) sets it in tabular figures, as the part does everywhere. Names, boxes and the picture bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Opening/window@ohmarchy-light-desktop",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's specimen stands inside its frame's window, whose fill the capture does not read as the specimen's; the kit's opening fills its own window (opening.css, its stage), read as a surface of the same box. The pictures are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Opening/window@ohmarchy-dark-desktop",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's specimen stands inside its frame's window, whose fill the capture does not read as the specimen's; the kit's opening fills its own window (opening.css, its stage), read as a surface of the same box. The pictures are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Opening/phone@ohmarchy-light-phone",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's specimen stands inside its frame's window, whose fill the capture does not read as the specimen's; the kit's opening fills its own window (opening.css, its stage), read as a surface of the same box. The pictures are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Opening/phone@ohmarchy-dark-phone",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's specimen stands inside its frame's window, whose fill the capture does not read as the specimen's; the kit's opening fills its own window (opening.css, its stage), read as a surface of the same box. The pictures are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Menu/titled",
+    "question": "drawn",
+    "since": "2026-11-15",
+    "reason": "The sheet's time field never resets the browser's appearance (it draws its own box over it); the part starts every control from nothing, as the kit's control does, and draws the same box itself. Of the drawn values that and, in the dark, the field's colour scheme differ (the design names color-scheme per scheme since 2026-11-15; the studio's sheet takes the line next); names, boxes and the picture bind."
+  },
+  {
+    "key": "Menu/titled@ohmarchy-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "The time field's clock is the browser's own drawing, and it now follows the dark scheme the design names (color-scheme, ruled 2026-11-15): drawn light on the dark field, where the reference, taken before the studio's sheet named the scheme, draws it dark. The rest of the picture is equal."
+  },
+  {
+    "key": "Button/mark",
+    "since": "2026-11-16",
+    "reason": "A button that opens a menu says whether the menu is open (aria-expanded), which the reference's plain button does not; the state stays, as ruled for every such control on 2026-11-15.",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "Button/mark@paper-light-phone",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark@paper-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark@ohmarchy-light-phone",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark@ohmarchy-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark-set@paper-light-phone",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark-set@paper-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark-set@ohmarchy-light-phone",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Empty/decided@ohmarchy-light-desktop",
+    "question": "picture",
+    "reason": "One letter of the answer's word (the x of Ohbox) differs by a hair (41 pixels that touch; two ten-thousandths of the picture). The answer's name, box and drawn values are the reference's, its key stands where the reference's does, and the same place in paper is equal in its picture.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "CameraSquare/live",
+    "reason": "The design's live square is a button because its page has no camera: a press on it stands for a code that was read. The kit's square is the camera's own place and takes no press: a picture, named the same, in both of its states. Its box, its drawn values and its picture bind.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "img", "as": "button" }]
+  },
+  {
+    "key": "Counters/rest",
+    "question": "names",
+    "reason": "The design's first read counts while it is drawn: its figures differ from one taking of the reference to the next (610, 647 and 4,938, 4,667 in three looks of one address). The specimen holds one count. The figures' face, size and column, the words and their dots still bind.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Counters/rest",
+    "question": "picture",
+    "reason": "The same moving count: the numerals in the picture are another moment's. Boxes and drawn values are equal in all three looks.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Button/mark-set@ohmarchy-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  }
+]

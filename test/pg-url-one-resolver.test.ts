@@ -64,7 +64,7 @@ describe("which Postgres a test reaches", () => {
       .map(({ f }) => f);
     expect(offenders,
       "these open a Postgres client AND spell out a test database: take pgTestUrl(import.meta.url) " +
-      "from @trafficflow/db/testing (or DB_URL from apps/worker/test/_workerdb.ts) instead").toEqual([]);
+      "from @trafficflow/db/testing (or DB_URL from packages/organizer/test/_workerdb.ts) instead").toEqual([]);
   });
 
   /* The rule above is vacuous if nothing opens a client, and a census that cannot fire is worth
@@ -123,10 +123,13 @@ const MIGRATING = [
   "packages/core/test/adapters/drizzle-repo.test.ts",
   "packages/db/test/schema.rules.test.ts",
   "apps/worker/test/leader-lock.test.ts",
-  ...["another-apps-filing-says-why", "api-move-handoff", "attachments", "external-move", "forward-round-trip",
-    "move-expunge-fault", "part-cut-by-move", "passive-folders", "poison-batch", "reconcile-cron",
-    "reconcile-cron-promotion", "reconcile-poison", "restart", "screen-out-unsubscribes-once", "send",
-    "send-multipart", "send-warm-connection", "sync", "uidvalidity-reset"].map((n) => `apps/worker/test/${n}.e2e.test.ts`),
+  ...["api-move-handoff", "attachments", "forward-round-trip",
+    "move-expunge-fault", "part-cut-by-move", "passive-folders", "reconcile-cron",
+    "reconcile-cron-promotion", "restart", "screen-out-unsubscribes-once", "send",
+    "send-multipart", "send-warm-connection", "uidvalidity-reset"].map((n) => `apps/worker/test/${n}.e2e.test.ts`),
+  // The organizer's own (ruling:organizer-cut): the same files, moved with the cycle they test.
+  ...["another-apps-filing-says-why", "external-move", "poison-batch", "reconcile-poison", "sync"]
+    .map((n) => `packages/organizer/test/${n}.e2e.test.ts`),
 ];
 
 describe("a file that migrates, in a checkout with no lane database", () => {
@@ -139,7 +142,7 @@ describe("a file that migrates, in a checkout with no lane database", () => {
     await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
     const port = (srv.address() as { port: number }).port;
     try {
-      for (const e of ["apps", "packages", "node_modules", "test", "scripts", "tsconfig.base.json", "tsconfig.json"]) {
+      for (const e of ["apps", "packages", "node_modules", "test", "scripts", "tools", "tsconfig.json"]) {
         symlinkSync(join(REPO, e), join(root, e));
       }
       copyFileSync(join(REPO, "package.json"), join(root, "package.json"));

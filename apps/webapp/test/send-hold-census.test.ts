@@ -1,17 +1,18 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import type { EngineMutation } from "@ohmail/client-engine";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import {
   allSendLocks, claimSendLock, holdOf, SEND_LOCK_FORMAT, sendLocksKey, type Hold, type SendLock,
-} from "../app/shell/send-lock";
-import { composeRowKey, composeSessionKey, readComposeDraft, writeComposeDraft } from "../app/shell/compose";
+} from "@ohmail/app-logic/writing/send-lock";
+import { composeRowKey, composeSessionKey, readComposeDraft, writeComposeDraft } from "@ohmail/app-logic/writing/compose";
 /* `(b)` below reads `discardDraft` as source. The rule it follows — anchor on the DECLARED NAME,
    never on the hook — and the three ways a hook spelling fails are written out in the helper;
    this file used to carry its own copy of it, which was two spellings of one rule. */
 import { sliceOfDeclaration } from "./source-anchor.js";
 import { JAR_0_14_0, JAR_0_14_1, RELEASED_AT } from "./fixtures/released-send-lock-jars";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
 
@@ -54,6 +55,8 @@ const NONE_OWED = (): boolean => false;
  *    compose for good once a row the mirror will never answer for is written down.
  */
 
+const WRITING_PROJECTION = "../../../../packages/app-logic/src/writing/writing-of.ts";
+
 const SHELL = (f: string): string =>
   readFileSync(resolve(process.cwd(), `apps/webapp/app/shell/${f}`), "utf8");
 
@@ -67,10 +70,10 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
   // FIVE: the open editor reads the hold of its own row — a `sent` with no record of this
   // browser's is another device's send, and the editor lets go of the row and says so. SIX: a door
   // asks whether a held send keeps the words on screen before it opens another draft over them.
-  ["compose-autosave.ts", 6,
+  ["../../../../packages/app-logic/src/writing/compose-autosave.ts", 6,
     "the adopt-on-mount, the save at SCHEDULE time, the save at FIRE time, Discard, the open "
     + "editor's sent-elsewhere read, and the words-on-screen read a door asks before replacing them"],
-  ["mail-send.ts", 1, "the Send press"],
+  ["../../../../packages/app-logic/src/writing/mail-send.ts", 1, "the Send press"],
   // FIVE, THEN SIX, THEN SEVEN — each step is a DOOR, never a second answer to one question.
   // `openDraft`'s hold was HOISTED above the reply arm rather than duplicated, so the Drafts-list
   // door onto a held reply reaches it (below the arm it never did: the row opened in the inline
@@ -92,7 +95,7 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
   // ELEVEN: the row a reply stored before a door bound its own create's row goes only while free.
   // TWELVE: a dock reads the row its lane last wrote, at its open and while open: one sent from another device ends the lane.
   // ELEVEN AGAIN: writeTo and the mailto seam became one door, `replaceComposer`, which Compose takes too.
-  ["shell-compose.ts", 11,
+  ["../../../../packages/app-logic/src/writing/shell-compose.ts", 11,
     "openDraft (above the reply arm, so a held reply takes the held view), replaceComposer (the "
     + "new-letter door: Compose, Write-to, a mail link), the Drafts list's Delete, replySendState (the reply editor's own lane, row "
     + "included), the orphaned-lane promotion (a dead parent's reply becoming a row), the "
@@ -101,7 +104,7 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
     + "heldLaneRow (the row a promoted lane writes into rather than beside), dropPriorRow (the "
     + "older row a reply's send from its own create's row leaves), and sentElsewhereOf (the row a lane "
     + "last wrote, sent from another device: read when a dock opens and while one is open)"],
-  ["AppShell.tsx", 1, "the render that feeds the compose's send state"],
+  [WRITING_PROJECTION, 1, "the projection that feeds the compose's send state"],
 ];
 
 /** The SUM, apart from the rows: a split that loses part of a count cannot pass on the rows alone. */
@@ -140,12 +143,12 @@ describe("the send hold is answered in one place, and every write site asks", ()
       // Reads the HOLD's own answer, not a row: `sent` is the server's terminal confirmation and
       // is the one status that settles rather than parks. The predicate supplied the fact; these
       // two decide what to do with it.
-      "compose-autosave.ts": [
+      "../../../../packages/app-logic/src/writing/compose-autosave.ts": [
         'if (hold.kind === "parked" && hold.status === "sent") {',
         // The same fact read live: the status witness (no record of this browser's) saying `sent`.
         'if (hold.kind === "parked" && hold.by === "status" && hold.status === "sent") {',
       ],
-      "mail-send.ts": [
+      "../../../../packages/app-logic/src/writing/mail-send.ts": [
         'if (hold.by === "status" && hold.status === "sent") return state;',
         // NOT a row's status and not the hold: `firstSendStatusOf` reads
         // `details.firstSend.status` off a REFUSAL, which is the server's fact about the OTHER
@@ -155,10 +158,9 @@ describe("the send hold is answered in one place, and every write site asks", ()
         // row still has to be classified: the assertion below is an exact list, not a subset.
         'return status === "sent" || status === "unverified" || status === "pending" ? status : undefined;',
       ],
-      // IN SOURCE ORDER, which is what the assertion below compares. Both moved to
-      // `shell-compose.ts` with the verbs that read them (ARCH-022); the empty entry below keeps
-      // `AppShell.tsx` asked, so a comparison written back into the shell frame still refuses.
-      "shell-compose.ts": [
+      // The comparison order follows the composer. The projection is scanned too, so its
+      // consumer cannot introduce a second answer to the hold question.
+      "../../../../packages/app-logic/src/writing/shell-compose.ts": [
         // Reads the HOLD's own answer, as the composer's sent-elsewhere read does: a `sent` by status
         // is another device's send, and Reply ends the lane's row as a delete ends it.
         'const sentElsewhere = hold !== null && hold.kind === "parked" && hold.by === "status" && hold.status === "sent";',
@@ -166,16 +168,26 @@ describe("the send hold is answered in one place, and every write site asks", ()
         // draft AND a row a send left unconfirmed; handing the press the ordinary one would ask
         // the predicate a question it answers `free` and send beside the held row. The verdict is
         // still `holdOf`'s — `replySendState` asks it about the row this line picks.
-        'drafts.find((d) => d.inReplyToMessageId === messageId && d.status !== "draft")?.id ?? null);',
+        'drafts.find((d) => d.inReplyToMessageId === messageId && d.status !== "draft"',
         // Not the hold: it decides whether this device's own editor state may seed the reopened
         // form, which is about where the block state was last written, not about a send.
         'if (d.status !== "draft") return {};',
+        // A resolution cannot change a confirmed sent row or cancel an appointment.
+        'if (starting !== shown || starting.status === "sent" || starting.status === "scheduled") return;',
+        // Reopen only the changed, newly confirmed draft after resolving the held send.
+        'if (!current || current === starting || current.status !== "draft") return;',
+        // An offered draft fills empty fields only while it is still an ordinary draft.
+        // A row a send took is never adopted.
+        'if (id !== "draft-compose" || !draft || draft.accepted || draft.status !== "draft") return;',
       ],
-      "AppShell.tsx": [],
+      [WRITING_PROJECTION]: [
+        // Select the ordinary, unaccepted draft offered in the composer. Its send state comes from holdOf.
+        '(draft) => draft.id === "draft-compose" && draft.status === "draft" && !draft.accepted,',
+      ],
       // The predicate's own file, where the question is allowed to be answered — and, in source
       // order after it, `discardDecision` reading the HOLD's status: a projection of `holdOf`'s
       // answer into what the Drafts list's Discard does with it, not a second reading of the row.
-      "send-lock.ts": [
+      "../../../../packages/app-logic/src/writing/send-lock.ts": [
         'if (row.status !== "draft") {',
         'if (hold.kind === "parked" && hold.by === "status" && hold.status === "sending") {',
       ],
@@ -192,7 +204,7 @@ describe("the send hold is answered in one place, and every write site asks", ()
         + "hold question, ask holdOf instead; if it is something else, name it above.",
       ).toEqual(allowed);
     }
-    expect(SHELL("send-lock.ts"), "the predicate stopped being defined in one place")
+    expect(SHELL("../../../../packages/app-logic/src/writing/send-lock.ts"), "the predicate stopped being defined in one place")
       .toMatch(/export function holdOf\(/);
   });
 
@@ -203,21 +215,21 @@ describe("the send hold is answered in one place, and every write site asks", ()
      * A jar holding a 0.14.0 record, a named unverified 0.14.1 one and the nameless v:3 the 0.14.0
      * rewrite made reads back holding none of them, while this build's own named record survives.
      */
-    const lock = SHELL("send-lock.ts");
+    const lock = SHELL("../../../../packages/app-logic/src/writing/send-lock.ts");
     expect(lock, "the 0.14.0 decoder is back").not.toMatch(/legacySendFingerprint_0_14_0/);
     expect(lock, "the 0.14.1 decoder is back").not.toMatch(/legacySendFingerprint_0_14_1/);
     expect(SEND_LOCK_FORMAT, "the record format moved; the retirement literal must be re-read").toBe(3);
     const at = Date.now();
     const rec = (over: Record<string, unknown>) => ({ lane: "compose", at, draftId: null, fp: "fp", ...over });
-    window.localStorage.setItem(sendLocksKey(), JSON.stringify([
+    window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify([
       rec({ v: 1, key: "K-0140" }),
       rec({ v: 2, key: "K-0141", unverified: true, subject: "draft:d2", session: "s2" }),
       rec({ v: 3, key: "K-NAMELESS", unverified: true }),
       rec({ v: 3, key: "K-NAMED", subject: "draft:d3", session: "s3" }),
     ]));
-    expect(allSendLocks(at, NONE_OWED).map((r) => r.key), "a retired record reached a reader").toEqual(["K-NAMED"]);
+    expect(allSendLocks(at, NONE_OWED, storageOwner()).map((r) => r.key), "a retired record reached a reader").toEqual(["K-NAMED"]);
     expect(
-      (JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]") as Array<{ key: string }>).map((r) => r.key),
+      (JSON.parse(window.localStorage.getItem(sendLocksKey(storageOwner())) ?? "[]") as Array<{ key: string }>).map((r) => r.key),
       "the jar kept a retired record on disk",
     ).toEqual(["K-NAMED"]);
     /* The jars the released 0.14.0 and 0.14.1 writers produced read back empty — and the same
@@ -225,12 +237,12 @@ describe("the send hold is answered in one place, and every write site asks", ()
        retirement and not the clock or the parse. */
     const fresh = RELEASED_AT + 1_000;
     for (const jar of [JAR_0_14_0, JAR_0_14_1]) {
-      window.localStorage.setItem(sendLocksKey(), jar);
-      expect(allSendLocks(fresh, NONE_OWED), "a released 0.14.x jar was read").toEqual([]);
+      window.localStorage.setItem(sendLocksKey(storageOwner()), jar);
+      expect(allSendLocks(fresh, NONE_OWED, storageOwner()), "a released 0.14.x jar was read").toEqual([]);
     }
     const restamped = (JSON.parse(JAR_0_14_1) as Array<Record<string, unknown>>).map((r) => ({ ...r, v: 3 }));
-    window.localStorage.setItem(sendLocksKey(), JSON.stringify(restamped));
-    expect(allSendLocks(fresh, NONE_OWED).map((r) => r.key), "the control: a current named record is read").toEqual(["KEY-" + "0141"]);
+    window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify(restamped));
+    expect(allSendLocks(fresh, NONE_OWED, storageOwner()).map((r) => r.key), "the control: a current named record is read").toEqual(["KEY-" + "0141"]);
   });
 
   it("(a4) a send's answer is kept in ONE map and drained by ONE consumer", () => {
@@ -255,9 +267,10 @@ describe("the send hold is answered in one place, and every write site asks", ()
      *    most likely to add innocently: `compose-autosave.ts` wants this answer too and must go on
      *    receiving it through `onSettled`, never by pulling the map itself.
      */
-    const engine = readFileSync(
-      resolve(process.cwd(), "packages/client-engine/src/engine.ts"), "utf8",
-    );
+    // The engine's door and every file of its folder: the writers stand in more than one of them.
+    const folder = resolve(process.cwd(), "packages/client-engine/src/engine");
+    const engine = [resolve(process.cwd(), "packages/client-engine/src/engine.ts"), ...readdirSync(folder).sort().map((n) => join(folder, n))]
+      .map((f) => readFileSync(f, "utf8")).join("\n");
     const code = (src: string): string[] => src.split("\n").map((l) => l.trim())
       .filter((l) => !l.startsWith("*") && !l.startsWith("//") && !l.startsWith("/*"));
 
@@ -276,14 +289,14 @@ describe("the send hold is answered in one place, and every write site asks", ()
     ).toBe(1);
 
     /* ONE FILE IN THE SHELL PULLS IT, and it is the hook that owns the send. */
-    const pullers = ["compose-autosave.ts", "mail-send.ts", "AppShell.tsx", "shell-compose.ts"]
+    const pullers = ["../../../../packages/app-logic/src/writing/compose-autosave.ts", "../../../../packages/app-logic/src/writing/mail-send.ts", WRITING_PROJECTION, "../../../../packages/app-logic/src/writing/shell-compose.ts"]
       .filter((f) => code(SHELL(f)).some((l) => /\.flushPending\(/.test(l)));
     expect(
       pullers,
       "a second surface drains the engine's late results. `flushPending()` hands each answer to "
       + "exactly one caller, so whichever of the two runs second settles nothing — and neither "
       + "one can tell that it lost.",
-    ).toEqual(["mail-send.ts"]);
+    ).toEqual(["../../../../packages/app-logic/src/writing/mail-send.ts"]);
   });
 
   it("(a5) the compose's HOLD has exactly one producer", () => {
@@ -300,22 +313,20 @@ describe("the send hold is answered in one place, and every write site asks", ()
      * different rule, and both would look correct in isolation — the shape that produced
      * `heldRowUnverified` disagreeing with `holdOf` about the same row.
      *
-     * Counted as JSX ATTRIBUTES, not as the word: `locked` is a local in `ComposeView` and a
-     * property name in its own type, and a census that fired on those would be a census that
-     * fires on innocent content — which discards real work and gets loosened until it fires on
-     * nothing.
+     * Count the assignments of the projected hold. The form reads this field to control its
+     * editor and both send buttons. The predicate and its stored sources have no projection.
      */
-    const producers = ["compose-autosave.ts", "mail-send.ts", "AppShell.tsx", "shell-compose.ts"]
-      .flatMap((f) => [...SHELL(f).matchAll(/\blocked=\{/g)].map(() => f));
+    const producers = ["../../../../packages/app-logic/src/writing/compose-autosave.ts", "../../../../packages/app-logic/src/writing/mail-send.ts", WRITING_PROJECTION, "../../../../packages/app-logic/src/writing/shell-compose.ts"]
+      .flatMap((f) => [...SHELL(f).matchAll(/\bcomposeLocked:\s*/g)].map(() => f));
     expect(
       producers,
       "the compose's hold is set from more than one place. A refusal with two authors has two "
       + "rules, and the one that runs second wins silently — ask the hook and pass its answer.",
-    ).toEqual(["AppShell.tsx"]);
+    ).toEqual([WRITING_PROJECTION]);
     /* TWO, and both are named: the entry on `MailSendApi` and the single implementation in the
        returned object. A third is a second answer to the question the prop above renders. */
     expect(
-      [...SHELL("mail-send.ts").matchAll(/restoredPending:/g)].length,
+      [...SHELL("../../../../packages/app-logic/src/writing/mail-send.ts").matchAll(/restoredPending:/g)].length,
       "the hook answers `restoredPending` from somewhere this census has not read — two are "
       + "expected, the type's entry and the one implementation",
     ).toBe(2);
@@ -356,7 +367,7 @@ function parkBySession(): void {
   claimSendLock({
     v: SEND_LOCK_FORMAT, lane: LANE, key: "KEY-1", at: NOW, draftId: null,
     fp: "fp-of-the-parked-message", session: SESSION, unverified: true,
-  } as SendLock, NONE_OWED);
+  } as SendLock, NONE_OWED, storageOwner());
 }
 
 /**
@@ -370,7 +381,7 @@ function ordinaryRecordBySession(): void {
   claimSendLock({
     v: SEND_LOCK_FORMAT, lane: LANE, key: "KEY-Q", at: NOW, draftId: null,
     fp: "fp-of-the-queued-message", session: SESSION,
-  } as SendLock, NONE_OWED);
+  } as SendLock, NONE_OWED, storageOwner());
 }
 
 beforeEach(() => {
@@ -385,14 +396,14 @@ describe("the predicate's three answers, each produced by the state it is about"
   it("free — no record, and a row the mirror calls a draft", () => {
     const hold = holdOf(mirrorOf([{ id: "d1", status: "draft" }]), {
       lane: LANE, draftId: "d1", session: SESSION,
-    });
+    }, storageOwner());
     expect(hold, "an ordinary draft is held, so nothing in the account can be written to")
       .toEqual({ kind: "free" });
   });
 
   it("free — no row at all, which is a compose nobody has saved yet", () => {
     expect(
-      holdOf(mirrorOf([]), { lane: LANE, draftId: null, session: SESSION }),
+      holdOf(mirrorOf([]), { lane: LANE, draftId: null, session: SESSION }, storageOwner()),
       "a compose with no row is held, so the first save can never happen",
     ).toEqual({ kind: "free" });
   });
@@ -414,7 +425,7 @@ describe("the predicate's three answers, each produced by the state it is about"
      */
     ordinaryRecordBySession();
     expect(
-      holdOf(mirrorOf([]), { lane: LANE, draftId: null, session: SESSION }),
+      holdOf(mirrorOf([]), { lane: LANE, draftId: null, session: SESSION }, storageOwner()),
       "a record with no row parks its session again — which refuses every NEW message written on "
       + "this lane until it ages out",
     ).toEqual({ kind: "free" });
@@ -430,12 +441,12 @@ describe("the predicate's three answers, each produced by the state it is about"
      */
     const sent = holdOf(mirrorOf([{ id: "d9", status: "sent" }]), {
       lane: LANE, draftId: "d9", session: SESSION,
-    });
+    }, storageOwner());
     expect(sent.kind, "a sent row stopped refusing writes").toBe("parked");
     if (sent.kind === "parked") expect(sent.status, "the hold does not carry the status").toBe("sent");
     const stranded = holdOf(mirrorOf([{ id: "d8", status: "sending" }]), {
       lane: LANE, draftId: "d8", session: SESSION,
-    });
+    }, storageOwner());
     if (stranded.kind === "parked") {
       expect(stranded.status, "a stranded send reads as something it is not").toBe("sending");
     }
@@ -445,7 +456,7 @@ describe("the predicate's three answers, each produced by the state it is about"
     parkBySession();
     const hold = holdOf(mirrorOf([{ id: "d1", status: "draft" }]), {
       lane: LANE, draftId: "d1", session: SESSION,
-    });
+    }, storageOwner());
     expect(hold.kind, "the record this browser wrote does not park its own message").toBe("parked");
     if (hold.kind !== "parked") return;
     expect(hold.by, "the record is not named as the witness, so the caller cannot restore the "
@@ -464,7 +475,7 @@ describe("the predicate's three answers, each produced by the state it is about"
     for (const status of ["unverified", "sending", "sent"]) {
       const hold = holdOf(mirrorOf([{ id: "srv-1", status }]), {
         lane: LANE, draftId: "srv-1", session: SESSION,
-      });
+      }, storageOwner());
       expect(hold.kind, `a row the server calls '${status}' is free — writing to it is refused by `
         + "the server and sending it again is a second copy").toBe("parked");
       if (hold.kind === "parked") {
@@ -475,7 +486,7 @@ describe("the predicate's three answers, each produced by the state it is about"
 
   it("unknown — the mirror cannot name the row yet, which a cold reload always looks like", () => {
     expect(
-      holdOf(mirrorOf([]), { lane: LANE, draftId: "not-loaded-yet", session: SESSION }),
+      holdOf(mirrorOf([]), { lane: LANE, draftId: "not-loaded-yet", session: SESSION }, storageOwner()),
       "a mirror that has not finished loading reads as a decision",
     ).toEqual({ kind: "unknown" });
   });
@@ -485,7 +496,7 @@ describe("the predicate's three answers, each produced by the state it is about"
     expect(
       holdOf(mirrorOf([{ id: "d1", status: "draft" }]), {
         lane: LANE, draftId: "d1", session: SESSION,
-      }),
+      }, storageOwner()),
       "a browser that will not let this app read its own records reads as a browser with none — "
       + "which is how every recovery door opened on evidence nobody had",
     ).toEqual({ kind: "unknown" });
@@ -494,12 +505,12 @@ describe("the predicate's three answers, each produced by the state it is about"
   it("an EMPTY jar admits, which is the half `unknown` must not swallow", () => {
     // Invariant S(4)'s last clause. Without this the fail-closed rule above would refuse every
     // first-ever compose in a browser that has simply never sent anything.
-    expect(window.localStorage.getItem(sendLocksKey()), "the jar was not empty for this case")
+    expect(window.localStorage.getItem(sendLocksKey(storageOwner())), "the jar was not empty for this case")
       .toBeNull();
     expect(
       holdOf(mirrorOf([{ id: "d1", status: "draft" }]), {
         lane: LANE, draftId: "d1", session: SESSION,
-      }),
+      }, storageOwner()),
       "an empty jar refuses",
     ).toEqual({ kind: "free" });
   });
@@ -544,9 +555,9 @@ describe("what a site may do under each answer", () => {
      * row the mirror will never answer for. Both readings are pinned so neither can be "tidied"
      * into the other by somebody who has only seen one of the two arguments.
      */
-    const autosave = SHELL("compose-autosave.ts");
-    const shell = SHELL("shell-compose.ts");
-    const send = SHELL("mail-send.ts");
+    const autosave = SHELL("../../../../packages/app-logic/src/writing/compose-autosave.ts");
+    const shell = SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts");
+    const send = SHELL("../../../../packages/app-logic/src/writing/mail-send.ts");
 
     expect(autosave, "the adopt-on-mount stopped failing closed on an answer nobody has")
       .toMatch(/if \(hold\.kind !== "free"\) return false;/);
@@ -558,7 +569,7 @@ describe("what a site may do under each answer", () => {
        of the two arguments. The write-time arm answers the CLOSE as well as the pause now — one
        write, two callers — so it returns a flush outcome where it used to return nothing. */
     expect(
-      [...autosave.matchAll(/\}\)\.kind === "parked"\) return;/g)].length,
+      [...autosave.matchAll(/\}, owner\.current\)\.kind === "parked"\) return;/g)].length,
       "the save at schedule time no longer admits `unknown`, so a compose whose row the mirror "
       + "cannot name can never be written to the account again",
     ).toBe(1);
@@ -569,11 +580,18 @@ describe("what a site may do under each answer", () => {
       "a create beside a row that IS written down no longer refuses on `unknown` — that is the "
       + "reload duplicate: the adoption waits, this hook holds no row, and the timer mints a second",
     ).toMatch(
-      /if \(row === null && readComposeRow\(\) !== null && hold\.kind === "unknown"\) return \{ kind: "nothing" \};/,
+      /if \(row === null && readComposeRow\(owner\.current\) !== null && hold\.kind === "unknown"\) return \{ kind: "nothing" \};/,
     );
     /* AND THE LIST'S DELETE, which was the write site the census did not count. */
-    expect(shell, "the Drafts list's Delete writes without asking the predicate")
-      .toMatch(/const hold = holdOf\(engine, \{[\s\S]{0,320}\}\);\n\s*const decision = discardDecision\(hold\);\n\s*if \(decision\.kind === "refuse"\) \{\n\s*setDiscardRefusal\(/);
+    const decideDraftDiscard = sliceOfDeclaration(shell, "decideDraftDiscard");
+    expect(decideDraftDiscard).toMatch(/discardDecision\(holdOf\(engine, \{[\s\S]{0,320}\}, scope\)\)/);
+    expect(decideDraftDiscard).toMatch(/return decision\.kind === "refuse" \? decision : \{ kind: "go" \}/);
+    const discardDraftRow = sliceOfDeclaration(shell, "discardDraftRow");
+    expect(discardDraftRow, "the Drafts list's Delete writes without asking the predicate")
+      .toMatch(/const decision = decideDraftDiscard\(draftId\);\s*if \(decision\.kind === "refuse"\) return \{ kind: "blocked", why: decision\.why \};[\s\S]+engine\.mutate\(\{ kind: "draft_discard", draftId, \.\.\.version \},/);
+    expect(sliceOfDeclaration(shell, "discardDraft")).toMatch(
+      /const v = await discardDraftRow\(listed\);[\s\S]+case "blocked": setDiscardRefusal\(/,
+    );
     expect(shell, "the race the server refuses by name is not told to anybody")
       .toMatch(/res\.error\?\.code === "send_recorded"/);
     /* AND THE ONE STATUS THAT SETTLES RATHER THAN PARKS, on both sides of the seam. */
@@ -606,13 +624,13 @@ describe("what a site may do under each answer", () => {
  * assertions, because a count is satisfied by a call whose answer is thrown away.
  */
 const SETTLE_SITES: Array<[file: string, count: number, sites: string]> = [
-  ["compose-autosave.ts", 1, "the adopt-on-mount arm for a row the mirror calls `sent`"],
-  ["shell-compose.ts", 2,
+  ["../../../../packages/app-logic/src/writing/compose-autosave.ts", 1, "the adopt-on-mount arm for a row the mirror calls `sent`"],
+  ["../../../../packages/app-logic/src/writing/shell-compose.ts", 2,
     "`onSendSettled`'s confirmed compose and `onSendOutcome`'s refused send that names its row "
     + "(`refusedWithRow`); a Discard empties the editor before the wire, so its 409 restores nothing"],
   // The shell frame keeps none: both endings moved with the verbs (ARCH-022), and a zero here is
   // the claim that no third ending was written back beside the JSX.
-  ["AppShell.tsx", 0, "nothing — the endings live with the verbs"],
+  [WRITING_PROJECTION, 0, "nothing — the endings live with the verbs"],
 ];
 
 /** The SUM, apart from the rows, for `CALL_SITES_TOTAL`'s reason. */
@@ -635,9 +653,9 @@ describe("a compose's ending is written in one place", () => {
       + "census does not read",
     ).toBe(SETTLE_SITES_TOTAL);
     /* And it is ONE implementation: the hook owns it and the shell is wired to that one. */
-    expect(SHELL("compose-autosave.ts"), "the one function is gone")
+    expect(SHELL("../../../../packages/app-logic/src/writing/compose-autosave.ts"), "the one function is gone")
       .toMatch(/const settleCompose = useCallback\(\(fate: ComposeFate\) => \{/);
-    expect(SHELL("shell-compose.ts"), "the shell holds its own copy of the ending again")
+    expect(SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts"), "the shell holds its own copy of the ending again")
       .toMatch(/settleComposeRef\.current = autosave\.settleCompose;/);
   });
 
@@ -652,7 +670,7 @@ describe("a compose's ending is written in one place", () => {
      * Counted on CODE lines only — a comment naming the call is not a call, and the count read 4
      * with one of them in a docblock.
      */
-    const shell = SHELL("shell-compose.ts");
+    const shell = SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts");
     const codeReleases = shell.split("\n")
       .map((l) => l.trim())
       /* THE STATEMENT, not the mention. Filtering on a leading `*` missed a docblock line that
@@ -678,10 +696,14 @@ describe("a compose's ending is written in one place", () => {
      * refuse could have been anywhere in that function. A name the shell does not declare has to
      * throw, not hand back something to assert nothing against.
      */
-    const shell = SHELL("shell-compose.ts");
+    const shell = SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts");
     expect(() => sliceOfDeclaration(shell, "noSuchName")).toThrow("anchor not found: noSuchName");
-    /* The positive half — the name `(b)` DOES use resolves to a slice with the arm in it. */
-    expect(sliceOfDeclaration(shell, "discardDraft")).toContain("emptyEditorsOf(draftId, heldRow)");
+    /* The positive half finds the shared Discard action and the call that detaches its editor. */
+    const discard = sliceOfDeclaration(shell, "discardDraftRow");
+    expect(discard).toMatch(
+      /const row = engine\.read\(\)\.get<EngineDraft>\("draft", draftId\);[\s\S]+const heldRow = readComposeRow\(scope\);\s*const session = heldRow === draftId \? composeSessionId\(scope\) : null;\s*const \{ clearAll, clearCompose \} = discardEditorsOf\(draftId, heldRow, row\);/,
+    );
+    expect(discard).toMatch(/if \(!shown\) clearAll\(\);\s*ownDraftDiscard\(draftId, true\);/);
   });
 });
 
@@ -755,7 +777,7 @@ describe("every write site, under every answer the predicate can give", { timeou
     (globalThis as unknown as { React: unknown }).React = React;
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     act = (React as unknown as { act: typeof act }).act;
-    window.localStorage.setItem(composeSessionKey(), SESSION);
+    window.localStorage.setItem(composeSessionKey(storageOwner()), SESSION);
   });
   afterEach(async () => {
     if (root) await act(async () => root!.unmount());
@@ -801,23 +823,23 @@ describe("every write site, under every answer the predicate can give", { timeou
     jarThrows?: boolean;
     sendInFlight?: boolean;
     onCleared?: (toList: "ohbox" | "drafts") => void;
-    after?: (api: import("../app/shell/compose-autosave").ComposeAutosave) => Promise<void>;
-  }): Promise<{ dispatched: EngineMutation[]; api: import("../app/shell/compose-autosave").ComposeAutosave }> {
-    const { useComposeAutosave, AUTOSAVE_DELAY_MS } = await import("../app/shell/compose-autosave");
+    after?: (api: import("@ohmail/app-logic/writing/compose-autosave").ComposeAutosave) => Promise<void>;
+  }): Promise<{ dispatched: EngineMutation[]; api: import("@ohmail/app-logic/writing/compose-autosave").ComposeAutosave }> {
+    const { useComposeAutosave, AUTOSAVE_DELAY_MS } = await import("@ohmail/app-logic/writing/compose-autosave");
     const { dispatched, engine } = fakeEngine(opts.rows);
     /* A FRESH TAB. The remembered row (`forgetComposeRows`) is module state and outlives a
        `localStorage.clear()`, so without this a case's second drive inherits the first's row and
        reads as a refusal nothing in the product would make. */
-    (await import("../app/shell/compose")).forgetComposeRows();
+    (await import("@ohmail/app-logic/writing/compose")).forgetComposeRows();
     if (opts.jarThrows === true) {
       /* THE JAR GOES BLIND FIRST, so the row is written the only way this browser can write it. */
       blindJar();
-      const { writeComposeRow } = await import("../app/shell/compose");
-      if (opts.heldRow !== undefined && opts.heldRow !== null) writeComposeRow(opts.heldRow);
+      const { writeComposeRow } = await import("@ohmail/app-logic/writing/compose");
+      if (opts.heldRow !== undefined && opts.heldRow !== null) writeComposeRow(opts.heldRow, storageOwner());
     } else if (opts.heldRow !== undefined && opts.heldRow !== null) {
-      window.localStorage.setItem(composeRowKey(), opts.heldRow);
+      window.localStorage.setItem(composeRowKey(storageOwner()), opts.heldRow);
     }
-    let api!: import("../app/shell/compose-autosave").ComposeAutosave;
+    let api!: import("@ohmail/app-logic/writing/compose-autosave").ComposeAutosave;
     /* THE SURFACE HALF, MODELLED: `AppShell.onCleared` empties the form. Without it this harness
        would hand the hook a populated form for ever and the pause after a clear would write a row
        for text no surface is showing — a fixture disagreeing with the shell, not a defect. */
@@ -833,6 +855,7 @@ describe("every write site, under every answer the predicate can give", { timeou
           setFields({ ...(FIELDS as object), to: "", subject: "", body: "" } as never);
           opts.onCleared?.(toList);
         },
+        scope: storageOwner(),
       });
       return null;
     };
@@ -868,7 +891,7 @@ describe("every write site, under every answer the predicate can give", { timeou
     writeComposeDraft({
       to: "lena@atelier.example, ", cc: "", bcc: "", subject: "Bis Montag",
       body: "Kommst du noch?", html: "", fromMailboxId: "mb-1", sig: null,
-    } as never);
+    } as never, storageOwner());
     ordinaryRecordBySession();
     const cleared: string[] = [];
     const out = await drive({
@@ -876,13 +899,13 @@ describe("every write site, under every answer the predicate can give", { timeou
       onCleared: (to) => cleared.push(to),
     });
     expect(
-      readComposeDraft().body,
+      readComposeDraft(storageOwner()).body,
       "the delivered message's text is still in the composer — the next press mints a second key "
       + "for a message the mirror says was already sent",
     ).toBe("");
-    expect(window.localStorage.getItem(composeRowKey()), "the compose still holds the sent row")
+    expect(window.localStorage.getItem(composeRowKey(storageOwner())), "the compose still holds the sent row")
       .toBeNull();
-    expect(window.localStorage.getItem(sendLocksKey()), "the record about the sent row was kept")
+    expect(window.localStorage.getItem(sendLocksKey(storageOwner())), "the record about the sent row was kept")
       .toBeNull();
     expect(cleared, "the surface was never told the compose is over, so the form stays on screen")
       .toEqual(["ohbox"]);
@@ -904,7 +927,7 @@ describe("every write site, under every answer the predicate can give", { timeou
     });
     const before = out.dispatched.length;
     await new Promise((r) => setTimeout(r, 2_400));
-    expect({ row: out.api.draftId, stored: window.localStorage.getItem(composeRowKey()), saves: saves(out.dispatched.slice(before)).length },
+    expect({ row: out.api.draftId, stored: window.localStorage.getItem(composeRowKey(storageOwner())), saves: saves(out.dispatched.slice(before)).length },
       "the released letter was written again, or the composer still holds the row").toEqual({ row: null, stored: null, saves: 0 });
   });
   it("the CREATE arm: free writes exactly one row; parked/record writes none", async () => {
@@ -916,7 +939,7 @@ describe("every write site, under every answer the predicate can give", { timeou
     ).toEqual([null]);
 
     window.localStorage.clear();
-    window.localStorage.setItem(composeSessionKey(), SESSION);
+    window.localStorage.setItem(composeSessionKey(storageOwner()), SESSION);
     parkBySession();
     const parked = await drive({ rows: [] });
     expect(
@@ -967,7 +990,7 @@ describe("every write site, under every answer the predicate can give", { timeou
       + "mirror cannot yet name — the reload duplicate",
     ).toHaveLength(0);
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "the held row was thrown away while the mirror was still loading",
     ).toBe("d-reload");
 
@@ -1023,13 +1046,13 @@ describe("every write site, under every answer the predicate can give", { timeou
        the remembered row would name a message that has been cleared and refuse every save after
        it. */
     const { clearComposeDraft, readComposeRow, writeComposeRow } =
-      await import("../app/shell/compose");
+      await import("@ohmail/app-logic/writing/compose");
     blindJar();
-    writeComposeRow("d-blind");
-    expect(readComposeRow(), "the row this browser opened is not remembered at all").toBe("d-blind");
-    clearComposeDraft();
+    writeComposeRow("d-blind", storageOwner());
+    expect(readComposeRow(storageOwner()), "the row this browser opened is not remembered at all").toBe("d-blind");
+    clearComposeDraft(storageOwner());
     expect(
-      readComposeRow(),
+      readComposeRow(storageOwner()),
       "a door that starts a new message left the old row remembered, so every save after it is "
       + "refused as a second row for a message nobody is holding",
     ).toBeNull();
@@ -1046,16 +1069,16 @@ describe("every write site, under every answer the predicate can give", { timeou
      *
      * Mutation: drop `hold.status === "sent"` from either arm.
      */
-    const { heldRowUnverified } = await import("../app/shell/mail-send");
+    const { heldRowUnverified } = await import("@ohmail/app-logic/writing/mail-send");
     ordinaryRecordBySession();
     const rows = [{ id: "d-sent", status: "sent" }];
     const settled = await drive({ rows, heldRow: "d-sent" });
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "the compose is still holding a row whose send is finished",
     ).not.toBe("d-sent");
     expect(
-      window.localStorage.getItem(sendLocksKey()),
+      window.localStorage.getItem(sendLocksKey(storageOwner())),
       "the record about a row the server calls `sent` was not settled",
     ).toBeNull();
     /* THE DELIVERED ROW ITSELF IS NEVER WRITTEN TO — which is the claim, and it is asserted by
@@ -1070,7 +1093,7 @@ describe("every write site, under every answer the predicate can give", { timeou
     ).not.toContain("d-sent");
 
     /* THE SURFACE SAYS NOTHING ABOUT IT — the projection half of the same evidence. */
-    const sentHold = holdOf(mirrorOf(rows), { lane: LANE, draftId: "d-sent", session: SESSION });
+    const sentHold = holdOf(mirrorOf(rows), { lane: LANE, draftId: "d-sent", session: SESSION }, storageOwner());
     expect(
       heldRowUnverified({ phase: "idle" }, "d-sent", sentHold, SESSION).phase,
       "a message the mirror says was sent is shown as one we could not confirm",
@@ -1080,7 +1103,7 @@ describe("every write site, under every answer the predicate can give", { timeou
        row is not a confirmation and keeps the warning and the refusal. */
     const strandedHold = holdOf(mirrorOf([{ id: "d-str", status: "sending" }]), {
       lane: LANE, draftId: "d-str", session: SESSION,
-    });
+    }, storageOwner());
     expect(
       heldRowUnverified({ phase: "idle" }, "d-str", strandedHold, SESSION).phase,
       "a send that died without a verdict stopped being held",
@@ -1102,7 +1125,7 @@ describe("every write site, under every answer the predicate can give", { timeou
      *
      * Mutation: `p.mutation.kind === "mail_send"` → `true`, or drop the lane comparison.
      */
-    const { sendPendingInOutbox } = await import("../app/shell/mail-send");
+    const { sendPendingInOutbox } = await import("@ohmail/app-logic/writing/mail-send");
     const queue = (ms: Array<Record<string, unknown>>) => ({
       pendingMutations: () => ms.map((m, i) => ({ id: `p${i}`, key: `k${i}`, mutation: m })),
     });
@@ -1137,7 +1160,7 @@ describe("every write site, under every answer the predicate can give", { timeou
        cannot see for a restored send) the tab that died, and the durable outbox the row a waiting
        send names or made. A lane-wide read here froze every other letter on the lane. */
     expect(
-      SHELL("shell-compose.ts"),
+      SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts"),
       "the shell reads only the phase again, so a reload inside the send window is unguarded",
     ).toMatch(/const sendCarriesThis = pressedHere \|\| restoredHere \|\| rowWaits;[\s\S]*sendInFlight: sendCarriesThis,/);
   });
@@ -1168,7 +1191,7 @@ describe("every write site, under every answer the predicate can give", { timeou
     ).toEqual(["d1"]);
 
     window.localStorage.clear();
-    window.localStorage.setItem(composeSessionKey(), SESSION);
+    window.localStorage.setItem(composeSessionKey(storageOwner()), SESSION);
     const parked = await drive({ rows: [{ id: "srv-1", status: "unverified" }], heldRow: "srv-1" });
     expect(
       saves(parked.dispatched),
@@ -1188,7 +1211,7 @@ describe("every write site, under every answer the predicate can give", { timeou
     expect(free.dispatched.length, "the adoption itself wrote to the account").toBeGreaterThan(-1);
 
     window.localStorage.clear();
-    window.localStorage.setItem(composeSessionKey(), SESSION);
+    window.localStorage.setItem(composeSessionKey(storageOwner()), SESSION);
     const parked = await drive({
       rows: [{ id: "srv-1", status: "sending" }], heldRow: "srv-1",
       after: async (api) => {
@@ -1197,7 +1220,7 @@ describe("every write site, under every answer the predicate can give", { timeou
       },
     });
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "the held row was thrown away, which is what let the next pause mint a second row for the "
       + "message whose send is most likely still in flight",
     ).toBe("srv-1");
@@ -1226,7 +1249,7 @@ describe("every write site, under every answer the predicate can give", { timeou
      * pressed on a row this hook IS holding.
      */
     window.localStorage.clear();
-    window.localStorage.setItem(composeSessionKey(), SESSION);
+    window.localStorage.setItem(composeSessionKey(storageOwner()), SESSION);
     const rows2 = [{ id: "d2", status: "draft" }];
     const parked = await drive({
       rows: rows2, heldRow: "d2",
@@ -1245,7 +1268,7 @@ describe("every write site, under every answer the predicate can give", { timeou
 
     /* AND THE JAR'S SIDE OF THE SAME GUARD: a record, no status change, same refusal. */
     window.localStorage.clear();
-    window.localStorage.setItem(composeSessionKey(), SESSION);
+    window.localStorage.setItem(composeSessionKey(storageOwner()), SESSION);
     const rows3 = [{ id: "d3", status: "draft" }];
     const byRecord = await drive({
       rows: rows3, heldRow: "d3",

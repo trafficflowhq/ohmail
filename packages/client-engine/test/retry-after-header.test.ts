@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
-  FixturesAdapter, HttpAdapter, MutationRejectedError, OhmailEngine, IndexedDbMirrorStore,
+  HttpAdapter, MutationRejectedError, OhmailEngine, IndexedDbMirrorStore,
   OUTBOX_BACKOFF_CAP_MS, type EngineAdapter,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * `Retry-After` FROM A REAL HEADER, and the clamp on the wait it names.

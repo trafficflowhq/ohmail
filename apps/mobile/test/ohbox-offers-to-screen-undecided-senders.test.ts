@@ -299,7 +299,7 @@ describe("the note on News and Receipts on the phone", () => {
       await s.cadence();
       expect(await s.actions.pileUnscreened("news")).toEqual({ total: 2, atLeast: false });
       expect(await s.actions.pileUnscreened("receipts")).toEqual({ total: 0, atLeast: false });
-      expect(Copy.pileUnscreenedLead(2)).toBe("2 letters here are from senders you never let in.");
+      expect(Copy.pileUnscreenedLead(2, Copy.reads)).toBe("2 letters in News come from senders you haven't screened yet");
       expect(s.fake.seen.filter((r) => r.method === "POST"), "asking moved mail").toEqual([]);
 
       expect(await s.actions.screenPileUnscreened("news")).toBe(true);

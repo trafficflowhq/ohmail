@@ -1,4 +1,7 @@
 /** @vitest-environment jsdom */
+import { fireEvent, within } from "@testing-library/react";
+import { forwardText, openRegion } from "./_draft-shell.js";
+import type { EngineDraft } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -8,13 +11,13 @@ import { attachments, drafts, mailboxCredentials } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
-import { HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineDraft, type FetchLike } from "@ohmail/client-engine";
+import { HttpAdapter, MemoryMirrorStore, OhmailEngine, type FetchLike } from "@ohmail/client-engine";
 import {
   FIXED_NOW, makeDeps, seedBody, seedMailbox, seedMessage, seedSession, seedThread,
 } from "../../../packages/api/test/helpers.js";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { editorOf } from "./fixtures/rich-editor-driver";
 import { withNodeBlobs } from "./fixtures/node-blobs";
 
@@ -51,7 +54,6 @@ const consentTransport = {
   setMailboxSignature: async () => ({ signatures: {} }),
 };
 
-const q = <T extends Element = Element>(sel: string): T | null => container.querySelector<T>(sel);
 async function waitFor(p: () => boolean | Promise<boolean>, what: string, timeout = 8000): Promise<void> {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -101,7 +103,7 @@ async function world(o: { pictured?: boolean } = {}) {
     // The send reads the inline part through the real fetch door; the IMAP socket is the only double.
     const sealed = await (deps as ApiDeps).keyProvider.encrypt(randomUUID());
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
+      mailboxId, accountId: s.accountId, transport: "imap", secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
       meta: { host: "imap.forward-picture.example", port: 993, secure: true, user: "me@forward-picture.example" },
     });
     vi.spyOn(ImapAdapter.prototype, "fetchPart").mockResolvedValue({ contentType: "image/png", filename: "crane.png", body: new Uint8Array([137, 80, 78, 71]) });
@@ -126,7 +128,7 @@ async function world(o: { pictured?: boolean } = {}) {
     createdAt: "2026-09-01T00:00:00.000Z", organizerRole: "organizer", organizedBy: null,
     organizeConsentedAt: "2026-09-01T00:00:00.000Z",
   } as MailboxFacts];
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -136,25 +138,35 @@ async function world(o: { pictured?: boolean } = {}) {
     root.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC",
       children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, {
-        children: h(AppShell as never, { demo: false, engine, consentTransport, mailboxFacts: async () => roster } as never),
+        children: h(MailShell as never, { demo: false, engine, consentTransport, mailboxFacts: async () => roster } as never),
       }) }),
     }));
   });
   for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
   const letterHash = `#/address/${encodeURIComponent("lena@atelier.example")}/m/${letter}`;
   await go(letterHash);
-  await waitFor(() => (q(".view-address")?.textContent ?? "").includes("Plans"), "the letter on screen");
+  await waitFor(() => (openRegion(container)?.textContent ?? "").includes("Plans"), "the letter on screen");
   const rows = async () => db.select().from(drafts);
   const body = async (id: string) => (await rows()).find((r) => r.id === id)?.body;
   return { delivered, rows, body, engine, net, letter, letterHash, otherId };
 }
 type World = Awaited<ReturnType<typeof world>>;
 
-const dock = (): HTMLElement | null => q<HTMLElement>(".reply[data-reply-for] .rte-surface");
+const dock = () => forwardText(container);
+const reader = () => within(openRegion(container)!);
+const forwardTo = () => reader().queryByRole<HTMLInputElement>("combobox", { name: "To" });
+const forwardButton = () => reader().queryByRole("button", { name: "Forward" });
+const sendForward = () => reader().getByRole("button", { name: "Send" });
+const compose = () => within(within(container).getByRole("region", { name: messages.write.letter }));
+const composeBody = () => within(container).queryByRole("textbox", { name: messages.write.text });
+const draftRow = (id: string) => within(container).queryAllByRole("option").find((row) => row.dataset.id === id) ?? null;
+async function fillForwardTo(): Promise<void> {
+  await act(async () => { fireEvent.change(forwardTo()!, { target: { value: `${TO}, ` } }); });
+}
 async function forwardOn(): Promise<void> {
-  await waitFor(() => q(".abar-fwd button") !== null, "Forward");
-  await act(async () => { q<HTMLElement>(".abar-fwd button")!.click(); });
-  await waitFor(() => dock() !== null && q(".reply[data-reply-for] .rcp-input") !== null, "the forward dock");
+  await waitFor(() => forwardButton() !== null, "Forward");
+  await act(async () => { forwardButton()!.click(); });
+  await waitFor(() => dock() !== null && forwardTo() !== null, "the forward dock");
 }
 async function dockWrites(text: string): Promise<void> {
   await act(async () => { editorOf(dock()!).commands.setContent(`<p>${text}</p>`); });
@@ -162,11 +174,7 @@ async function dockWrites(text: string): Promise<void> {
 /** Forward on the letter, To typed, then (after `between`) the note. */
 async function forwardWith(note: string, between = (): void => {}): Promise<void> {
   await forwardOn();
-  const input = q<HTMLInputElement>(".reply[data-reply-for] .rcp-input")!;
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, `${TO}, `);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  await fillForwardTo();
   between();
   await dockWrites(note);
 }
@@ -174,12 +182,12 @@ async function closeDockAndOpen(id: string): Promise<void> {
   await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
   await waitFor(() => dock() === null, "the dock closed");
   await go("#/drafts");
-  await waitFor(() => q(`.draft-row[data-id="${id}"] .draft-open`) !== null, `${id} in Drafts`);
-  await act(async () => { q<HTMLElement>(`.draft-row[data-id="${id}"] .draft-open`)!.click(); });
-  await waitFor(() => q(".view-compose .rte-surface") !== null, "the composer on the forward row");
+  await waitFor(() => draftRow(id) !== null, `${id} in Drafts`);
+  await act(async () => { draftRow(id)!.click(); });
+  await waitFor(() => composeBody() !== null, "the composer on the forward row");
 }
 const composerWrites = async (text: string) => act(async () => {
-  editorOf(q<HTMLElement>(".view-compose .rte-surface")!).commands.setContent(`<p>${text}</p>`);
+  editorOf(composeBody()!).commands.setContent(`<p>${text}</p>`);
 });
 /** The forward rows this page lists, a create still queued included. */
 const forwardRows = (w: World) => w.engine.read().list<EngineDraft>("draft").filter((d) => d.forwardOfMessageId === w.letter);
@@ -188,9 +196,9 @@ async function composerEditsAndLeaves(w: World, row: string): Promise<void> {
   await composerWrites("composer words two");
   await waitFor(async () => (await w.body(row)) === "composer words two", "the composer's save", SAVED);
   await go("#/drafts");
-  await waitFor(() => q(`.draft-row[data-id="${w.otherId}"] .draft-open`) !== null, "the other draft in Drafts");
-  await act(async () => { q<HTMLElement>(`.draft-row[data-id="${w.otherId}"] .draft-open`)!.click(); });
-  await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Another letter", "the composer on the other draft");
+  await waitFor(() => draftRow(w.otherId) !== null, "the other draft in Drafts");
+  await act(async () => { draftRow(w.otherId)!.click(); });
+  await waitFor(() => compose().queryByRole<HTMLTextAreaElement>("textbox", { name: "Subject" })?.value === "Another letter", "the composer on the other draft");
   await go(w.letterHash);
   await forwardOn();
 }
@@ -236,8 +244,7 @@ describe("a dock's forward row the composer took while the dock's write waited",
     expect(dock()!.textContent, "Forward opened other words than the composer's").toBe("composer words two");
     await dockWrites("composer words two, and more");
     await waitFor(async () => (await w.body(row)) === "composer words two, and more", "the dock's save on the row", SAVED);
-    const send = [...container.querySelectorAll<HTMLButtonElement>(".reply[data-reply-for] button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith("Send"))!;
+    const send = sendForward();
     await act(async () => { send.click(); });
     await waitFor(() => w.delivered.length > 0, "the forward delivered");
     expect(w.delivered.map((m) => m.text.split("\n")[0]), "the send carried other words").toEqual(["composer words two, and more"]);
@@ -297,15 +304,10 @@ describe("a web forward of a letter whose picture sits in its text", () => {
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "F", shiftKey: true, bubbles: true, cancelable: true }));
     });
-    await waitFor(() => dock() !== null && q(".reply[data-reply-for] .rcp-input") !== null, "the forward dock");
-    const input = q<HTMLInputElement>(".reply[data-reply-for] .rcp-input")!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, `${TO}, `);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await waitFor(() => dock() !== null && forwardTo() !== null, "the forward dock");
+    await fillForwardTo();
     if (note !== null) await act(async () => { editorOf(dock()!).commands.setContent(note); });
-    const send = [...container.querySelectorAll<HTMLButtonElement>(".reply[data-reply-for] button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith("Send"))!;
+    const send = sendForward();
     await act(async () => { send.click(); });
     await waitFor(() => w.delivered.length > 0, "the forward delivered", SAVED);
     const msg = w.delivered[0]!;

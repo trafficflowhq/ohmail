@@ -4,14 +4,15 @@ import { resolve } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
 import type { Editor } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
-import { Slice } from "@tiptap/pm/model";
-import { RichEditor } from "../app/shell/RichEditor";
-import { EMPTY_RICH, escapeAsParagraphs, type RichValue } from "../app/shell/rich-text";
+import { DOMParser as SchemaParser, Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { undoDepth } from "@tiptap/pm/history";
+import { getText, getTextSerializersFromSchema } from "@tiptap/react";
+import { htmlToPlainText } from "@trafficflow/core/mail";
+import { WRITE_WORDS, linkCard, mountWriteEditor, type MountedEditor } from "./_write-1-editor";
+import { EMPTY_RICH, escapeAsParagraphs, type RichValue } from "@ohmail/app-logic/writing/rich-text";
+import { pasteInto } from "./fixtures/rich-editor-driver";
 
 /**
  * THE EDITOR, MOUNTED — what it offers, and what it refuses to offer.
@@ -50,67 +51,20 @@ beforeAll(() => {
 });
 
 let host: HTMLElement | null = null;
-let root: Root | null = null;
+let mounted: MountedEditor | null = null;
 
-interface Mounted {
-  emitted: RichValue[];
-  readonly value: RichValue;
-  editor: () => Editor;
-  surface: () => HTMLElement;
-  buttons: () => HTMLButtonElement[];
-  button: (label: string) => HTMLButtonElement;
-  /** Flips the mid-send lock, the way Compose does while a send is in flight. */
-  setEditable: (editable: boolean) => void;
-}
+type Mounted = MountedEditor;
 
-/** Mounts the editor and hands back a live view of the last value it emitted. */
+/** Mounts Write's editor (as Write mounts it: `_write-1-editor.tsx`) and hands back a live view of its value. */
 function mount(initial: RichValue = EMPTY_RICH): Mounted {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  const emitted: RichValue[] = [];
-  let current = initial;
-  let instance: Editor | null = null;
-  let lock: ((editable: boolean) => void) | null = null;
-
-  function Harness() {
-    const [v, setV] = React.useState<RichValue>(initial);
-    const [editable, setEditable] = React.useState(true);
-    current = v;
-    lock = setEditable;
-    return (
-      <NextIntlClientProvider locale="en" messages={messages as never}>
-        <RichEditor
-          value={v}
-          onChange={(next) => { emitted.push(next); setV(next); }}
-          ariaLabel="Reply"
-          editable={editable}
-          editorRef={(e) => { if (e) instance = e; }}
-        />
-      </NextIntlClientProvider>
-    );
-  }
-
-  root = createRoot(host);
-  act(() => { root!.render(<Harness />); });
-  return {
-    emitted,
-    get value() { return current; },
-    setEditable: (editable: boolean) => act(() => lock?.(editable)),
-    editor: () => {
-      if (!instance) throw new Error("the editor never reported itself through editorRef");
-      return instance;
-    },
-    surface: () => host!.querySelector<HTMLElement>(".rte-surface")!,
-    buttons: () => [...host!.querySelectorAll<HTMLButtonElement>(".rte-b")],
-    button: (label: string) =>
-      host!.querySelector<HTMLButtonElement>(`.rte-b[aria-label="${label}"]`)!,
-  };
+  mounted = mountWriteEditor(initial, "Reply");
+  host = mounted.host;
+  return mounted;
 }
 
 afterEach(() => {
-  act(() => { root?.unmount(); });
-  root = null;
-  host?.remove();
+  mounted?.unmount();
+  mounted = null;
   host = null;
   vi.restoreAllMocks();
 });
@@ -198,7 +152,7 @@ describe("the body says WHAT IT IS, not only what it is called", () => {
   it("is a TEXT BOX to a reader, found by role and named by the caller's label", () => {
     mount();
     const body = byRole(host!, "textbox", "Reply");
-    expect(body.classList.contains("rte-surface")).toBe(true);
+    expect(body.classList.contains("ProseMirror"), "the role is not on the editing surface itself").toBe(true);
     expect(body.getAttribute("contenteditable")).toBe("true");
   });
 
@@ -227,40 +181,45 @@ describe("the body says WHAT IT IS, not only what it is called", () => {
      * Read from the sources rather than listed here: a new surface that mounts the editor is
      * covered the day it lands, which a hand-kept list is not.
      */
-    const roots = ["app/views/ComposeView.tsx", "app/shell/InlineReply.tsx", "app/shell/AppShell.tsx",
-      "app/shell/SignatureBlock.tsx", "app/shell/SignaturesRow.tsx"];
+    const letter = "packages/app/src/write/Letter.tsx";
+    expect(readFileSync(resolve(__dirname, "..", "..", "..", letter), "utf8")).toMatch(/<LetterText\b/);
+    const roots = ["packages/app/src/write/text/LetterText.tsx", "packages/app/src/write/Reply.tsx"];
     const sites: string[] = [];
     for (const rel of roots) {
-      const src = readFileSync(resolve(__dirname, "..", rel), "utf8");
-      for (const m of src.matchAll(/<RichEditor\b([\s\S]*?)\/?>/g)) {
+      const src = readFileSync(resolve(__dirname, "..", "..", "..", rel), "utf8");
+      for (const m of src.matchAll(/<Editor\b([\s\S]*?)\/?>/g)) {
         const props = m[1];
-        const label = /ariaLabel=\{([^}]*)\}/.exec(props);
-        expect(label, `${rel}: a <RichEditor> with no ariaLabel`).not.toBeNull();
-        expect(label![1].trim(), `${rel}: an empty ariaLabel`).not.toBe('""');
+        const label = /label=\{([^}]*)\}/.exec(props);
+        expect(label, `${rel}: an <Editor> with no label`).not.toBeNull();
+        expect(label![1].trim(), `${rel}: an empty label`).not.toBe('""');
         sites.push(`${rel}: ${label![1].trim()}`);
       }
     }
-    expect(sites.length, "no call site was found at all — the census read nothing").toBeGreaterThanOrEqual(6);
+    expect(sites).toEqual([
+      `${roots[0]}: t("text")`,
+      `${roots[1]}: forward ? t("reply.forwardText") : t("reply.text")`,
+    ]);
 
     /* The two the composer surfaces use, in both catalogues, non-empty and not each other: the
        compose body and the inline reply are different bodies and a reader hearing the same name
        for both cannot tell which one the caret is in. */
-    const de = JSON.parse(readFileSync(resolve(__dirname, "..", "messages", "de.json"), "utf8")) as
-      Record<string, Record<string, string>>;
-    const en = messages as unknown as Record<string, Record<string, string>>;
-    for (const cat of [en, de]) {
-      expect(cat.compose.editorAria?.trim()).toBeTruthy();
-      expect(cat.reply.editorAria?.trim()).toBeTruthy();
-      expect(cat.compose.editorAria).not.toBe(cat.reply.editorAria);
+    const read = (lang: string) =>
+      (JSON.parse(readFileSync(resolve(__dirname, "..", "..", "..", "packages", "app", "messages", `write.${lang}.json`), "utf8")) as
+        { write: { text?: string; reply: { text?: string; forwardText?: string } } }).write;
+    for (const cat of [read("en"), read("de")]) {
+      expect(cat.text?.trim()).toBeTruthy();
+      expect(cat.reply.text?.trim()).toBeTruthy();
+      expect(cat.reply.forwardText?.trim()).toBeTruthy();
+      expect(new Set([cat.text, cat.reply.text, cat.reply.forwardText]).size).toBe(3);
     }
   });
 });
 
 describe("the toolbar is the grammar, and the grammar is small", () => {
-  it("offers exactly eight controls, in a fixed order", () => {
-    const ed = mount();
-    expect(ed.buttons().map((b) => b.getAttribute("aria-label"))).toEqual([
-      "Bold", "Italic", "Strikethrough", "Code", "Link", "Bulleted list", "Numbered list", "Quote",
+  it("offers exactly twelve controls in order", () => {
+    expect(mount().buttons().map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Bold", "Italic", "Underline", "Strikethrough", "Paragraph style", "Link",
+      "Numbered list", "Bulleted list", "Quote", "Inline code", "Code block", "Divider",
     ]);
   });
 
@@ -281,11 +240,11 @@ describe("the toolbar is the grammar, and the grammar is small", () => {
     // out, so the user would see one message and the recipient another.
     const ed = mount();
     act(() => {
-      ed.editor().commands.setContent("<h1>Title</h1><hr><p>kept</p>");
+      ed.editor().commands.setContent("<h4>Title</h4><table><tr><td>Cell</td></tr></table><p>kept</p>");
     });
     const html = ed.editor().getHTML();
-    expect(html).not.toContain("<h1");
-    expect(html).not.toContain("<hr");
+    expect(html).not.toContain("<h4");
+    expect(html).not.toContain("<table");
     // …and the WORDS are kept. Refusing a node type must not silently delete somebody's text.
     expect(ed.editor().getText()).toContain("Title");
     expect(ed.editor().getText()).toContain("kept");
@@ -368,11 +327,27 @@ describe("links — select, make, edit, unlink (the popover)", () => {
    * UNCONTROLLED (read on Apply), so a test writes `.value` directly — no synthetic change
    * events, which jsdom + React would need the native-setter dance for.
    */
-  const pop = () => host!.querySelector<HTMLElement>(".rte-linkpop");
-  const urlInput = () => host!.querySelector<HTMLInputElement>(".rte-linkpop-url")!;
-  const applyBtn = () => host!.querySelector<HTMLButtonElement>(".rte-linkpop-apply")!;
-  const removeBtn = () => host!.querySelector<HTMLButtonElement>(".rte-linkpop-remove");
-  const applyValue = (v: string) => act(() => { urlInput().value = v; applyBtn().click(); });
+  /* Write's link card, found by its role and name ("Link"), its field by its label, its presses by their names. */
+  const pop = () => linkCard();
+  const urlInput = () => {
+    const input = [...(pop()?.querySelectorAll<HTMLInputElement>("input") ?? [])][0];
+    if (!input) throw new Error("the link card holds no address field");
+    return input;
+  };
+  const pressNamed = (name: string) =>
+    [...(pop()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.textContent?.trim() === name) ?? null;
+  const applyBtn = () => pressNamed(WRITE_WORDS.link.apply)!;
+  const removeBtn = () => pressNamed(WRITE_WORDS.link.remove);
+  /* The field is the kit's controlled one: the value is typed the way React hears it, then Apply is pressed. */
+  const typeValue = (v: string) => {
+    const input = urlInput();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, v);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const applyValue = (v: string) => { act(() => { typeValue(v); }); act(() => { applyBtn().click(); }); };
+  /* The visible refusal: the card's field says the fix and is marked invalid. */
+  const refusal = () =>
+    pop()?.textContent?.includes(WRITE_WORDS.link.refused) && urlInput().getAttribute("aria-invalid") === "true" ? pop() : null;
 
   it("the Link button opens the popover, and Apply links the selection", () => {
     const ed = mount({ text: "the quote", html: "<p>the quote</p>" });
@@ -497,7 +472,7 @@ describe("links — select, make, edit, unlink (the popover)", () => {
     });
     applyValue("javascript:alert(1)");
     expect(pop(), "the popover closed around a refused destination").not.toBeNull();
-    expect(host!.querySelector(".rte-linkpop-err"), "no visible refusal").not.toBeNull();
+    expect(refusal(), "no visible refusal").not.toBeNull();
     expect(ed.editor().getHTML()).not.toContain("<a");
     expect(ed.editor().getHTML()).not.toContain("javascript");
   });
@@ -519,7 +494,7 @@ describe("links — select, make, edit, unlink (the popover)", () => {
     });
     applyValue("ftp://a.example/file");
     expect(pop(), "the popover closed around a refused destination").not.toBeNull();
-    expect(host!.querySelector(".rte-linkpop-err"), "no visible refusal").not.toBeNull();
+    expect(refusal(), "no visible refusal").not.toBeNull();
     expect(ed.editor().getHTML()).not.toContain("<a");
   });
 
@@ -557,44 +532,6 @@ describe("the Link control wears the chain-link glyph (owner-specified)", () => 
     // arrow this replaces must be gone.
     expect(svg!.querySelectorAll("path").length, "the chain-link is two halves").toBe(2);
     expect(btn.textContent).not.toContain("↗");
-  });
-});
-
-describe("the link popover is themed by tokens, positioned under the bar", () => {
-  // Read the way the flex-chain suite reads its geometry: the stylesheet is the claim.
-  const appCss = readFileSync(resolve(process.cwd(), "apps/webapp/app/app.css"), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "");
-  const ruleBody = (sel: string): string | null => {
-    const m = new RegExp(`(?:^|[};])\\s*${sel}\\s*\\{([^{}]*)\\}`, "m").exec(appCss);
-    return m ? m[1] : null;
-  };
-
-  it("hangs off the bar's own box", () => {
-    const bar = ruleBody("\\.rte-bar");
-    expect(bar, "no bare .rte-bar rule").not.toBeNull();
-    expect(bar, "the popover has nothing to anchor to").toMatch(/position:\s*relative/);
-    const popRule = ruleBody("\\.rte-linkpop");
-    expect(popRule, "no .rte-linkpop rule").not.toBeNull();
-    expect(popRule).toMatch(/position:\s*absolute/);
-    expect(popRule).toMatch(/z-index:\s*var\(--z-pal\)/);
-  });
-
-  it("is painted with theme tokens, no literal colours — both themes from one rule", () => {
-    const popRule = ruleBody("\\.rte-linkpop")!;
-    expect(popRule).toMatch(/background:\s*var\(--float\)/);
-    expect(popRule).not.toMatch(/#[0-9a-fA-F]{3}/);
-    /* The URL field is the shared text field (`TextField`, `packages/ui`): its ink, ground and
-       edge come from `text-field.css`, and the rule left here only places it in the popover's
-       row. So the token claim is made against the file that now paints it. */
-    const input = ruleBody("\\.rte-linkpop-url");
-    expect(input, "no .rte-linkpop-url rule").not.toBeNull();
-    expect(input).not.toMatch(/#[0-9a-fA-F]{3}/);
-    const field = readFileSync(
-      resolve(__dirname, "..", "..", "..", "packages", "ui", "src", "primitives", "text-field.css"), "utf8");
-    const tf = /\n\.tf\{[^}]*\}/.exec(field.replace(/\/\*[\s\S]*?\*\//g, ""))?.[0] ?? "";
-    expect(tf, "no .tf rule — the field is painted by nothing").not.toBe("");
-    expect(tf).toMatch(/color:var\(--ink\)/);
-    expect(tf).not.toMatch(/#[0-9a-fA-F]{3}/);
   });
 });
 
@@ -689,7 +626,7 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
     const start = "<p>run ".length - "<p>".length + 1; // "run " → text starts at pos 1
     act(() => {
       ed.editor().commands.setTextSelection({ from: start, to: start + "npm test".length });
-      ed.button("Code").click();
+      ed.button("Inline code").click();
     });
     expect(ed.value.html).toContain("<code>npm test</code>");
     expect(ed.value.html).not.toContain("<pre");
@@ -709,7 +646,7 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
     const ed = mount({ text: "", html: "<p>one<br>two<br>three</p>" });
     act(() => {
       ed.editor().chain().focus().selectAll().run();
-      ed.button("Code").click();
+      ed.button("Code block").click();
     });
     const html = ed.editor().getHTML();
     expect(count(html, "pre"), "not exactly one code block").toBe(1);
@@ -724,7 +661,7 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
     const ed = mount({ text: "", html: "<p>head<br><br>tail</p>" });
     act(() => {
       ed.editor().chain().focus().selectAll().run();
-      ed.button("Code").click();
+      ed.button("Code block").click();
     });
     expect(ed.editor().state.doc.textContent).toContain("head\n\ntail");
   });
@@ -732,11 +669,13 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
   it("turns a MULTI-PARAGRAPH selection into ONE block, not one per paragraph", () => {
     // `setCodeBlock()` is `setBlockType`, which retypes each textblock it finds — three
     // paragraphs would give three `<pre>` elements and bring the gaps back in a new costume.
-    // The command builds a single node from the selection's text instead.
-    const ed = mount({ text: "", html: "<p>alpha</p><p>beta</p><p>gamma</p>" });
+    // The command builds a single node from the selection's text instead. Side-by-side paragraphs are
+    // what the list and quote toggles leave; set by the content command, since a draft opens as lines.
+    const ed = mount();
+    act(() => { ed.editor().commands.setContent("<p>alpha</p><p>beta</p><p>gamma</p>"); });
     act(() => {
       ed.editor().chain().focus().selectAll().run();
-      ed.button("Code").click();
+      ed.button("Code block").click();
     });
     const html = ed.editor().getHTML();
     expect(count(html, "pre")).toBe(1);
@@ -744,17 +683,16 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
   });
 
   it("reports itself pressed inside a block, and pressing it again lifts the block out", () => {
-    // One button, two constructs: a caret in a code block with an unlit Code button would be a
-    // control claiming the text is not code while the text is code.
+    // The dedicated button reports the block at the caret and returns it to normal text.
     const ed = mount({ text: "", html: "<p>one<br>two</p>" });
     act(() => {
       ed.editor().chain().focus().selectAll().run();
-      ed.button("Code").click();
+      ed.button("Code block").click();
     });
     expect(ed.editor().isActive("codeBlock")).toBe(true);
-    expect(ed.button("Code").getAttribute("aria-pressed")).toBe("true");
+    expect(ed.button("Code block").getAttribute("aria-pressed")).toBe("true");
 
-    act(() => { ed.button("Code").click(); });
+    act(() => { ed.button("Code block").click(); });
     expect(ed.editor().getHTML()).not.toContain("<pre");
     // …and the lines the author typed all came back. `HardBreak` is the schema's
     // `linebreakReplacement`, so the block's newlines become `<br>`s again rather than running
@@ -771,7 +709,7 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
     const ed = mount({ text: "x", html: "<p>x</p>" });
     act(() => {
       ed.editor().commands.focus("end");
-      ed.button("Code").click();
+      ed.button("Inline code").click();
       ed.editor().commands.insertContent("y");
     });
     expect(ed.editor().getHTML()).toContain("<code>y</code>");
@@ -850,11 +788,11 @@ describe("block formats take LINES, not the whole message (owner-reported)", () 
   it("a mid-line code selection expands to whole lines and leaves no dangling break", () => {
     const ed = mount({ text: "", html: "<p>one<br>two<br>three<br>four</p>" });
     act(() => { ed.editor().commands.setTextSelection({ from: 6, to: 11 }); });
-    act(() => { ed.button("Code").click(); });
+    act(() => { ed.button("Code block").click(); });
     // The neighbours come out CLEAN — the pre-fix command left `<p>one<br></p>`, a dangling
     // break that rendered (and sent) as a stray blank line under "one".
     expect(ed.editor().getHTML()).toBe(
-      "<p>one</p><pre><code>two\nthree</code></pre><p>four</p>",
+      '<p>one</p><pre data-ohmail-code="1"><code>two\nthree</code></pre><p>four</p>',
     );
   });
 
@@ -871,8 +809,10 @@ describe("block formats take LINES, not the whole message (owner-reported)", () 
   });
 
   it("the multi-paragraph case stays as it was: the caret's own paragraph only", () => {
-    // This was already right before the fix — pinned so the line layer cannot regress it.
-    const ed = mount({ text: "", html: "<p>alpha</p><p>beta</p><p>gamma</p>" });
+    // This was already right before the fix — pinned so the line layer cannot regress it. Set by the
+    // content command: a draft's paragraphs open as lines.
+    const ed = mount();
+    act(() => { ed.editor().commands.setContent("<p>alpha</p><p>beta</p><p>gamma</p>"); });
     act(() => { ed.editor().commands.setTextSelection(9); });
     act(() => { ed.button("Bulleted list").click(); });
     expect(ed.editor().getHTML()).toBe(
@@ -1049,7 +989,7 @@ describe("block formats take LINES, not the whole message (owner-reported)", () 
       const { state, view } = ed.editor();
       view.dispatch(state.tr.setSelection(NodeSelection.create(state.doc, 0)));
     });
-    act(() => { ed.button("Code").click(); });
+    act(() => { ed.button("Code block").click(); });
     const html = ed.editor().getHTML();
     expect((html.match(/<pre[ >]/g) ?? []).length).toBe(1);
     expect(html).not.toContain("<ul>");
@@ -1112,7 +1052,7 @@ describe("Enter leaves a block the way every editor leaves one", () => {
     const ed = mount({ text: "", html: "<p>one<br>two</p>" });
     act(() => {
       ed.editor().chain().focus().selectAll().run();
-      ed.button("Code").click();
+      ed.button("Code block").click();
     });
     // To the end of "one\ntwo" INSIDE the block (pre opens at 0, text 1–8) — `focus("end")`
     // would land in the trailing paragraph the replacement keeps after the block.
@@ -1121,82 +1061,7 @@ describe("Enter leaves a block the way every editor leaves one", () => {
     act(() => { pressEnter(ed); pressEnter(ed); pressEnter(ed); });
     expect(ed.editor().isActive("codeBlock"), "three Enters must leave the block").toBe(false);
     // …and the block kept the lines; the exits did not eat them.
-    expect(ed.editor().getHTML()).toContain("<pre><code>one\ntwo</code></pre>");
-  });
-});
-
-describe("the editable surface FILLS its frame — the compose click dead zone (R10-2)", () => {
-  /**
-   * THE HALF A DOM CAN ANSWER, AND THE HALF IT CANNOT — said plainly because the difference is
-   * the whole value of this block.
-   *
-   * jsdom lays nothing out, so "a click 180px below the last line puts the caret in the
-   * message" is not assertable here and is verified in a browser. What IS assertable is the
-   * thing that was broken: the CHAIN. `EditorContent` renders a wrapper div and appends
-   * ProseMirror's contenteditable inside it; that wrapper was unclassed and had no flex, so the
-   * surface stayed one line tall inside a 220px box and everything below it was inert. So this
-   * pins the two facts the fix consists of — the class is on the wrapper (DOM), and the three
-   * rules that pass the height down exist (stylesheet, read the way
-   * `empty-explainer-gutter.test.ts` reads its geometry).
-   *
-   * MUTATION WATCH: drop `className="rte-body"` from `EditorContent` and the first case goes
-   * red; delete the `.rte-body` rule or either flex declaration from `.rte-surface` and the
-   * others do.
-   */
-  const appCss = readFileSync(resolve(process.cwd(), "apps/webapp/app/app.css"), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "");
-
-  /** Body of the first top-level rule whose selector list starts with `sel`. */
-  const ruleBody = (sel: string): string | null => {
-    const m = new RegExp(`(?:^|[};])\\s*${sel}\\s*\\{([^{}]*)\\}`, "m").exec(appCss);
-    return m ? m[1] : null;
-  };
-
-  it("puts the surface inside a CLASSED wrapper, so the stylesheet has something to name", () => {
-    const ed = mount();
-    const surface = ed.surface();
-    const body = surface.parentElement;
-    expect(body, "the surface has no wrapper at all").not.toBeNull();
-    expect(body!.className.split(/\s+/)).toContain("rte-body");
-    // …and that wrapper really is the flex child of `.rte`, not some deeper node — the whole
-    // defect was a link in the middle of the chain that nothing styled.
-    expect(body!.parentElement!.className.split(/\s+/)).toContain("rte");
-  });
-
-  it("declares the flex column on all three links of the chain", () => {
-    for (const [sel, name] of [["\\.rte", ".rte"], ["\\.rte-body", ".rte-body"]] as const) {
-      const rule = ruleBody(sel);
-      expect(rule, `no bare ${name} rule in app.css`).not.toBeNull();
-      expect(rule, `${name} stopped being a flex column`).toMatch(/display:\s*flex/);
-      expect(rule).toMatch(/flex-direction:\s*column/);
-    }
-    const body = ruleBody("\\.rte-body")!;
-    expect(body, ".rte-body no longer takes the box's slack").toMatch(/flex:\s*1 1 auto/);
-    expect(body, ".rte-body's auto min-height would force the column open").toMatch(/min-height:\s*0/);
-  });
-
-  it("makes the surface itself take the wrapper's height, with no floor of its own", () => {
-    const surface = ruleBody("\\.rte-surface");
-    expect(surface, "no bare `.rte-surface` rule in app.css").not.toBeNull();
-    expect(surface, "the surface stopped filling its wrapper").toMatch(/flex:\s*1 1 auto/);
-    /**
-     * AND NO `min-height` — the half that was measured rather than reasoned about.
-     *
-     * A `min-height: 0` here looks free: every surface declares its own floor in a more
-     * specific rule, and specificity decides it in a browser. jsdom's `getComputedStyle` takes
-     * the LAST declaration instead, and `reply-ergonomics.test.ts` reads that floor through it —
-     * so adding this line put `expected '0' to be '240px'` on somebody else's guard while the
-     * shipped page was fine. It was never needed: `flex-grow` is what fills the wrapper.
-     */
-    expect(surface, "a floor on the shared rule outranks a surface's own in jsdom's cascade")
-      .not.toMatch(/min-height:/);
-  });
-
-  it("keeps compose's 220px floor, which is what the dead zone was 200px of", () => {
-    const compose = ruleBody("\\.compose-editor");
-    expect(compose, "no `.compose-editor` rule in app.css").not.toBeNull();
-    expect(compose).toMatch(/min-height:\s*220px/);
-    expect(compose).toMatch(/flex:\s*1 1 auto/);
+    expect(ed.editor().getHTML()).toContain('<pre data-ohmail-code="1"><code>one\ntwo</code></pre>');
   });
 });
 
@@ -1222,8 +1087,8 @@ describe("what leaves the editor", () => {
       act(() => { ed.editor().commands.insertContent("!"); });
       expect(ed.value.html, `a plain note reported markup: ${JSON.stringify(plain)}`).toBe("");
       expect(ed.value.text).toContain(plain.split("\n")[0]);
-      act(() => { root?.unmount(); });
-      root = null;
+      ed.unmount();
+      mounted = null;
     }
   });
 
@@ -1274,6 +1139,401 @@ describe("a file dropped on the editor never becomes text", () => {
     });
     expect(claimed(ed, link)).toBe(false);
     expect(claimed(ed, withheld, true)).toBe(false);
+  });
+});
+
+/* ── a paste keeps its lines (Slack's composer is the reference) ───────────────────────── */
+
+/** A letter as it was pasted, byte for byte but for the first name it is signed with: wrapped lines, empty lines, two `- ` lists. */
+const SAMPLE = `Hallo zusammen
+
+Das Q3 2026 ist in Bexio gebucht. Es ist das erste Quartal, das wir selbst
+gebucht haben. Könnt ihr bitte eine kurze Kontrolle machen, ob alles passt?
+Ich möchte die MWST-Abrechnung bis 27.11. bezahlen und bis 30.11. einreichen.
+
+- Alle Q3-Buchungen haben im Feld Referenz eine Nummer «TFA-2026Q3-…»,
+  die Belege sind direkt an den Buchungen angehängt.
+- Die Umbuchungen der MWST sind per 30.09. gebucht.
+- Bank 1020 per 30.09.: CHF 87.38, stimmt mit dem PostFinance-Auszug überein.
+
+MWST-Abrechnung Q3 2026:
+- Ziffer 303: Umsatz 85'365.60, Steuer 6'914.61
+- Ziffer 383 Bezugsteuer: 45'542.17, Steuer 3'688.91
+- Ziffer 400 Vorsteuer: 3'668.91
+- Ziffer 405 Vorsteuer: 782.39
+- Zu bezahlen: CHF 6'152.22
+
+Eine Frage: Wir zahlen der ESTV noch Raten für frühere Quartale
+(2'856.00, 2'856.00, 1'583.40 im Q3). Soll ich Q3 voll bezahlen?
+
+Für den Jahresabschluss habe ich ein paar Punkte notiert, die kommen mit Q4.
+
+Danke und Gruss
+Anna
+`;
+
+/** A block's text with a hard break read as `\n`. */
+const linesOf = (node: ProseMirrorNode): string =>
+  node.textBetween(0, node.content.size, "\n\n", (leaf) => (leaf.type.name === "hardBreak" ? "\n" : ""));
+
+/** The document as its blocks: a paragraph as its lines, a list as its items, anything else by name. */
+function blocksOf(ed: Mounted): Array<string | Record<string, string[]>> {
+  const out: Array<string | Record<string, string[]>> = [];
+  ed.editor().state.doc.forEach((node) => {
+    if (node.type.name === "paragraph") out.push(linesOf(node));
+    else if (node.type.name.endsWith("List")) {
+      const items: string[] = [];
+      node.forEach((item) => { items.push(linesOf(item)); });
+      out.push({ [node.type.name]: items });
+    } else out.push(node.type.name);
+  });
+  return out;
+}
+
+/** Every run of text with its marks (a link with its address), in document order. */
+function runsOf(doc: ProseMirrorNode): string[] {
+  const out: string[] = [];
+  doc.descendants((n) => {
+    if (n.isText) out.push(`${n.text}|${n.marks.map((m) => (m.attrs.href ? `link=${m.attrs.href}` : m.type.name)).join(",")}`);
+  });
+  return out;
+}
+
+const nodesOf = (doc: ProseMirrorNode, type: string): number => {
+  let n = 0;
+  doc.descendants((node) => { if (node.type.name === type) n += 1; });
+  return n;
+};
+
+/** The editor's markup with a link's attributes cut to its address, so a case reads the shape. */
+const shapeOf = (ed: Mounted): string =>
+  ed.editor().getHTML().replace(/<a [^>]*?href="([^"]*)"[^>]*>/g, '<a href="$1">');
+
+function paste(ed: Mounted, clip: { text?: string; html?: string }, plain = false): void {
+  act(() => { pasteInto(ed.surface(), clip, { plain }); });
+}
+
+describe("a paste keeps its lines: line breaks only, never a paragraph (owner-reported)", () => {
+  /**
+   * THE REPORTED DEFECT: the editor makes a line break for Enter, but a pasted letter came in as one
+   * paragraph per line with its empty lines gone, and a paragraph is nothing a person can type or
+   * take apart again. Slack's composer is the reference: it never makes a paragraph from a paste.
+   * Read on the unedited editor: the sample came in as 19 paragraphs, no list, no empty line.
+   */
+  it("THE SAMPLE: its lines, every empty line, and the two lists of three and five items", () => {
+    const ed = mount();
+    paste(ed, { text: SAMPLE });
+    expect(blocksOf(ed)).toEqual([
+      "Hallo zusammen\n\nDas Q3 2026 ist in Bexio gebucht. Es ist das erste Quartal, das wir selbst\n" +
+        "gebucht haben. Könnt ihr bitte eine kurze Kontrolle machen, ob alles passt?\n" +
+        "Ich möchte die MWST-Abrechnung bis 27.11. bezahlen und bis 30.11. einreichen.\n",
+      { bulletList: [
+        // The wrapped line joins its item with ONE space (Slack joins with none).
+        "Alle Q3-Buchungen haben im Feld Referenz eine Nummer «TFA-2026Q3-…», die Belege sind direkt an den Buchungen angehängt.",
+        "Die Umbuchungen der MWST sind per 30.09. gebucht.",
+        "Bank 1020 per 30.09.: CHF 87.38, stimmt mit dem PostFinance-Auszug überein.",
+      ] },
+      "\nMWST-Abrechnung Q3 2026:",
+      { bulletList: [
+        "Ziffer 303: Umsatz 85'365.60, Steuer 6'914.61",
+        "Ziffer 383 Bezugsteuer: 45'542.17, Steuer 3'688.91",
+        "Ziffer 400 Vorsteuer: 3'668.91",
+        "Ziffer 405 Vorsteuer: 782.39",
+        "Zu bezahlen: CHF 6'152.22",
+      ] },
+      "\nEine Frage: Wir zahlen der ESTV noch Raten für frühere Quartale\n" +
+        "(2'856.00, 2'856.00, 1'583.40 im Q3). Soll ich Q3 voll bezahlen?\n\n" +
+        "Für den Jahresabschluss habe ich ein paar Punkte notiert, die kommen mit Q4.\n\n" +
+        "Danke und Gruss\nAnna",
+    ]);
+  });
+
+  it("lands inside the caret's line: what stood before and after it stays there", () => {
+    const ed = mount({ text: "", html: "<p>before after</p>" });
+    act(() => { ed.editor().commands.setTextSelection(8); }); // after "before "
+    paste(ed, { text: "one\ntwo" });
+    expect(ed.editor().getHTML()).toBe("<p>before one<br>twoafter</p>");
+  });
+
+  it("replaces a selection", () => {
+    const ed = mount({ text: "", html: "<p>before after</p>" });
+    act(() => { ed.editor().commands.setTextSelection({ from: 8, to: 13 }); });
+    paste(ed, { text: "x\ny" });
+    expect(ed.editor().getHTML()).toBe("<p>before x<br>y</p>");
+  });
+
+  it("stays in the list item and in the quote it is pasted into", () => {
+    const list = mount({ text: "", html: "<ul><li><p>item</p></li></ul>" });
+    act(() => { list.editor().commands.setTextSelection(7); });
+    paste(list, { text: " a\nb" });
+    expect(list.editor().getHTML()).toContain("<ul><li><p>item a<br>b</p></li></ul>");
+
+    const quote = mount({ text: "", html: "<blockquote><p>quoted</p></blockquote>" });
+    act(() => { quote.editor().commands.setTextSelection(8); });
+    paste(quote, { text: " x\ny" });
+    expect(quote.editor().getHTML()).toContain("<blockquote><p>quoted x<br>y</p></blockquote>");
+  });
+
+  it("reads CR LF and CR as one break, and a paste ending in a line break leaves no empty last line", () => {
+    const ed = mount();
+    paste(ed, { text: "a\r\nb\rc\r\n\r\nd" });
+    expect(ed.editor().getHTML()).toBe("<p>a<br>b<br>c<br><br>d</p>");
+
+    // The breaks after the text's last words are no lines of their own (Slack shows none).
+    const trailing = mount();
+    paste(trailing, { text: "a\nb\r\n" });
+    expect(blocksOf(trailing)).toEqual(["a\nb"]);
+    const empty = mount();
+    paste(empty, { text: "a\n\n" });
+    expect(blocksOf(empty)).toEqual(["a"]);
+    // A text of line breaks only has no last words: it goes in as it is.
+    const breaks = mount({ text: "", html: "<p>ab</p>" });
+    act(() => { breaks.editor().commands.setTextSelection(2); });
+    paste(breaks, { text: "\n\n" });
+    expect(breaks.editor().getHTML()).toBe("<p>a<br><br>b</p>");
+  });
+
+  it("a paste ending in a line break keeps it where words follow the caret: a copied line pasted above a line", () => {
+    const mid = mount({ text: "", html: "<p>Hello world</p>" });
+    act(() => { mid.editor().commands.setTextSelection(7); }); // after "Hello "
+    paste(mid, { text: "foo\n" });
+    expect(mid.editor().getHTML()).toBe("<p>Hello foo<br>world</p>");
+
+    const above = mount({ text: "", html: "<p>world</p>" });
+    act(() => { above.editor().commands.setTextSelection(1); });
+    paste(above, { text: "foo\n" });
+    expect(above.editor().getHTML()).toBe("<p>foo<br>world</p>");
+  });
+
+  it("puts one line in as plain words, and a code block takes its paste verbatim (unchanged)", () => {
+    // Both are what the library already did: pinned so the rule cannot take them over.
+    const ed = mount({ text: "", html: "<p>ab</p>" });
+    act(() => { ed.editor().commands.setTextSelection(2); });
+    paste(ed, { text: "- X" });
+    expect(ed.editor().getHTML()).toBe("<p>a- Xb</p>");
+
+    const code = mount({ text: "", html: "<pre><code>x</code></pre>" });
+    act(() => { code.editor().commands.setTextSelection(2); });
+    paste(code, { text: "\n  - y" });
+    expect(code.editor().getHTML()).toContain('<pre data-ohmail-code="1"><code>x\n  - y</code></pre>');
+  });
+
+  it("paste-as-plain-text (Ctrl+Shift+V) takes the text by the same rule, markup left behind", () => {
+    const ed = mount();
+    paste(ed, { text: "a\nb", html: "<p><b>a</b></p><p>b</p>" }, true);
+    expect(ed.editor().getHTML()).toBe("<p>a<br>b</p>");
+  });
+
+  it("a one-node paste takes the caret's marks only with Shift held, as ProseMirror's own paste does", () => {
+    // Only a slice of one closed node shows the flag; the text rule makes one only of a lone list,
+    // whose marks the document drops. So the slice is handed to the editor's paste handlers here.
+    const pasted = (shift: boolean): string => {
+      const ed = mount({ text: "", html: "<p><strong>ab</strong></p>" });
+      const view = ed.editor().view;
+      act(() => {
+        ed.editor().commands.setTextSelection(2);
+        if (shift) {
+          const key = { key: "V", keyCode: 86, ctrlKey: true, shiftKey: true, bubbles: true };
+          ed.surface().dispatchEvent(new KeyboardEvent("keydown", key));
+        }
+        const event = new Event("paste") as ClipboardEvent;
+        Object.defineProperty(event, "clipboardData", { value: { getData: (t: string) => (t === "text/plain" ? "x" : "") } });
+        const slice = new Slice(Fragment.from(view.state.schema.text("x")), 0, 0);
+        view.someProp("handlePaste", (f) => f(view, event, slice));
+      });
+      return ed.editor().getHTML();
+    };
+    expect(pasted(true)).toBe("<p><strong>axb</strong></p>");
+    expect(pasted(false)).toBe("<p><strong>a</strong>x<strong>b</strong></p>");
+  });
+
+  it("makes a numbered list of '1. ' and '2) ' lines, counting from 1", () => {
+    const ed = mount();
+    paste(ed, { text: "Steps:\n1. open\n2) close" });
+    // The empty last line is the one the editor keeps after a list at the document's end.
+    expect(blocksOf(ed)).toEqual(["Steps:", { orderedList: ["open", "close"] }, ""]);
+    expect(ed.editor().getHTML()).not.toContain("start=");
+  });
+
+  it("a line that begins with a date stays a line, and the letter sends the number it shows", () => {
+    // The letter drops a list's first number, so a list from 27 was sent as "1. November".
+    const ed = mount();
+    paste(ed, { text: "Termin:\n27. November 2026 um 10 Uhr\nGruss" });
+    expect(blocksOf(ed)).toEqual(["Termin:\n27. November 2026 um 10 Uhr\nGruss"]);
+    // An unformatted letter carries no markup and is sent as its text.
+    expect(ed.value.html).toBe("");
+    expect(ed.value.text).toContain("27. November");
+  });
+
+  it("numbered lines that do not count from 1 stay lines", () => {
+    const ed = mount();
+    paste(ed, { text: "3. open\n4. close" });
+    expect(blocksOf(ed)).toEqual(["3. open\n4. close"]);
+    // One numbered line alone is words too.
+    const one = mount();
+    paste(one, { text: "27. November 2026" });
+    expect(blocksOf(one)).toEqual(["27. November 2026"]);
+  });
+
+  it("a marker with nothing after it is no item", () => {
+    const ed = mount();
+    paste(ed, { text: "a\n- \nb\n1. \nc" });
+    expect(blocksOf(ed)).toEqual(["a\n- \nb\n1. \nc"]);
+  });
+});
+
+describe("formatted text comes in as lines, its marks, lists, quotes and code kept", () => {
+  it("a word processor's paragraphs: one empty line between them, bold kept", () => {
+    const ed = mount();
+    paste(ed, {
+      text: "First with bold words.\r\n\r\nSecond.",
+      html: "<html><head><style>p.MsoNormal{margin-top:0cm;margin-bottom:8.0pt}</style></head><body>" +
+        "<!--StartFragment--><p class=MsoNormal>First with <b>bold</b> words.</p>" +
+        "<p class=MsoNormal>Second.</p><!--EndFragment--></body></html>",
+    });
+    expect(shapeOf(ed)).toBe("<p>First with <strong>bold</strong> words.<br><br>Second.</p>");
+  });
+
+  it("one block per line (a mail program's editor): no empty line added, the link kept", () => {
+    const ed = mount();
+    paste(ed, {
+      text: "Line one\nLine two\n\nLine four",
+      html: '<div dir="ltr"><div>Line one</div><div>Line <a href="https://example.com/two">two</a></div>' +
+        "<div><br></div><div>Line four</div></div>",
+    });
+    expect(shapeOf(ed)).toBe('<p>Line one<br>Line <a href="https://example.com/two">two</a><br><br>Line four</p>');
+  });
+
+  it("lines written as paragraphs with no margin (a document program) stay lines", () => {
+    const ed = mount();
+    const line = 'style="margin-top:0pt;margin-bottom:0pt"';
+    paste(ed, {
+      text: "a\nb\n\nc",
+      html: `<b style="font-weight:normal" id="docs-internal"><p ${line}>a</p><p ${line}>b</p><br><p ${line}>c</p></b>`,
+    });
+    expect(ed.editor().getHTML()).toBe("<p>a<br>b<br><br>c</p>");
+  });
+
+  it("a page with paragraphs, a list and a link: the list stays a list, the paragraphs become lines", () => {
+    const ed = mount();
+    paste(ed, {
+      text: "Intro with a link.\n\nSecond.\n\none\ntwo\n\nEnd.",
+      html: '<p>Intro with <a href="https://example.com/x">a link</a>.</p><p>Second.</p>' +
+        "<ul><li>one</li><li><strong>two</strong></li></ul><p>End.</p>",
+    });
+    expect(shapeOf(ed)).toBe(
+      '<p>Intro with <a href="https://example.com/x">a link</a>.<br><br>Second.</p>' +
+        "<ul><li><p>one</p></li><li><p><strong>two</strong></p></li></ul><p>End.</p>",
+    );
+  });
+
+  it("a quote stays a quote and a code block a code block", () => {
+    const ed = mount();
+    paste(ed, {
+      text: "Quoted\nlet a = 1;",
+      html: "<blockquote><div>Quoted</div><div>twice</div></blockquote><pre><code>let a = 1;\n  a += 1;</code></pre>",
+    });
+    const html = ed.editor().getHTML();
+    expect(html).toContain("<blockquote><p>Quoted<br>twice</p></blockquote>");
+    expect(html).toContain("<pre><code>let a = 1;\n  a += 1;</code></pre>");
+    // No paragraph beside another: the quote's lines are one paragraph, the code its own block.
+    expect(nodesOf(ed.editor().state.doc, "paragraph") - nodesOf(ed.editor().state.doc, "blockquote")).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("a draft put back into the editor reads its paragraphs as lines, losing nothing", () => {
+  const DRAFT =
+    '<p>One <strong>bold</strong> word</p><p>Two <a href="https://example.com/2">link</a></p>' +
+    "<ul><li><p>item</p><p>wrapped</p></li></ul><blockquote><p>q1</p><p>q2</p></blockquote><p>Three</p>";
+  const AS_LINES =
+    '<p>One <strong>bold</strong> word<br><br>Two <a href="https://example.com/2">link</a></p>' +
+    "<ul><li><p>item<br><br>wrapped</p></li></ul><blockquote><p>q1</p><p>q2</p></blockquote><p>Three</p>";
+
+  function parsed(ed: Mounted, html: string): ProseMirrorNode {
+    const el = document.createElement("div");
+    el.innerHTML = html;
+    return SchemaParser.fromSchema(ed.editor().schema).parse(el);
+  }
+
+  function expectNothingLost(ed: Mounted, html: string): void {
+    const before = parsed(ed, html);
+    const after = ed.editor().state.doc;
+    expect(runsOf(after)).toEqual(runsOf(before));
+    expect(nodesOf(after, "listItem")).toBe(nodesOf(before, "listItem"));
+    // The editor's own plain text (a block boundary an empty line, a break a line): equal, byte for byte.
+    const schema = ed.editor().schema;
+    expect(ed.editor().getText()).toBe(getText(before, { blockSeparator: "\n\n", textSerializers: getTextSerializersFromSchema(schema) }));
+  }
+
+  it("when the editor opens on the draft", () => {
+    const ed = mount({ text: "", html: DRAFT });
+    expect(shapeOf(ed)).toBe(AS_LINES);
+    expectNothingLost(ed, DRAFT);
+    // Opening is not an edit: nothing is reported, the stored draft stays as it was.
+    expect(ed.emitted).toEqual([]);
+  });
+
+  it("when the draft arrives in an open editor", () => {
+    const ed = mount();
+    ed.setValue({ text: "", html: DRAFT });
+    expect(shapeOf(ed)).toBe(AS_LINES);
+    expectNothingLost(ed, DRAFT);
+    expect(ed.emitted).toEqual([]);
+  });
+
+  it("a plain draft's empty lines are lines too", () => {
+    const ed = mount({ text: "a\n\nb\n\nc", html: "" });
+    expect(ed.editor().getHTML()).toBe("<p>a<br><br>b<br><br>c</p>");
+    expectNothingLost(ed, escapeAsParagraphs("a\n\nb\n\nc"));
+  });
+});
+
+describe("pasted text is sent as typed text is, and one undo takes it back", () => {
+  function typeLines(ed: Mounted, lines: string[]): void {
+    const { view } = ed.editor();
+    act(() => {
+      ed.editor().commands.focus("end");
+      lines.forEach((line, i) => {
+        if (i > 0) view.someProp("handleKeyDown", (fn) => fn(view, new KeyboardEvent("keydown", { key: "Enter" })));
+        if (line) ed.editor().commands.insertContent(line);
+      });
+    });
+  }
+
+  it("the same lines typed with Enter and pasted: the same markup, the same plain-text part", () => {
+    const typed = mount();
+    typeLines(typed, ["Line one", "Line two", "", "Line four"]);
+    const pasted = mount();
+    paste(pasted, { text: "Line one\nLine two\n\nLine four" });
+    expect(pasted.value).toEqual(typed.value);
+    expect(pasted.editor().getHTML()).toBe(typed.editor().getHTML());
+    expect(htmlToPlainText(pasted.value.html)).toBe(htmlToPlainText(typed.value.html));
+    expect(htmlToPlainText(pasted.value.html)).toBe("Line one\nLine two\n\nLine four");
+  });
+
+  it("the sample read back as the letter's plain-text part is the sample again, but for the joined item", () => {
+    const ed = mount();
+    paste(ed, { text: SAMPLE });
+    // A paste leaves no empty last line: the sample's last break is not in the letter.
+    const expected = SAMPLE
+      .replace("«TFA-2026Q3-…»,\n  die", "«TFA-2026Q3-…», die")
+      .replace(/\n$/, "");
+    expect(htmlToPlainText(ed.value.html)).toBe(expected);
+  });
+
+  it("ONE undo takes the whole paste back, and the caret stands after the pasted text", () => {
+    const ed = mount({ text: "", html: "<p>before after</p>" });
+    const start = ed.editor().state.doc;
+    act(() => { ed.editor().commands.setTextSelection(8); });
+    paste(ed, { text: SAMPLE });
+    const { state } = ed.editor();
+    expect(undoDepth(state)).toBe(1);
+    // The caret: everything before it is what stood there plus the paste, everything after is "after".
+    const after = state.doc.textBetween(state.selection.from, state.doc.content.size, "\n");
+    expect(state.selection.empty).toBe(true);
+    expect(after).toBe("after");
+    act(() => { ed.editor().commands.undo(); });
+    expect(ed.editor().state.doc.eq(start)).toBe(true);
   });
 });
 

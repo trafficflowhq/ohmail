@@ -1031,8 +1031,36 @@ fn facts(os: Os) -> Facts {
         flatpak_info: false,
         system_path: false,
         store_build: false,
+        preview_build: false,
         os,
     }
+}
+
+/// A PREVIEW IS AN APPIMAGE IN EVERY WAY THE MACHINE CAN SEE, and the release feed would replace
+/// it with the released app. So the compiled fact wins before anything on disk is read, and the
+/// control is the same machine with the flag off, which is the AppImage that does update itself.
+#[test]
+fn a_preview_build_never_asks_the_release_feed_whatever_the_machine_says() {
+    let machine = Facts {
+        bundled_as: Some(InstallKind::AppImage),
+        appimage: AppImage::Running,
+        ..facts(Os::Linux)
+    };
+    assert_eq!(classify(machine), InstallKind::AppImage);
+    assert_eq!(classify(Facts { preview_build: true, ..machine }), InstallKind::Preview);
+    assert_eq!(
+        classify(Facts { preview_build: true, flatpak_info: true, system_path: true, ..machine }),
+        InstallKind::Preview,
+    );
+    for os in [Os::Windows, Os::Mac] {
+        assert_eq!(classify(Facts { preview_build: true, ..facts(os) }), InstallKind::Preview);
+    }
+    assert!(!InstallKind::Preview.self_applies());
+    assert_eq!(InstallKind::Preview.as_str(), "preview");
+    assert_eq!(
+        InstallKind::Preview.menu_sentence(),
+        Some("Updates Come with the Next Night's Build"),
+    );
 }
 
 /// THE STORE BUILD IS THE ONE KIND NOTHING ON DISK CAN SAY, so it is driven here with the machine

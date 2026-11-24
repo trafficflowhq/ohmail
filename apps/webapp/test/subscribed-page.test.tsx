@@ -74,12 +74,12 @@ afterEach(async () => {
 });
 
 async function mount(messages: typeof en = en, locale = "en"): Promise<void> {
-  const { SubscribedScreen } = await import("../app/(product)/subscribed/SubscribedScreen.js");
+  const { SubscribedRoute } = await import("../app/(product)/subscribed/SubscribedRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, { locale, messages, children: h(SubscribedScreen) }));
+    root!.render(h(NextIntlClientProvider, { locale, messages, children: h(SubscribedRoute) }));
   });
   for (let i = 0; i < 20; i += 1) await act(async () => { await Promise.resolve(); });
 }
@@ -114,14 +114,16 @@ describe("a full session continues to the app at once", () => {
 });
 
 describe("no session: one true sentence and the way to the app", () => {
-  it("a refused session shows the sentence and a link to /, and navigates nowhere", async () => {
+  it("a refused session shows the sentence and the way to /, and navigates nowhere until it is pressed", async () => {
     session = () => json({ error: { code: "unauthorized", message: "no" } }, 401);
     await mount();
     expect(replaced).toEqual([]);
-    expect(text()).toContain(en.subscribed.title);
+    // The title's closing full stop is the drawn dot.
+    expect(text()).toContain(en.subscribed.title.replace(/\.$/, ""));
     expect(text()).toContain(en.subscribed.body);
-    const open = [...host.querySelectorAll("a")].find((a) => a.textContent === en.subscribed.open);
-    expect(open?.getAttribute("href")).toBe("/");
+    const open = [...host.querySelectorAll("button")].find((b) => b.textContent === en.subscribed.open);
+    await act(async () => { open!.click(); });
+    expect(replaced).toEqual(["assign:/"]);
   });
 
   it("a server that did not answer is not a session either — the sentence, not a spinner for ever", async () => {
@@ -134,7 +136,7 @@ describe("no session: one true sentence and the way to the app", () => {
   it("speaks German where the catalogue is German", async () => {
     session = () => json({ error: { code: "unauthorized", message: "no" } }, 401);
     await mount(de as typeof en, "de");
-    expect(text()).toContain("Zurück zu ohmail.");
+    expect(text()).toContain("Zurück zu ohmail");
     expect(text()).toContain("ohmail öffnen");
   });
 

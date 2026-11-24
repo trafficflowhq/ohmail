@@ -3,9 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import desktopDe from "../packages/app/messages/desktop.de.json";
 
 /**
- * GERMAN SAYS MAIL, NOT POST, AND ACCOUNT, NOT KONTO.
+ * GERMAN MAIL AND ACCOUNT WORDING.
  *
  * German-speaking people who use a mail app write "Mail" and "Mails" ("deine Mails", "neue Mail")
  * and call their ohmail sign-in an "Account". "Post" for mail read like a word-for-word rendering of
@@ -17,15 +18,20 @@ import ts from "typescript";
  *  - every value of `apps/webapp/messages/de.json` (web, desktop window);
  *  - every string literal and template text in `apps/mobile/src/copy.de.ts` (the phone's deck),
  *    found through the TypeScript parser so comments are not read as copy;
- *  - the German side of the lifecycle mails in `packages/services/src/mail/templates.ts`
- *    (literals under a `de:` property);
+ *  - the German side of the mails in `packages/services/src/mail/templates.ts` (literals under a
+ *    `de:` property), for Post only: the mails say Konto, as the brand's voice has it. Most German mail
+ *    words sit in `de ? … : …` branches this reader does not see; the mails' own gate
+ *    (`mail-templates.test.ts`, "German says Mail and Konto") holds the mails' Post rule over every
+ *    German render (every word holding "post" is a Postfach word), and that they never say Account,
+ *    E-Mail or Nachricht;
  *  - the German paragraph of the last-resort error page (`lang="de"`).
  *
  * Admitted, each with its reason:
  *  - anything built on "Postfach" (Postfach, Postfächer, Postfach-Passwort, IMAP-Postfach, …): it
  *    names the mailbox itself, which is the ordinary German word for it;
  *  - "Postgres": the database's name;
- *  - "Konto" where it means an account somewhere else, never the ohmail one: the AI provider's
+ *  - "Konto" on the desktop installation account label and the sign-in link to create an account;
+ *  - "Konto" where it means an account somewhere else: the AI provider's
  *    billing account (Anthropic, OpenAI, OpenCode), the mail provider's account password, and the
  *    account a forwarded verification or security mail is about (THIRD_PARTY_KONTO).
  *
@@ -52,6 +58,8 @@ const THIRD_PARTY_KONTO: Record<string, string> = {
   "onboarding.passwordHint": "the mail provider's account password",
   "reply.forwardAsk.verification": "a mail verifying an account at some other service",
   "reply.forwardAsk.security_alert": "a security alert about an account at some other service",
+  "write.reply.ask.verification": "a mail verifying an account at some other service",
+  "write.reply.ask.security_alert": "a security alert about an account at some other service",
   "providerPicker.note_microsoft": "the Microsoft account's security defaults, and work accounts at Microsoft",
   "join.mailboxMicrosoftAfterSetup": "the Microsoft account an app password is allowed on",
   "providerPicker.note_yahoo": "the Yahoo account's security page and its password",
@@ -60,6 +68,8 @@ const THIRD_PARTY_KONTO: Record<string, string> = {
   "providerPicker.note_gmail": "Google accounts that cannot create App Passwords",
   "mailboxes.probe_auth_gmail_app_password_required": "Google accounts that cannot create App Passwords",
   "mailboxes.probe_auth_gmail_imap_disabled": "the Google account IMAP is turned off for",
+  "phoneDoor.form.appOnlyNote": "Google accounts that cannot create App Passwords",
+  "phoneRefusal.standaloneAuthImapDisabled": "the provider's account IMAP is turned off for",
   "mailboxes.probe_auth_microsoft": "work accounts at Microsoft",
   "mailboxes.probe_auth_yahoo": "the name of Yahoo's own account security page",
 };
@@ -135,10 +145,7 @@ const readDe = (): Array<[string, string]> =>
 
 const phoneDeck = (): Array<[string, string]> => literals("apps/mobile/src/copy.de.ts");
 
-const mailsAndLastResort = (): Array<[string, string]> => [
-  ...literals("packages/services/src/mail/templates.ts", (n) => under(n, isDeProperty)),
-  ...literals("apps/webapp/app/last-resort.tsx", (n) => under(n, isLangDe)),
-];
+const lastResortDe = (): Array<[string, string]> => literals("apps/webapp/app/last-resort.tsx", (n) => under(n, isLangDe));
 
 describe("German says Mail, not Post", () => {
   it("the web catalogue (de.json): no Post for mail outside Postfach", () => {
@@ -179,16 +186,24 @@ describe("German says Mail, not Post", () => {
   });
 });
 
-describe("German says Account for the ohmail account, not Konto", () => {
-  it("the web catalogue (de.json): Konto only for somebody else's account", () => {
-    const found = readDe()
+describe("German account wording", () => {
+  it("the web catalogue uses Konto on the two approved ohmail account labels", () => {
+    const catalogue = new Map(readDe());
+    const installAccountKey = "desktopDoor.installAccount";
+    const createAccountKey = "login.createAccount";
+    const desktopLabel = desktopDe.desktopDoor.installAccount;
+    expect(desktopLabel).toBe("Konto");
+    expect(catalogue.get(installAccountKey)).toBe(desktopLabel);
+    expect(catalogue.get(createAccountKey)).toBe("Konto erstellen");
+    const found = [...catalogue]
       .filter(([key]) => !(key in THIRD_PARTY_KONTO))
-      .flatMap(([key, value]) => kontoWords(value).map((w) => `${key}: ${w}`));
-    expect(found, `the ohmail account is an Account in German:\n  ${found.join("\n  ")}`).toEqual([]);
+      .flatMap(([key, value]) => kontoWords(value).map((w) => `${key}: ${w}`))
+      .sort();
+    expect(found).toEqual([`${installAccountKey}: Konto`, `${createAccountKey}: Konto`]);
   });
 
-  it("the phone's deck, the lifecycle mails and the last-resort page: Konto only for somebody else's", () => {
-    const found = [...phoneDeck(), ...mailsAndLastResort()]
+  it("the phone's deck and the last-resort page: Konto only for somebody else's", () => {
+    const found = [...phoneDeck(), ...lastResortDe()]
       .filter(([, text]) => !THIRD_PARTY_KONTO_PHONE.includes(text))
       .flatMap(([at, text]) => kontoWords(text).map((w) => `${at}: ${w}`));
     expect(found, `the ohmail account is an Account in German:\n  ${found.join("\n  ")}`).toEqual([]);

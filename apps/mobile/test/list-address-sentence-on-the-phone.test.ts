@@ -1,7 +1,8 @@
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { MemoryMirrorStore, type EngineMessage, type Folder, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { liveScreener, presentedOf, screeningAnswered, type WorldView } from "../src/state/live";
 import { EN as en } from "../src/copy.en";

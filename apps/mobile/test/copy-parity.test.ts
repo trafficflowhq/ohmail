@@ -138,7 +138,6 @@ const SAME_AS_WEBAPP: Record<string, string> = {
   phoneStateMailboxFull: "sync.blocked_mailbox_full",
   /* The folder verbs — the rail's whole vocabulary. */
   folders: "rail.folders",
-  folderEmpty: "rail.folderEmpty",
   folderFilter: "rail.folderFilter",
   folderNoMatch: "rail.folderNoMatch",
   folderShowFewer: "rail.folderShowFewer",
@@ -203,7 +202,6 @@ const SAME_AS_WEBAPP: Record<string, string> = {
   actionScreening: "screening.action",
   actionDelete: "ohbox.actionDelete",
   deleteAsk: "ohbox.deleteAsk",
-  deleteNote: "ohbox.deleteNote",
   toastDeleted: "ohbox.toastDeleted",
   deleteFailed: "ohbox.deleteFailed",
   resurfaceWhen: "ohbox.resurfaceWhen",
@@ -510,6 +508,7 @@ describe("the phone's two copy decks", () => {
    */
   const SAME_OUTPUT_IN_BOTH: Record<string, { arm?: boolean; why: string }> = {
     serversForgetFailed: { why: "returns its argument unchanged — the sentence is the caller's" },
+    scheduledFor: { why: "forwards the appointment stamp the caller already localized" },
     filingStuckWhy: { why: "a mailbox and a reason joined by a middle dot, as the web's sync.filingStuckWhy" },
     filingsReasonCounted: { why: "a reason and its count in brackets, as the web's mailboxFilings.reasonCounted" },
     aiSuggests: { why: "a place name and a number, with no words of its own" },
@@ -569,8 +568,8 @@ describe("the phone's two copy decks", () => {
       "javax.net.ssl.SSLHandshakeException: Trust anchor for certification path not found",
       "ECONNRESET",                                    // …and the arm that is not a pin failure
     ],
-    /* the one value it tests for, and one that is not it */
-    wakeOff: ["endpoint_refused", "no_distributor"],
+    /* the two values it tests for, and one that is neither */
+    wakeOff: ["endpoint_refused", "switched_off", "no_distributor"],
     /* THE FIVE ARMS OF THE PAIRING CONFIRMATION'S "what answered" LINE, one value each. The
        four flavors are `/hello`'s own vocabulary (`net/pairing.ts`, `state/servers.ts#flavor`);
        the fifth is a flavor this build has never heard of, whose arm names it verbatim rather
@@ -697,6 +696,14 @@ describe("the phone's two copy decks", () => {
       }
     }
   });
+
+  it.each(["Monday, 9:05 AM", "Montag, 09:05 Uhr"])(
+    "keeps the already-localized scheduled time %s unchanged in both copy decks",
+    (stamp) => {
+      expect(EN.scheduledFor(stamp)).toBe(stamp);
+      expect(DE.scheduledFor(stamp)).toBe(stamp);
+    },
+  );
 
   it("translates every store-fault code, and knows an unknown one is not translated", () => {
     /*

@@ -28,6 +28,7 @@ const H = (r: Request, d: ApiDeps): Promise<Response> =>
   app.handle(r, { ...d, session: null, idempotency: null });
 
 const PW = "long-login-password";
+const WRONG_PW = [PW, "wrong"].join("-");
 const IP = "198.51.100.7";
 const IMAP = { host: "imap.example", port: 993, secure: true, user: "mila", pass: "mailbox-imap-password" };
 
@@ -43,7 +44,7 @@ async function openRegister(
   email: string, password = PW,
 ): Promise<string> {
   const res = await H(req("POST", "/auth/register", {
-    headers: { "x-vercel-forwarded-for": IP },
+    headers: { "x-forwarded-for": IP },
     body: JSON.stringify({ email, password, displayName: "A Stranger" }),
   }), deps);
   expect(res.status).toBe(202);
@@ -154,7 +155,7 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
     const token = await openRegister(deps, mailer, "fresh@example.com");
 
     const res = await H(req("POST", "/auth/verify-email", {
-      headers: { "x-vercel-forwarded-for": IP },
+      headers: { "x-forwarded-for": IP },
       body: JSON.stringify({ token, password: PW }),
     }), deps);
 
@@ -188,31 +189,39 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
     expect(rows[0]!.purpose).toBe("email_verify");
   });
 
-  it("A USED TOKEN IS REFUSED, and the second presentation is told nothing extra", async () => {
+  it("a replay acknowledges confirmation only with the correct password", async () => {
     const { deps, mailer } = await makeDeps(undefined, { publicSignup: true });
     const token = await openRegister(deps, mailer, "once@example.com");
 
     const body = JSON.stringify({ token, password: PW });
     const first = await H(req("POST", "/auth/verify-email", {
-      headers: { "x-vercel-forwarded-for": IP }, body,
+      headers: { "x-forwarded-for": IP }, body,
     }), deps);
     expect(first.status).toBe(200);
 
     const second = await H(req("POST", "/auth/verify-email", {
-      headers: { "x-vercel-forwarded-for": IP }, body,
+      headers: { "x-forwarded-for": IP }, body,
     }), deps);
-    expect(second.status).toBe(400);
-    const reused = await envelope(second);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({ status: "already_verified" });
+    expect(second.headers.has("set-cookie")).toBe(false);
+
+    const wrong = await H(req("POST", "/auth/verify-email", {
+      headers: { "x-forwarded-for": IP },
+      body: JSON.stringify({ token, password: WRONG_PW }),
+    }), deps);
+    expect(wrong.status).toBe(400);
+    const reused = await envelope(wrong);
     expect(reused.code).toBe("invalid_token");
 
     // And it is the SAME answer a token that never existed gets. "Already used" must not be
     // distinguishable: a link appears in mailbox-scanner and proxy logs, so telling whoever
     // presents it second that it WAS real confirms the address has an account.
     const never = await H(req("POST", "/auth/verify-email", {
-      headers: { "x-vercel-forwarded-for": IP },
+      headers: { "x-forwarded-for": IP },
       body: JSON.stringify({ token: "not-a-real-token-at-all", password: PW }),
     }), deps);
-    expect(never.status).toBe(second.status);
+    expect(never.status).toBe(wrong.status);
     expect(await envelope(never)).toEqual(reused);
   });
 
@@ -224,7 +233,7 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
     await db.update(loginTokens).set({ expiresAt: new Date(FIXED_NOW.getTime() - 1_000) });
 
     const res = await H(req("POST", "/auth/verify-email", {
-      headers: { "x-vercel-forwarded-for": IP },
+      headers: { "x-forwarded-for": IP },
       body: JSON.stringify({ token, password: PW }),
     }), deps);
     expect(res.status).toBe(400);
@@ -241,7 +250,7 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
 
     // The victim clicks and supplies what they know — which is not the attacker's password.
     const asVictim = await H(req("POST", "/auth/verify-email", {
-      headers: { "x-vercel-forwarded-for": "203.0.113.99" },
+      headers: { "x-forwarded-for": "203.0.113.99" },
       body: JSON.stringify({ token, password: "the-victims-own-password" }),
     }), deps);
     expect(asVictim.status).toBe(401);
@@ -258,7 +267,7 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
 
     // A missing password is refused too — the field cannot be optional-by-omission.
     const noPassword = await H(req("POST", "/auth/verify-email", {
-      headers: { "x-vercel-forwarded-for": IP }, body: JSON.stringify({ token }),
+      headers: { "x-forwarded-for": IP }, body: JSON.stringify({ token }),
     }), deps);
     expect(noPassword.status).toBe(400);
     expect((await envelope(noPassword)).code).toBe("validation_failed");
@@ -275,7 +284,7 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
 
     for (let i = 0; i < 3; i++) {
       const res = await H(req("POST", "/auth/verify-email", {
-        headers: { "x-vercel-forwarded-for": IP },
+        headers: { "x-forwarded-for": IP },
         body: JSON.stringify({ token, password: `guess-${i}-password` }),
       }), deps);
       expect(res.status).toBe(401);
@@ -284,7 +293,7 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
     // Locked out, and the CORRECT password now gets the lockout too — proof the counter governs
     // this endpoint rather than merely being written by it.
     const locked = await H(req("POST", "/auth/verify-email", {
-      headers: { "x-vercel-forwarded-for": IP },
+      headers: { "x-forwarded-for": IP },
       body: JSON.stringify({ token, password: PW }),
     }), deps);
     expect(locked.status).toBe(423);
@@ -297,7 +306,7 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
     expect(keys).toContain(`pw:${k.address("brute@example.com")}:${k.client(IP)}`);
     expect(keys.filter((key) => key.includes("@")), "a typed address in a key").toEqual([]);
     const viaLogin = await H(req("POST", "/auth/login", {
-      headers: { "x-vercel-forwarded-for": IP },
+      headers: { "x-forwarded-for": IP },
       body: JSON.stringify({ email: "brute@example.com", password: PW }),
     }), deps);
     expect(viaLogin.status, "the two endpoints kept two budgets").toBe(423);
@@ -310,7 +319,7 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
     const { db, deps, mailer } = await makeDeps(undefined, { publicSignup: true });
     const token = await openRegister(deps, mailer, "mono@example.com");
     await H(req("POST", "/auth/verify-email", {
-      headers: { "x-vercel-forwarded-for": IP },
+      headers: { "x-forwarded-for": IP },
       body: JSON.stringify({ token, password: PW }),
     }), deps);
 
@@ -320,7 +329,7 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
     // Force a second live token for the same user, as a resend would, and consume it later.
     await db.update(loginTokens).set({ consumedAt: null });
     await H(req("POST", "/auth/verify-email", {
-      headers: { "x-vercel-forwarded-for": IP },
+      headers: { "x-forwarded-for": IP },
       body: JSON.stringify({ token, password: PW }),
     }), deps);
 
@@ -360,7 +369,7 @@ describe("a failed verification send is OBSERVABLE, and still not a request fail
     };
 
     const res = await H(req("POST", "/auth/register", {
-      headers: { "x-vercel-forwarded-for": IP },
+      headers: { "x-forwarded-for": IP },
       body: JSON.stringify({ email: "unlucky@example.com", password: PW, displayName: "Unlucky" }),
     }), withFailingMail);
 
@@ -388,7 +397,7 @@ describe("a failed verification send is OBSERVABLE, and still not a request fail
       debug: rec(), info: rec(), warn: rec(), error: rec(),
     };
     const res = await H(req("POST", "/auth/register", {
-      headers: { "x-vercel-forwarded-for": IP },
+      headers: { "x-forwarded-for": IP },
       body: JSON.stringify({ email: "lucky@example.com", password: PW, displayName: "Lucky" }),
     }), { ...deps, logger: logger as unknown as ApiDeps["logger"] });
     expect(res.status).toBe(202);
@@ -414,7 +423,7 @@ describe("the resend endpoint has no oracle and refuses cleanly", () => {
 
     const res = await H(req("POST", "/auth/verify-email/resend", {
       bearer: s.token,
-      headers: { "x-vercel-forwarded-for": IP },
+      headers: { "x-forwarded-for": IP },
       body: JSON.stringify({ email: "somebody-else@example.com" }),
     }), deps);
     expect(res.status).toBe(200);
@@ -430,7 +439,7 @@ describe("the resend endpoint has no oracle and refuses cleanly", () => {
     const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW, emailVerified: false });
 
     const send = (): Promise<Response> => H(req("POST", "/auth/verify-email/resend", {
-      bearer: s.token, headers: { "x-vercel-forwarded-for": IP }, body: "{}",
+      bearer: s.token, headers: { "x-forwarded-for": IP }, body: "{}",
     }), deps);
 
     expect((await send()).status).toBe(200);
@@ -451,7 +460,7 @@ describe("the resend endpoint has no oracle and refuses cleanly", () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW, emailVerified: false });
     await H(req("POST", "/auth/verify-email/resend", {
-      bearer: s.token, headers: { "x-vercel-forwarded-for": "203.0.113.42" }, body: "{}",
+      bearer: s.token, headers: { "x-forwarded-for": "203.0.113.42" }, body: "{}",
     }), deps);
 
     const keys = (await db.select().from(authThrottle)).map((r) => r.key);
@@ -467,7 +476,7 @@ describe("the resend endpoint has no oracle and refuses cleanly", () => {
     const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
 
     const res = await H(req("POST", "/auth/verify-email/resend", {
-      bearer: s.token, headers: { "x-vercel-forwarded-for": IP }, body: "{}",
+      bearer: s.token, headers: { "x-forwarded-for": IP }, body: "{}",
     }), deps);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
@@ -481,7 +490,7 @@ describe("the resend endpoint has no oracle and refuses cleanly", () => {
       now: FIXED_NOW, lastTwofaAt: null, scope: "enrollment", emailVerified: false,
     });
     const res = await H(req("POST", "/auth/verify-email/resend", {
-      bearer: s.token, headers: { "x-vercel-forwarded-for": IP }, body: "{}",
+      bearer: s.token, headers: { "x-forwarded-for": IP }, body: "{}",
     }), deps);
     expect(res.status).toBe(403);
     expect((await envelope(res)).code).toBe("enrollment_incomplete");

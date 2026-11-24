@@ -5,6 +5,7 @@
  * (a new process), the kill is every timer cleared with nothing closed, and the reading is the
  * dispatch seam, the journal row on disk and the sentence the next launch says.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { createRequire } from "node:module";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +14,6 @@ import {
   ROUTING_JOURNAL_TYPE,
   SqlMirrorStore,
   routingSubject,
-  type EngineMutation,
   type DecideIntent,
   type RoutingIntent,
   type ScreenIntent,

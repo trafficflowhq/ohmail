@@ -3,7 +3,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes, MAILBOX_SYNC_BLOCK_REASONS } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, ServiceError, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, ServiceError, type ServiceContext } from "@trafficflow/services";
 
 /**
  * THE PUBLIC PATCH MAY NOT STEP AROUND THE WORKER'S FAILURE STATE MACHINE.
@@ -33,7 +33,7 @@ const svc = makeMailboxService({ keyProvider: KP });
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 /** An outage three days old, on its ninth attempt — the state a real quarantine reaches. */
 const OUTAGE = {

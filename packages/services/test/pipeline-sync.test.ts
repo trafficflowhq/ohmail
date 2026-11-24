@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/core";
 import type { Change, ClassifierPort, ClassifierInput, ClassifierResult, NativeLocator } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { SyncService, type ServiceContext } from "../src/index.js";
+import { SyncService, dbFor, type ServiceContext } from "../src/index.js";
 
 /** A deterministic classifier + adapter that record whether they were called while a tx was active. */
 class ProbeClassifier implements ClassifierPort {
@@ -59,7 +59,7 @@ async function setup(opts: { graduated?: boolean } = {}) {
   if (opts.graduated) {
     await db.insert(graduations).values({ accountId, patternKey: "sender:friend@known.example→ohmail/News", action: "route", graduated: true });
   }
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => new Date("2026-07-28T00:00:00Z"), requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date("2026-07-28T00:00:00Z"), requestId: "r" };
   return { db, accountId, mailboxId: mb.id, ctx };
 }
 

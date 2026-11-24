@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { accountSettings, accounts, changeLog, mailboxCredentials, mailboxes, type Tx } from "@trafficflow/db";
@@ -56,11 +57,11 @@ async function readerMailbox() {
   }).returning();
   // A stored credential, because a claim-back with no password in the body requires one.
   await tx.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
   });
   const svc = makeMailboxService({ allowance: async () => { /* permitted */ } });
   const ctxAt = (now: Date): ServiceContext => ({
-    db: pglite as unknown as ServiceContext["db"],
+    db: dbFor(pglite, accountId),
     accountId, userId: null, now: () => now, requestId: "r",
   });
   const settings = async () =>

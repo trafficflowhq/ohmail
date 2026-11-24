@@ -1,11 +1,15 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { FixturesAdapter, FOLDER_OF_VIEW, type EngineMutation } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import { barVerb, menuItem, ohboxRows, pickedRows } from "./ohbox/_finders.js";
 
 /**
  * DRAG-AND-DROP FILING TO THE RAIL — one semantic, new gesture.
@@ -73,7 +77,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -88,15 +92,29 @@ async function mountShell(): Promise<void> {
       }),
     );
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await vi.waitFor(() => expect(ohboxRows(host!).length).toBeGreaterThan(0));
   // Put the cursor on the first row — the Ohbox selects nothing by itself.
   await key("j");
 }
+
+/**
+ * THE ADDRESS AS A BROWSER ANNOUNCES IT. At the seated Ohbox the selection is the address, and the frame hears a move
+ * of it by its `hashchange`; jsdom queues that event on a task this file's fake clock never runs (the reason this file
+ * already announces a link by hand). A press that moved the address announces it here, as the browser does a frame
+ * later.
+ */
+let heardHash = "";
+const hearAddress = async (): Promise<void> => {
+  if (window.location.hash === heardHash) return;
+  heardHash = window.location.hash;
+  await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
+};
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
+  await hearAddress();
 };
 
 const click = async (el: Element | null | undefined, init: MouseEventInit = {}): Promise<void> => {
@@ -104,6 +122,7 @@ const click = async (el: Element | null | undefined, init: MouseEventInit = {}):
   await act(async () => {
     el!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
   });
+  await hearAddress();
 };
 
 /** A pointer event by NAME — see the header for why the constructor is MouseEvent. */
@@ -118,6 +137,7 @@ const pointer = async (
       new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y }),
     );
   });
+  await hearAddress();
 };
 
 /** What `document.elementFromPoint` answers while the pointer is "over" `el`. */
@@ -125,13 +145,17 @@ const hovering = (el: Element | null): void => {
   (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () => el;
 };
 
-const rows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")];
+const rows = (): HTMLElement[] => ohboxRows(host!);
+/** The row the cursor stands on: today's `.sel`, the Ohbox's open option (`data-open`). */
+const isOpen = (row: HTMLElement): boolean => row.classList.contains("sel") || row.hasAttribute("data-open");
 /** Rows standing for ONE message — no `⤷ N` fold — so a per-row assert names one id. */
 const soloRows = (): HTMLElement[] => rows().filter((r) => !(r.textContent ?? "").includes("⤷"));
 const rail = (id: string): HTMLElement | null => host!.querySelector<HTMLElement>(`[data-rail-id="${id}"]`);
 const tagRows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>("[data-rail-tag-id]")];
 const ghost = (): HTMLElement | null => document.body.querySelector<HTMLElement>(".drag-ghost");
-const lit = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".drop-ok")];
+/* The target the pointer is on is lit: the kit's entry says so (`data-drop="over"`) inside the box that names the target. */
+const lit = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[data-drop="over"]')];
+const lights = (target: HTMLElement): boolean => target.querySelector('[data-drop="over"]') !== null;
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 
 /** Drag `row` past the threshold and leave the pointer over `over`. */
@@ -150,6 +174,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   setViewport(false);
   window.location.hash = "#/ohbox";
+  heardHash = "";
   sent = [];
   // The demo adapter IS the transport — see `shell-screening-bulk.test.ts` for why the spy
   // calls through with every argument.
@@ -176,21 +201,8 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
 
     // ── the pill's own Move on the cursor row, as the reference dispatch ──────────────────
     const pillRowId = rows()[0]!.dataset.id!;
-    const byText = (text: string): HTMLButtonElement => {
-      // The verb's LABEL, without the keycap the button also wears (`<Key chord>` prints the
-      // registry's cap into the button — `Move` reads "Move m" in textContent terms). The
-      // dispatch assertions below are untouched; only the finder learned the bar's anatomy.
-      const label = (x: HTMLButtonElement): string => {
-        const kbd = x.querySelector("kbd")?.textContent ?? "";
-        return (x.textContent ?? "").replace(kbd, "").trim();
-      };
-      const b = [...host!.querySelectorAll<HTMLButtonElement>(".read-col .abar button")]
-        .find((x) => label(x) === text);
-      expect(b, `no "${text}" control in the pill`).toBeTruthy();
-      return b!;
-    };
-    await click(byText("Move"));
-    await click(byText(`→ ${messages.place.reads}`));
+    await click(barVerb(host!, "Move"));
+    await click(menuItem(messages.place.reads) ?? undefined);
     const pillMove = kinds("move");
     expect(pillMove).toHaveLength(1);
     // The Move writes the sender's rule, so its move is marked as that press's (`pressRule`).
@@ -200,9 +212,9 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     sent = [];
     const row = soloRows().find((r) => r.dataset.id !== pillRowId)!;
     const dragId = row.dataset.id!;
-    await dragOver(row, rail("reads"));
+    await dragOver(row, rail("news"));
     expect(ghost(), "no drag ghost past the threshold").toBeTruthy();
-    expect(rail("reads")!.classList.contains("drop-ok"), "legal target did not light").toBe(true);
+    expect(lights(rail("news")!), "legal target did not light").toBe(true);
     await pointer("pointerup", window, 60, 60);
     await settle();
 
@@ -248,16 +260,16 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     expect(ghost(), "a ghost below the threshold").toBeNull();
     await pointer("pointerup", window, 12, 11);
     await click(row);
-    expect(row.classList.contains("sel"), "the click after a non-drag did not select").toBe(true);
+    expect(isOpen(row), "the click after a non-drag did not select").toBe(true);
 
     // A real drag: the release's click is suppressed — once.
-    const other = rows().find((r) => r.dataset.id !== id && !r.classList.contains("sel"))!;
+    const other = rows().find((r) => r.dataset.id !== id && !isOpen(r))!;
     await dragOver(other, null);
     await pointer("pointerup", window, 60, 60);
     await click(other);
-    expect(other.classList.contains("sel"), "the drag's release still clicked").toBe(false);
+    expect(isOpen(other), "the drag's release still clicked").toBe(false);
     await click(other);
-    expect(other.classList.contains("sel"), "the suppression was not one-shot").toBe(true);
+    expect(isOpen(other), "the suppression was not one-shot").toBe(true);
     await settle();
   });
 
@@ -266,19 +278,19 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     await key("x");
     await key("j");
     await key("x");
-    const picked = host!.querySelectorAll('.view-ohbox .row[aria-selected="true"]');
+    const picked = pickedRows(host!);
     expect(picked.length).toBeGreaterThanOrEqual(2);
     // The count the bar states is MESSAGES (a folded row picks its members), so it is the
     // number of moves a drop must dispatch — and the number the ghost badge must wear.
     // The count is the pill's leading capsule since 0.15.0 (`.list-foot .abar-count`), and the
     // number inside it is the live region — which is exactly the span to read here.
     const stated = Number(
-      (host!.querySelector('.list-foot .abar-count [role="status"]')?.textContent ?? "").match(/\d+/)?.[0],
+      ([...host!.querySelectorAll("button")].map((b) => /^(\d+) selected — /.exec(b.getAttribute("aria-label") ?? "")?.[1]).find(Boolean) ?? null),
     );
     expect(stated).toBeGreaterThanOrEqual(2);
 
     sent = [];
-    await dragOver(picked[0] as HTMLElement, rail("reads"));
+    await dragOver(picked[0] as HTMLElement, rail("news"));
     // The ghost badges the whole selection, not the one row under the pointer.
     expect(ghost()!.querySelector(".dg-count")?.textContent).toBe(String(stated));
     await pointer("pointerup", window, 60, 60);
@@ -288,26 +300,26 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     expect(moved).toHaveLength(stated);
     expect(new Set(moved.map((m) => m.messageId)).size).toBe(stated);
     for (const m of moved) expect(m.folder).toBe(FOLDER_OF_VIEW.reads);
-    expect(host!.querySelector(".list-foot"), "the selection survived its own drop").toBeNull();
+    expect(host!.querySelector(".ob-foot"), "the selection survived its own drop").toBeNull();
   });
 
   it("Escape cancels: no dispatch, the selection survives, the release is not a click", async () => {
     await mountShell();
     await key("x");
-    expect(host!.querySelector(".list-foot")).toBeTruthy();
+    expect(host!.querySelector(".ob-foot")).toBeTruthy();
 
     const row = rows()[3]!;
     sent = [];
-    await dragOver(row, rail("reads"));
-    expect(rail("reads")!.classList.contains("drop-ok")).toBe(true);
+    await dragOver(row, rail("news"));
+    expect(lights(rail("news")!)).toBe(true);
     await key("Escape");
     // The drag owned that Escape: nothing cleared the selection, nothing stayed lit.
-    expect(host!.querySelector(".list-foot"), "Escape fell through to the shell's ladder").toBeTruthy();
+    expect(host!.querySelector(".ob-foot"), "Escape fell through to the shell's ladder").toBeTruthy();
     expect(lit()).toHaveLength(0);
     await pointer("pointerup", window, 60, 60);
     // The release's click arrives in the same task in a browser — before any timer runs.
     await click(row);
-    expect(row.classList.contains("sel"), "the cancelled drag's release still clicked").toBe(false);
+    expect(isOpen(row), "the cancelled drag's release still clicked").toBe(false);
     await settle();
     expect(sent.filter((m) => m.kind !== "mark_seen")).toHaveLength(0);
     expect(ghost()).toBeNull();
@@ -320,9 +332,10 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
 
     // ── the picker's own apply on the same row, as the reference dispatch ────────────────
     await click(row);
-    await key("t");
-    const free = [...host!.querySelectorAll<HTMLElement>(".tagp li[role='option']")]
-      .find((li) => !li.querySelector(".ck") && !li.classList.contains("mk"));
+    await click(within(host!).getByRole("button", { name: "Tag" }));
+    const picker = within(host!).getByRole("menu", { name: "Tag" });
+    const free = within(picker).getAllByRole("menuitemcheckbox")
+      .find((item) => item.getAttribute("aria-checked") === "false");
     expect(free, "no unassigned tag in the picker").toBeTruthy();
     await click(free!);
     const pickerAssign = kinds("tag_assign")[0] as Record<string, unknown> & { tagId: string };
@@ -330,12 +343,16 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     await key("Escape");
 
     // ── the drag, onto a DIFFERENT tag's rail row — the first one that lights ────────────
+    const railNav = within(host!).getByRole("navigation", { name: "Places" });
+    const tags = within(railNav).getByRole("button", { name: "Tags" });
+    if (tags.getAttribute("aria-expanded") !== "true") await click(tags);
+    expect(tagRows().length, "the Tags group has no rail entries").toBeGreaterThan(1);
     sent = [];
     let target: HTMLElement | null = null;
     for (const tag of tagRows()) {
       if (tag.dataset.railTagId === pickerAssign.tagId) continue;
       await dragOver(rows().find((r) => r.dataset.id === rowId)!, tag);
-      if (tag.classList.contains("drop-ok")) { target = tag; break; }
+      if (lights(tag)) { target = tag; break; }
       // Not this one — release over it (an illegal drop dispatches nothing) and try the next.
       await pointer("pointerup", window, 60, 60);
       await settle();
@@ -358,7 +375,7 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     // The picker's own enablement, mirrored: already applied ⇒ not a target.
     sent = [];
     await dragOver(rows().find((r) => r.dataset.id === rowId)!, target);
-    expect(target!.classList.contains("drop-ok"), "an applied tag still lit").toBe(false);
+    expect(lights(target!), "an applied tag still lit").toBe(false);
     await pointer("pointerup", window, 60, 60);
     await settle();
     expect(kinds("tag_assign")).toHaveLength(0);

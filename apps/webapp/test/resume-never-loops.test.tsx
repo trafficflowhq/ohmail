@@ -45,7 +45,7 @@ const setOwner = (raw: string | null): void => {
 const answer = (list: Array<() => Response>, n: number): Response => list[Math.min(n, list.length) - 1]!();
 
 beforeEach(async () => {
-  (await import("../app/shell/session-truth.js")).resetSessionTruthForTests();
+  (await import("@ohmail/app-logic/session/session-truth")).resetSessionTruthForTests();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.setSystemTime(new Date("2026-10-17T12:00:00.000Z"));
   vi.spyOn(Math, "random").mockReturnValue(1);
@@ -109,13 +109,13 @@ async function tick(ms: number): Promise<void> {
 
 /** The splash as `resume/page.tsx` renders it: `initialOwner` is the RAW cookie the edge saw. */
 async function mountSplash(initialOwner: string | null): Promise<HTMLElement> {
-  const { ResumeScreen } = await import("../app/(product)/resume/ResumeScreen.js");
+  const { ResumeRoute } = await import("../app/(product)/resume/ResumeRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", children: h(ResumeScreen, { initialOwner }),
+      locale: "en", messages, timeZone: "UTC", children: h(ResumeRoute, { initialOwner }),
     }));
   });
   await flush();

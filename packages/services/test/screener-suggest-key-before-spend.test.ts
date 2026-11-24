@@ -12,7 +12,7 @@ import type { ClassifierPort, ClassifierInput, ClassifierResult } from "@traffic
 import { ScreenerService, pendingKeyTtlMs } from "../src/index.js";
 import { fakeSpendPort, type FakeSpendPort } from "./helpers/spend-port-fake.js";
 import { PLANE_PRICES, PLANE_PRICING } from "./helpers/plane-pricing.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 
 /*
  * the request's Idempotency-Key is claimed BEFORE the first credit is spent.
@@ -44,7 +44,7 @@ function heldClassifier() {
 }
 
 async function world(credits: FakeSpendPort = fakeSpendPort()) {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "key-before-spend" });
   await seedMessage(w.db, w.accountId, w.mailboxId, { from: "alice@ex.example" });
   await seedMessage(w.db, w.accountId, w.mailboxId, { from: "bob@ex.example" });
@@ -184,18 +184,19 @@ describe("a run that ends without an answer hands its claims back through one do
   it("a key release that faults is logged and never replaces the pass error", async () => {
     const w = await world();
     let failTx = false;
-    const db = new Proxy(w.db as unknown as object, {
+    // Over the context's own handle, bound to the account: a transaction it opens carries the binding.
+    const db = new Proxy(w.ctx.db, {
       get(target, prop) {
         if (prop === "transaction") {
           return async (fn: (tx: Tx) => Promise<unknown>) => {
             if (failTx) throw new Error("release 08006");
-            return (target as { transaction: (f: typeof fn) => Promise<unknown> }).transaction(fn);
+            return Reflect.get(target, "transaction").call(target, fn);
           };
         }
         const v = Reflect.get(target, prop);
         return typeof v === "function" ? v.bind(target) : v;
       },
-    }) as typeof w.db;
+    });
     const c = heldClassifier(); c.open();
     const svc = new ScreenerService({ adapter: new FakeAdapter(), classifier: c.port, credits: w.credits, pricing: PLANE_PRICING });
     (svc as unknown as { store: () => Promise<void> }).store = async () => {

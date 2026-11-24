@@ -10,12 +10,12 @@ import {
   mailboxFolders, mailboxes, messageBodies, messageInstances, messages, PassMayNotAdmitError, rules, type Tx,
 } from "@trafficflow/db";
 import type { OrganizerRole } from "@trafficflow/db";
-import { runSyncCycle } from "../src/sync.js";
-import { screenerCorrespondentRetroPass } from "../src/screener-correspondent-retro.js";
-import { ruleRetroPass } from "../src/rule-retro.js";
-import { materializeMessages, releaseHeld } from "@trafficflow/services/mail";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { screenerCorrespondentRetroPass } from "@ohmail/organizer/screener-correspondent-retro";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
+import { dbFor, materializeMessages, releaseHeld, type Db as ServicesDb } from "@trafficflow/services/mail";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A LIST ADDRESS THE PERSON POSTED TO NEVER CONSENTS A COMPANY CLAIM (mail 0150), through a real
@@ -67,7 +67,7 @@ async function world(o: { role?: OrganizerRole; trusted?: ReadonlySet<string>; c
   const me = `me-${accountId.slice(0, 8)}@own.invalid`;
   const [mb] = await db.insert(mailboxes)
     .values({ accountId, provider: "imap", address: me, status: "connected", createdAt: CONNECT }).returning();
-  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
+  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
   const sentCopy = async (header: string, to: string, uid: number) => {
     const [s] = await db.insert(messages).values({
       accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `sent:${randomUUID()}`, subject: "Spring meeting",
@@ -78,10 +78,10 @@ async function world(o: { role?: OrganizerRole; trusted?: ReadonlySet<string>; c
       accountId, mailboxId: mb!.id, messageId: s!.id, folder: "Sent", uidvalidity: 7n, uid, isPrimary: true,
     });
     await db.insert(folderState).values({
-      messageId: s!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us",
+      messageId: s!.id, accountId: s!.accountId, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us",
       reconcileStatus: "reconciled", conflict: false,
     });
-    await db.insert(messageBodies).values({ messageId: s!.id, text: "hi", headers: {} });
+    await db.insert(messageBodies).values({ messageId: s!.id, accountId: s!.accountId, text: "hi", headers: {} });
   };
   await sentCopy(POST, LIST, 1);
   await sentCopy("private-1@own.invalid", FRIEND, 2);
@@ -385,7 +385,7 @@ describe("only a person's press consents a brand under a list address", () => {
       await w.db.update(folderState).set({ desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us" })
         .where(eq(folderState.messageId, id));
     }
-    const ctx = { db: w.db as never, accountId: w.accountId, userId: null, now: () => new Date(), requestId: `l026-${randomUUID().slice(0, 8)}` };
+    const ctx = { db: dbFor(w.db as unknown as ServicesDb, w.accountId), accountId: w.accountId, userId: null, now: () => new Date(), requestId: `l026-${randomUUID().slice(0, 8)}` };
     const r = await releaseHeld(ctx, { senders: [LIST] });
     expect([r.total, await w.desiredOf(post.id)]).toEqual([1, "INBOX"]);
     expect(await w.desiredOf(claim.id), "the offer never counted the claim").toBe("ohmail/Screener");

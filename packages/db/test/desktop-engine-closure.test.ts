@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -39,6 +40,12 @@ const ALLOWED = new Set([
   // The search extensions the engine sets up after its migrator, and the one index builder they
   // share with the server's setup; the lock constants sit in their own leaf so `migrate.ts` stays out.
   "search-setup.ts", "concurrent-index.ts", "migration-lock.ts",
+  // Where the 1.0 line ends and 2.0 begins: three constants and three pure readers, no import.
+  // The engine reads them to know which of a store's owed entries the 2.0 transition applies.
+  "journal-heads.ts",
+  // The binder, which the search setup asks to refuse a bound handle before an index build: no driver
+  // import, only the dialect's brands and the two settings' names, so every store can load it.
+  "bound.ts",
 ]);
 
 /**
@@ -49,7 +56,20 @@ const ALLOWED = new Set([
 const FORBIDDEN = /^(migrate|setup-prod|billing|admin-db|schema-cloud|staff-grants|provision-staff-role|session-url)/;
 
 /** Bare specifiers that mean the postgres server driver has entered the closure. */
-const SERVER_DRIVER = /from\s+"(postgres|drizzle-orm\/postgres-js(\/migrator)?)"/;
+const SERVER_DRIVER = /^(postgres|drizzle-orm\/postgres-js(\/migrator)?)$/;
+
+function importsServerDriver(src: string): boolean {
+  const file = ts.createSourceFile("module.ts", src, ts.ScriptTarget.Latest);
+  return file.statements.some((statement) => {
+    if (ts.isImportDeclaration(statement) && !statement.importClause?.isTypeOnly) {
+      return ts.isStringLiteral(statement.moduleSpecifier) && SERVER_DRIVER.test(statement.moduleSpecifier.text);
+    }
+    if (ts.isExportDeclaration(statement) && !statement.isTypeOnly && statement.moduleSpecifier) {
+      return ts.isStringLiteral(statement.moduleSpecifier) && SERVER_DRIVER.test(statement.moduleSpecifier.text);
+    }
+    return false;
+  });
+}
 
 function closure(entry: string): Set<string> {
   const seen = new Set<string>();
@@ -74,7 +94,7 @@ function driverImporters(files: Iterable<string>): string[] {
   for (const f of files) {
     let src: string;
     try { src = readFileSync(join(SRC, f), "utf8"); } catch { continue; }
-    if (SERVER_DRIVER.test(src)) hits.push(f);
+    if (importsServerDriver(src)) hits.push(f);
   }
   return hits;
 }
@@ -99,6 +119,13 @@ describe("the desktop engine's database entry point", () => {
     expect(drivers,
       `@trafficflow/db/journal reaches a module that imports the postgres server driver: ${drivers.join(", ")}`,
     ).toEqual([]);
+  });
+
+  it("distinguishes erased types from imports that can load the driver", () => {
+    expect(importsServerDriver('import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";')).toBe(false);
+    expect(importsServerDriver('import { drizzle } from "drizzle-orm/postgres-js";')).toBe(true);
+    expect(importsServerDriver('export { migrate } from "drizzle-orm/postgres-js/migrator";')).toBe(true);
+    expect(importsServerDriver('import "postgres";')).toBe(true);
   });
 
   it("severs migrate.ts — the runner and its driver stay on /admin", () => {

@@ -33,7 +33,11 @@
  * subject line IS a claim about that subject — and random ones would differ between two paints.
  */
 
-import { useLoadingGrace } from "./loading-grace";
+import { useSyncExternalStore } from "react";
+import { useTranslations } from "next-intl";
+import { Button, Opening, openingReloadDelay } from "@ohmail/ui/base";
+import { useBrowserOnline } from "@ohmail/app-logic/session/browser-online";
+import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 
 /**
  * How long a wait may go unshaped. Three hundred milliseconds.
@@ -161,5 +165,30 @@ export function BootSkeleton({
       {/* The unselected reading column: a quiet panel, exactly as `ReadColumn` renders empty. */}
       <div className="boot-sk-reader" />
     </div>
+  );
+}
+
+const noSubscription = () => () => {};
+
+/** The web's quiet opening frame and the way forward when it stays on screen. */
+export function MailboxOpening({ serverFrame = false, network = true }: { serverFrame?: boolean; network?: boolean }) {
+  const session = useTranslations("session");
+  const reload = useTranslations("appError")("reload");
+  const online = useBrowserOnline();
+  const served = useSyncExternalStore(noSubscription, () => false, () => serverFrame);
+  const waiting = useLoadingGrace(!serverFrame);
+  const late = useLoadingGrace(!serverFrame, openingReloadDelay);
+
+  if (served) {
+    return <Opening kind="web" late label={session("opening")} action={<Button kind="two" href="/">{reload}</Button>} />;
+  }
+
+  const offerReload = waiting && (late || (network && !online));
+  return (
+    <Opening
+      kind="web"
+      label={waiting ? session("opening") : undefined}
+      action={offerReload ? <Button kind="two" onPress={() => window.location.reload()}>{reload}</Button> : undefined}
+    />
   );
 }

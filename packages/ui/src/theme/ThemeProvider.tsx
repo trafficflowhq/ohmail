@@ -13,6 +13,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -85,6 +86,7 @@ export function nextSchemePreference(
 }
 /** The appearance face — `paper` is today's look, `ohmarchy` the tiling one. */
 export type FaceName = "paper" | "ohmarchy";
+export const FACE_SCOPE_KEY = "ohmail.face.scope";
 /** The layout arrangement — `classic` is today's, `zero` the tiling one (3b builds it). */
 export type LayoutName = "classic" | "zero";
 
@@ -107,6 +109,8 @@ export interface ThemeContextValue {
   face: FaceName;
   /** This device's explicit face choice, or null when it never made one. */
   facePreference: FaceName | null;
+  /** An explicit This device choice takes precedence over the saved account look. */
+  deviceFaceExplicit: boolean;
   /** The account-level synced face as last adopted, or null for "no account choice". */
   accountFace: FaceName | null;
   /**
@@ -115,13 +119,15 @@ export interface ThemeContextValue {
    */
   linuxDevice: boolean;
   /** "Only this device": set (or clear, with null) this device's explicit face. */
-  setFace: (face: FaceName | null) => void;
+  setFace: (face: FaceName | null, explicit?: boolean) => void;
   /**
    * The layout arrangement (OHMARCHY-CONTRACT.md). Always concrete; absent attribute reads
    * as "classic". The zero layout itself is 3b's work — the machinery exists first so no
    * second provider ever needs to race the attribute.
    */
   layout: LayoutName;
+  /** The host opted into the face and layout controls. */
+  layoutEnabled: boolean;
   setLayout: (layout: LayoutName | null) => void;
   /**
    * Teaching intensity, the contract's one JS-visible switch: 0 (paper, calm) / 1 (ohmarchy,
@@ -141,6 +147,8 @@ export interface ThemeContextValue {
    */
   persistence: ThemePersistence;
 }
+
+const useFaceStamp = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
@@ -201,8 +209,12 @@ export function themeInitScript(
      * gets an ohmarchy landing with no way back. The product door passes true.
      */
     faces?: boolean;
+    /** Use paper while a signed-in host awaits an account look and has no saved face. */
+    deferLinuxFace?: boolean;
     faceStorageKey?: string;
     accountFaceStorageKey?: string;
+    /** The host's owner expression, or null when this document cannot use the account mirror. */
+    accountFaceOwner?: { storageKey: string; read: string | null };
     layoutStorageKey?: string;
   } = {},
 ): string {
@@ -213,16 +225,21 @@ export function themeInitScript(
   const faceKey = JSON.stringify(opts.faceStorageKey ?? "ohmail.face");
   const accountKey = JSON.stringify(opts.accountFaceStorageKey ?? "ohmail.face.account");
   const layoutKey = JSON.stringify(opts.layoutStorageKey ?? "ohmail.layout");
-  /* The face half re-encodes the provider's resolution order verbatim: device pin, account
-     mirror, Linux-desktop detection (see linuxDesktopDevice — the regexes here must match
-     it), paper. Only the "ohmarchy" outcome stamps; paper is absence. EACH STORAGE READ SITS
-     IN ITS OWN try (review-caught): a blocked jar must fall through to the detection, not
-     skip it — otherwise a sandboxed context flashes paper and re-skins after hydration. */
+  const owner = opts.accountFaceOwner;
+  const ownFace = owner?.read
+    ? `try{var o=${owner.read};if(o!==null&&localStorage.getItem(${JSON.stringify(owner.storageKey)})===o)f=localStorage.getItem(${accountKey})}catch(e){}`
+    : "";
+  const deviceFace = `try{f=localStorage.getItem(${faceKey})}catch(e){}`;
+  const faceHalf = "var f=null;" + (owner
+    ? `try{if(localStorage.getItem(${JSON.stringify(FACE_SCOPE_KEY)})==="device"){${deviceFace}}}catch(e){}` +
+      `if(f!=="paper"&&f!=="ohmarchy"){${ownFace}}if(f!=="paper"&&f!=="ohmarchy"){${deviceFace}}`
+    : deviceFace + `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem(${accountKey})}catch(e){}}`);
   return (
     themeHalf +
-    `var f=null;try{f=localStorage.getItem(${faceKey})}catch(e){}` +
-    `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem(${accountKey})}catch(e){}}` +
-    `if(f!=="paper"&&f!=="ohmarchy")f=(/Linux/.test(navigator.platform||"")&&!/Android|CrOS/.test(navigator.userAgent||""))?"ohmarchy":"paper";` +
+    faceHalf +
+    (opts.deferLinuxFace
+      ? ""
+      : `if(f!=="paper"&&f!=="ohmarchy")f=(/Linux/.test(navigator.platform||"")&&!/Android|CrOS/.test(navigator.userAgent||""))?"ohmarchy":"paper";`) +
     `if(f==="ohmarchy")try{document.documentElement.dataset.face="ohmarchy"}catch(e){}` +
     `var l=null;try{l=localStorage.getItem(${layoutKey})}catch(e){}` +
     `if(l==="zero")try{document.documentElement.dataset.layout="zero"}catch(e){}})()`
@@ -231,6 +248,8 @@ export function themeInitScript(
 
 export interface ThemeProviderProps {
   children: ReactNode;
+  /** Keep the paper attribute on hosts whose product accent uses it. */
+  stampPaper?: boolean;
   /** Initial preference; defaults to following the system. */
   defaultPreference?: ThemePreference;
   /**
@@ -260,6 +279,14 @@ export interface ThemeProviderProps {
    * untouched.
    */
   faces?: boolean;
+  /** Defer automatic Linux styling until the host supplies the account's face or confirms there is none. */
+  deferLinuxFace?: boolean;
+  /** Let the account face supersede a stored device pin until a new device choice is made. */
+  preferAccountFace?: boolean;
+  /** A host may fence adopted account appearance to its current browser owner. */
+  accountFaceScope?: string | null;
+  /** A host can read a remembered face while waiting to confirm its account. */
+  accountFaceReadScope?: string | null;
   /**
    * THE DOOR EVERY WRITE GOES THROUGH, handed in by the host — see {@link StorageDoor}. Omit it and this provider
    * persists nothing ({@link ThemePersistence} `unpersisted`): the choice holds for the session, no jar is touched,
@@ -286,6 +313,11 @@ export function ThemeProvider({
   accountFaceStorageKey = "ohmail.face.account",
   layoutStorageKey = "ohmail.layout",
   faces = false,
+  stampPaper = false,
+  deferLinuxFace = false,
+  preferAccountFace = false,
+  accountFaceScope,
+  accountFaceReadScope = accountFaceScope,
   storage,
   systemScheme,
 }: ThemeProviderProps) {
@@ -323,7 +355,17 @@ export function ThemeProvider({
   // undefined = not yet hydrated (the same contract as `stored === null` above; the face
   // needs a third state because null is meaningful — "adopted, and no pin exists").
   const [devicePin, setDevicePin] = useState<FaceName | null | undefined>(undefined);
-  const [accountFace, setAccountFaceState] = useState<FaceName | null>(null);
+  const [deviceFaceChanged, setDeviceFaceChanged] = useState(false);
+  const [deviceFaceExplicit, setDeviceFaceExplicit] = useState(false);
+  // Undefined means the account look is still unknown; null is a confirmed absence.
+  const [accountFace, setAccountFaceState] = useState<FaceName | null>();
+  const activeFaceScope = useRef(accountFaceScope);
+  useFaceStamp(() => { activeFaceScope.current = accountFaceScope; }, [accountFaceScope]);
+  const [faceScope, setFaceScope] = useState(accountFaceReadScope);
+  if (faceScope !== accountFaceReadScope) {
+    setFaceScope(accountFaceReadScope);
+    setAccountFaceState(undefined);
+  }
   const [linux, setLinux] = useState(false);
   // undefined = not yet hydrated, devicePin's contract; null = adopted, no stored layout.
   const [layoutPin, setLayoutPin] = useState<LayoutName | null | undefined>(undefined);
@@ -340,20 +382,21 @@ export function ThemeProvider({
     setSystem(systemTheme());
   }, [storageKey, defaultPreference]);
 
-  // Post-mount face adoption: the device pin, the account mirror (the previous session's
+  // Before the next paint, adopt the device pin and the account mirror (the previous session's
   // adopted answer — the live one arrives via adoptAccountFace when the host's consent
   // read lands), and the Linux detection. SSR and the first client render stay "paper".
-  useEffect(() => {
+  useFaceStamp(() => {
     if (!faces) return; // the axis is not active on this host — leave storage and state alone
     setDevicePin((current) => {
       if (current !== undefined) return current; // a click beat us to it — user wins
       const raw = doorRef.current.get(faceStorageKey);
       return isFace(raw) ? raw : null;
     });
+    setDeviceFaceExplicit(doorRef.current.get(FACE_SCOPE_KEY) === "device");
     setAccountFaceState((current) => {
-      if (current !== null) return current; // a live adoption beat the mirror — it wins
+      if (current !== undefined) return current; // a live adoption beat the mirror — it wins
       const raw = doorRef.current.get(accountFaceStorageKey);
-      return isFace(raw) ? raw : null;
+      return isFace(raw) ? raw : undefined;
     });
     setLayoutPin((current) => {
       if (current !== undefined) return current; // a click beat us to it — user wins
@@ -361,7 +404,7 @@ export function ThemeProvider({
       return isLayout(raw) ? raw : null;
     });
     setLinux(linuxDesktopDevice());
-  }, [faces, storageKey, faceStorageKey, accountFaceStorageKey, layoutStorageKey]);
+  }, [faces, storageKey, faceStorageKey, accountFaceStorageKey, layoutStorageKey, accountFaceReadScope]);
 
   // Stamp <html data-theme> exactly like the prototype: absent = system.
   // Skipped until adoption so hydration never clobbers the pre-paint stamp.
@@ -418,19 +461,21 @@ export function ThemeProvider({
   const resolved: ResolvedTheme = preference === "system" ? systemNow : preference;
   const next = nextSchemePreference(preference, systemNow);
   const nextResolved: ResolvedTheme = next === "system" ? systemNow : next;
+  const useLinuxDefault = linux && (!deferLinuxFace || accountFace !== undefined);
+  const savedAccountFace = preferAccountFace && !deviceFaceChanged && !deviceFaceExplicit ? accountFace : null;
   const face: FaceName =
-    devicePin ?? accountFace ?? (linux ? "ohmarchy" : "paper");
+    savedAccountFace ?? devicePin ?? accountFace ?? (useLinuxDefault ? "ohmarchy" : "paper");
   const layout: LayoutName = layoutPin ?? "classic";
   const teach: 0 | 1 = face === "ohmarchy" ? 1 : 0;
 
   // Stamp <html data-face> — absent = paper. Skipped until adoption, so the init script's
   // pre-paint stamp is never clobbered by a hydrating render that has not read storage yet.
-  useEffect(() => {
+  useFaceStamp(() => {
     if (!faces || devicePin === undefined) return;
     const root = document.documentElement;
-    if (face === "ohmarchy") root.dataset.face = "ohmarchy";
+    if (face === "ohmarchy" || stampPaper) root.dataset.face = face;
     else delete root.dataset.face;
-  }, [faces, devicePin, face]);
+  }, [faces, devicePin, face, stampPaper]);
 
   // Stamp <html data-layout> — absent = classic, the same skip-until-adoption contract.
   useEffect(() => {
@@ -448,11 +493,15 @@ export function ThemeProvider({
   }, [defaultPreference]);
 
   const setFace = useCallback(
-    (next: FaceName | null) => {
+    (next: FaceName | null, explicit = false) => {
+      setDeviceFaceChanged(true);
       setDevicePin(next);
+      setDeviceFaceExplicit(next !== null && explicit);
       // The in-memory choice applies either way; "lost" is what the host's notice is for.
       if (next === null) doorRef.current.remove(faceStorageKey);
       else doorRef.current.set(faceStorageKey, next);
+      if (next !== null && explicit) doorRef.current.set(FACE_SCOPE_KEY, "device");
+      else doorRef.current.remove(FACE_SCOPE_KEY);
     },
     [storageKey, faceStorageKey],
   );
@@ -468,13 +517,14 @@ export function ThemeProvider({
 
   const adoptAccountFace = useCallback(
     (next: FaceName | null) => {
+      if (accountFaceScope === null || activeFaceScope.current !== accountFaceScope) return;
       setAccountFaceState(next);
       // A lost mirror write means the NEXT boot's init script cannot stamp the account's face
       // pre-paint; the account answer itself lives on the server and is re-adopted then.
       if (next === null) doorRef.current.remove(accountFaceStorageKey);
       else doorRef.current.set(accountFaceStorageKey, next);
     },
-    [storageKey, accountFaceStorageKey],
+    [storageKey, accountFaceStorageKey, accountFaceScope],
   );
 
   const value = useMemo(
@@ -487,16 +537,18 @@ export function ThemeProvider({
       nextResolved,
       face,
       facePreference: devicePin ?? null,
-      accountFace,
+      deviceFaceExplicit,
+      accountFace: accountFace ?? null,
       linuxDevice: linux,
       setFace,
       layout,
+      layoutEnabled: faces,
       setLayout,
       teach,
       adoptAccountFace,
       persistence,
     }),
-    [preference, resolved, setTheme, cycle, next, nextResolved, face, devicePin, accountFace, linux, setFace, layout, setLayout, teach, adoptAccountFace, persistence],
+    [preference, resolved, setTheme, cycle, next, nextResolved, face, devicePin, deviceFaceExplicit, accountFace, linux, setFace, layout, faces, setLayout, teach, adoptAccountFace, persistence],
   );
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

@@ -1,15 +1,17 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { OhmailEngine, type EngineAdapter, type EngineMessage } from "@ohmail/client-engine";
-import messages from "../../webapp/messages/en.json";
+import { cleanup, render, screen } from "@testing-library/react";
+import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { EngineProvider } from "../../webapp/app/shell/engine";
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
-import { useMessageAttachments } from "../../webapp/app/shell/attachments.js";
-import { MessageChromeProvider } from "../../webapp/app/shell/message-chrome.js";
-import { MessagePane } from "../../webapp/app/shell/MessagePane.js";
+import { ROSTER, storeWith } from "../../webapp/test/_draft-shell";
 import { EXCHANGE_ICAL, GOOGLE, type InviteShape } from "../../../packages/core/test/fixtures/invite-shapes";
+import { DesktopFrame, type DesktopFrameProps } from "../src/DesktopFrame";
+import { DesktopLocale } from "../src/DesktopLocale";
+import { linkSlot } from "../src/link-in";
 
 /**
  * ON THE DESKTOP, A MEETING INVITATION SHOWS ITS EVENT ONCE, ABOVE THE MAIL (owner screenshot
@@ -36,11 +38,9 @@ for (const name of ["text", "arrayBuffer"] as const) {
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as unknown as { React: unknown }).React = React;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const h = React.createElement;
 Element.prototype.scrollTo ??= function scrollTo() {};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 
-const NOW = new Date("2026-10-22T09:00:00.000Z");
 const ID = "m-google";
 const shell = globalThis as unknown as { __TAURI_INTERNALS__?: { invoke: (c: string, p?: Record<string, unknown>) => Promise<unknown> } };
 
@@ -58,41 +58,45 @@ const message = {
   triage: null, labels: [], remoteContent: "none", updatedAt: "2026-10-22T08:00:00.000Z",
 } as unknown as EngineMessage;
 
-function engineServing(shape: InviteShape): OhmailEngine {
+async function engineServing(shape: InviteShape): Promise<OhmailEngine> {
   const adapter: EngineAdapter = {
-    sync: async () => ({ changes: [], cursor: "1", hasMore: false }) as never,
+    sync: async () => ({
+      changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "1", hasMore: false, serverTime: message.date,
+    }),
     mutate: async () => ({ changes: [], seq: null }),
     withdrawSend: async () => ({ outcome: "unsupported" as const }),
-    fetchBody: async () => null,
+    fetchBody: async () => ({
+      text: shape.text, html: shape.html, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
+    }),
     listAttachments: async () => shape.parts.map((p) => ({
       id: p.id, filename: p.filename, contentType: p.contentType, sizeBytes: p.bytes.length,
       inline: p.inline, contentId: p.contentId, messageId: ID,
     })),
     fetchAttachment: async (id: string) => new Blob([shape.parts.find((p) => p.id === id)!.bytes], { type: "application/octet-stream" }),
   };
-  return new OhmailEngine({ adapter });
+  return new OhmailEngine({ adapter, store: await storeWith([{ ...message, mailboxId: ROSTER[0]!.id }], []) });
 }
 
-function Desktop({ engine }: { engine: OhmailEngine }) {
-  const attachments = useMessageAttachments(engine, ID, { conversationOf: () => [], onDownloadAllFailed: () => {} });
-  return h(MessageChromeProvider as never, {
-    value: {
-      ownAddresses: ["mila@example.test"], absoluteTime: false, onToggleAbsoluteTime: () => {},
-      replyTo: null, replyBody: { text: "", html: "" }, onReplyBody: () => {}, closeReply: () => {},
-      sendReply: () => {}, replySendState: () => ({ phase: "idle" }), openSenderMenu: () => {},
-      openAttachmentPreview: () => {}, conversationOf: () => [],
-      bodyOf: () => ({ text: GOOGLE.text, state: "full", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }),
-      hydrateBody: () => {}, hydrateBodies: () => {}, hydrateThread: () => {}, openReply: () => {}, forward: () => {},
-      attachments,
-    },
-    children: h(MessagePane as never, {
-      message, tags: [], now: NOW, onAction: () => {}, onAddTag: () => {}, onAttachment: () => {},
-    } as never),
-  } as never);
-}
+const noChange = () => undefined;
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+async function openInDesktop(shape: InviteShape): Promise<HTMLElement> {
+  const engine = await engineServing(shape);
+  const props: DesktopFrameProps = {
+    engine, status: { state: "serving", mode: "local" }, session: "live", sessionRefused: false,
+    sealFailed: false, paired: false, hostLabel: null, freshness: null, account: null, storage: null,
+    mayLinkOut: false, manageOffered: false, withdrawManage: noChange, rereadAccess: noChange,
+    reuseSweeps: [], recheckSweeps: async () => undefined, ai: null, setAi: noChange, onStatus: noChange,
+    openOverlay: noChange, takeOver: noChange, firstRunOpen: false, firstRun: undefined, takesMailLinks: true,
+    scope: "acct-invitation-desktop", onUnread: noChange,
+    liveBody: async () => ({ kind: "loaded", text: shape.text, html: shape.html }),
+    links: linkSlot(), connection: { read: () => null, subscribe: () => noChange },
+  };
+  window.location.hash = `#/ohbox/m/${ID}`;
+  render(<DesktopLocale><ThemeProvider><ToastHost>
+    <EngineProvider demo={false} engine={engine}><DesktopFrame {...props} /></EngineProvider>
+  </ToastHost></ThemeProvider></DesktopLocale>);
+  return screen.findByRole("region", { name: "Open message" });
+}
 
 beforeEach(() => {
   shell.__TAURI_INTERNALS__ = { invoke: async () => null };
@@ -100,11 +104,8 @@ beforeEach(() => {
   (globalThis.URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
 });
 
-afterEach(async () => {
-  if (root) await act(async () => root!.unmount());
-  host?.remove();
-  root = null;
-  host = null;
+afterEach(() => {
+  cleanup();
   delete shell.__TAURI_INTERNALS__;
 });
 
@@ -114,40 +115,31 @@ async function until(done: () => boolean, ms = 4_000): Promise<void> {
   }
 }
 
-describe("the desktop reading pane: one event card, above the mail", () => {
-  it("a Google invitation's two calendar parts draw one card before the body", async () => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Desktop, { engine: engineServing(GOOGLE) }),
-    })));
-    await until(() => host!.querySelectorAll("button.att-tile").length > 0 && host!.querySelector(".ics-card") !== null);
+describe("the desktop reading pane: one event card, after the mail", () => {
+  it("a Google invitation's two calendar parts draw one card after the body and before the files", async () => {
+    const host = await openInDesktop(GOOGLE);
+    await until(() => host.querySelector("button.oh-file-main") !== null && host.querySelector(".ics-card") !== null);
     // Settle past the arrival: a second card would land with the same texts.
     await until(() => false, 300);
     const cards = host.querySelectorAll(".ics-card");
     expect(cards, "the invitation drew no card, or one per part").toHaveLength(1);
-    const body = host.querySelector(".msg-body");
+    const body = host.querySelector("[data-read-body]");
     expect(body, "the premise: the pane drew the body").not.toBeNull();
     expect(body!.contains(cards[0]!)).toBe(false);
-    expect(cards[0]!.compareDocumentPosition(body!) & Node.DOCUMENT_POSITION_FOLLOWING, "the card is under the body").toBeTruthy();
-    const tiles = host.querySelectorAll("button.att-tile");
+    expect(body!.compareDocumentPosition(cards[0]!) & Node.DOCUMENT_POSITION_FOLLOWING, "the card is after the body").toBeTruthy();
+    const tiles = host.querySelectorAll("button.oh-file-main");
     expect(tiles, "invite.ics is listed twice, or the file left the strip").toHaveLength(1);
-    expect(tiles[0]!.querySelector(".att-name")?.textContent).toBe("invite.ics");
+    expect(cards[0]!.compareDocumentPosition(tiles[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tiles[0]!.querySelector(".oh-file-title")?.textContent).toBe("invite.ics");
   });
 
   it("an Exchange invitation (the alternative only) draws its card and keeps its one tile", async () => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Desktop, { engine: engineServing(EXCHANGE_ICAL) }),
-    })));
-    await until(() => host!.querySelector(".ics-card") !== null);
+    const host = await openInDesktop(EXCHANGE_ICAL);
+    await until(() => host.querySelector(".ics-card") !== null);
     await until(() => false, 300);
     expect(host.querySelectorAll(".ics-card")).toHaveLength(1);
-    const tiles = host.querySelectorAll(".att-strip .att-tile");
+    const tiles = host.querySelectorAll(".oh-files .oh-file");
     expect(tiles, "the only copy of the event left the strip").toHaveLength(1);
-    expect(tiles[0]!.querySelector(".att-name")?.textContent).toBe("invite.ics");
+    expect(tiles[0]!.querySelector(".oh-file-title")?.textContent).toBe("invite.ics");
   });
 });

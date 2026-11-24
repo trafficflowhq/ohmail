@@ -1,6 +1,6 @@
 import { listWaitingOnOrganizer } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 
 /**
@@ -13,11 +13,12 @@ export const organizerRequestRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/organizer-requests",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const items = await listWaitingOnOrganizer(serviceContext(deps, req));
-      return jsonResponse({ items });
+      return answer<"GET /organizer-requests">()({ items });
     },
   },
 ];

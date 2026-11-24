@@ -7,7 +7,7 @@ import en from "../messages/en.json";
 import de from "../messages/de.json";
 import {
   deriveMailState, seedGrowth, type MailState, type MailStateInputs, type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A FULL `ohmail/_meta` IS CURED BY MOVING MAIL, NEVER BY DELETING IT (mail 0142). The filler a
@@ -22,8 +22,8 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 let current: MailState | null = null;
-vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: current, refresh: () => {} }),
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
+  useMailState: () => ({ state: current, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
 let root: Root | null = null;
@@ -47,12 +47,12 @@ const inputs = (reason: string): MailStateInputs => ({
   failureStreak: 3, mailboxes: [blocked(reason)], mirrored: 495, growth: seedGrowth(495),
   freshness: { state: "current" as const, asOf: ago(30_000) },
   engineFreshness: { state: "current" as const, asOf: ago(30_000) },
-  now: NOW, demo: false,
+  now: NOW, demo: false, scope: null,
 } as MailStateInputs);
 
 async function strip(reason: string, locale: "en" | "de"): Promise<string> {
   current = deriveMailState(inputs(reason));
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);

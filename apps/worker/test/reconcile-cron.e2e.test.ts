@@ -9,8 +9,8 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { META_FOLDER, parseClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { runReconcileCron } from "../src/reconcile-cron.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "../src/leader-lock.js";
-import { cloudInstallId } from "../src/lease.js";
-import { byMessageId, makeHarness, rawClient, emlOf, dbUrlFor } from "./_workerenv.js";
+import { cloudInstallId } from "@ohmail/organizer/lease";
+import { byMessageId, makeHarness, rawClient, emlOf, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
 import { rigAppendDate } from "../../../test/support/rig-append-date.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
@@ -562,5 +562,35 @@ describe("cron reconciler backstop", () => {
     expect(await runReconcileCron(cfgFrom(h))).toEqual({ ran: true });
     expect(await folderHolding(h.cfg, "bk1@x")).toBe("INBOX");
     expect(await places()).toBe(0);
+  }, 60000);
+
+  /* ══ THE SWEEP'S CYCLES CARRY THE WORKER'S BUILD LABEL ═══════════════════════════════════════
+     A message set aside for a reason only a new build can change is read again when the build is
+     another one. The sweep stands in for the worker, so it compares with the worker's label: a
+     write-off of this build waits, an older build's is read again. */
+  it("labels its cycles with the build its configuration names", async () => {
+    const h = await makeHarness();
+    closers.push(() => h.adapter.close());
+    const c = await rawClient(h.cfg);
+    let epoch = 0n;
+    try {
+      const lock = await c.getMailboxLock("INBOX");
+      try { epoch = (c.mailbox as { uidValidity: bigint }).uidValidity; } finally { lock.release(); }
+    } finally { await c.logout(); }
+    // Two write-offs with no clock, at places the server no longer holds: a re-read closes the row.
+    const owed = { accountId: h.accountId, mailboxId: h.mailboxId, folder: "INBOX", uidvalidity: epoch, code: "mime_too_large", nextAttemptAt: null };
+    await h.db.insert(messageFailures).values([
+      { ...owed, uid: 900_001, attemptedVersion: "build-two" },
+      { ...owed, uid: 900_002, attemptedVersion: "build-one" },
+    ]);
+
+    expect(await runReconcileCron({ ...cfgFrom(h), buildVersion: "build-two" })).toEqual({ ran: true });
+
+    const rows = await h.db.select({ uid: messageFailures.uid, attempts: messageFailures.attempts, by: messageFailures.attemptedVersion })
+      .from(messageFailures).where(eq(messageFailures.mailboxId, h.mailboxId));
+    expect(rows.sort((a, b) => a.uid - b.uid)).toEqual([
+      { uid: 900_001, attempts: 0, by: "build-two" },
+      { uid: 900_002, attempts: 1, by: "build-two" },
+    ]);
   }, 60000);
 });

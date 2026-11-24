@@ -1,9 +1,11 @@
 /** @vitest-environment jsdom */
+import { fireEvent, within } from "@testing-library/react";
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { FixturesAdapter, type EngineMutation } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
@@ -42,7 +44,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -52,12 +54,12 @@ async function mountShell(): Promise<void> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
   });
-  for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  await settleFirstPaint();
 }
 
 async function mountCompose(): Promise<void> {
@@ -66,13 +68,15 @@ async function mountCompose(): Promise<void> {
     window.location.hash = "#/compose";
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
-  // ComposeView is a lazy chunk: microtask rounds alone left the file's FIRST compose mount on the
-  // Suspense fallback (red alone, green inside a run that had transformed it). Cross the seam.
   await settleFirstPaint();
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
 }
 
-const q = <T extends Element>(sel: string): T | null => host!.querySelector<T>(sel);
+const page = () => within(host!);
+const compose = () => page().getByRole("region", { name: messages.write.letter });
+const reading = () => page().getByRole("region", { name: messages.frame.landmark.reading });
+const picker = (area: HTMLElement) => area.querySelector<HTMLInputElement>('input[type="file"]');
+const note = () => page().queryAllByRole("status").find((status) => status.textContent?.includes(SENTENCE));
 
 const pressKey = async (k: string): Promise<void> => {
   await act(async () => {
@@ -85,18 +89,12 @@ async function drain(n = 8): Promise<void> {
 }
 
 async function typeTo(value: string): Promise<void> {
-  const input = q<HTMLInputElement>("#compose-to")!;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  const input = within(compose()).getByRole("combobox", { name: messages.write.to });
+  await act(async () => { fireEvent.change(input, { target: { value: value + ", " } }); });
 }
 
-/** The foot's Send — by its own class, never by a label another button could share. */
-const sendButton = (): HTMLButtonElement =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".compose-foot button")]
-    .find((b) => (b.textContent ?? "").trim().startsWith("Send"))!;
+const sendButton = (area = compose()): HTMLButtonElement =>
+  within(area).getByRole("button", { name: messages.write.send }) as HTMLButtonElement;
 
 /** A non-image pick, so the conversion completes on its own in jsdom — no held mock here. */
 async function pickFile(input: HTMLInputElement, name: string, type = "text/plain"): Promise<void> {
@@ -157,7 +155,7 @@ describe("a message with an attachment sends without text", () => {
     expect(before.getAttribute("aria-disabled")).toBe("true");
     expect(before.title).toBe(SENTENCE);
 
-    const input = q<HTMLInputElement>('.compose-attach input[type="file"]')!;
+    const input = picker(compose())!;
     await pickFile(input, "screenshot-notes.txt");
 
     const after = sendButton();
@@ -179,27 +177,29 @@ describe("a message with an attachment sends without text", () => {
     await act(async () => { sendButton().click(); });
     await drain(4);
     expect(sends(), "an empty press reached the wire").toEqual([]);
-    const note = [...host!.querySelectorAll<HTMLElement>('.send-row [role="status"]')]
-      .find((n) => (n.textContent ?? "").includes(SENTENCE));
-    expect(note, "the refused press earned no sentence").toBeTruthy();
+    expect(note(), "the refused press earned no sentence").toBeTruthy();
 
     // The sentence leaves the moment content arrives.
-    const input = q<HTMLInputElement>('.compose-attach input[type="file"]')!;
+    const input = picker(compose())!;
     await pickFile(input, "notes.txt");
     expect(host!.textContent, "the sentence outlived the attachment").not.toContain(SENTENCE);
   }, 20000);
 
   it("reply: an attachment and no words sends — the judged mutation carries the wire's files", async () => {
+    window.location.hash = "#/history";
     await mountShell();
     // The product's own keys: land on a message, open its reply editor.
-    await pressKey("j");
+    const list = page().getByRole("region", { name: messages.frame.landmark.list });
+    const [row] = within(list).getAllByRole("option");
+    await act(async () => { fireEvent.click(row!); });
+    await drain();
     await pressKey("r");
     await drain(6);
-    // The demo's letter has a reply draft on the account, which Reply opens: emptied here.
-    await act(async () => { typeInto(q<HTMLElement>(".read-col .msg .rte-surface")!, ""); });
+    // Reply can open a saved draft. Clear its body to test an attachment-only send.
+    await act(async () => { typeInto(within(reading()).getByRole("textbox", { name: messages.write.reply.text }), ""); });
 
     // Nothing typed: the reply's Send wears the reason, pressable, and the press says the sentence.
-    const before = [...host!.querySelectorAll<HTMLButtonElement>(".reply-actions button")][0]!;
+    const before = sendButton(reading());
     expect(before.getAttribute("aria-disabled"), "the wordless reply's Send carried no reason").toBe("true");
     expect(before.title).toBe(SENTENCE);
     await act(async () => { before.click(); });
@@ -207,12 +207,11 @@ describe("a message with an attachment sends without text", () => {
     expect(sends(), "an empty reply press reached the wire").toEqual([]);
     expect(host!.textContent).toContain(SENTENCE);
 
-    const input = q<HTMLInputElement>('.reply input[type="file"]')
-      ?? q<HTMLInputElement>('.compose-attach input[type="file"]');
+    const input = picker(reading());
     expect(input, "the reply editor drew no attach control").not.toBeNull();
     await pickFile(input!, "receipt.pdf", "application/pdf");
 
-    const send = [...host!.querySelectorAll<HTMLButtonElement>(".reply-actions button")][0]!;
+    const send = sendButton(reading());
     expect(send.getAttribute("aria-disabled"), "the reason outlived the attachment").toBeNull();
     expect(send.disabled, "an attachment alone did not unlock the reply's Send").toBe(false);
 

@@ -1,11 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { and, eq } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { accountSettings, accounts, changeLog, mailboxCredentials, mailboxes } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { makeMailboxService } from "../src/mailbox-service.js";
@@ -18,8 +16,8 @@ import type { ServiceContext } from "../src/context.js";
  */
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 const NOW = new Date("2026-09-11T08:00:00.000Z");
 
@@ -32,7 +30,7 @@ async function account(opts: { organizing: boolean }) {
     organizeConsentedAt: opts.organizing ? NOW : null,
   }).returning();
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
   });
   if (opts.organizing) {
     await db.insert(accountSettings).values({
@@ -40,7 +38,7 @@ async function account(opts: { organizing: boolean }) {
     });
   }
   const ctx: ServiceContext = {
-    db: db as unknown as ServiceContext["db"], accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => NOW, requestId: `ord-pg-${randomUUID().slice(0, 8)}`,
   };
   const rings = async () => (await db.select().from(changeLog).where(and(
@@ -53,10 +51,10 @@ describe.skipIf(!PG_UP)("organizeHere's settings change row on Postgres", () => 
   const svc = makeMailboxService({ allowance: async () => { /* permitted */ } });
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 120_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); });
 
   it("a first consent appends one", async () => {
     const a = await account({ organizing: false });

@@ -1,7 +1,7 @@
-import { SetupScreen } from "./SetupScreen";
+import { SetupRoute } from "./SetupRoute";
 
 /**
- * `/setup` — the self-host first-run ceremony (design in `SetupScreen.tsx`). A plain client screen
+ * `/setup` — the self-host first-run ceremony (`SetupRoute.tsx`, over `use-setup-door.ts`). A plain client screen
  * with NO server-side inputs, deliberately: the one credential — the setup token — is pasted into a
  * form, never carried in a URL, so there is nothing for history, referrers or access logs to
  * retain; `middleware.ts` serves the path under the strict nonce CSP with `no-referrer`/`no-store`.
@@ -11,5 +11,5 @@ import { SetupScreen } from "./SetupScreen";
  * — a truthful page, not a 404, because the self-host guides name this address.
  */
 export default function SetupPage() {
-  return <SetupScreen />;
+  return <SetupRoute />;
 }

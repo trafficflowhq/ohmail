@@ -13,10 +13,10 @@ import { makeDb } from "@trafficflow/db/cloud";
 import {
   formatProfileMessage, makeProfileDoc, profileFingerprint, signatureReceipt, type OrganizerProfilePayload,
 } from "@trafficflow/core/adapters/organizer-profile";
-import { ScreenerService, TriageService, type ServiceContext } from "@trafficflow/services";
-import { OrganizerProfileSync } from "../src/profile.js";
+import { ScreenerService, TriageService, dbFor, type Db as ServicesDb, type ServiceContext } from "@trafficflow/services";
+import { OrganizerProfileSync } from "@ohmail/organizer/profile";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE ORGANIZER FINISHES A PRESS THE REQUEST COULD NOT. The ask is on the mailbox row (mail 0129);
@@ -46,13 +46,17 @@ async function seed(db: Db): Promise<{ accountId: string; mailboxId: string }> {
   return { accountId, mailboxId: row!.id };
 }
 
+/** A handle bound to the account, over `db`'s pool. */
+const accountDb = (db: Db, accountId: string): Db => dbFor(db as unknown as ServicesDb, accountId) as unknown as Db;
+
 function sync(db: Db, fleet: FakeAdapterFleet, mb: { accountId: string; mailboxId: string }, now: () => Date, events: string[]) {
   const adapter = fleet.factory(
     { host: "fake.invalid", port: 1143, secure: false, auth: { user: "u", pass: "p" }, sentDomain: "t" } as never,
     { accountId: mb.accountId, mailboxId: mb.mailboxId, onConnectionError: () => undefined },
   );
   return new OrganizerProfileSync({
-    db, accountId: mb.accountId, mailboxId: mb.mailboxId, adapter,
+    // The account's handle, as the worker binds an organizer's pass (`scope.forAccount`).
+    db: accountDb(db, mb.accountId), accountId: mb.accountId, mailboxId: mb.mailboxId, adapter,
     self: { installId: INSTALL, kind: "cloud" }, producerVersion: "dev", flushIntervalMs: INTERVAL, now,
     log: (event, detail) => { events.push(`${event} ${JSON.stringify(detail)}`); },
   });
@@ -122,7 +126,7 @@ async function seedOther(db: Db, accountId: string): Promise<string> {
 
 /** A triage press as the route makes it, with an Idempotency-Key. */
 const triage = (db: Db, accountId: string, messageId: string, key: string): Promise<unknown> => new TriageService().setState({
-  db: db as unknown as ServiceContext["db"], accountId, userId: null,
+  db: dbFor(db as unknown as ServicesDb, accountId), accountId, userId: null,
   now: () => new Date("2026-09-26T20:00:00Z"), requestId: `ask-${key}`,
 }, messageId, { state: "reply_later" }, { idempotency: { key, requestHash: "ask" } });
 
@@ -140,7 +144,7 @@ describe("the organizer's tick answers a handed-over press", () => {
     const s = sync(db, fleet, mb, () => now, events);
     await s.onOrganize(); // seed: the foreign document is held
     now = new Date(now.getTime() + 1000); // well inside the five-minute debounce
-    await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
+    await recordImportAsk(accountDb(db, mb.accountId) as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
     await db.insert(accountSettings).values({ accountId: mb.accountId, updatedAt: new Date("2026-09-01T00:00:00Z") });
     const reads = fleet.metaFor(mb.mailboxId).profileReads;
     await s.onOrganize();
@@ -179,7 +183,7 @@ describe("the organizer's tick answers a handed-over press", () => {
       await s.onOrganize();
       const marker = await latestProfileFoundMarker(db as unknown as Tx, mb.accountId, mb.mailboxId);
       now = new Date(now.getTime() + 1000);
-      await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: fp, now });
+      await recordImportAsk(accountDb(db, mb.accountId) as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: fp, now });
       if (named) {
         await recordImportAskSignature(db as unknown as Tx, {
           accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: fp, signatureReplaces: signatureReceipt("-- \ntyped here")!, at: now,
@@ -212,7 +216,7 @@ describe("the organizer's tick answers a handed-over press", () => {
     const s = sync(db, fleet, mb, () => now, []);
     await s.onOrganize();
     now = new Date(now.getTime() + 1000);
-    await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: "not-this-document", now });
+    await recordImportAsk(accountDb(db, mb.accountId) as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: "not-this-document", now });
     await s.onOrganize();
     expect(await askOf(db, mb.mailboxId)).toMatchObject({ outcome: "refused", reason: "changed" });
     expect(await db.select().from(contacts).where(eq(contacts.accountId, mb.accountId))).toEqual([]);
@@ -228,7 +232,7 @@ describe("the organizer's tick answers a handed-over press", () => {
     const s = sync(db, fleet, mb, () => now, events);
     await s.onOrganize();
     now = new Date(now.getTime() + 1000);
-    await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
+    await recordImportAsk(accountDb(db, mb.accountId) as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
     fleet.metaFor(mb.mailboxId).deadConnection = true;
     await s.onOrganize();
     expect(await askOf(db, mb.mailboxId)).toMatchObject({ fp: FP, outcome: null });
@@ -251,9 +255,9 @@ describe("the organizer's tick answers a handed-over press", () => {
       const s = sync(db, fleet, mb, () => now, []);
       await s.onOrganize();
       now = new Date(now.getTime() + 1000);
-      await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
+      await recordImportAsk(accountDb(db, mb.accountId) as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
       // The confirm route's shape exactly: the account fence alone (`profile-import-service.ts#apply`).
-      const inline = (): Promise<unknown> => fencedAccountWrite(db as unknown as Tx, { accountId: mb.accountId },
+      const inline = (): Promise<unknown> => fencedAccountWrite(accountDb(db, mb.accountId) as unknown as Tx, { accountId: mb.accountId },
         async (tx) => applyOrganizerProfile(tx as LedgerTx, { accountId: mb.accountId, mailboxId: mb.mailboxId, doc: FOREIGN, fingerprint: FP, now }));
       const tick = (): Promise<unknown> => s.onOrganize();
       await Promise.all(order === "tick-first" ? [tick(), inline()] : [inline(), tick()]);
@@ -285,7 +289,7 @@ describe("the organizer's tick answers a handed-over press", () => {
     const s = sync(makeDb(named(TICK)), fleet, mb, () => now, events);
     await s.onOrganize();
     now = new Date(now.getTime() + 1000);
-    await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
+    await recordImportAsk(accountDb(db, mb.accountId) as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
     await db.insert(contacts).values({ accountId: mb.accountId, address: "friend@elsewhere.example" });
 
     const probe = postgres(DB, { max: 1, onnotice: () => undefined });
@@ -310,7 +314,8 @@ describe("the organizer's tick answers a handed-over press", () => {
         await released;
       });
       await holding;
-      const inline = fencedAccountWrite(makeDb(named(INLINE)) as unknown as Tx, { accountId: mb.accountId },
+      // The import door's merge, on the account's handle as its service binds it.
+      const inline = fencedAccountWrite(accountDb(makeDb(named(INLINE)), mb.accountId) as unknown as Tx, { accountId: mb.accountId },
         async (tx) => applyOrganizerProfile(tx as LedgerTx, { accountId: mb.accountId, mailboxId: mb.mailboxId, doc: FOREIGN, fingerprint: FP, now }))
         .then(() => "committed", (err: unknown) => `refused: ${String((err as { code?: string }).code ?? err)}`);
       await waiting(INLINE); // the merge's lock taken, parked on the held contact
@@ -354,7 +359,7 @@ describe("the organizer's tick answers a handed-over press", () => {
         const s = sync(makeDb(named(TICK)), fleet, mb, () => now, events);
         await s.onOrganize();
         now = new Date(now.getTime() + 1000);
-        await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: c.askFp, now });
+        await recordImportAsk(accountDb(db, mb.accountId) as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: c.askFp, now });
         const holder = makeDb(named(HOLD));
         const key = `ask-key-${tag}`;
         let pressed: Promise<string>;
@@ -408,19 +413,19 @@ describe("the organizer's tick answers a handed-over press", () => {
         const s = sync(makeDb(named(TICK)), fleet, mb, () => now, events);
         await s.onOrganize();
         now = new Date(now.getTime() + 1000);
-        await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: "not-this-document", now });
+        await recordImportAsk(accountDb(db, mb.accountId) as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: "not-this-document", now });
         const sender = `s-${tag}@example.test`;
         const [m] = await db.insert(messages).values({
           accountId: mb.accountId, mailboxId: mb.mailboxId, bodyHash: `scr-${tag}`, dedupKey: `scr:${tag}`, subject: "hello",
           fromAddress: sender, nativeLocator: { folder: SCREENER_FOLDER, ref: "1:9" },
         }).returning();
-        await db.insert(folderState).values({ messageId: m!.id, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER, lastSetBy: "us" });
+        await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER, lastSetBy: "us" });
         await db.insert(accountSyncState).values({ accountId: mb.accountId }).onConflictDoNothing();
         const held = await hold(makeDb(named(HOLD)), async (tx) => {
           await tx.insert(contacts).values({ accountId: mb.accountId, address: sender, source: "person" });
         });
         const pressed = outcome(new ScreenerService({}).decide({
-          db: makeDb(named(SCR)) as unknown as ServiceContext["db"], accountId: mb.accountId, userId: null,
+          db: dbFor(makeDb(named(SCR)) as unknown as ServicesDb, mb.accountId), accountId: mb.accountId, userId: null,
           now: () => now, requestId: `scr-${tag}`,
         }, m!.id, { decision: "yes", dest: "INBOX" }));
         await blockedOn(probe, SCR, HOLD);
@@ -456,7 +461,7 @@ describe("the organizer's tick answers a handed-over press", () => {
     const writers = (): string[] => meta.messages.map((m) => /X-Ohmail-Install-Id: (.+)/.exec(m.raw)?.[1]?.trim() ?? "?").sort();
     const beside = writers();
     now = new Date(now.getTime() + 1000);
-    await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
+    await recordImportAsk(accountDb(db, mb.accountId) as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
     // The server keeps a different tag than it was handed ("mine" as "mime"): the copy reads back otherwise and is removed.
     meta.profileStoredAs = (raw) => raw.split("\\u006e\\u0065\"").join("\\u006d\\u0065\"");
     const refused: string[][] = [];

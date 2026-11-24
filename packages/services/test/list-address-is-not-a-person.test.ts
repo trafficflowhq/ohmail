@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -15,7 +16,7 @@ import { materializeMessages } from "../src/dto/materialize.js";
 import { resetScreeningState } from "../src/consent-reset.js";
 import { heldReleaseSenders, releaseHeld } from "../src/held-release-service.js";
 import type { ServiceContext } from "../src/context.js";
-import { ruleRetroPass } from "../../../apps/worker/src/rule-retro.js";
+import { ruleRetroPass } from "../../organizer/src/rule-retro.js";
 import { readerDoorListClaim, readerDoorWorld } from "./helpers/list-claim-reader-door.js";
 
 /**
@@ -42,7 +43,7 @@ async function world() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: me, status: "connected", organizerRole: "organizer", createdAt: CONNECT,
   }).returning();
-  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
+  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
   let uid = 0;
   const sentTo = async (to: string, source: "person" | "inferred" = "person") => {
     uid += 1;
@@ -55,9 +56,9 @@ async function world() {
       accountId, mailboxId: mb!.id, messageId: s!.id, folder: "Sent", uidvalidity: 7n, uid, isPrimary: true,
     });
     await db.insert(folderState).values({
-      messageId: s!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: s!.id, accountId: s!.accountId, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
-    await db.insert(messageBodies).values({ messageId: s!.id, text: "hi", headers: {} });
+    await db.insert(messageBodies).values({ messageId: s!.id, accountId: s!.accountId, text: "hi", headers: {} });
     await db.insert(contacts).values({ accountId, address: to, source });
   };
   await sentTo(LIST);
@@ -72,9 +73,9 @@ async function world() {
       snippet: "", fromAddress: from, fromName: "PostFinance", senderCheck: "impersonation", senderCheckBrand: "PostFinance",
       date: NOW, unread: true, createdAt: NOW, nativeLocator: { folder: GATE, ref: `1:${randomUUID().slice(0, 6)}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await db.insert(routingDecisions).values({
       accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE, destination: "INBOX",
@@ -90,9 +91,9 @@ async function world() {
       snippet: "", fromAddress: from, fromName: "The Lists", senderCheck: "none", date: at, unread: true, createdAt: at,
       nativeLocator: { folder: GATE, ref: `1:${randomUUID().slice(0, 6)}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await db.insert(routingDecisions).values({
       accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE, destination: "INBOX",
@@ -101,7 +102,7 @@ async function world() {
     return m!.id;
   };
   const ctx: ServiceContext = {
-    db: db as never, accountId, userId: null, now: () => NOW, requestId: `lst-${randomUUID().slice(0, 8)}`,
+    db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `lst-${randomUUID().slice(0, 8)}`,
   };
   const brandsOf = async (address: string) => {
     const [r] = await db.select({ b: listAddresses.consentedBrands }).from(listAddresses)
@@ -197,15 +198,15 @@ async function pressWorld(contactSource: "person" | "inferred" | null, list = LI
       fromAddress: list, fromName: name, authVerdict: auth, senderCheck: brand === null ? "none" : "impersonation",
       senderCheckBrand: brand, date: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: `1:${n}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: placedBy, reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: placedBy, reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
   };
   if (contactSource !== null) await db.insert(contacts).values({ accountId, address: list, source: contactSource });
   await db.insert(listAddresses).values({ accountId, address: list, consentedBrands: [] });
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `lpr-${randomUUID().slice(0, 8)}` };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `lpr-${randomUUID().slice(0, 8)}` };
   const desired = async (id: string) =>
     (await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
   const brands = async () => listBrandsOf((await db.select({ b: listAddresses.consentedBrands }).from(listAddresses)
@@ -270,11 +271,11 @@ describe("a press over a list address consents only what it moves", () => {
  * keeps its destination, priority, switch, stamps and retro, the list's letter and the next one stay
  * in News, no learning signal is written and no unsubscribe is asked. On whichever store runs.
  */
-async function listWithItsRule() {
+async function listWithFiledPost(standingRule = true) {
   const w = await pressWorld("person");
   const [mb] = await w.db.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, w.accountId));
   const stamp = new Date("2026-09-30T08:00:00.000Z");
-  await w.db.insert(rules).values({
+  if (standingRule) await w.db.insert(rules).values({
     accountId: w.accountId, kind: "sender", match: LIST, destination: "ohmail/News", enabled: true, priority: 3,
     provenance: "manual", personDecidedAt: stamp, retroRequestedAt: stamp, retroDoneAt: stamp,
   });
@@ -284,7 +285,7 @@ async function listWithItsRule() {
     nativeLocator: { folder: "ohmail/News", ref: "1:900" },
   }).returning();
   await w.db.insert(folderState).values({
-    messageId: post!.id, desiredFolder: "ohmail/News", observedFolder: "ohmail/News", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: post!.id, accountId: post!.accountId, desiredFolder: "ohmail/News", observedFolder: "ohmail/News", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   const unsubscribed: string[][] = [];
   const svc = new ScreenerService({ unsubscribe: { onScreenOut: async (_ctx, ids) => { unsubscribed.push(ids); return { considered: ids.length }; } } });
@@ -307,15 +308,17 @@ async function listWithItsRule() {
 
 describe("a person's screen-out of a claim through a list address", () => {
   it("files the claim alone: the list's rule, its letters, its learning and its subscription are untouched", async () => {
-    const w = await listWithItsRule();
+    const w = await listWithFiledPost();
     const claim = await w.held("PostFinance", "PostFinance", "us");
     const before = await w.listRule();
     // The row says so before the press: the surfaces key their sentences on it.
     const page = await w.svc.list(w.ctx, { limit: 50, live: true });
     expect(page.items.find((i) => i.messageId === claim)?.checked).toMatchObject({ list: true, claimsOnly: true });
+    const ordinaryAtGate = await w.held("The List", null, "us");
     const r = await w.svc.decide(w.ctx, claim, { decision: "no", scope: "sender" }, { idempotency: { key: "lst-no", requestHash: "h" } });
     expect(r).toMatchObject({ createdRuleId: null, createdRule: null, appliedFolder: "ohmail/Screened" });
     expect(await w.desired(claim)).toBe("ohmail/Screened");
+    expect(await w.desired(ordinaryAtGate)).toBe(GATE);
     expect(await w.listRule(), "the list's rule moved").toEqual(before);
     await ruleRetroPass(w.db as never, { accountId: w.accountId, trustedAuthservIdsFor: async () => new Set<string>() }, NOW);
     expect(await w.desired(w.post), "the list's own letter left News").toBe("ohmail/News");
@@ -325,10 +328,20 @@ describe("a person's screen-out of a claim through a list address", () => {
     // The replay a lost answer gets is the answer the press got.
     const [stored] = await w.db.select().from(idempotencyKeys).where(eq(idempotencyKeys.accountId, w.accountId));
     expect([stored!.responseStatus, JSON.parse(JSON.stringify(stored!.responseJson))]).toEqual([200, JSON.parse(JSON.stringify(r))]);
+
+    const spam = await w.held("PostFinance", "PostFinance", "us");
+    const spamResult = await w.svc.decide(w.ctx, spam, { decision: "no", scope: "sender", dest: "ohmail/Quarantine" });
+    expect(spamResult).toMatchObject({ createdRuleId: null, createdRule: null, appliedFolder: "ohmail/Quarantine" });
+    expect(await w.desired(spam)).toBe("ohmail/Quarantine");
+    expect(await w.desired(claim)).toBe("ohmail/Screened");
+    expect(await w.desired(ordinaryAtGate)).toBe(GATE);
+    expect(await w.listRule()).toEqual(before);
+    expect(await w.desired(w.post)).toBe("ohmail/News");
+    expect(w.unsubscribed).toEqual([]);
   });
 
   it("CONTROL: a list address whose held mail holds no claim is screened out as an address", async () => {
-    const w = await listWithItsRule();
+    const w = await listWithFiledPost();
     const plain = await w.held("The List", null, "us");
     const r = await w.svc.decide(w.ctx, plain, { decision: "no", scope: "sender" });
     expect((await w.listRule()).map((x) => x.destination)).toEqual(["ohmail/Screened"]);
@@ -347,11 +360,24 @@ describe("a person's screen-out of a claim through a list address", () => {
   });
 
   it("CONTROL: a yes on the claim is the press it was: a rule, and the claim let in", async () => {
-    const w = await listWithItsRule();
+    const w = await listWithFiledPost();
     const claim = await w.held("PostFinance", "PostFinance", "us");
     const r = await w.svc.decide(w.ctx, claim, { decision: "yes", scope: "sender" });
     expect(r).toMatchObject({ createdRuleId: expect.any(String) });
     expect(await w.desired(claim)).toBe("INBOX");
+    for (const dest of ["INBOX", "ohmail/News", "ohmail/Receipts"] as const) {
+      const list = await listWithFiledPost(false);
+      const held = await list.held("PostFinance", "PostFinance", "us");
+      expect(await list.listRule()).toEqual([]);
+      const filed = await list.svc.decide(list.ctx, held, { decision: "yes", scope: "sender", dest, applyRetro: false });
+      const persisted = await list.listRule();
+      expect(persisted).toEqual([expect.objectContaining({
+        id: expect.any(String), kind: "sender", match: LIST, destination: dest, enabled: true,
+      })]);
+      expect(filed).toMatchObject({ createdRuleId: persisted[0]!.id, appliedFolder: dest });
+      expect(await list.desired(held)).toBe(dest);
+      expect(await list.desired(list.post)).toBe("ohmail/News");
+    }
   });
 });
 
@@ -459,7 +485,7 @@ async function admittedBy(door: Door) {
     nativeLocator: { folder: "ohmail/News", ref: "1:900" },
   }).returning();
   await w.db.insert(folderState).values({
-    messageId: post!.id, desiredFolder: "ohmail/News", observedFolder: "ohmail/News", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: post!.id, accountId: post!.accountId, desiredFolder: "ohmail/News", observedFolder: "ohmail/News", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   const unsubscribed: string[][] = [];
   const svc = new ScreenerService({ unsubscribe: { onScreenOut: async (_ctx, ids) => { unsubscribed.push(ids); return { considered: ids.length }; } } });
@@ -558,7 +584,7 @@ describe("a list address whose claim no press can reach", () => {
  */
 describe("a list claim held where another install organizes", () => {
   it("asks the holder to move that claim alone: no decision travels, and the holder's list rule and mail stand", async () => {
-    const w = await listWithItsRule();
+    const w = await listWithFiledPost();
     const [laptop] = await w.db.insert(mailboxes).values({
       accountId: w.accountId, provider: "imap", address: `work-${w.accountId.slice(0, 8)}@own.invalid`, organizerRole: "reader",
       organizerState: "held", organizedByCapabilities: "requests,moves", organizedByKind: "local", organizedByName: "Laptop",
@@ -574,7 +600,7 @@ describe("a list claim held where another install organizes", () => {
     expect(w.unsubscribed).toEqual([]);
 
     // The holder's own store, as its drain applies the request: the list's rule, its past letter and its retro stand.
-    const h = await listWithItsRule();
+    const h = await listWithFiledPost();
     const claim = await h.held("PostFinance", "PostFinance", "us");
     await h.db.update(messages).set({ dedupKey }).where(eq(messages.id, claim));
     const before = await h.listRule();

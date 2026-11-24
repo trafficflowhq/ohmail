@@ -2,18 +2,16 @@
  * THE OHBOX BAR IN THE DESKTOP WINDOW — the window's half of the engine's screening preference.
  * The POSTURE and the BAR live on `account_settings`; `GET/PATCH /account/screening` is served
  * by the local engine on the standalone door and forwarded to the account on the hosted one —
- * this module never asks which. One patching function writes the four axes (`ohboxPolicy`,
- * `ohboxBar`, `screenerAutoApply`, `impersonationFiling`); the route tests presence with `in`: omitted = "leave this
- * alone", `null` = "revert". Posture is honoured on both doors; AUTO-APPLY is hosted-only, its
- * consumer the hosted worker's scheduled pass. `bridgeFetch`, never the sync client — a
- * preference is not sync traffic, and the route-coverage check derives the client's call list.
+ * this module never asks which. One patching function writes the three axes (`ohboxPolicy`,
+ * `ohboxBar`, `impersonationFiling`); the route tests presence with `in`: omitted = "leave this
+ * alone", `null` = "revert". Posture is honoured on both doors. `bridgeFetch`, never the sync
+ * client — a preference is not sync traffic, and the route-coverage check derives the client's
+ * call list.
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
+import { changeScreeningResponse, readScreeningResponse } from "@ohmail/app/host";
 import type { TravelledChangeWire } from "../../webapp/app/shell/travelled-change.js";
-
-/** Where the engine serves it. Root-relative, like every path in this window. */
-const SCREENING_PATH = "/account/screening";
 
 /**
  * `404` MEANS "NOT ON THIS DOOR", and it is a state rather than a fault.
@@ -51,7 +49,6 @@ export interface ScreeningPreference {
   ohboxBar: string | null;
   /** The product default — what the editor prefills with, and what `null` resolves to. */
   defaultBar: string;
-  screenerAutoApply: boolean;
   /** Filing a held impersonation to Spam on its own, with no AI; on by default. Absent from an older engine. */
   impersonationFiling?: boolean;
   /** The save was sent to the install that organizes; nothing was written on this door. */
@@ -82,7 +79,7 @@ async function readPreference(res: Response): Promise<ScreeningPreference> {
 
 /** This mailbox's screening preference, or which of the two absences applies. */
 export async function readScreening(): Promise<ScreeningRead> {
-  const res = await bridgeFetch(SCREENING_PATH);
+  const res = await readScreeningResponse(bridgeFetch);
   if (res.status === NOT_SERVED_HERE) return { state: "not-served" };
   if (res.status === OFFLINE) return { state: "offline" };
   return { state: "ready", pref: await readPreference(res) };
@@ -97,15 +94,9 @@ export async function readScreening(): Promise<ScreeningRead> {
  * for — the discipline the hosted client's copy of these controls follows.
  */
 export async function saveScreening(
-  patch: Partial<Pick<ScreeningPreference, "ohboxPolicy" | "ohboxBar" | "screenerAutoApply" | "impersonationFiling">>,
+  patch: Partial<Pick<ScreeningPreference, "ohboxPolicy" | "ohboxBar" | "impersonationFiling">>,
 ): Promise<ScreeningPreference> {
-  return readPreference(
-    await bridgeFetch(SCREENING_PATH, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(patch),
-    }),
-  );
+  return readPreference(await changeScreeningResponse(bridgeFetch, patch));
 }
 
 /** The bar, and nothing else. `null` reverts it to the product default. */

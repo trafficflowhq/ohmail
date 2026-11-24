@@ -1,23 +1,22 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import {
   OhmailEngine,
   MemoryMirrorStore,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import de from "../messages/de.json";
-import { screenerMode, type ScreenerRole } from "../app/shell/mail-state";
-import type { ScreenerState } from "../app/shell/screener-state";
+import { screenerMode, type ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * A DECISION DURING A TAKEOVER THIS INSTALL ASKED FOR REACHES THE DOOR (as reported, and the
@@ -115,7 +114,7 @@ async function mountState(
   role: ScreenerRole,
   locale: "en" | "de" = "en",
 ): Promise<{ get: () => ScreenerState; bump: () => Promise<void> }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   let latest: ScreenerState | null = null;
   let force: (() => void) | null = null;
 
@@ -125,9 +124,9 @@ async function mountState(
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     latest = useScreenerState(
       engine,
-      v,
+      null, v,
       ((message: string) => { toasts.push(message); }) as never,
-      undefined,
+      useScreenerWords(), undefined,
       undefined,
       true,
       role,
@@ -139,8 +138,8 @@ async function mountState(
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale, messages: (locale === "de" ? de : en) as never, timeZone: "UTC", now: NOW,
+    root!.render(h(TextProvider, {
+      locale, messages: (locale === "de" ? de : en) as never, timeZone: "UTC",
       children: h(Probe),
     }));
   });

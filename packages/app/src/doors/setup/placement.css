@@ -1,0 +1,22 @@
+/* Where the setup token is read: the command, set apart on the sheet's soft ground and ringed, with its Copy; the way
+   the reference sets it. Own classes: `way-`. */
+.way-setup-cmd {
+  --way-cmd-ring: inset 0 0 0 1px var(--ctl-ring);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  min-height: var(--h-l);
+  margin: 0;
+  padding: 0 var(--s2) 0 var(--s4);
+  border-radius: var(--r-row);
+  background-color: var(--soft-sheet);
+  box-shadow: var(--way-cmd-ring);
+}
+
+.way-setup-code {
+  font: inherit;
+  font-weight: var(--w-mid);
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}

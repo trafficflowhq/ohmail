@@ -9,10 +9,12 @@ export {
   ACCOUNT_MAILBOXES_MAX_READ, accountMailboxesProbe, refuseOverAccountMailboxes,
   type ReadBoundKind,
 } from "./read-bounds.js";
-export type { ServiceContext, Db, IdempotencyClaim, SearchSupersede } from "./context.js";
+export type {
+  ServiceContext, PassContext, OpenPassSendAdapter, Db, BoundDb, UnboundDb, ContextDb, IdempotencyClaim, SearchSupersede,
+} from "./context.js";
 // The fenced transaction door — every request-scoped write against a table Art. 17 erasure
 // empties opens here, so the fence cannot be forgotten. See `context.ts`.
-export { withAccountTx, claimOrLose } from "./context.js";
+export { withAccountTx, claimOrLose, dbFor, passContext } from "./context.js";
 /* THE HOSTED DATABASE HANDLES. `context.ts` declares the registry with the one member a local
  * install can offer; this adds the two a hosted deployment has, by augmenting that interface.
  * Re-exporting a name from it is what carries the augmentation into every program built from this
@@ -24,9 +26,12 @@ export type { CloudDb } from "./context-cloud.js";
 export {
   SyncService, syncService, SNAPSHOT_WINDOW, SNAPSHOT_DRAFT_PAGE, SNAPSHOT_FIRST_PAGE_MESSAGES,
   assertSnapshotWindow,
-  STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
+  STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW, namedCalendarSpan, NAMED_CALENDAR_SPAN_MAX_MS,
   type GetChangesOptions, type GetSnapshotOptions,
 } from "./sync-service.js";
+export type { CalendarConnectPort, CalendarFeedPort, CalendarSpanMs } from "./calendar-port.js";
+// The settings record's devices where a copy mirrors another store's account: a type alone.
+export type { DeviceNumbers, DeviceNumbersPort } from "./device-numbers.js";
 /* The byte bound a `/sync` page is built to, and the row floor the walk holds back for the draft
  * phase. Exported because the transport arm measures them against the codec's own cap. */
 export { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "./sync-page-byte-budget.js";
@@ -57,8 +62,7 @@ export {
   // driven by a test that can occupy the gate a purchase actually uses. Nothing in the product
   // imports either name.
   LaneGate, suggestLaneGate, SUGGEST_ADMISSION, admissionDeadline, pendingKeyTtlMs,
-  type ScreenerDeps, type ScreenBody, type ScreenDecisionResult, type ScreenIdempotency,
-  type ScreenDecisionMailboxes, type ScreenRequestedMailbox, type ScreenRequestResult,
+  type ScreenerDeps, type ScreenIdempotency,
 } from "./screener-service.js";
 export {
   dismissHeldRelease, heldReleaseFingerprint, heldReleaseGroups, heldReleaseSummary,
@@ -79,7 +83,7 @@ export {
 } from "./ohbox-unscreened-service.js";
 export {
   TriageService, triageService,
-  type TriageSetBody, type TriageIdempotency, type ListOptions, type FocusReplyView, type PowerThroughView,
+  type TriageIdempotency, type ListOptions, type FocusReplyView, type PowerThroughView,
 } from "./triage-service.js";
 export {
   ApprovalService, makeApprovalService,
@@ -91,7 +95,7 @@ export {
 } from "./hey-migration.js";
 export {
   RulesService, rulesService,
-  type CreateRuleBody, type PatchRuleBody, type RuleMutation, type RuleCreation,
+  type RuleMutation, type RuleCreation,
   /* Mail 0094 — where a rule edit went, mailbox by mailbox. The panes that render "waiting on
      <machine>" read these, so they are exported rather than left inside the service. */
   type RuleTravel, type RuleRequestSent, type RuleRequestResult, type RuleRemoval,
@@ -103,7 +107,7 @@ export {
   SEED_MAX_ADDRESSES, SEED_SCAN_LIMIT, SUPPORTED_LOCALES, SUPPORTED_THEME_FACES,
   buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setAutoAct, setBlockAutoUnsubscribe,
   setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled,
-  setLocale, setMailboxFoldersEnabled, setMailboxSignature, setResurfaceTime, setThemeFace,
+  setDraftReplies, setLocale, setMailboxFoldersEnabled, setMailboxSignature, setResurfaceTime, setSubjectHeading, setThemeFace,
   setOnboardingCompleted,
   mailboxSignatures, mailboxSignatureHtmls, effectiveMailboxSignatures, MAILBOX_SIGNATURE_MAX_CHARS,
   isMachineSent, isRobotAddress, parseAddressList,
@@ -173,9 +177,9 @@ export {
 } from "./push-service.js";
 export {
   MessageService, messageService, MARK_SEEN_MAX_IDS,
-  type MessageView, type ListMessagesOptions, type MessagePatchBody,
+  type MessageView, type ListMessagesOptions,
   type MarkSeenBody, type MarkSeenResult,
-  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
+  type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
 } from "./message-service.js";
 /* THE READER'S VIEW OF SETTINGS IT DOES NOT OWN (mail 0094) — the mirror row, no dial. */
 export {
@@ -206,8 +210,8 @@ export {
   SearchService, searchService, SEARCH_SORTS, isSearchSort, SEARCH_PARTS, isSearchParts,
   SEARCH_QUERY_MAX_CHARS,
   ADDRESS_DIRECTIONS, ADDRESS_DIRECTIONS_SERVED, isAddressSearchDirection,
-  type SearchOptions, type SearchFilters, type SearchResult, type Facets, type SearchSort, type SearchParts,
-  type AddressSearchDirection, type AddressSearchOptions, type AddressSearchResult,
+  type SearchOptions, type SearchFilters, type SearchSort, type SearchParts,
+  type AddressSearchDirection, type AddressSearchOptions,
 } from "./search-service.js";
 export { SearchTiming, SEARCH_TIMING_PHASES, type SearchTimingPhase, type SearchTimingFacts } from "./search-timing.js";
 export {
@@ -268,7 +272,7 @@ export {
 } from "./kb-service.js";
 export {
   TagsService, tagsService, RENDERABLE_HUES,
-  type TagBody, type TagHue, type AssignResult,
+  type TagHue, type AssignResult,
 } from "./tags-service.js";
 export {
   FolderOpsService,
@@ -277,10 +281,10 @@ export {
 export {
   DraftsService, draftsService, DRAFT_MAX_RECIPIENTS,
   DRAFT_SUBJECT_MAX_CHARS, RECIPIENT_ADDRESS_MAX_CHARS, RECIPIENT_NAME_MAX_CHARS,
-  type CreateDraftBody, type PatchDraftBody, type DraftMutation,
+  type DraftMutation,
 } from "./drafts-service.js";
 export {
-  DraftingService, draftingService, makeDraftingService, draftWindow, DRAFT_ADMISSION, DRAFT_USAGE_RELEASE,
+  DraftingService, draftingService, makeDraftingService, draftWindow, DRAFT_ADMISSION, DRAFT_OWN_TEXT_MAX_CHARS, DRAFT_USAGE_RELEASE,
   type DraftFromMessageDeps,
 } from "./drafting-service.js";
 export {
@@ -350,7 +354,7 @@ export {
 // The wall's nightly pass (cloud 0040): the reminder mails, idempotent by the notices PK, and
 // the erasure door, one account per call, through the same path DELETE /account runs.
 export {
-  runAccountLifecyclePass, eraseOneDueAccount, noticesDue, erasureDue, erasureClearsEpoch,
+  runAccountLifecyclePass, eraseOneDueAccount, eraseRequestedAccount, noticesDue, erasureDue, erasureClearsEpoch,
   connectReminderDue, CONNECT_REMINDER_AFTER_MS,
   TRIAL_REMINDER_AHEAD_MS, ERASURE_REMINDER_AHEAD_MS, ERASURE_SLACK_MS,
   ACCOUNT_LIFECYCLE_BUDGET_MS, ERASURE_DUE_PER_RUN,
@@ -394,6 +398,8 @@ export {
   PAIRING_TTL_BOUNDS, PAIRING_LABEL_MAX, PAIRING_LIVE_TOKENS_MAX,
   type PairingGrant, type PairingTokenMinted, type PairingTokenListed, type PairingTokenStatus,
   type PairingConsumed, type PairedDeviceSessionMinter, type PairLinkState,
+  mintAppHandoff, redeemAppHandoff, APP_HANDOFF_GRANT, APP_HANDOFF_TTL_MS, APP_HANDOFF_PER_HOUR, APP_HANDOFF_LIVE_MAX,
+  type AppHandoffAuditor, type AppHandoffTarget, type HandoffConsumed,
 } from "./pairing.js";
 export {
   redeemInviteGrant, PAIRING_INVITE_TTL_MS, type InviteGrantRedeemed,

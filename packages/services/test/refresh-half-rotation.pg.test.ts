@@ -1,18 +1,25 @@
 // @postpush: alone — one case holds ACCESS EXCLUSIVE on `sessions`, which a co-tenant would wait behind.
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq, desc } from "drizzle-orm";
 import { generateSync } from "otplib";
-import { refreshTokens, sessions } from "@trafficflow/db";
-import { authEvents, schema } from "@trafficflow/db/cloud";
+import { bindDb, refreshTokens, sessions } from "@trafficflow/db";
+import { authEvents, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  AuthService, makeTestAuthDeps, hashToken, classifyRefreshFailure, type ServiceContext,
+  AuthService, dbFor, makeTestAuthDeps, hashToken, classifyRefreshFailure, type ServiceContext,
 } from "@trafficflow/services";
+import { statementSeam, type StatementAct, type StatementRun } from "./helpers/statement-seam.js";
+
+// The service binds the request's handle again for a credential's look-up: through a seam, that binds the seam's own handle.
+vi.mock("@trafficflow/db", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@trafficflow/db")>();
+  const { bindThroughSeams } = await import("./helpers/statement-seam.js");
+  return { ...real, bindDb: bindThroughSeams(real.bindDb) };
+});
+
 
 /*
  * A ROTATION IS ONE COMMIT: the claim, the session's checks and the successor land together or
@@ -23,17 +30,31 @@ import {
  */
 const PG_UP = await realPgAvailable();
 type Sql = ReturnType<typeof postgres>;
-type Db = ReturnType<typeof drizzle<typeof schema>>;
+type Db = OwnedDb["db"];
 
 let client: Sql;
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+let owned: OwnedDb;
 let db: Db;
 const extra: Sql[] = [];
+const owners: OwnedDb[] = [];
 
 let ipCell = 0;
 let ip = "10.10.0.1";
+// A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
 const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => new Date(), requestId: "refresh-half-pg", ip, ...over,
+  db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+  accountId: "", userId: null, now: () => new Date(), requestId: "refresh-half-pg", ip, ...over,
 });
+
+/** A pool of the factory's whose connections carry `params` (a parameter of the address is one of the connection). */
+function pool(params: Record<string, string>): Db {
+  const address = new URL(PG_TEST_URL);
+  for (const [k, v] of Object.entries(params)) address.searchParams.set(k, v);
+  const made = makeOwnedDb(address.toString());
+  owners.push(made);
+  return made.db;
+}
 const native = { surface: "native" } as const;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -66,62 +87,39 @@ const familyRows = (familyId: string) => db.select().from(refreshTokens).where(e
 const reuseEvents = async (userId: string) => (await db.select().from(authEvents)
   .where(and(eq(authEvents.userId, userId), eq(authEvents.event, "refresh_reuse_revoked")))).length;
 
-/** A query that never reaches the driver and rejects with `err` however drizzle consumes it. */
-function rejected(err: Error): object {
-  const run = (): Promise<never> => Promise.reject(err);
-  return { values: run, raw: run, then: (ok?: never, bad?: (e: unknown) => unknown) => run().then(ok, bad) };
+/** A statement that never reaches the driver and rejects with `err`. */
+function rejected(err: Error): Promise<never> {
+  return Promise.reject(err);
 }
 
 /** As `rejected`, but the real statement, sent only once `gate` opens. */
-function held(gate: Promise<void>, make: () => { values: () => Promise<unknown> } & PromiseLike<unknown>): object {
-  return {
-    values: () => gate.then(() => make().values()),
-    then: (ok?: (v: unknown) => unknown, bad?: (e: unknown) => unknown) => gate.then(() => make()).then(ok, bad),
-  };
+function held(gate: Promise<void>, run: StatementRun): Promise<unknown> {
+  return gate.then(run);
 }
 
 /*
- * A HANDLE THAT MEDDLES WITH ONE STATEMENT: after it has seen the claim, the first statement that
- * matches `pattern` is handed to `act`, which may refuse it or hold it. The pool's `begin` and
- * `savepoint` hand their callbacks a scoped client, so the proxy wraps those too — a transaction's
- * statements never pass through the outer `unsafe`.
+ * A HANDLE THAT MEDDLES WITH ONE STATEMENT: a factory pool of its own, bound to nothing as the door
+ * before sign-in is, seen at the drizzle builder (where a bound flight's statements pass). After it
+ * has seen the claim, the first statement that matches `pattern` is handed to `act`, which may
+ * refuse it or hold it. A transaction's statements, and a savepoint's, are seen the same way.
  */
-function meddling(pattern: RegExp, act: (run: () => unknown) => unknown): { db: Db; hits: () => number } {
-  const base = postgres(PG_TEST_URL, { max: 2, onnotice: () => {} });
-  extra.push(base);
+function meddling(pattern: RegExp, act: StatementAct): { db: ServiceContext["db"]; hits: () => number } {
   let claimed = false;
   let hits = 0;
-  const wrap = (sql: Sql): Sql => new Proxy(sql, {
-    get(target, prop) {
-      const value = Reflect.get(target, prop) as unknown;
-      if (prop === "unsafe") {
-        return (text: string, params?: unknown[], opts?: unknown) => {
-          const run = () => (value as (...a: unknown[]) => unknown).call(target, text, params, opts);
-          if (claimed && hits === 0 && pattern.test(text)) {
-            hits += 1;
-            return act(run);
-          }
-          if (/^update "refresh_tokens" set "consumed_at"/i.test(text)) claimed = true;
-          return run();
-        };
-      }
-      if (prop === "begin" || prop === "savepoint") {
-        return (...args: unknown[]) => {
-          const fn = args[args.length - 1] as (s: Sql) => unknown;
-          return (value as (...a: unknown[]) => unknown).apply(target, [...args.slice(0, -1), (inner: Sql) => fn(wrap(inner))]);
-        };
-      }
-      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
-    },
+  const seen = statementSeam(bindDb(pool({}), { account: null }), (text) => {
+    if (claimed && hits === 0 && pattern.test(text)) {
+      hits += 1;
+      return act;
+    }
+    if (/^update "refresh_tokens" set "consumed_at"/i.test(text)) claimed = true;
+    return null;
   });
-  return { db: brandDialect(drizzle(wrap(base), { schema }), "pg"), hits: () => hits };
+  return { db: seen, hits: () => hits };
 }
 
 /** A handle of its own, named in pg_stat_activity, so a wait of its backend can be READ. */
 function named(app: string): Db {
-  const base = postgres(PG_TEST_URL, { max: 2, onnotice: () => {}, connection: { application_name: app } });
-  extra.push(base);
-  return brandDialect(drizzle(base, { schema }), "pg");
+  return pool({ application_name: app });
 }
 
 /** Poll, bounded, until a backend named `app` in this database waits on a lock: a reading, not a sleep. */
@@ -140,10 +138,13 @@ describe.skipIf(!PG_UP)("a rotation whose second half fails spends nothing", () 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 5, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 60_000);
   afterAll(async () => {
     for (const c of extra) await c.end({ timeout: 5 });
+    for (const made of owners) await made.close();
+    await owned?.close();
     await client?.end({ timeout: 5 });
   });
 
@@ -179,9 +180,9 @@ describe.skipIf(!PG_UP)("a rotation whose second half fails spends nothing", () 
     const { userId, r1 } = await establish(svc, `half-lock-${randomUUID()}@lichtgrat.example`);
     const familyId = (await rowOf(r1)).familyId;
     const attemptId = `r${randomUUID()}`;
-    const short = postgres(PG_TEST_URL, { max: 2, onnotice: () => {}, connection: { lock_timeout: 300 } });
+    const short = pool({ lock_timeout: "300" });
     const holder = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
-    extra.push(short, holder);
+    extra.push(holder);
     let release!: () => void;
     const released = new Promise<void>((r) => { release = r; });
     let locked!: () => void;
@@ -193,8 +194,7 @@ describe.skipIf(!PG_UP)("a rotation whose second half fails spends nothing", () 
     });
     try {
       await isLocked;
-      const shortDb = brandDialect(drizzle(short, { schema }), "pg");
-      const err = await svc.refresh(ctx({ db: shortDb }), { refreshToken: r1, attemptId }, native)
+      const err = await svc.refresh(ctx({ db: bindDb(short, { account: null }) }), { refreshToken: r1, attemptId }, native)
         .then(() => null, (e: unknown) => e as { code?: string });
       expect(err?.code, "the lock wait gave up").toBe("55P03");
     } finally {
@@ -260,7 +260,7 @@ describe.skipIf(!PG_UP)("a rotation whose second half fails spends nothing", () 
     await isLocked;
     let settled = false;
     const rotator = `half-order-${randomUUID().slice(0, 8)}`;
-    const rotation = svc.refresh(ctx({ db: named(rotator) }), { refreshToken: r1, attemptId: `r${randomUUID()}` }, native)
+    const rotation = svc.refresh(ctx({ db: bindDb(named(rotator), { account: null }) }), { refreshToken: r1, attemptId: `r${randomUUID()}` }, native)
       .finally(() => { settled = true; });
     try {
       expect(await blockedOnALock(rotator), "the rotation is blocked on a lock").toBe(true);
@@ -291,13 +291,13 @@ describe.skipIf(!PG_UP)("a rotation whose second half fails spends nothing", () 
     // Held at the mint's session write: the claim and the successor are written, not committed.
     const pausing = meddling(/^update "sessions"/i, (run) => {
       reached();
-      return held(gate, run as () => { values: () => Promise<unknown> } & PromiseLike<unknown>);
+      return held(gate, run);
     });
     const rotation = svc.refresh(ctx({ db: pausing.db }), { refreshToken: r1, attemptId: `r${randomUUID()}` }, native);
     await atMint;
     let signedOut = false;
     const leaver = `half-logout-${randomUUID().slice(0, 8)}`;
-    const logout = svc.logout(ctx({ db: named(leaver) }), { refreshToken: r1 }).finally(() => { signedOut = true; });
+    const logout = svc.logout(ctx({ db: bindDb(named(leaver), { account: null }) }), { refreshToken: r1 }).finally(() => { signedOut = true; });
     try {
       expect(await blockedOnALock(leaver), "the sign-out is blocked on a lock").toBe(true);
       expect(signedOut, "the sign-out waits for the rotation that holds the session").toBe(false);

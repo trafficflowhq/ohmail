@@ -1,0 +1,1 @@
+A device’s own SQLite store has no calendar tables. The desktop engine runs the shared journal.

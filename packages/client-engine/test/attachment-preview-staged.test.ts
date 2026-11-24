@@ -1,7 +1,8 @@
+import type { AttachmentWire } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { OhmailEngine, type StagedPreview } from "../src/engine.js";
 import { MutationRejectedError } from "../src/types.js";
-import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
  * THE DESKTOP'S PREVIEW HOLDS NO IMAGE BYTE: `stageAttachment` takes the shell's answer — a URL on

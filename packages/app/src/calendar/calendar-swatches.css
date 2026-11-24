@@ -1,0 +1,20 @@
+.cal-rail-swatches {
+  display: grid;
+  flex: none;
+  align-self: center;
+  align-content: start;
+  justify-content: center;
+  gap: var(--cal-rail-swatch-gap);
+  width: var(--h-l);
+  max-height: 30vh;
+  padding-block: var(--cal-rail-swatch-top) var(--s2);
+  overflow: auto;
+  scrollbar-width: none;
+  border-radius: var(--r-pill);
+}
+.cal-rail-swatches:hover {
+  background: var(--hover);
+}
+.cal-rail-swatches[data-short] {
+  grid-template-columns: repeat(3, var(--cal-rail-swatch));
+}

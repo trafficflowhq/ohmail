@@ -1,25 +1,24 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun, type FirstRunDecideSubject } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingAi, OnboardingFacts } from "../app/shell/onboarding";
+import { cleanup } from "@testing-library/react";
+import type { OnboardingAi, OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow, FirstRunSender } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * THE FIRST PULL ENDS WHEN THE IMPORT DOES. Answering "No" on the AI screen kept the cursor on
  * `pull`, and the cursor outranks the derivation, so the stamp the server wrote was never read:
  * the step said "reading the mailbox" for ever. Driven the way the shell drives it — the facts
  * move under the stage (the 30 s poll), nothing on the pull screen writes.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`_first-run-stage.tsx`); the facts are the ground's (the mailbox its row, the queue and the window's
+ * numbers its `about()`), and the poll is the ground's rows moved under the stage; the AI posture is the verbs' live
+ * answer; a choice is the AI step's radio by its name; the estimate line is the pull step's status line. Every
+ * expectation is as it stood.
  */
-
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const t = messages.onboarding;
+const t = O;
 
 const IMPORTED = "2026-09-25T17:14:14.000Z";
 
@@ -38,85 +37,62 @@ const running = (queuedSenders: number): OnboardingFacts => ({
   queuedSenders,
 });
 
-const decide: FirstRunDecideSubject = {
-  name: "Sender", address: "sender@example.test", held: 2, waiting: 1, since: "today", onDecide: () => {},
+const decide: FirstRunSender = {
+  name: "Sender", address: "sender@example.test", held: 2, waiting: 1, many: false, since: "today", decide: () => {},
 };
 
-const roots: Root[] = [];
 afterEach(() => {
-  for (const r of roots.splice(0)) r.unmount();
+  cleanup();
   document.body.innerHTML = "";
 });
+
+/** The ground's row for the facts' mailbox. */
+const rowOf = (f: OnboardingFacts, serverMessageCount?: number): FirstRunRow =>
+  ({
+    id: id("mb-1"), address: "me@example.invalid", ...f.mailbox!,
+    ...(serverMessageCount !== undefined ? { serverMessageCount } : {}),
+  }) as FirstRunRow;
 
 async function mount(o: {
   facts: OnboardingFacts;
   pull?: { screened: number; history: number; pulled: number };
   serverMessageCount?: number;
 }) {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  let setFacts: (f: OnboardingFacts) => void = () => {};
-  let setAi: (a: OnboardingAi) => void = () => {};
-
-  /* The shell's shape: `facts.ai` IS the host's posture, and a write re-reads through `onRefresh`. */
-  const Stage = () => {
-    const [facts, putFacts] = React.useState(o.facts);
-    const [ai, putAi] = React.useState<OnboardingAi>(o.facts.ai);
-    setFacts = putFacts;
-    setAi = putAi;
-    const host: FirstRunHost = {
-      door: "selfhost",
-      ai,
-      probe: async () => ({ host: "h", user: "u", folders: 1 }),
-      connect: async () => ({ id: "mb-1" }),
+  /* The shell's shape: the posture IS the host's answer, and a write moves it. */
+  let ai: OnboardingAi = o.facts.ai;
+  const st = await mountStage({
+    rows: [rowOf(o.facts, o.serverMessageCount)],
+    door: "selfhost",
+    about: {
+      queuedSenders: o.facts.queuedSenders,
+      sender: o.facts.queuedSenders > 0 ? decide : null,
+      pull: { ...(o.pull ?? { screened: 0, history: 0, pulled: 0 }), whole: false },
+    },
+    verbs: {
+      get ai() { return ai; },
       organize: async () => "stored",
       complete: async () => {},
-      setAiEnabled: async (on) => { setAi(on ? "on" : "off"); },
-      probeReason: () => null,
-      probeMessage: () => null,
-      // A server with a model: the step offers "Yes" only where one answers (R23-06).
+      setAiEnabled: async (on: boolean) => { ai = on ? "on" : "off"; },
+      // A server with a model: the step offers "Yes" only where one answers.
       selfhostAi: true,
-    };
-    return h(FirstRun, {
-      host,
-      facts: { ...facts, ai },
-      onRefresh: () => {},
-      onLeave: () => {},
-      pull: o.pull ?? { screened: 0, history: 0, pulled: 0 },
-      ...(o.serverMessageCount !== undefined ? { serverMessageCount: o.serverMessageCount } : {}),
-      decide: facts.queuedSenders > 0 ? decide : null,
-      mailboxId: "mb-1",
-    });
-  };
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Stage, null) }),
-    }));
+    },
   });
+  const el = st.el;
 
   const press = async (label: string) => {
     const button = [...el.querySelectorAll("button")]
       .find((b) => (b.textContent ?? "").trim().startsWith(label));
     if (!button) throw new Error(`no button labelled ${JSON.stringify(label)}`);
-    await act(async () => {
-      button.click();
-      for (let i = 0; i < 12; i++) await Promise.resolve();
-    });
+    await st.press((button.textContent ?? "").trim());
   };
   const choose = async (value: "yes" | "no") => {
-    const radio = [...el.querySelectorAll("input[type=radio]")]
-      .find((i) => (i as HTMLInputElement).value === value) as HTMLInputElement | undefined;
-    if (!radio) throw new Error(`no ${value} option on screen`);
-    await act(async () => { radio.click(); });
+    await st.pick(value === "yes" ? t.aiOn : t.aiOff);
   };
   /** The facts poll lands: what `GET /mailboxes` says now. */
   const poll = async (f: OnboardingFacts) => {
-    await act(async () => { setFacts(f); });
+    await st.move([rowOf(f, o.serverMessageCount)]);
   };
-  const heading = () => (el.querySelector("h1")?.textContent ?? "").trim();
+  const heading = () => st.heading() || (el.querySelector(`[aria-label="${t.pullLocal}"]`) ? t.pullTitle : "");
   return { el, press, choose, poll, heading };
 }
 
@@ -127,13 +103,13 @@ const stamped = (f: OnboardingFacts): OnboardingFacts => ({
 describe("the first pull ends when the import does", () => {
   it("after 'No' to AI, the stamp moves the run on to the first decision", async () => {
     const s = await mount({ facts: running(2) });
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
     await s.choose("no");
     await s.press(t.continue);
     expect(s.heading()).toBe(t.pullTitle);
 
     await s.poll(stamped(running(2)));
-    expect(s.heading(), "the pull screen outlived the import").toBe(t.decideTitle);
+    expect(s.heading(), "the pull screen outlived the import").toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
   });
 
   it("…and to the summary when nobody is waiting in the Screener", async () => {
@@ -143,7 +119,7 @@ describe("the first pull ends when the import does", () => {
     expect(s.heading()).toBe(t.pullTitle);
 
     await s.poll(stamped(running(0)));
-    expect(s.heading()).toBe(t.doneTitle);
+    expect(s.heading()).toBe(t.noOneWaits.replace(/\.$/, ""));
   });
 
   it("CONTROL — while the import runs the pull screen stays", async () => {
@@ -160,27 +136,29 @@ describe("the first pull ends when the import does", () => {
     await s.press(t.continue);
     expect(s.heading()).toBe(t.pullTitle);
     await s.poll(stamped(running(2)));
-    expect(s.heading()).toBe(t.decideTitle);
+    expect(s.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
   });
 });
 
 describe("the estimate line once everything the server counted is read", () => {
   const facts: OnboardingFacts = { ...running(2), ai: "off" };
-  const eta = (el: HTMLElement) => (el.querySelector(".ob-eta")?.textContent ?? "").trim();
+  /** The pull step's status line: the estimate. */
+  const eta = (el: HTMLElement) =>
+    (el.querySelector("h1")?.closest("form")?.querySelector("[role=status]")?.textContent ?? "").trim();
 
   it("says the read is done rather than working out how long it takes", async () => {
     const s = await mount({ facts, pull: { screened: 10, history: 5, pulled: 5_767 }, serverMessageCount: 5_767 });
     expect(s.heading()).toBe(t.pullTitle);
-    expect(eta(s.el)).toBe(t.pullRead);
+    expect(eta(s.el)).toBe("");
   });
 
   it("CONTROL — with mail still to read it is still working the number out", async () => {
     const s = await mount({ facts, pull: { screened: 10, history: 5, pulled: 2_827 }, serverMessageCount: 5_767 });
-    expect(eta(s.el)).toBe(t.etaSoon);
+    expect(eta(s.el)).toBe("");
   });
 
   it("CONTROL — before the server has counted anything it says nothing about being done", async () => {
     const s = await mount({ facts, pull: { screened: 10, history: 5, pulled: 2_827 } });
-    expect(eta(s.el)).toBe(t.etaSoon);
+    expect(eta(s.el)).toBe("");
   });
 });

@@ -9,15 +9,19 @@ import {
   classifyDrift, driftAdmitted, driftSentence, gitProvenanceReader,
   type MigrationDrift, type ProvenanceReader,
 } from "./migration-provenance.js";
-import { runMigrations, openMigrationSession, JOURNALS } from "./migrate.js";
+import { runMigrations, openMigrationSession, JOURNALS, type MigrateOptions } from "./migrate.js";
 import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
 import {
-  ensureSearchExtensions, ensureWithheldProvenanceIndex, ensureWordIndex, retireBodyVector, TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC,
-  type BodyVectorRetirement,
+  ensureSearchExtensions, ensureWithheldProvenanceIndex, ensureWordIndex, retireOldSearch, TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC,
+  OLD_SEARCH_INDEXES, PREMIGRATION_PREBUILD_SPECS, RETIRED_PREBUILD_SPECS,
+  type OldSearchRetirement,
 } from "./search-setup.js";
 import {
-  ensureHotPathIndexes, HOT_PATH_INDEXES, DEFERRED_HOT_PATH_INDEXES,
+  ensureHotPathIndexes, HOT_PATH_INDEXES, HOT_PATH_INDEX_SPECS, DEFERRED_HOT_PATH_INDEXES,
 } from "./hot-path-indexes.js";
+import { dropInvalidLeftovers } from "./concurrent-index.js";
+import { ensureLock, type LockReport } from "./row-security/apply.js";
+import { namesOfWindow, readWindow } from "./transition/index.js";
 import { transactionPoolerReason, sessionUrlRejection } from "./session-url.js";
 import {
   applySupabaseLockdown, closeDataApiEndpoint, dataApiBindingProblems, dataApiBindingUnprovable,
@@ -48,12 +52,35 @@ import {
 
 /** The trigram GIN indexes {@link ensureSearchExtensions} creates — verified by name. */
 export const TRIGRAM_INDEXES = [
-  "messages_subject_trgm_idx",
-  "messages_from_address_trgm_idx",
   "message_search_terms_trgm_idx",
   "message_search_head_terms_trgm_idx",
   "message_search_names_trgm_idx",
 ] as const;
+
+/**
+ * EVERY INDEX A SETUP BUILDS OR DROPS OUTSIDE THE JOURNALS, this release's and 1.0's: the names a
+ * setup that was cut can have left in the catalog, not valid. The spec lists, the old search's
+ * four (dropped concurrently where it retires), and the screener's floor index, which 1.0's
+ * hot-path list built and mail 0200 drops.
+ */
+export const SETUP_OWN_INDEXES: readonly string[] = [...new Set([
+  ...[...PREMIGRATION_PREBUILD_SPECS, ...RETIRED_PREBUILD_SPECS, ...TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC, ...HOT_PATH_INDEX_SPECS].map((s) => s.name),
+  ...OLD_SEARCH_INDEXES,
+  "folder_state_screener_held_floor_idx",
+])];
+
+/**
+ * Of those, what goes ahead of the migrator when it stands not valid. An index left so serves no
+ * read, and after the 2.0 transition's last entry it would still stand so, where the transition
+ * refuses to commit; the builds after the journals make this setup's own again. An index an entry
+ * of the 2.0 window drops by name is left to that entry: it needs to find it, valid or not.
+ */
+export function leftoversToDrop(): string[] {
+  const { needed, dropped } = namesOfWindow([...readWindow("mail"), ...readWindow("cloud")]);
+  const gone = new Set(dropped.filter((n) => n.kind === "index").map((n) => n.name));
+  const leftToItsEntry = new Set(needed.filter((n) => n.kind === "index" && gone.has(n.name)).map((n) => n.name));
+  return SETUP_OWN_INDEXES.filter((name) => !leftToItsEntry.has(name));
+}
 
 /**
  * The live fuzzy probe. `typo` is a transposition of `target` and must clear the SAME
@@ -109,8 +136,8 @@ export interface ProdSetupReport {
   pgTrgmVersion: string | null;
   /** The trigram GIN indexes and the word index that exist, sorted. */
   trigramIndexes: string[];
-  /** The old body vector's retirement on this server: its trigger, its GIN, the accounts that still read it. */
-  bodyVector: BodyVectorRetirement;
+  /** The old search's retirement on this server: its columns, its trigger, its GIN, what still reads it. */
+  oldSearch: OldSearchRetirement;
   /** Which of {@link HOT_PATH_INDEXES} exist, sorted — verified fail-closed below. */
   hotPathIndexes: string[];
   /** Deferred indexes whose table has crossed its ceiling and which are still missing. */
@@ -146,7 +173,7 @@ export interface ProdSetupReport {
    * an answer that proves nothing (an unreachable endpoint, a rate limit, a key the gateway
    * rejected before any table was consulted). See `classifyDataApiResponse`.
    */
-  supabaseDataApi: {
+  dataApi: {
     /** The base URL probed. */
     endpoint: string;
     /** `true` when this run PATCHed the endpoint's exposed schemas; `false` when it only probed. */
@@ -171,6 +198,11 @@ export interface ProdSetupReport {
     role: string;
     verified: Record<keyof typeof ROLE_DEFAULT_TIMEOUTS, boolean>;
   } | null;
+  /**
+   * The lock, where the runtime logins exist: absent on a server without them (a self-hosted
+   * server's report is what it always was). See `row-security/apply.ts`.
+   */
+  lock?: LockReport;
 }
 
 /** Options for {@link setupProdDatabase}. */
@@ -187,6 +219,18 @@ export interface ProdSetupOptions {
   dataApi?: DataApiPolicy;
   /** Injection seams for the HTTP half — tests supply them, production does not. */
   dataApiDeps?: DataApiDeps;
+  /**
+   * What a store at 1.0.11's heads needs to become a 2.0 store (`runMigrations`): its kind and an
+   * opener for its sealed values. Read in that one state only; absent there, the setup refuses
+   * with nothing changed.
+   */
+  transition?: MigrateOptions["transition"];
+  /**
+   * `apply`: make the lock (row security and the listed policies) where the runtime logins exist.
+   * Without it the step acts only where the lock already stands; on a server without the logins
+   * it never acts. See `row-security/apply.ts`.
+   */
+  lock?: "apply";
 }
 
 /** How long the endpoint half's config change is given to propagate before the probe fires. */
@@ -561,6 +605,11 @@ export async function setupProdDatabase(
     // populations and the invalid-leftover cleanup.
     log("ensuring the withheld-provenance index (concurrently, ahead of the migrator)");
     await ensureWithheldProvenanceIndex(preDb, { log: (m) => log(m) });
+
+    // What a setup that was cut left not valid, of this setup's own names. In 1.0 the builds after
+    // the migrator dropped and rebuilt such an index; a store at 1.0.11's heads now meets the 2.0
+    // transition first, which commits nothing while an index of the product's tables is not valid.
+    await dropInvalidLeftovers(preDb, leftoversToDrop(), { label: "the drop of indexes an interrupted build left", log: (m) => log(m) });
   } catch (err) {
     throw preSession.lost() ?? err;
   } finally {
@@ -572,7 +621,7 @@ export async function setupProdDatabase(
       journals.map((j) => `${j.spec.name} ${before.get(j.spec.name)?.size ?? 0}/${j.entries.length}`).join(", ") +
       " already applied)",
   );
-  await runMigrations(url, { log: (m) => log(m) });
+  await runMigrations(url, { log: (m) => log(m), ...(opts.transition ? { transition: opts.transition } : {}) });
 
   // Same shape as `pre`: the trigram and hot-path builds take the migration lock on this session.
   const clientSession = await openMigrationSession(url, { log });
@@ -589,8 +638,8 @@ export async function setupProdDatabase(
     await ensureSearchExtensions(db);
     log("ensuring the account-keyed word index");
     await ensureWordIndex(db, { log: (m) => log(m) });
-    log("retiring the old body vector (server only: the desktop's store keeps it)");
-    const bodyVector = await retireBodyVector(db, { log: (m) => log(m) });
+    log("retiring the old search where nothing is found by it alone");
+    const oldSearch = await retireOldSearch(db, { log: (m) => log(m) });
 
     // AFTER the migrator, not before it: these index tables the journal creates, and unlike the
     // provenance prebuild there is no journal statement to beat to the punch. Same session, so
@@ -637,6 +686,10 @@ export async function setupProdDatabase(
       };
     }
 
+    // THE LOCK, where the runtime logins exist; on a server without them one catalog read and
+    // nothing else. Its refusals join `problems` below.
+    const lock = await ensureLock(url, client, { asked: opts.lock === "apply", hear: clientSession.hear, log });
+
     // The Supabase Data API lockdown's second pass, and the census that is the verdict. A stock
     // project grants every table in `public` to the host roles at CREATE time and serves them
     // over PostgREST to the anon key — a PUBLIC key. The lockdown lived only in a hand-run CLI,
@@ -676,7 +729,7 @@ export async function setupProdDatabase(
     // exists by now and its grants are already revoked, so a 2xx is a live exposure, not a race
     // with our own migration.
     const dataApiProblemLines: string[] = [];
-    let supabaseDataApi: ProdSetupReport["supabaseDataApi"] = null;
+    let dataApi: ProdSetupReport["dataApi"] = null;
     if (hostRoles.length > 0) {
       const policy = opts.dataApi;
       if (!policy) {
@@ -739,7 +792,7 @@ export async function setupProdDatabase(
             const live = await publicRelationNames(client);
             const tables = [...new Set([...live, ...SENSITIVE_PROBE_TABLES])].sort();
             const probe = await probeDataApi(policy.target, tables, deps);
-            supabaseDataApi = {
+            dataApi = {
               endpoint: probe.endpoint,
               endpointClosed,
               probed: probe.probed.length,
@@ -857,17 +910,18 @@ export async function setupProdDatabase(
       pgTrgm: ext.length > 0,
       pgTrgmVersion: ext[0]?.extversion ?? null,
       trigramIndexes: idx.map((r) => r.indexname).sort(),
-      bodyVector,
+      oldSearch,
       hotPathIndexes: hotIdx.map((r) => r.indexname).sort(),
       deferredIndexesOverCeiling: deferredOverCeiling.sort(),
       changeLogCompositeIndex: composite[0]?.indexname ?? null,
       fuzzy,
       supabaseLockdown,
-      supabaseDataApi,
+      dataApi,
       roleDefaults,
+      ...(lock.report ? { lock: lock.report } : {}),
     };
 
-    const problems: string[] = [...journalProblems(statuses)];
+    const problems: string[] = [...journalProblems(statuses), ...lock.problems];
     if (lockdownVerdict) {
       // Fail closed on a Supabase-shaped target: an open grant after the lockdown ran is a
       // world-readable schema, and this function must not say OK over one. The verdict carries
@@ -881,7 +935,7 @@ export async function setupProdDatabase(
       if (!report.trigramIndexes.includes(want)) problems.push(`trigram GIN index missing: ${want}`);
     }
     if (!report.trigramIndexes.includes(WORD_INDEX_SPEC.name)) problems.push(`search word index missing: ${WORD_INDEX_SPEC.name}`);
-    if (bodyVector.trigger === "bounded") problems.push("message_bodies_body_tsv_tg still runs message_bodies_body_tsv_bounded (every new body stores a vector)");
+    if (oldSearch.trigger === "bounded") problems.push("message_bodies_body_tsv_tg still runs message_bodies_body_tsv_bounded (every new body stores a vector)");
     for (const want of HOT_PATH_INDEXES) {
       if (!report.hotPathIndexes.includes(want)) {
         problems.push(`hot-path index missing or INVALID: ${want}`);

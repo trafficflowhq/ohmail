@@ -1,14 +1,13 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { act } from "react";
-import { NextIntlClientProvider } from "next-intl";
 import { MutationRejectedError, type MutationResult } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { SendStatus } from "../app/shell/SendStatus.js";
-import { phaseFor, type SendState } from "../app/shell/mail-send.js";
+import { mountWriting, rounds, unmountWritings } from "./_write-1-writing.js";
+import { phaseFor, type SendState } from "@ohmail/app-logic/writing/mail-send";
 
 /**
  * WHAT A PERSON IS TOLD WHEN THE DRAFT MOVED UNDER THEIR PRESS.
@@ -20,22 +19,34 @@ import { phaseFor, type SendState } from "../app/shell/mail-send.js";
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 
-function render(send: SendState, messages: typeof en | typeof de, locale: string): string {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  act(() => {
-    root!.render(
-      <NextIntlClientProvider locale={locale} messages={messages as never} timeZone="UTC">
-        <SendStatus send={send} scope="compose" lane={null} showing={null} />
-      </NextIntlClientProvider>,
-    );
-  });
-  return host.textContent ?? "";
+/*
+ * RE-POINTED BY THE OLDER TESTS' SORTING, EXPECTATIONS UNTOUCHED: today's `SendStatus` is drawn by no
+ * host. The compose scope's state is drawn where a person reads it now: Write's send line over the new letter
+ * (`_write-1-writing.tsx`, as send-status-copy does), in the language on screen; the text read is the send line's
+ * (its role, status or alert), nothing else of the sheet.
+ */
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+void React;
+
+function lineOf(el: HTMLElement): string {
+  return [...el.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]')]
+    .map((n) => (n.textContent ?? "").trim())
+    .filter((text) => text !== "")
+    .join(" ");
 }
 
-afterEach(() => {
+async function render(send: SendState, messages: typeof en | typeof de, locale: string): Promise<string> {
+  await unmountWritings();
+  host?.remove();
+  const world = await mountWriting({ view: true, send, locale: locale === "de" || messages === de ? "de" : "en" });
+  host = world.el;
+  await rounds(2);
+  return lineOf(host);
+}
+
+afterEach(async () => {
   act(() => root?.unmount());
+  await unmountWritings();
   host?.remove();
   root = null;
   host = null;
@@ -59,22 +70,22 @@ describe("a draft that moved under the press", () => {
    * — which drops the compose scratch — on a confirmation and on nothing else. A mapping that
    * answered IDLE here would take the words away as well as refusing to send them.
    */
-  it("maps to a failed phase carrying the code, never to the confirmation that spends the editor", () => {
+  it("maps to a failed phase carrying the code, never to the confirmation that spends the editor", async () => {
     const state = phaseFor(refused());
     expect(state.phase).toBe("failed");
     expect(state.code).toBe("draft_changed");
     expect(state.phase, "a refusal that reads as a confirmation clears the draft").not.toBe("idle");
   });
 
-  it("says so in English, and does not quote the wire", () => {
-    const text = render(phaseFor(refused()), en, "en");
+  it("says so in English, and does not quote the wire", async () => {
+    const text = await render(phaseFor(refused()), en, "en");
     expect(text).toContain("changed in another window");
     expect(text).toContain("review it before sending");
     expect(text, "the send is claimed to have gone").toContain("Not sent");
   });
 
-  it("says so in German", () => {
-    const text = render(phaseFor(refused()), de, "de");
+  it("says so in German", async () => {
+    const text = await render(phaseFor(refused()), de, "de");
     expect(text).toContain("in einem anderen Fenster oder auf einem anderen Gerät geändert");
     expect(text).toContain("Nicht gesendet");
   });
@@ -84,8 +95,8 @@ describe("a draft that moved under the press", () => {
    * at Send as the retry, and pressing Send again on a row somebody else rewrote is exactly what
    * this refusal exists to stop until the person has looked.
    */
-  it("does not fall through to the general failed sentence", () => {
-    const text = render(phaseFor(refused()), en, "en");
+  it("does not fall through to the general failed sentence", async () => {
+    const text = await render(phaseFor(refused()), en, "en");
     expect(text).not.toContain("Sending didn't work");
   });
 });

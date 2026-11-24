@@ -10,11 +10,12 @@
  * RENDERED catalogue text, never a source string.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/dom";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { resumeOnceKey } from "../app/(product)/resume/ResumeScreen.js";
+import { resumeOnceKey } from "../app/(product)/resume/use-resume-door.js";
 import { REVOKE_OWED_PREFIX, shareSignedOutNote } from "../app/(product)/resume/signed-out-note.js";
 import { SESSION_MINTED_KEY, SETTLE_DEADLINE_MS } from "../app/session-refresh.js";
 import { fixturePassword } from "../../../test/support/fixture-credentials.js";
@@ -69,7 +70,7 @@ let host: HTMLDivElement | null = null;
 
 beforeEach(async () => {
   // A coded 401 arms the death latch and its heal schedule; neither may leak into the next case.
-  (await import("../app/shell/session-truth.js")).resetSessionTruthForTests();
+  (await import("@ohmail/app-logic/session/session-truth")).resetSessionTruthForTests();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.setSystemTime(new Date("2026-09-23T08:00:00.000Z"));
   // Full jitter pinned at its top: every wait is the schedule's whole number, so a retry that
@@ -113,7 +114,7 @@ afterEach(async () => {
   (await import("../app/revoked-door.js")).resetRevokedDoorForTests();
   // An erasure heard in one case latches the tab: the next case starts on a live one.
   (await import("../app/erased-door.js")).resetErasedDoorForTests();
-  (await import("../app/shell/account-erased.js")).clearAccountErased();
+  (await import("@ohmail/app-logic/session/account-erased")).clearAccountErased();
   globalThis.fetch = priorFetch;
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
   document.cookie = "tf_signed_out=; Path=/; Max-Age=0";
@@ -143,13 +144,13 @@ async function tick(ms: number): Promise<void> {
 }
 
 async function mountResume(owner: string | null = "acct_A"): Promise<HTMLElement> {
-  const { ResumeScreen } = await import("../app/(product)/resume/ResumeScreen.js");
+  const { ResumeRoute } = await import("../app/(product)/resume/ResumeRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", children: h(ResumeScreen, { initialOwner: owner }),
+      locale: "en", messages, timeZone: "UTC", children: h(ResumeRoute, { initialOwner: owner }),
     }));
   });
   await flush();
@@ -164,7 +165,7 @@ async function wipesEnded(doors: Array<{ revokedWipeSettled: () => Promise<void>
 }
 
 async function mountLogin(): Promise<HTMLElement> {
-  const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+  const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -176,8 +177,11 @@ async function mountLogin(): Promise<HTMLElement> {
 }
 
 const text = (el: HTMLElement): string => el.textContent ?? "";
-const buttons = (el: HTMLElement, label: string): number =>
-  [...el.querySelectorAll("a, button")].filter((b) => (b.textContent ?? "").trim() === label).length;
+const buttons = (el: HTMLElement, label: string): number => {
+  const byRole = within(el);
+  return byRole.queryAllByRole("button", { name: label }).length +
+    byRole.queryAllByRole("link", { name: label }).length;
+};
 const stamp = (answer: string, reloadsSoFar = 0): void =>
   sessionStorage.setItem(ONCE_KEY, JSON.stringify({ at: Date.now(), answer, reloads: reloadsSoFar }));
 
@@ -431,11 +435,11 @@ describe("(f) every tab on an ended sign-in says the same reason", () => {
 
   /** Tabs opened at the same moment, `initialOwner` as each one's edge saw it. */
   async function openTabs(...owners: Array<string | null>): Promise<void> {
-    const screens: Array<typeof import("../app/(product)/resume/ResumeScreen.js").ResumeScreen> = [];
+    const screens: Array<typeof import("../app/(product)/resume/ResumeRoute.js").ResumeRoute> = [];
     const doors: Array<typeof import("../app/revoked-door.js")> = [];
     for (const _ of owners) {
       vi.resetModules();
-      screens.push((await import("../app/(product)/resume/ResumeScreen.js")).ResumeScreen);
+      screens.push((await import("../app/(product)/resume/ResumeRoute.js")).ResumeRoute);
       doors.push(await import("../app/revoked-door.js"));
     }
     await act(async () => {
@@ -587,7 +591,7 @@ describe("the loop guard reads the answer of the previous pass", () => {
 describe("/login says why the splash sent this tab there", () => {
   it("the note renders its sentence once and is removed", async () => {
     sessionStorage.setItem(NOTE_KEY, "expired");
-    const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+    const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -601,7 +605,7 @@ describe("/login says why the splash sent this tab there", () => {
 
   it("the reuse note renders its sentence once and is removed", async () => {
     sessionStorage.setItem(NOTE_KEY, "reused");
-    const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+    const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -626,7 +630,7 @@ describe("/login says why the splash sent this tab there", () => {
   });
 
   it("THE CONTROL — no note, no sentence", async () => {
-    const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+    const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -668,10 +672,10 @@ describe("(g) a revoked sign-in leaves no copy behind the sign-in form", () => {
     [...Object.keys(localStorage), ...Object.keys(sessionStorage)].filter((k) => k.includes(owner)).sort();
   /** An account's keys beside its copy: its data, its preferences and this tab's note about it. */
   async function plantKeysOf(owner: string): Promise<string[]> {
-    const { SEND_LOCKS_PREFIX } = await import("../app/shell/send-lock.js");
-    const { COMPOSE_DRAFT_PREFIX } = await import("../app/shell/compose.js");
-    const { searchSortKey } = await import("../app/shell/persisted-ui.js");
-    const { seedNotNowKey } = await import("../app/shell/seed-offer.js");
+    const { SEND_LOCKS_PREFIX } = await import("@ohmail/app-logic/writing/send-lock");
+    const { COMPOSE_DRAFT_PREFIX } = await import("@ohmail/app-logic/writing/compose");
+    const { searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
+    const { seedNotNowKey } = await import("@ohmail/app-logic/mailboxes/first-run/seed-offer");
     const keys = [
       `${SEND_LOCKS_PREFIX}${owner}`, `${COMPOSE_DRAFT_PREFIX}${owner}.w1`, `ohmail.boot.ownAddresses.${owner}`,
       searchSortKey(owner), seedNotNowKey(owner), `ohmail.ui.reader.afterVerb:${owner}`,
@@ -842,7 +846,7 @@ describe("(g) a revoked sign-in leaves no copy behind the sign-in form", () => {
     /** The code step, whose answer mints the new session. */
     async function secondFactor(el: HTMLElement): Promise<void> {
       expect(await until(() => el.querySelector("#login-code") !== null), "no code step").toBe(true);
-      await submit(el, "form.login-totp", [["#login-code", "123456"]]);
+      await submit(el, "form:has(#login-code)", [["#login-code", "123456"]]);
       expect(await until(() => wire.includes("verify")), "the code never left").toBe(true);
     }
     /** The held wipe let go: its module loaded, and whatever it removes, removed. */
@@ -989,10 +993,16 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
     await flush();
     return host;
   }
+  /** A blank, by its id (an old card) or by the name its label gives it (a door's page). */
+  function blankOf(el: HTMLElement, key: string): HTMLInputElement | null {
+    if (key.startsWith("#")) return el.querySelector<HTMLInputElement>(key);
+    const label = [...el.querySelectorAll("label")].find((l) => l.textContent === key);
+    return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+  }
   async function submit(el: HTMLElement, form: string, fields: Array<[string, string]>): Promise<void> {
     await act(async () => {
-      for (const [id, value] of fields) {
-        const input = el.querySelector<HTMLInputElement>(id)!;
+      for (const [key, value] of fields) {
+        const input = blankOf(el, key)!;
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
         input.dispatchEvent(new Event("input", { bubbles: true }));
       }
@@ -1003,24 +1013,27 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
     submit(el, "form", [["#login-email", "m@example.test"], ["#login-pw", PASSWORD]]);
   async function secondFactor(el: HTMLElement): Promise<void> {
     expect(await until(() => el.querySelector("#login-code") !== null), "no code step").toBe(true);
-    await submit(el, "form.login-totp", [["#login-code", "123456"]]);
+    await submit(el, "form:has(#login-code)", [["#login-code", "123456"]]);
     expect(await until(() => wire.includes("verify")), "the code never left").toBe(true);
   }
   /** A form once it is on screen, filled and sent. */
   async function sent(el: HTMLElement, first: string, fields: Array<[string, string]>): Promise<void> {
-    expect(await until(() => el.querySelector(first) !== null), "no form").toBe(true);
+    expect(await until(() => blankOf(el, first) !== null), "no form").toBe(true);
     await submit(el, "form", fields);
   }
   const account = (f: string): Array<[string, string]> => [[`#${f}-email`, "m@example.test"], [`#${f}-name`, "M"], [`#${f}-pw`, PASSWORD]];
+  /** A door page's account blanks, by the names its labels give them. */
+  const named = (w: { emailLabel: string; nameLabel: string; passwordLabel: string }): Array<[string, string]> =>
+    [[w.emailLabel, "m@example.test"], [w.nameLabel, "M"], [w.passwordLabel, PASSWORD]];
   const register = (el: HTMLElement): Promise<void> => sent(el, "#join-email", account("join"));
   /** /join/invite opened from its link (or without its fragment), nothing pressed. */
   async function inviteOpened(hash = "#tok"): Promise<HTMLElement> {
     Object.assign(window.location, { hash, pathname: "/join/invite", search: "" });
-    return page(async () => (await import("../app/(product)/join/invite/InviteScreen.js")).InviteScreen, {})();
+    return page(async () => (await import("../app/(product)/join/invite/InviteRoute.js")).InviteRoute, {})();
   }
   /** /join/invite opened from its link, its form filled and sent. */
   async function invite(): Promise<void> {
-    await sent(await inviteOpened(), "#invite-email", account("invite"));
+    await sent(await inviteOpened(), messages.joinInvite.emailLabel, named(messages.joinInvite));
   }
   /** The wipe a revoke starts waits at its module load until `release`; each sweep it then starts is kept. */
   function holdWipe(): void {
@@ -1050,7 +1063,9 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
     script = [refusedClearing("refresh_missing")];
   }
   const owed = (): string[] => Object.keys(localStorage).filter((k) => k.startsWith(REVOKE_OWED_PREFIX)).sort();
-  const linkUp = (el: HTMLElement): boolean => el.querySelector("a.btn") !== null;
+  /** A door page's way on is a button, named. */
+  const pressable = (name: string) => (el: HTMLElement): boolean =>
+    [...el.querySelectorAll("button")].some((b) => b.textContent === name);
   const page = (load: () => Promise<React.ComponentType<never>>, props: object) => async (): Promise<HTMLElement> =>
     mountPage(h(await load(), props as never));
 
@@ -1134,19 +1149,23 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
   });
 
   const PAGES: Array<[string, () => Promise<HTMLElement>, (el: HTMLElement) => boolean, ((el: HTMLElement) => Promise<void>)?]> = [
-    ["/join", page(async () => (await import("../app/(product)/join/JoinScreen.js")).JoinScreen,
+    ["/join", page(async () => (await import("../app/(product)/join/JoinRoute.js")).JoinRoute,
       { initialCode: "", publicSignup: true, signedIn: true }), () => wire.some((w) => w.startsWith("register")), register],
     ["/join/invite", () => inviteOpened(), () => wire.some((w) => w.startsWith("redeem")),
-      (el) => sent(el, "#invite-email", account("invite"))],
-    ["/approve", page(async () => (await import("../app/(product)/approve/ApproveScreen.js")).ApproveScreen, { request: REQUEST }),
+      (el) => sent(el, messages.joinInvite.emailLabel, named(messages.joinInvite))],
+    ["/approve", page(async () => (await import("../app/(product)/approve/ApproveRoute.js")).ApproveRoute, { request: REQUEST }),
       () => router.replace.mock.calls.length > 0],
-    ["/link-desktop", page(async () => (await import("../app/(product)/link-desktop/LinkDesktopScreen.js")).LinkDesktopScreen, {}), linkUp],
-    ["/authorize-desktop", page(async () => (await import("../app/(product)/authorize-desktop/AuthorizeDesktopScreen.js"))
-      .AuthorizeDesktopScreen, { request: REQUEST }), linkUp],
-    ["/setup", page(async () => (await import("../app/(product)/setup/SetupScreen.js")).SetupScreen, {}), linkUp],
-    ["/subscribed", page(async () => (await import("../app/(product)/subscribed/SubscribedScreen.js")).SubscribedScreen, {}), linkUp],
-    ["/verify-email", page(async () => (await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen,
-      { initialToken: "tok" }), () => wire.some((w) => w.startsWith("verify-email")), (el) => submit(el, "form", [["#verify-pw", PASSWORD]])],
+    ["/link-desktop", page(async () => (await import("../app/(product)/link-desktop/LinkDesktopRoute.js")).LinkDesktopRoute, {}),
+      pressable(messages.login.title)],
+    ["/authorize-desktop", page(async () => (await import("../app/(product)/authorize-desktop/AuthorizeDesktopRoute.js"))
+      .AuthorizeDesktopRoute, { request: REQUEST }), pressable(messages.login.title)],
+    ["/setup", page(async () => (await import("../app/(product)/setup/SetupRoute.js")).SetupRoute, {}),
+      pressable(messages.setup.signIn)],
+    ["/subscribed", page(async () => (await import("../app/(product)/subscribed/SubscribedRoute.js")).SubscribedRoute, {}),
+      pressable(messages.subscribed.open)],
+    ["/verify-email", page(async () => (await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute,
+      { initialToken: "tok" }), () => wire.some((w) => w.startsWith("verify-email")),
+      (el) => submit(el, "form", [[messages.verify.passwordLabel, PASSWORD]])],
   ];
 
   it.each(PAGES)("%s: its first action waits until the revoked copy is gone", async (_, mount, acted, press) => {
@@ -1184,7 +1203,7 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
   it("/join, no name in the jar: a registration pressed before the check's 401 leaves once the copy is gone", async () => {
     document.cookie = "tf_owner=; Path=/; Max-Age=0";
     holdSession = true;
-    const el = await page(async () => (await import("../app/(product)/join/JoinScreen.js")).JoinScreen,
+    const el = await page(async () => (await import("../app/(product)/join/JoinRoute.js")).JoinRoute,
       { initialCode: "", publicSignup: true })();
     expect(await until(() => wire.includes("session")), "no session check").toBe(true);
     await register(el);
@@ -1260,7 +1279,7 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
   it("/join, no name in the jar: a registration after a busy read asks once more, and leaves once the copy is gone", async () => {
     document.cookie = "tf_owner=; Path=/; Max-Age=0";
     busySessions = 1;
-    const el = await page(async () => (await import("../app/(product)/join/JoinScreen.js")).JoinScreen,
+    const el = await page(async () => (await import("../app/(product)/join/JoinRoute.js")).JoinRoute,
       { initialCode: "", publicSignup: true })();
     expect(await until(() => wire.includes("session:503")), "no session check").toBe(true);
     await tick(2_000);
@@ -1276,30 +1295,30 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
     ["naming an account, opened without a token", "acct_A", ""],
   ] as const)("/verify-email, the jar %s: the revoked copy goes with nothing pressed, and the form stays", async (_, name, token) => {
     if (name === null) document.cookie = "tf_owner=; Path=/; Max-Age=0";
-    const el = await page(async () => (await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen,
+    const el = await page(async () => (await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute,
       { initialToken: token })();
     expect(await until(() => !engine.holdsMirrorOf("acct_A")), "the page stood over the revoked copy").toBe(true);
     expect(wire).toEqual(["session", "refresh"]);
-    expect(el.querySelector("#verify-pw"), "the form went").not.toBeNull();
+    expect(blankOf(el, messages.verify.passwordLabel), "the form went").not.toBeNull();
   });
 
   // Nobody: Safari keeps the script-written name seven days, the session cookie longer.
   it.each([["naming an account", "acct_A"], ["naming nobody", null]] as const)(
     "/verify-email, the jar %s: the session is asked on arrival and again on Confirm, which leaves once the copy is gone", async (_, name) => {
       if (name === null) document.cookie = "tf_owner=; Path=/; Max-Age=0";
-      const el = await page(async () => (await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen,
+      const el = await page(async () => (await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute,
         { initialToken: "tok" })();
-      await submit(el, "form", [["#verify-pw", PASSWORD]]);
+      await submit(el, "form", [[messages.verify.passwordLabel, PASSWORD]]);
       expect(await until(() => wire.some((w) => w.startsWith("verify-email"))), "the confirmation never left").toBe(true);
       expect(wire).toEqual(["session", "refresh", "session", "refresh", "verify-email, copy gone"]);
     });
 
   it("/verify-email: an arrival check never answered holds the confirmation no longer than the bound, and is stopped", async () => {
     holdSession = true;
-    const el = await page(async () => (await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen,
+    const el = await page(async () => (await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute,
       { initialToken: "tok" })();
     expect(await until(() => wire.includes("session")), "no session check").toBe(true);
-    await submit(el, "form", [["#verify-pw", PASSWORD]]);
+    await submit(el, "form", [[messages.verify.passwordLabel, PASSWORD]]);
     const { SETTLE_DEADLINE_MS } = await import("../app/session-refresh.js");
     await tick(SETTLE_DEADLINE_MS - 1_000);
     expect(wire, "the confirmation left beside its check").toEqual(["session"]);
@@ -1339,7 +1358,8 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
     const el = await inviteOpened(hash);
     expect(await until(() => !engine.holdsMirrorOf("acct_A")), "the page stood over the revoked copy").toBe(true);
     expect(wire).toEqual(["session", "refresh"]);
-    expect(el.querySelector(hash === "" ? "[role=alert]" : "#invite-email"), "the page went").not.toBeNull();
+    expect(hash === "" ? el.textContent?.includes(messages.joinInvite.missingTitle) : blankOf(el, messages.joinInvite.emailLabel) !== null,
+      "the page went").toBe(true);
     expect(router.replace, "the page sent the person on").not.toHaveBeenCalled();
   });
 
@@ -1353,13 +1373,13 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
 
   it.each([
     ["/login", async () => signIn(await mountLogin()), "login"],
-    ["/verify-email", async () => submit(await page(async () => (await import("../app/(product)/verify-email/VerifyEmailScreen.js"))
-      .VerifyEmailScreen, { initialToken: "tok" })(), "form", [["#verify-pw", PASSWORD]]), "verify-email"],
+    ["/verify-email", async () => submit(await page(async () => (await import("../app/(product)/verify-email/VerifyRoute.js"))
+      .VerifyRoute, { initialToken: "tok" })(), "form", [[messages.verify.passwordLabel, PASSWORD]]), "verify-email"],
     ["/join/invite", invite, "redeem"],
     ["/setup on a new server", async () => {
       needsSetup = true;
-      await sent(await page(async () => (await import("../app/(product)/setup/SetupScreen.js")).SetupScreen, {})(),
-        "#setup-token", [["#setup-token", "tok"], ...account("setup")]);
+      await sent(await page(async () => (await import("../app/(product)/setup/SetupRoute.js")).SetupRoute, {})(),
+        messages.setup.tokenLabel, [[messages.setup.tokenLabel, "tok"], ...named(messages.setup)]);
     }, "redeem"],
   ] as const)("a page closed mid-wipe leaves it owed; the next page, %s, finishes it before its first action", async (_, press, ask) => {
     await closedMidWipe();
@@ -1435,7 +1455,9 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
    * the face mirror through the product door's provider, the push row through its announce.
    */
   async function leaveItemsOfA(): Promise<void> {
-    (await import("../app/shell/mail-send.js")).writeReplyDraft("m-of-a", { text: "words of A", html: "" });
+    (await import("@ohmail/app-logic/writing/mail-send")).writeReplyDraft(
+      "m-of-a", { text: "words of A", html: "" }, (await import("@ohmail/app-logic/storage/storage-owner")).storageOwner(),
+    );
     const { Providers } = await import("../app/(product)/providers.js");
     const { useTheme } = await import("@ohmail/ui");
     const Adopt = (): null => {
@@ -1444,8 +1466,9 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
       return null;
     };
     const faceRoot = createRoot(document.createElement("div"));
-    await act(async () => { faceRoot.render(h(Providers, { children: h(Adopt) })); });
+    await act(async () => { faceRoot.render(h(Providers, { owner: "acct_A", children: h(Adopt) })); });
     await act(async () => { faceRoot.unmount(); });
+    expect(localStorage.getItem("ohmail.face.account.owner")).toBe("acct_A");
     const sub = {
       endpoint: "https://push.example/ep/a", unsubscribe: async () => true,
       getKey: (n: string) => new Uint8Array(n === "auth" ? 16 : 65).fill(7).buffer,
@@ -1471,9 +1494,10 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
   });
   /** B's reply, typed once B's sign-in holds the jar, as read back by B. */
   const replyOfB = async (write: boolean): Promise<string> => {
-    const send = await import("../app/shell/mail-send.js");
-    if (write) send.writeReplyDraft("m-of-b", { text: "words of B", html: "" });
-    return send.readReplyDraft("m-of-b").text;
+    const send = await import("@ohmail/app-logic/writing/mail-send");
+    const { storageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
+    if (write) send.writeReplyDraft("m-of-b", { text: "words of B", html: "" }, storageOwner());
+    return send.readReplyDraft("m-of-b", storageOwner()).text;
   };
 
   it("a wipe held past its 15 s, then a sign-in as another account: the revoked copy goes, the new session keeps its own", async () => {

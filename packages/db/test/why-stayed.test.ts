@@ -1,3 +1,4 @@
+import { accountOfMessage } from "../src/parent-account.js";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "../src/testing.js";
@@ -24,7 +25,7 @@ async function world() {
       fromAddress: o.from ?? THEM, unread: false, authVerdict: o.auth ?? null, threadId: o.threadId ?? null,
       ...(o.from === OWN ? { toAddresses: [{ name: null, address: THEM }] } : {}),
     }).returning({ id: messages.id });
-    await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "ohmail/News", observedFolder: "ohmail/News",
+    await db.insert(folderState).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "ohmail/News", observedFolder: "ohmail/News",
       lastSetBy: o.setBy ?? "us", reconcileStatus: "reconciled", conflict: false });
     return m!.id;
   };

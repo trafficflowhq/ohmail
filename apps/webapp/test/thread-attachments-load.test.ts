@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -6,11 +7,10 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
   type SyncChange,
   threadOf,
 } from "@ohmail/client-engine";
-import { useMessageAttachments } from "../app/shell/attachments.js";
+import { useMessageAttachments } from "@ohmail/app-logic/reader/attachments";
 
 /**
  * ═══ THE THREAD'S LISTS ARE LOADED, NOT ONLY THE FOCUSED MESSAGE'S ═════════════════════════
@@ -75,9 +75,9 @@ afterEach(unmount);
 /** The chrome as of the LAST render — how a test presses the group verb the way a panel does. */
 let latestChrome: ReturnType<typeof useMessageAttachments>;
 
-/** `MessagePane`'s own wiring — the hook, nothing else; the strip's render is held elsewhere. */
+/** The shared Reader's own wiring — the hook, nothing else; the strip's render is held elsewhere. */
 function Harness({ engine, messageId }: { engine: OhmailEngine; messageId: string | null }) {
-  latestChrome = useMessageAttachments(engine, messageId, { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  latestChrome = useMessageAttachments(engine, messageId, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   return null;
 }
 

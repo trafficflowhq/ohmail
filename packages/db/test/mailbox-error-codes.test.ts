@@ -39,7 +39,7 @@ describe("one definition of MailboxErrorCode", () => {
 
   it("the column comment no longer carries a fourth copy that can go stale", () => {
     // The comment used to spell out `auth|connect|tls|timeout|storage|sync|unknown`. A comment
-    // is a claim under test here (CLAUDE.md), and an enumerated one drifts silently.
+    // is a claim under test here (AGENTS.md), and an enumerated one drifts silently.
     expect(read("../src/schema.ts")).not.toContain("auth|connect|tls|timeout|storage|sync|unknown");
   });
 

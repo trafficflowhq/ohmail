@@ -1,0 +1,125 @@
+{
+  "component": "SettingsSheet",
+  "state": "wants",
+  "look": "paper-dark-desktop",
+  "place": "block",
+  "target": [688, 88, 740, 118.3906],
+  "clip": [688, 88, 740, 119],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "opacity": "0.5", "borderRadius": "999px" },
+    { "backgroundColor": "rgb(18, 16, 14)", "borderRadius": "999px" },
+    { "backgroundColor": "rgb(58, 35, 25)", "borderRadius": "20px" },
+    { "backgroundColor": "rgb(255, 106, 61)", "borderRadius": "999px" },
+    { "backgroundColor": "rgb(35, 32, 28)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "switch",
+      "name": "Notify me on this device",
+      "box": [664, 65.4, 44, 26],
+      "drawn": {
+        "color": "rgb(184, 175, 163)",
+        "backgroundColor": "rgb(246, 241, 233)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(184, 175, 163)"
+      },
+      "state": ["checked"],
+      "surfaces": [
+        { "box": [664, 65.4, 44, 26], "paint": 0 },
+        { "box": [686, 69.4, 18, 18], "paint": 1 }
+      ]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "Blocked", "type": 0 },
+      { "said": "In this device’s system settings.", "type": 1 },
+      { "said": "Notify me on this device", "type": 2 },
+      { "said": "This device", "type": 3 }
+    ],
+    "surfaces": [
+      { "box": [0, 0, 740, 118.4], "paint": 2 },
+      { "box": [91.3, 30.6, 5.4, 5.4], "paint": 3 },
+      { "box": [213.5, 67.4, 81.7, 22], "paint": 4 }
+    ]
+  }
+}

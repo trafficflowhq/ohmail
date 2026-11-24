@@ -1,0 +1,56 @@
+{
+  "component": "Switch",
+  "state": "off",
+  "look": "ohmarchy-dark-desktop",
+  "place": "cell",
+  "target": [24, 24, 44, 26],
+  "clip": [24, 24, 44, 26],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [
+    { "boxShadow": "rgb(107, 112, 144) 0px 0px 0px 1px inset" },
+    { "backgroundColor": "rgb(26, 27, 38)", "boxShadow": "rgb(107, 112, 144) 0px 0px 0px 1px inset" }
+  ],
+  "nodes": [
+    {
+      "role": "switch",
+      "name": "Off",
+      "box": [0, 0, 44, 26],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(37, 39, 52)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "surfaces": [
+        { "box": [0, 0, 44, 26], "paint": 0 },
+        { "box": [4, 4, 18, 18], "paint": 1 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

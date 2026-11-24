@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HttpAdapter,
@@ -6,8 +7,6 @@ import {
   mirrorCoverage,
   uuidSuccessor,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type StoreTimeline,
   type SyncChange,
   type SyncResponse,

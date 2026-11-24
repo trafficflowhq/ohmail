@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
-import { currentUpdateOffer, resetUpdateStoreForTests } from "../../webapp/app/shell/app-update.js";
+import { currentUpdateOffer, resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 import { DEFAULT_LOCALE, setActiveCatalog } from "../../webapp/app/shell/locale";
 import { updateAnswerSentence, updateVerbLabel } from "../../webapp/app/shell/update-answer";
 import { UpdateLine } from "../../webapp/app/shell/UpdateLine";

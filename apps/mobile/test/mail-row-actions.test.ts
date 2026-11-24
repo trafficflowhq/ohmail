@@ -5,6 +5,7 @@ import { bracketSpan, withoutCommentsAndLiterals } from "../../../scripts/lib/so
 import { rowActionVerb, rowActions } from "../src/ui/row-actions";
 import { moveTargetLabel } from "../src/state/live";
 import { DECKS } from "../src/copy";
+import { mailRowSwipes } from "./_mail-row-swipes";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -164,25 +165,13 @@ describe("§3 the row wires the one list, and grows no undo of its own", () => {
 
   it("the verbs are off exactly where the list offers none, and on every list that does", () => {
     const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-    /* Trash: a deleted row has no Done, no Later and no Junk, so it publishes none of them —
-       read as the ABSENCE of the prop, not as one spelling of the element. The row moved into
-       `MailList`'s `renderRow` and its key into `rowKey` (the phone list's virtualization), and
-       a pinned literal called that a lost claim; what is claimed is that Trash's row carries no
-       `swipe`, and the four lists below carry it. The element is still asserted present, so a
-       screen that stopped rendering rows at all cannot pass by having no `swipe` either. */
-    const trash = read("../app/trash/index.tsx");
-    expect(trash, "the trash screen renders a MailRow").toContain("<MailRow ");
-    /* The element's own text, taken to its `/>`. NOT a `[^>]*` character class: `onPress={() =>
-       …}` carries a `>`, so that class stops inside the prop and reads a `swipe` after it as
-       absent — the mutation that adds one passed under exactly that regex before this line. */
-    const rowProps = (src: string): string[] =>
-      src.split("<MailRow ").slice(1).map((rest) => rest.slice(0, rest.indexOf("/>")));
-    expect(
-      rowProps(trash).filter((props) => /\bswipe\b/.test(props)),
-      "a deleted row must publish no verbs — no `swipe` on the trash screen's MailRow",
-    ).toEqual([]);
+    const trash = mailRowSwipes(read("../app/trash/index.tsx"));
+    expect(trash.length, "the trash screen renders a MailRow").toBeGreaterThan(0);
+    expect(new Set(trash), "a deleted row must publish no verbs").toEqual(new Set(["off"]));
     for (const screen of ["../app/(tabs)/index.tsx", "../app/(tabs)/receipts.tsx", "../app/history.tsx", "../app/folder/[id].tsx"]) {
-      expect(read(screen), `${screen} renders mail rows without the verbs`).toContain("swipe />");
+      const rows = mailRowSwipes(read(screen));
+      expect(rows.length, `${screen} must render a MailRow`).toBeGreaterThan(0);
+      expect(new Set(rows), `${screen} renders mail rows without the verbs`).toEqual(new Set(["on"]));
     }
   });
 });

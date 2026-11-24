@@ -1,8 +1,10 @@
 import net from "node:net";
 import { Duplex } from "node:stream";
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import type { Transporter } from "nodemailer";
 import { ImapAdapter } from "../src/adapters/imap.js";
 import { SendNotSubmitted, SentCopyAppendFailed, submissionNeverOffered } from "../src/send.js";
+import { watchTransporters } from "./adapters/_smtp-door.js";
 
 /**
  * A SUBMISSION THAT NEVER GOT PAST SECURING OR LOGIN IS A DEFINITE NON-DELIVERY.
@@ -13,6 +15,18 @@ import { SendNotSubmitted, SentCopyAppendFailed, submissionNeverOffered } from "
  * Before, every one of them read as an ambiguous SMTP throw and the send ended "couldn't confirm".
  * A timeout, a reset or a close proves nothing about the envelope and stays ambiguous.
  */
+
+/** The smallest IMAP client `connect()` accepts: one INBOX, no events. */
+const fakeImapClient = () => ({
+  list: async () => [{ path: "INBOX", delimiter: "/", flags: new Set<string>() }],
+  on: () => undefined, logout: async () => undefined, close: () => undefined,
+});
+
+/** Each adapter's transporter, taken where the adapter builds it (`nodemailer.createTransport`). */
+let smtpDoor: ReturnType<typeof watchTransporters>;
+const transporterOf = new WeakMap<ImapAdapter, Transporter>();
+beforeEach(() => { smtpDoor = watchTransporters(); });
+afterEach(() => { smtpDoor.restore(); });
 
 const fail = (code: string | undefined, extra: Record<string, unknown> = {}) =>
   Object.assign(new Error("smtp"), code ? { code } : {}, extra);
@@ -34,14 +48,15 @@ describe("which submission errors prove nothing was offered", () => {
 });
 
 describe("ImapAdapter.send over a submission that never offered the message", () => {
-  const adapterFailing = (err: Error) => {
+  const adapterFailing = async (err: Error) => {
     const adapter = new ImapAdapter({
       host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" },
       smtp: { host: "example.invalid", port: 587, secure: false, auth: { user: "u", pass: "p" } },
-    });
-    (adapter as unknown as { transporter: unknown }).transporter = {
+    }, { client: fakeImapClient() as never });
+    await adapter.connect();
+    Object.assign(smtpDoor.last(), {
       sendMail: async () => { throw err; }, close() { /* nothing */ },
-    };
+    });
     return adapter;
   };
   const send = (a: ImapAdapter) =>
@@ -49,7 +64,7 @@ describe("ImapAdapter.send over a submission that never offered the message", ()
 
   it("throws SendNotSubmitted with the step, carrying the client's own error", async () => {
     const tlsErr = fail("ETLS");
-    const secured = await send(adapterFailing(tlsErr));
+    const secured = await send(await adapterFailing(tlsErr));
     expect(secured).toBeInstanceOf(SendNotSubmitted);
     expect((secured as SendNotSubmitted).step).toBe("secure");
     expect((secured as { cause?: unknown }).cause).toBe(tlsErr);
@@ -57,14 +72,14 @@ describe("ImapAdapter.send over a submission that never offered the message", ()
     expect((secured as SendNotSubmitted).code).toBe("ETLS");
     expect((secured as Error).message).toBe(tlsErr.message);
 
-    const login = await send(adapterFailing(fail("EAUTH")));
+    const login = await send(await adapterFailing(fail("EAUTH")));
     expect(login).toBeInstanceOf(SendNotSubmitted);
     expect((login as SendNotSubmitted).step).toBe("login");
   });
 
   it("a transporter without the release gate proves nothing: its timeout reaches the caller unchanged", async () => {
     const timeout = fail("ETIMEDOUT");
-    const out = await send(adapterFailing(timeout));
+    const out = await send(await adapterFailing(timeout));
     expect(out).toBe(timeout);
     expect(out).not.toBeInstanceOf(SendNotSubmitted);
     expect(out).not.toBeInstanceOf(SentCopyAppendFailed);
@@ -132,6 +147,7 @@ describe("a submission that ends before its end-of-data mark is `data`", () => {
       timeouts: { connectionMs: 2_000, greetingMs: 2_000, socketMs: 1_000 },
     } as never, { client: fakeImap as never });
     await a.connect();
+    transporterOf.set(a, smtpDoor.last());
     return a;
   }
 
@@ -155,7 +171,7 @@ describe("a submission that ends before its end-of-data mark is `data`", () => {
 
   /** The SMTP socket as a slow link: bytes wait in its own write queue and leave at `rate` per second. */
   function overSlowLink(a: ImapAdapter, port: number, rate: number): void {
-    (a as unknown as { transporter: { getSocket: unknown } }).transporter.getSocket = (
+    (transporterOf.get(a) as unknown as { getSocket: unknown }).getSocket = (
       _o: unknown, cb: (e: Error | null, s?: { connection: Duplex }) => void,
     ) => {
       const sock = net.connect(port, "127.0.0.1", () => cb(null, { connection: link }));

@@ -18,10 +18,11 @@ export { PRESS_AGE_MAX_MS, pressIsAged } from "@trafficflow/db";
 export {
   parseReaderZone, parseReaderLocale, forwardedDate, READER_ZONE_MAX_CHARS, READER_LOCALE_MAX_CHARS,
 } from "./reader-clock.js";
-export type { ServiceContext, Db, SearchSupersede } from "./context.js";
+export type { ServiceContext, PassContext, OpenPassSendAdapter, Db, BoundDb, UnboundDb, ContextDb, SearchSupersede } from "./context.js";
 // The fenced transaction door — see `context.ts`. On the mail leaf because the API's own
 // account-owned writers (the Junk window's rescue) reach it without the AI half.
-export { withAccountTx } from "./context.js";
+export { withAccountTx, dbFor, passContext, assertPassWalk, rosterAccountDb } from "./context.js";
+export { withScreenerRuleRelease } from "./screener-rule-release.js";
 /* The fence itself, for a writer that already holds its transaction — the local install's consent
    write is one, and it is on the mail leaf for the same reason the door above is. */
 export { fenceErasedAccount, fenceErasedScope, asServiceRefusal } from "./erasure-fence.js";
@@ -29,9 +30,13 @@ export { fenceErasedAccount, fenceErasedScope, asServiceRefusal } from "./erasur
 export { lockAccountSettingsRow, lockMailboxRows } from "./account-lock.js";
 export {
   SyncService, syncService, SNAPSHOT_WINDOW, SNAPSHOT_DRAFT_PAGE, assertSnapshotWindow,
-  STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
+  STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW, namedCalendarSpan, NAMED_CALENDAR_SPAN_MAX_MS,
   type GetChangesOptions, type GetSnapshotOptions,
 } from "./sync-service.js";
+// The calendar's door into the feed: a type alone, so this leaf carries none of its code.
+export type { CalendarConnectPort, CalendarFeedPort, CalendarSpanMs } from "./calendar-port.js";
+// The settings record's devices where a copy mirrors another store's account: a type alone.
+export type { DeviceNumbers, DeviceNumbersPort } from "./device-numbers.js";
 /* The byte bound a `/sync` page is built to, and the row floor the walk holds back for the draft
  * phase. Exported because the transport arm measures them against the codec's own cap. */
 export { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "./sync-page-byte-budget.js";
@@ -49,8 +54,7 @@ export {
 export { isUuid, requireUuid, requireImapUint32, IMAP_UINT32_MAX } from "./ids.js";
 export {
   ScreenerService, makeScreenerService, SCREENER_FOLDER,
-  type ScreenerDeps, type ScreenBody, type ScreenDecisionResult, type ScreenIdempotency,
-  type ScreenDecisionMailboxes, type ScreenRequestedMailbox, type ScreenRequestResult,
+  type ScreenerDeps, type ScreenIdempotency,
 } from "./screener-service.js";
 export {
   dismissHeldRelease, heldReleaseFingerprint, heldReleaseGroups, heldReleaseSummary,
@@ -71,7 +75,7 @@ export {
 } from "./ohbox-unscreened-service.js";
 export {
   TriageService, triageService,
-  type TriageSetBody, type TriageIdempotency, type ListOptions, type FocusReplyView, type PowerThroughView,
+  type TriageIdempotency, type ListOptions, type FocusReplyView, type PowerThroughView,
 } from "./triage-service.js";
 export {
   ApprovalService, makeApprovalService,
@@ -79,7 +83,7 @@ export {
 } from "./approval-service.js";
 export {
   RulesService, rulesService,
-  type CreateRuleBody, type PatchRuleBody, type RuleMutation, type RuleCreation,
+  type RuleMutation, type RuleCreation,
   // The two halves a delete can answer with. The route names BOTH, because deciding which one it
   // holds by re-reading fields is what let a queued delete be reported as done.
   type RuleRemoval, type RuleRequestResult,
@@ -91,7 +95,7 @@ export {
   SEED_MAX_ADDRESSES, SEED_SCAN_LIMIT, SUPPORTED_LOCALES, SUPPORTED_THEME_FACES,
   buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setAutoAct, setBlockAutoUnsubscribe,
   setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled,
-  setLocale, setMailboxFoldersEnabled, setMailboxSignature, setResurfaceTime, setThemeFace,
+  setDraftReplies, setLocale, setMailboxFoldersEnabled, setMailboxSignature, setResurfaceTime, setSubjectHeading, setThemeFace,
   setOnboardingCompleted,
   mailboxSignatures, mailboxSignatureHtmls, effectiveMailboxSignatures, MAILBOX_SIGNATURE_MAX_CHARS,
   hasMachineSentHeaders, isMachineSent, isRobotAddress, parseAddressList,
@@ -137,7 +141,7 @@ export {
   type CreateMailboxBody, type UpdateMailboxBody, type TransportInput, type MailboxServiceDeps,
   // Cloud 0009 — the OAuth consent flow's write end. `connectOAuth` resolves its target row
   // by ADDRESS (the `id_token` claim), so these types carry no `mailboxId`.
-  type ConnectOAuthMailboxInput, type ConnectOAuthOptions, type ConnectOAuthResult,
+  DeviceGrantExpired, type ConnectOAuthMailboxInput, type ConnectOAuthOptions, type ConnectOAuthResult,
   type MailboxProbe, type MailboxProbeInput, type MailboxProbeVerdict,
   type SmtpProbe, type SmtpProbeInput, type ProbeTransport, type SendingProbe,
   type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,
@@ -176,9 +180,9 @@ export {
   // body requests and the server REFUSES an over-long id list rather than truncating it, so the cap
   // is shared rather than copied — a change here cannot leave a client asking for one too many.
   MessageService, messageService, MARK_SEEN_MAX_IDS, BODIES_IDS_MAX,
-  type MessageView, type ListMessagesOptions, type MessagePatchBody,
+  type MessageView, type ListMessagesOptions,
   type MarkSeenBody, type MarkSeenResult,
-  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
+  type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
 } from "./message-service.js";
 /* THE READER'S DISPATCH AND ITS MIRROR READ (mail 0094). In the LOCAL barrel because the doors
    that use them are mounted by the desktop engine as well as by the hosted API. */
@@ -204,8 +208,8 @@ export {
   SearchService, searchService, SEARCH_SORTS, isSearchSort, SEARCH_PARTS, isSearchParts,
   SEARCH_QUERY_MAX_CHARS,
   ADDRESS_DIRECTIONS, ADDRESS_DIRECTIONS_SERVED, isAddressSearchDirection,
-  type SearchOptions, type SearchFilters, type SearchResult, type Facets, type SearchSort, type SearchParts,
-  type AddressSearchDirection, type AddressSearchOptions, type AddressSearchResult,
+  type SearchOptions, type SearchFilters, type SearchSort, type SearchParts,
+  type AddressSearchDirection, type AddressSearchOptions,
 } from "./search-service.js";
 export { SearchTiming, SEARCH_TIMING_PHASES, type SearchTimingPhase, type SearchTimingFacts } from "./search-timing.js";
 export {
@@ -265,7 +269,7 @@ export {
 } from "./kb-service.js";
 export {
   TagsService, tagsService, RENDERABLE_HUES,
-  type TagBody, type TagHue, type AssignResult,
+  type TagHue, type AssignResult,
 } from "./tags-service.js";
 export {
   FolderOpsService,
@@ -274,10 +278,10 @@ export {
 export {
   DraftsService, draftsService, DRAFT_MAX_RECIPIENTS,
   DRAFT_SUBJECT_MAX_CHARS, RECIPIENT_ADDRESS_MAX_CHARS, RECIPIENT_NAME_MAX_CHARS,
-  type CreateDraftBody, type PatchDraftBody, type DraftMutation, type SendResolution,
+  type DraftMutation,
 } from "./drafts-service.js";
 export {
-  DraftingService, draftingService, makeDraftingService, draftWindow, DRAFT_ADMISSION,
+  DraftingService, draftingService, makeDraftingService, draftWindow, DRAFT_ADMISSION, DRAFT_OWN_TEXT_MAX_CHARS,
   type DraftFromMessageDeps,
 } from "./drafting-service.js";
 export {
@@ -355,7 +359,7 @@ export {
 export { DEFAULT_AUTH_CONFIG, makeAuthConfig } from "./auth/config.js";
 // The keyed hash a throttle slot names an address by: the add-time probe keys its slots with it.
 export { throttleKeysFor, type ThrottleKeys } from "./auth/throttle-keys.js";
-export { resolveSession, type ResolvedSessionCore, type SessionScope } from "./auth/resolve-session.js";
+export { resolveSession, sessionEmailVerifiedAt, type ResolvedSessionCore, type SessionScope } from "./auth/resolve-session.js";
 export {
   allowedOrigins, assertOriginConfig, defaultOrigin, isAllowedOrigin,
   normalizeOrigin, tryNormalizeOrigin, resolveCeremonyOrigin,

@@ -1,0 +1,18 @@
+Subject: Confirm your address for ohmail
+
+ohmail.
+
+Confirm your address.
+
+Confirm this address to finish setting up your ohmail account.
+
+The link works once and expires in 24 hours. The page it opens asks for the password you chose.
+
+If you did not start this, ignore this mail. Without the link, the account cannot connect a mailbox and cannot subscribe to anything.
+
+Confirm this address:
+https://app.ohmail.app/verify-email?token=Zm9vYmFyLXRva2Vu
+
+--
+Write to support@ohmail.app and a person answers.
+TrafficFlow GmbH, Zürich, Switzerland

@@ -1,8 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { IntlProvider } from "use-intl";
+import { createRoot } from "react-dom/client";
 import { ThemeProvider } from "@ohmail/ui";
 import {
   DURABILITY_LOST_EVENT,
@@ -13,8 +12,8 @@ import {
 } from "@ohmail/client-engine/durable";
 
 import messages from "../../webapp/messages/en.json";
-import { DurabilityNotice } from "../../webapp/app/shell/DurabilityNotice";
-import { BearerManager, REFRESH_STORAGE_KEY } from "../src/host-client/bearer.js";
+import { message, mountShell, stubDom, unmountAll } from "../../webapp/test/_draft-shell.js";
+import { BearerManager, REFRESH_STORAGE_KEY } from "../../paired-page/src/bearer.js";
 
 /**
  * ═══ A WRITE THIS WINDOW LOST IS SAID IN THIS WINDOW — the desktop's arm of the same door ═════
@@ -76,36 +75,38 @@ const listen = (e: Event): void => { heard.push((e as CustomEvent<DurabilityLost
 
 const realJar = Object.getOwnPropertyDescriptor(window, "localStorage");
 
-let root: Root | null = null;
 let mountPoint: HTMLElement | null = null;
 
-/** The shell's strip, mounted the way this window mounts it: intl over the webapp's catalogue. */
+/**
+ * The shell's strip, mounted the way this window mounts it: re-pointed from today's `DurabilityNotice` to the new
+ * shell (RULING-NEW-SHELL-FIRST D): the frame over the mail ground, whose notices (`MailNotices`) say the refused
+ * write in the frame's one notice slot, through the new shell's test door, over the webapp's catalogue.
+ */
 async function mountShellNotice(): Promise<HTMLElement> {
-  mountPoint = document.createElement("div");
-  document.body.appendChild(mountPoint);
-  root = createRoot(mountPoint);
-  await act(async () => {
-    root!.render(
-      <IntlProvider locale="en" messages={messages as never} timeZone="UTC">
-        <DurabilityNotice />
-      </IntlProvider>,
-    );
-  });
+  mountPoint = (await mountShell("#/ohbox", [message("m1")])).el;
   return mountPoint;
 }
 
-const strip = (): HTMLElement | null => mountPoint!.querySelector(".ohx-durability");
+/**
+ * The strip, by what it says (today's probe `.ohx-durability` left with its view): the innermost element with a role
+ * that carries the shell's sentence, so its role is read, not assumed.
+ */
+const strips = (): HTMLElement[] => {
+  const saying = [...mountPoint!.querySelectorAll<HTMLElement>("[role]")]
+    .filter((el) => (el.textContent ?? "").includes(messages.session.storageRefused));
+  return saying.filter((el) => !saying.some((other) => other !== el && el.contains(other)));
+};
+const strip = (): HTMLElement | null => strips()[0] ?? null;
 
 beforeEach(() => {
+  stubDom();
   resetDurabilityForTest();
   heard = [];
   window.addEventListener(DURABILITY_LOST_EVENT, listen);
 });
 afterEach(async () => {
   window.removeEventListener(DURABILITY_LOST_EVENT, listen);
-  if (root) await act(async () => { root!.unmount(); });
-  mountPoint?.remove();
-  root = null;
+  await unmountAll();
   mountPoint = null;
   if (realJar) Object.defineProperty(window, "localStorage", realJar);
   delete document.documentElement.dataset.theme;
@@ -140,8 +141,12 @@ describe("the desktop's lost writes reach the shell's own notice", () => {
   });
 
   it("the window's THEME is on the same door, and its refusal draws the same strip", async () => {
-    Object.defineProperty(window, "localStorage", { value: refusingJar(), configurable: true });
+    /* The shell comes up over the window's own jar, and the jar refuses from then on: mounted over a refusing jar, the
+       new shell's own first writes (the composer's session, the scope's choices) would draw the strip before the theme
+       wrote anything, and the case would read nothing of the theme's door. */
     await mountShellNotice();
+    Object.defineProperty(window, "localStorage", { value: refusingJar(), configurable: true });
+    expect(heard, "nothing of the window answered lost before the theme wrote").toEqual([]);
     // Exactly `main.tsx`'s wiring: the provider takes the client-engine door, not a jar.
     const themePoint = document.createElement("div");
     document.body.appendChild(themePoint);
@@ -170,8 +175,10 @@ describe("the desktop's lost writes reach the shell's own notice", () => {
     });
     expect(heard.length, "each lost write still fires — every caller has its own degradation")
       .toBe(2);
-    expect(mountPoint!.querySelectorAll(".ohx-durability").length, "one strip, not two").toBe(1);
-    const dismiss = mountPoint!.querySelector<HTMLButtonElement>(".upd-later");
+    expect(strips().length, "one strip, not two").toBe(1);
+    /* Its one answer, by its name (today's `.upd-later` left with its view). */
+    const dismiss = [...strip()!.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent === messages.session.storageRefusedDismiss) ?? null;
     expect(dismiss).not.toBeNull();
     await act(async () => { dismiss!.click(); });
     expect(strip(), "a dismissal is not undone by the next loss").toBeNull();

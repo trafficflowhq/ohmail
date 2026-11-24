@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
+import { fireEvent } from "@testing-library/react";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { DesktopGate } from "../src/DesktopGate.js";
@@ -191,7 +192,10 @@ describe("a mailto activation becomes the compose form", () => {
     expect(window.location.hash).toBe("#/compose");
     const text = el.textContent ?? "";
     expect(text).toContain("ada@example.test");
-    const subject = el.querySelector<HTMLInputElement>("input[value='Loom plans']");
+    /* RE-POINTED: Write's letter names its subject field "Subject"; the field is found by role and
+       name and read by its value (the new letter's field may be a line that grows: an input or a text area). */
+    const subject = [...el.querySelectorAll<HTMLInputElement>('input[aria-label="Subject"], textarea[aria-label="Subject"]')]
+      .find((f) => f.value === "Loom plans") ?? null;
     expect(subject, "the subject did not reach its field").not.toBeNull();
     expect(text).toContain("First line");
     expect(text).toContain("Second");
@@ -272,4 +276,96 @@ describe("a mailto activation becomes the compose form", () => {
     expect(window.location.hash).not.toBe("#/compose");
     expect((el.textContent ?? "").length).toBeGreaterThan(0);
   });
+});
+
+/**
+ * THE DESKTOP KEEPS A LETTER UNDER THE MAILBOX ITS GATE MOUNTED. The same real gate over the same stand-in shell, with
+ * the real frame and Write's letter: the scope the gate hands its frame is the mailbox it mounted, so a letter typed
+ * here is kept under that mailbox's keys; a mailbox switched in place keeps the first one's last words under the first
+ * and opens the second composer empty; a door given up draws no mail and leaves the words where they were.
+ * Seen red with either hand-over fixed to one value (the gate's `scope={shellKey}`, the frame's `scope: p.scope`): the
+ * second mailbox's composer opens with the first one's last words.
+ */
+describe("the desktop keeps words under the mounted mailbox", () => {
+  const TWO: EngineStatus = { ...SERVING, mailboxId: "mbx-2", address: "other@example.test" };
+  const pause = async (ms: number): Promise<void> => {
+    for (let left = ms; left > 0; left -= 50) await act(async () => { await new Promise((r) => setTimeout(r, Math.min(50, left))); });
+  };
+  /* RE-POINTED: Write's letter's subject, by role and name (an input or a text area). */
+  const subject = (): HTMLInputElement | null =>
+    document.querySelector<HTMLInputElement>('input[aria-label="Subject"], textarea[aria-label="Subject"]');
+  const type = async (words: string): Promise<void> => {
+    await act(async () => { fireEvent.change(subject()!, { target: { value: words } }); });
+  };
+  const holding = (words: string): string[] =>
+    Object.keys(localStorage).filter((k) => (localStorage.getItem(k) ?? "").includes(words));
+  /** As the key builders spell a mailbox: after a `.` or `:`, then a `.`, a `:` or the key's end. Never a substring. */
+  const names = (key: string, mailbox: string): boolean => new RegExp(`[.:]${mailbox}([.:]|$)`).test(key);
+  /** A key of a space that names nobody: `local`, `anon`, the bare look keys, the reply and compose keys with no account. */
+  const namesNobody = (key: string): boolean =>
+    /\.(local|anon)($|[.:])/.test(key) || key === "ohmail.ui.reader.afterVerb" || key === "ohmail.ui.compose.imageQuality"
+    || key.startsWith("ohmail.ui.reply:") || key.startsWith("ohmail.ui.replymeta:") || key === "ohmail.ui.compose";
+  /** Past the composer's own save. */
+  const SAVED_MS = 2500;
+  /** Past the gate's next look at the engine's status (`LIFECYCLE_POLL_MS`). */
+  const NEXT_LOOK_MS = 6500;
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    window.location.hash = "#/compose";
+  });
+
+  it("keeps a letter only under keys that name the mounted mailbox", async () => {
+    fakeShell(SERVING);
+    await render();
+    await pause(500);
+    expect(subject(), "the composer under the first mailbox").not.toBeNull();
+    await type("Words under mailbox one");
+    await pause(SAVED_MS);
+    const keys = holding("Words under mailbox one");
+    expect({ kept: keys.length > 0, underTheMailbox: keys.every((k) => names(k, "mbx-1")) })
+      .toEqual({ kept: true, underTheMailbox: true });
+  });
+
+  it("a mailbox switched in place: the first one's last words stand under it, the second opens empty and keeps its own", async () => {
+    const shell = fakeShell(SERVING);
+    await render();
+    await pause(500);
+    await type("First words of mailbox one");
+    await pause(SAVED_MS);
+    /* The last keystroke is not saved yet when the status moves. */
+    await type("Last words of mailbox one");
+    shell.set(TWO);
+    await pause(NEXT_LOOK_MS);
+    const opened = subject()?.value ?? null;
+    if (subject()) {
+      await type("Words of mailbox two");
+      await pause(SAVED_MS);
+    }
+    const one = holding("Last words of mailbox one");
+    const two = holding("Words of mailbox two");
+    expect({
+      opened,
+      oneKept: one.length > 0, oneUnderOne: one.every((k) => names(k, "mbx-1")),
+      twoKept: two.length > 0, twoUnderTwo: two.every((k) => names(k, "mbx-2")),
+      nobody: Object.keys(localStorage).filter(namesNobody),
+    }).toEqual({ opened: "", oneKept: true, oneUnderOne: true, twoKept: true, twoUnderTwo: true, nobody: [] });
+  }, 40_000);
+
+  it("the door given up with words not yet saved: no mail is drawn, the words stand under their mailbox, no key names nobody", async () => {
+    const shell = fakeShell(SERVING);
+    await render();
+    await pause(500);
+    await type("First words");
+    await pause(SAVED_MS);
+    await type("Last words before the door went");
+    shell.set({ state: "not_configured", credentialState: "absent" } as EngineStatus);
+    await pause(NEXT_LOOK_MS);
+    const keys = holding("Last words before the door went");
+    expect({
+      composer: subject() !== null,
+      kept: keys.length > 0, underTheMailbox: keys.every((k) => names(k, "mbx-1")),
+      nobody: Object.keys(localStorage).filter(namesNobody),
+    }).toEqual({ composer: false, kept: true, underTheMailbox: true, nobody: [] });
+  }, 40_000);
 });

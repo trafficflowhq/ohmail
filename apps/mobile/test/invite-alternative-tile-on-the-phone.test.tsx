@@ -7,9 +7,10 @@
  * alternative. An alternative that is the only calendar part (Exchange) stays a chip, so a fetch
  * that failed still leaves something to retry or save. Served through the real parse: each list is `normalizeMime(eml).attachments`.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createHash } from "node:crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { MemoryMirrorStore, OhmailEngine, type EngineAdapter, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, type EngineAdapter, type SyncChange } from "@ohmail/client-engine";
 import { normalizeMime } from "../../../packages/core/src/mime.js";
 import { EXCHANGE_ICAL, GOOGLE, PLAIN_ICS_FILE, type InviteShape } from "../../../packages/core/test/fixtures/invite-shapes";
 

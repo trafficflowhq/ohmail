@@ -1,0 +1,93 @@
+/* The full stop: hot is open, ink is done, a ring came back. Its size follows the text it ends. */
+@layer oh {
+  .oh-dot {
+    --oh-dot-gap: 0.08em;
+    --oh-dot-ring: inset 0 0 0 var(--oh-focus) var(--hot);
+    --oh-dot-todo: inset 0 0 0 var(--oh-focus) var(--ink2);
+    display: inline-block;
+    flex: none;
+    width: var(--dot-size);
+    height: var(--dot-size);
+    margin-left: var(--oh-dot-gap);
+    border-radius: var(--dot-r);
+    background: var(--ink);
+    vertical-align: baseline;
+    transition: background-color var(--d-dot) var(--e-std);
+  }
+  .oh-dot[data-kind="hot"] {
+    background: var(--hot);
+  }
+  .oh-dot[data-kind="ring"] {
+    background: transparent;
+    box-shadow: var(--oh-dot-ring);
+  }
+  /* A step still ahead: hollow, ringed in the second ink. */
+  .oh-dot[data-kind="todo"] {
+    background: transparent;
+    box-shadow: var(--oh-dot-todo);
+  }
+  .oh-dot[data-kind="none"] {
+    background: transparent;
+  }
+  /* A dot that is pressed: drawn at its own size, reached by a finger as far as the smallest control. */
+  .oh-dot[data-press] {
+    --oh-dot-reach: min(0px, calc((var(--dot-size) - var(--h-s)) / 2));
+    position: relative;
+  }
+  .oh-dot[data-press]:focus-visible {
+    border-radius: var(--dot-r);
+  }
+  .oh-dot[data-press]::after {
+    content: "";
+    position: absolute;
+    inset: var(--oh-dot-reach);
+  }
+
+  /* Ringing: it knocks, and a ring leaves it once (the base sheet's ring). */
+  .oh-dot[data-ringing] {
+    --oh-dot-ringout: 0 0 0 3px var(--hot);
+    position: relative;
+    animation: oh-knock var(--d-ring) var(--e-knock);
+  }
+  .oh-dot[data-ringing]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: var(--oh-dot-ringout);
+    animation: oh-ringout var(--d-ring) var(--e-out) both;
+    pointer-events: none;
+  }
+  :root[data-rm="1"] .oh-dot[data-ringing],
+  :root[data-rm="1"] .oh-dot[data-ringing]::before {
+    animation: none;
+  }
+  :root[data-rm="1"] .oh-dot[data-ringing]::before {
+    opacity: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .oh-dot[data-ringing],
+    .oh-dot[data-ringing]::before {
+      animation: none;
+    }
+    .oh-dot[data-ringing]::before {
+      opacity: 0;
+    }
+  }
+
+  /* An app's own dot: that app's colour whichever app is open. In ohmarchy both wear the theme's. */
+  :root:not([data-face="ohmarchy"]) .oh-dot[data-product] {
+    background: var(--oh-dot-light);
+  }
+  :root:not([data-face="ohmarchy"])[data-scheme="dark"] .oh-dot[data-product] {
+    background: var(--oh-dot-dark);
+  }
+  :root[data-face="ohmarchy"] .oh-dot[data-product] {
+    background: var(--hot);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-face="ohmarchy"], [data-scheme]) .oh-dot[data-product] {
+      background: var(--oh-dot-dark);
+    }
+  }
+}

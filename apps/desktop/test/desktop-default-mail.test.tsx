@@ -120,7 +120,7 @@ describe("the Settings row", () => {
     await click(buttonNamed(el, "Make default"));
     expect(invoked).toContain("default_mail_request");
     // The platform's own sentence, from the shell's `how` — never guessed from the user agent.
-    expect(el.textContent).toContain("macOS is applying the change — confirm its dialog if one appears.");
+    expect(el.textContent).toContain("macOS is applying the change — confirm its dialog if one appears");
   });
 
   it("offers no action over an OS that already says ohmail", async () => {
@@ -159,7 +159,7 @@ describe("the one-time ask", () => {
     for (let i = 0; i < 4; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
 
     expect(invoked).toContain("default_mail_request");
-    expect(el.textContent).toContain("macOS is applying the change — confirm its dialog if one appears.");
+    expect(el.textContent).toContain("macOS is applying the change — confirm its dialog if one appears");
     expect(localStorage.getItem(DEFAULT_MAIL_ASKED_KEY)).toBe("1");
 
     await click(buttonNamed(el, "Done"));
@@ -256,11 +256,14 @@ describe("the ask stands beside the mail, in the stage's card slot, not over it"
       h(ThemeProvider, { storageKey: null }, h(ToastHost, null, h(DesktopGate, null)))));
     for (let i = 0; i < 40; i++) await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
     expect(el.textContent, "the card is not up").toContain("Open email links with ohmail?");
-    // In the stage's card slot, in the flow: it covers no Save and no reader head.
-    const ask = el.querySelector<HTMLElement>("[role='dialog'][data-key-beside]");
-    expect({ slot: ask?.parentElement?.matches("main.stage > .stage-notice:first-child"), fixed: ask?.style.position ?? null })
+    // In the frame's one notice slot, in the flow: it covers no Save and no reader head. (The window's entry hands the
+    // ask as its notice; the slot is the rail's foot, or the bar over the columns at a phone's width.)
+    const ask = [...el.querySelectorAll<HTMLElement>("[role='status']")]
+      .find((n) => (n.textContent ?? "").includes("Open email links with ohmail?")) ?? null;
+    expect({ slot: ask?.parentElement?.matches(".fr-railnotice *, .fr-noticebar *"), fixed: ask?.style.position ?? null })
       .toEqual({ slot: true, fixed: "" });
-    const row = (id: string) => el.querySelector<HTMLElement>(`.row[data-id="${id}"]`);
+    /* A row of the Ohbox is an option of its listbox; the open one is the cursor's. */
+    const row = (id: string) => el.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${id}"]`);
     const press = async (key: string) => {
       await act(async () => {
         (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
@@ -270,10 +273,10 @@ describe("the ask stands beside the mail, in the stage's card slot, not over it"
 
     for (const [id, key] of [["m3", "Backspace"], ["m2", "Delete"]] as const) {
       await click(row(id)!);
-      expect(el.querySelector(".row.sel")?.getAttribute("data-id"), "the row is not the open one").toBe(id);
+      expect(el.querySelector(":is(.row.sel, [role=option][data-open])")?.getAttribute("data-id"), "the row is not the open one").toBe(id);
       await press(key);
       expect(row(id), `${key} left the row in the Ohbox`).toBeNull();
-      expect(el.textContent).toContain("Moved to Trash.");
+      expect(el.querySelector(".oh-report-said")?.textContent).toBe("Moved to Trash");
     }
     expect(el.textContent, "the key answered the card").toContain("Open email links with ohmail?");
   }, 30_000);

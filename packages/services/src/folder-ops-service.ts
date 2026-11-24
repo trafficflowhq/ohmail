@@ -3,7 +3,7 @@ import { dialect } from "@trafficflow/db/dialect";
 // `@trafficflow/core/mail`, NOT the default barrel — `folders.ts`'s rule, same reason: this
 // module is imported beside it and must never pull the classifier/drafter graph anywhere.
 import { folderNameError } from "@trafficflow/core/mail";
-import { assertOrganizerRole, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, lockAccountRuleKeys, mailboxFolders, mailboxes, messages, recordChange, type LedgerTx, type Tx } from "@trafficflow/db";
+import { assertOrganizerRole, carryBinding, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, lockAccountRuleKeys, mailboxFolders, mailboxes, messages, recordChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { lockAccountRow } from "./account-lock.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -12,7 +12,12 @@ import { folderInventoryProbe, refuseOverFolderInventory } from "./read-bounds.j
 import type { MoveIdempotency } from "./message-service.js";
 import { foldersEnabled, userFolderById, userFolderExclusion, type UserFolderRow } from "./folders.js";
 import { folderRowToDTO } from "./dto/materialize.js";
-import type { FolderDTO } from "./dto/types.js";
+import type {
+  FolderDTO,
+  UntrustedBody,
+  FolderCreateBody as WireFolderCreateBody,
+  FolderRenameBody as WireFolderRenameBody,
+} from "@ohmail/wire";
 
 /**
  * The folder verbs — create / rename / delete, as USER COMMANDS (FOLDERS-SPEC.md stage 2). Every
@@ -63,10 +68,10 @@ async function recheckIdempotency(
   if (stored !== null) throw new IdempotencyRaceLost(ctx.accountId, idem.key);
 }
 
-/** `POST /folders` body. */
-export interface FolderCreateBody { mailboxId?: unknown; name?: unknown }
-/** `PATCH /folders/:id` body — the new full canonical path. */
-export interface FolderRenameBody { name?: unknown }
+/** `POST /folders` body, as it arrives: the wire's, every field still to be judged. */
+export type FolderCreateBody = UntrustedBody<WireFolderCreateBody>;
+/** `PATCH /folders/:id` body — the new full canonical path, as it arrives. */
+export type FolderRenameBody = UntrustedBody<WireFolderRenameBody>;
 
 /** The delete confirm's server-truth numbers ("N messages across M folders move to Trash"). */
 export interface FolderScopeSummary { folders: number; messages: number }
@@ -105,7 +110,7 @@ export class FolderOpsService {
       await recheckIdempotency(tx, ctx, opts.idempotency);
       await this.assertNoOpOverlap(tx, mailboxId, [name]);
       const inserted = await tx.insert(mailboxFolders)
-        .values({ mailboxId, folder: name })
+        .values({ mailboxId, accountId: ctx.accountId, folder: name })
         .onConflictDoNothing()
         .returning({ id: mailboxFolders.id });
       const row = inserted[0];
@@ -411,7 +416,7 @@ export class FolderOpsService {
     tx: Tx, ctx: ServiceContext, id: string, seq: bigint | null,
     idem?: MoveIdempotency | null, status = 200,
   ): Promise<{ dto: FolderDTO; seq: number | null }> {
-    const row = await userFolderById(tx as unknown as ServiceContext["db"], ctx.accountId, id);
+    const row = await userFolderById(carryBinding(ctx.db, tx), ctx.accountId, id);
     if (!row) throw new ServiceError("internal", 500, "folder vanished after write");
     const dto = folderRowToDTO(row);
     await claimVerb(tx, ctx, idem, dto, seq, status);

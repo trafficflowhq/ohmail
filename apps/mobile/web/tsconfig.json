@@ -1,0 +1,18 @@
+{
+  "//": "The shell's PAGE: what the phone's web view runs, typed for a browser. Not a workspace and not part of the app's Metro program (apps/mobile/tsconfig.json leaves web/ out); scripts/build-shell.mjs bundles it with esbuild. It reaches the native side's bridge kinds and framing by relative path, and the shared packages by name. Node's types as the desktop window's program has them: the shared packages it compiles read `globalThis.process` where it exists.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "customConditions": ["ohmail-source"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

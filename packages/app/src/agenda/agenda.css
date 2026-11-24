@@ -1,0 +1,74 @@
+/* The Agenda's placement: the list scrolls; on a phone the month stands on the ground over the list's sheet. */
+.cal-ag {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.cal-ag-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--s2) var(--s4);
+}
+.cal-ag-note {
+  padding: var(--s2) var(--s1) 0;
+}
+.cal-ag-day {
+  padding-top: var(--s2);
+}
+.cal-ag-none {
+  margin: 0;
+  padding: var(--s1) var(--s3) var(--s3);
+  color: var(--ink2);
+}
+.cal-ag-month {
+  padding: 0 0 var(--s3);
+}
+.cal-ag-sheet {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  background: var(--sheet);
+}
+
+.cal-ag {
+  background: var(--sheet);
+  border-radius: var(--r-sheet);
+  box-shadow: 0 0 0 var(--ringw) var(--ring);
+}
+.cal-ag[data-device="phone"] {
+  background: transparent;
+  box-shadow: none;
+}
+.cal-ag[data-device="phone"] .cal-ag-sheet {
+  box-shadow: 0 0 0 var(--ringw) var(--ring);
+}
+.cal-ag[data-device="phone"] .cal-ag-list {
+  touch-action: pan-y;
+  padding-block-end: var(--cal-phone-sheet-foot);
+  scroll-padding-block-end: var(--cal-phone-sheet-foot);
+}
+.cal-ag-day {
+  max-inline-size: var(--cal-reading-measure);
+}
+
+.cal-ag-pick {
+  touch-action: none;
+}
+.cal-ag-grab {
+  display: grid;
+  flex: none;
+  place-items: center;
+  min-height: var(--s3);
+  padding: var(--s1);
+}
+.cal-ag-grab-line {
+  width: var(--cal-strip-disc);
+  height: var(--s1);
+  border-radius: var(--r-pill);
+  background: var(--line);
+}

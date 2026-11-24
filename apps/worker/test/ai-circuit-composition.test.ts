@@ -20,6 +20,8 @@ import ts from "typescript";
 
 const HERE = resolve(import.meta.dirname ?? ".");
 const ROOT = resolve(HERE, "../src");
+/** The organizer's package: the passes the worker runs that moved out of it (ruling:organizer-cut). */
+const ROOTS = [ROOT, resolve(HERE, "../../../packages/organizer/src")];
 const REPO = resolve(HERE, "../../..");
 
 function tsFiles(dir: string): string[] {
@@ -64,7 +66,7 @@ interface Finding { file: string; line: number; metered: string; ports: string[]
 
 function disagreements(): Finding[] {
   const out: Finding[] = [];
-  for (const file of tsFiles(ROOT)) {
+  for (const file of ROOTS.flatMap((r) => tsFiles(r))) {
     const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
     for (const metered of callsOf(sf, sf, "meter")) {
       // Locate the `meter(` node again to take its enclosing function.
@@ -90,7 +92,7 @@ function disagreements(): Finding[] {
 describe("the circuit's two halves are composed with one mailbox id", () => {
   it("finds a `meter(` call at all — a census over nothing cannot fire", () => {
     let n = 0;
-    for (const file of tsFiles(ROOT)) {
+    for (const file of ROOTS.flatMap((r) => tsFiles(r))) {
       const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
       n += callsOf(sf, sf, "meter").length;
     }

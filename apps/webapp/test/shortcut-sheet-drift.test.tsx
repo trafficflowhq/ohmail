@@ -65,7 +65,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(locale: "en" | "de" = "en"): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -78,7 +78,7 @@ async function mountShell(locale: "en" | "de" = "en"): Promise<void> {
         locale, messages: locale === "de" ? de : en, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
@@ -94,8 +94,8 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
 
 /** The palette's rows as `{ caps, label }` — the caps are the row's own keycaps, joined. */
 function paletteRows(): Array<{ caps: string; label: string }> {
-  return [...host!.querySelectorAll<HTMLElement>(".palette [role=option]")].map((li) => {
-    const caps = [...(li.querySelector(".keys")?.querySelectorAll("kbd") ?? [])]
+  return [...document.querySelectorAll<HTMLElement>('[role="dialog"] [role="option"]')].map((li) => {
+    const caps = [...(li.querySelector(".oh-palette-keys")?.querySelectorAll("kbd") ?? [])]
       .map((k) => k.textContent ?? "").join("");
     /* The label is the row WITHOUT its keycap span, taken by removing that node from a clone.
        Subtracting the caps STRING from the row's text is what this used to do, and it is wrong
@@ -105,7 +105,7 @@ function paletteRows(): Array<{ caps: string; label: string }> {
        and the row read `shortcuts.Ohboxgo`. The case went red either way; a test whose failure
        text is garbled is a test somebody has to debug before they can read it. */
     const clone = li.cloneNode(true) as HTMLElement;
-    clone.querySelector(".keys")?.remove();
+    clone.querySelector(".oh-palette-keys")?.remove();
     return { caps, label: (clone.textContent ?? "").trim() };
   });
 }
@@ -113,9 +113,9 @@ function paletteRows(): Array<{ caps: string; label: string }> {
 /** The `?` sheet's rows as `{ caps, label }`, one entry per chord spelling. */
 function sheetRows(): Array<{ caps: string; label: string }> {
   const out: Array<{ caps: string; label: string }> = [];
-  for (const li of host!.querySelectorAll(".ks li")) {
-    const label = li.querySelector(".ks-lab")?.textContent ?? "";
-    for (const chord of li.querySelectorAll(".ks-chord")) {
+  for (const li of document.querySelectorAll('[role="dialog"] .oh-keyhelp-row')) {
+    const label = li.querySelector(".oh-keyhelp-label")?.textContent ?? "";
+    for (const chord of li.querySelectorAll(".oh-keyhelp-chord")) {
       out.push({ caps: [...chord.querySelectorAll("kbd")].map((k) => k.textContent ?? "").join(""), label });
     }
   }
@@ -178,7 +178,7 @@ describe("the palette and the ? sheet name a destination with one sentence", () 
 
 /** Types into the open palette's field. */
 async function query(text: string): Promise<void> {
-  const input = host!.querySelector<HTMLInputElement>(".palette input")!;
+  const input = document.querySelector<HTMLInputElement>('[role="dialog"] [role="combobox"]')!;
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -189,10 +189,14 @@ async function query(text: string): Promise<void> {
 function railPlaces(): Array<{ id: string; name: string }> {
   return [...host!.querySelectorAll<HTMLElement>("[data-rail-id]")]
     .filter((b) => b.dataset.railId !== "search")
+    // A group's fold (Tags) is no place: it opens and closes, and says so.
+    .filter((b) => b.querySelector("button[aria-expanded]") === null)
     .map((b) => {
+      // The kit's entry: its name, apart from its count and its key.
+      const named = b.querySelector(".oh-railentry-name");
       const clone = b.cloneNode(true) as HTMLElement;
       clone.querySelector(".cnt")?.remove();
-      return { id: b.dataset.railId!, name: (clone.textContent ?? "").trim() };
+      return { id: b.dataset.railId!, name: (named?.textContent ?? clone.textContent ?? "").trim() };
     });
 }
 
@@ -259,16 +263,15 @@ describe("the census — a destination has one message, in one namespace", () =>
 });
 
 describe("the sheet scrolls rather than being cut off at a short window", () => {
-  it("`.ks` carries a ceiling and its own scroll", () => {
-    /* Read off the stylesheet, and that is the honest instrument: jsdom lays nothing out, so a
-       rendered-height assertion here would measure zero and pass whatever the rule said. The
-       reported fault was a sheet running past the fold of a 720px window with no way to reach
-       the rest of it, and `max-height` + `overflow-y: auto` IS the mechanism that answers it. */
-    const css = readFileSync("apps/webapp/app/app.css", "utf8");
-    const rule = /\n\.ks \{([^}]*)\}/.exec(css);
-    expect(rule, "no `.ks` rule in app.css").toBeTruthy();
-    const body = rule![1]!;
-    expect(body, "the sheet has no ceiling, so a long list runs off the window").toMatch(/max-height:\s*[^;]+;/);
-    expect(body, "the sheet cannot be scrolled").toMatch(/overflow-y:\s*auto\s*;/);
+  it("the shortcuts dialog stays within the window and scrolls vertically", () => {
+    // jsdom does not lay out the dialog. The shared overlay constrains its height, and
+    // KeyHelp allows vertical scrolling so a short window still exposes every shortcut.
+    const overlays = "packages/ui/src/base/Overlays";
+    const overlay = readFileSync(`${overlays}/overlay.css`, "utf8");
+    const help = readFileSync(`${overlays}/key-help.css`, "utf8");
+    const overlayRule = /\n\s*\.oh-overlay \{([^}]*)\}/.exec(overlay);
+    const helpRule = /\n\s*\.oh-keyhelp \{([^}]*)\}/.exec(help);
+    expect(overlayRule?.[1], "the sheet has no ceiling, so a long list runs off the window").toMatch(/max-height:\s*[^;]+;/);
+    expect(helpRule?.[1], "the sheet cannot be scrolled").toMatch(/overflow:\s*hidden auto\s*;/);
   });
 });

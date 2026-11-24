@@ -1,9 +1,8 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { getFixtures } from "@ohmail/fixtures";
+import { getFixtures } from "@ohmail/testing";
 import {
-  DEMO_NOW,
   FOLDER_OF_VIEW,
-  FixturesAdapter,
   OhmailEngine,
   isFromSomeone,
   isOwnSent,
@@ -17,9 +16,9 @@ import {
   threadParticipants,
   threadParticipantsIndex,
   triagePiles,
-  type EngineMessage,
   type EntityReader,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** Selector correctness against the fixture world (counts match the prototype). */
 

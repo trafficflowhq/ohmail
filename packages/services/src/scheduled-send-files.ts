@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
-import { dialect, dialectOf } from "@trafficflow/db/dialect";
-import { drafts, scheduledSendFiles, type Tx } from "@trafficflow/db";
-import { bridgeTx, type Db } from "./context.js";
+import { drafts, reclaimSpace, scheduledSendFiles, type Tx } from "@trafficflow/db";
+import { bridgeTx, type Db, type BoundDb, type UnboundDb } from "./context.js";
 
 /**
  * A SCHEDULED LETTER'S FILES (mail 0179, 0180) — kept from the schedule press until the appointment
@@ -225,15 +224,21 @@ export async function readScheduledFiles(
  * Remove the files no appointment carries any more: rows whose draft is gone or no longer holds
  * their key. Every ending of an appointment clears or replaces the key, so this catches each one.
  * Answers how many rows went; on the desktop's PGlite the space is handed back when any did
- * (`vacuum: false` on a server, whose own autovacuum does that).
+ * (`reclaimSpace`, which sends a server nothing: its own autovacuum does that; `vacuum: false`
+ * for a caller that reclaims it itself).
  */
+type SweepScheduledFileOptions = { mailboxIds?: readonly string[]; vacuum?: boolean };
+
+export function sweepScheduledSendFiles(db: UnboundDb, opts?: SweepScheduledFileOptions): Promise<number>;
+export function sweepScheduledSendFiles(db: BoundDb, opts: SweepScheduledFileOptions, accountId: string): Promise<number>;
 export async function sweepScheduledSendFiles(
-  db: Db, opts: { mailboxIds?: readonly string[]; vacuum?: boolean } = {},
+  db: BoundDb | UnboundDb, opts: SweepScheduledFileOptions = {}, accountId?: string,
 ): Promise<number> {
   if (opts.mailboxIds !== undefined && opts.mailboxIds.length === 0) return 0;
   const tx = bridgeTx(db);
   const gone = await tx.delete(scheduledSendFiles)
     .where(and(
+      accountId === undefined ? undefined : eq(scheduledSendFiles.accountId, accountId),
       ...(opts.mailboxIds ? [inArray(scheduledSendFiles.mailboxId, [...opts.mailboxIds])] : []),
       // scoped-by: each row is matched to its own draft by (account_id, id, send_key) inside the subquery
       sql`not exists (select 1 from ${drafts} where ${drafts.id} = ${scheduledSendFiles.draftId}
@@ -241,9 +246,7 @@ export async function sweepScheduledSendFiles(
             and ${drafts.sendKey} = ${scheduledSendFiles.sendKey})`,
     ))
     .returning({ draftId: scheduledSendFiles.draftId });
-  if (gone.length > 0 && opts.vacuum !== false && dialectOf(db) === "pg") {
-    await dialect(db).exec(db, sql`VACUUM scheduled_send_files`).catch(() => { /* the store's open reclaims it */ });
-  }
+  if (gone.length > 0 && opts.vacuum !== false) await reclaimSpace(db, "scheduled_send_files");
   return gone.length;
 }
 
@@ -253,10 +256,13 @@ export async function sweepScheduledSendFiles(
  * this — at most {@link SCHEDULE_FILES_MAX_AHEAD_MS} ahead, closed a day after its time — so this
  * reaches only a letter something else left behind, which then closes as unreadable when it comes due.
  */
-export async function sweepAgedScheduledFiles(db: Db, before: Date): Promise<number> {
+export function sweepAgedScheduledFiles(db: UnboundDb, before: Date): Promise<number>;
+export function sweepAgedScheduledFiles(db: BoundDb, before: Date, accountId: string): Promise<number>;
+export async function sweepAgedScheduledFiles(db: BoundDb | UnboundDb, before: Date, accountId?: string): Promise<number> {
   const gone = await bridgeTx(db).delete(scheduledSendFiles)
     .where(and(
       lt(scheduledSendFiles.createdAt, before),
+      accountId === undefined ? undefined : eq(scheduledSendFiles.accountId, accountId),
       // scoped-by: each row is matched to its own draft by (account_id, id, send_key) inside the subquery
       sql`not exists (select 1 from ${drafts} where ${drafts.id} = ${scheduledSendFiles.draftId}
             and ${drafts.accountId} = ${scheduledSendFiles.accountId}

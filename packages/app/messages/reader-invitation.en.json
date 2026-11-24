@@ -1,0 +1,18 @@
+{
+  "readerInvitation": {
+    "invitation": "Invitation",
+    "changed": "Changed",
+    "cancelled": "Cancelled",
+    "from": "From {organizer}",
+    "overlaps": "overlaps",
+    "show": "Show in calendar",
+    "notOn": "Not on your calendar",
+    "goes": "{title} goes to <calendar></calendar>",
+    "on": "{title} is on {calendar}",
+    "answerPending": "The answer is still being sent",
+    "answerRefused": "This answer could not be sent",
+    "calendarRefused": "The event could not be added to your calendar",
+    "add": "Add to calendar",
+    "destination": "Goes to"
+  }
+}

@@ -1,0 +1,18 @@
+/* Tags' own placement: Rename's field and answers in the list head. Every look is the kit's. */
+.tg-rename {
+  display: flex;
+  gap: var(--s1);
+  align-items: end;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.tg-rename > :first-child {
+  flex: 1;
+  min-inline-size: min(100%, var(--s8));
+}
+
+/* A tag's drop-target box in the rail draws nothing: the kit's entry lays out as if it stood alone. */
+.tg-railtarget {
+  display: contents;
+}

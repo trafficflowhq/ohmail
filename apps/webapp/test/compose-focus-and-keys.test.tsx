@@ -33,6 +33,12 @@
  * harness); part two drives the SHIPPED SHELL, because the wiring — ComposeView claiming the
  * surface, the mount focus finding the real inputs — is exactly what a unit fixture cannot
  * see.
+ *
+ * RE-POINTED (the older tests' sorting, share write-1): the registry stands as the frame stands
+ * it (`KeymapContext` over `useKeymapStore`), never through today's KeymapProvider; part two
+ * drives the new shell (`_mail-shell.js`), where the composer is Write's letter, the region
+ * "New message", found by role and name: its To the combobox "To", its subject the textbox
+ * "Subject", its text the textbox "Message". Every expectation stands as it stood.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -46,8 +52,12 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
-const { KeymapProvider, useKeyBindings, useWritingSurface, useCursorPlacer } =
-  await import("../app/shell/keymap");
+const { useKeyBindings, useWritingSurface, useCursorPlacer, KeymapContext, useKeymapStore } =
+  await import("@ohmail/app-logic/keys/keymap");
+/** The key registry as the frame stands it. */
+function KeymapProvider({ children }: { children: React.ReactNode }) {
+  return h(KeymapContext.Provider, { value: useKeymapStore() }, children);
+}
 
 let roots: Root[] = [];
 let ran: string[] = [];
@@ -58,7 +68,7 @@ let placed: string[] = [];
    stranded mount kept its keymap, and the five cases after it read `c` as not opening Compose.
    What the cases measure is the keys and the caret, never the compile. */
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 
@@ -299,9 +309,9 @@ describe("a mounted writing surface silences every chord a writer could press", 
    PART TWO — the shipped shell: the wiring a fixture cannot see.
    ───────────────────────────────────────────────────────────────────────────────────────── */
 
-/** The shipped shell on the fixture world — the census's own mount. */
+/** The shipped shell on the fixture world — the new shell's own demo mount. */
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
 
   const container = document.createElement("div");
@@ -318,7 +328,7 @@ async function shell(): Promise<HTMLElement> {
         now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
@@ -327,7 +337,29 @@ async function shell(): Promise<HTMLElement> {
   return container;
 }
 
-const rows = (c: HTMLElement): HTMLElement[] => [...c.querySelectorAll<HTMLElement>(".view .row[data-id]")];
+const rows = (c: HTMLElement): HTMLElement[] =>
+  [...c.querySelectorAll<HTMLElement>('section[aria-label="Messages"] [role=option][data-id]')];
+
+/* Write's letter, by role and name (today's `.view-compose`, `#compose-to`, `#compose-subject`, `.compose-editor`). */
+const letter = (c: HTMLElement): HTMLElement | null =>
+  c.querySelector<HTMLElement>('[role="region"][aria-label="New message"]');
+const composing = (c: HTMLElement): boolean => letter(c) != null;
+const toField = (c: HTMLElement): HTMLInputElement | null =>
+  letter(c)?.querySelector<HTMLInputElement>('[role="combobox"][aria-label="To"]') ?? null;
+/** The letter's subject is a one-row text area in Write (a reply's is an input): either, by its name. */
+const subjectField = (c: HTMLElement): HTMLInputElement | null =>
+  letter(c)?.querySelector<HTMLInputElement>('[aria-label="Subject"]') ?? null;
+const textField = (c: HTMLElement): HTMLElement | null =>
+  letter(c)?.querySelector<HTMLElement>('[role="textbox"][aria-label="Message"]') ?? null;
+/** The people on the To line: each is a press "Remove <address>" (today's `.rcp-chip`). */
+const people = (c: HTMLElement): number =>
+  [...(letter(c)?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .filter((b) => /^Remove .+@/.test(b.getAttribute("aria-label") ?? "")).length;
+/** The key sheet (today's `.ks`) and the palette (today's `.palette`), by role and name. */
+const sheetOpen = (): boolean =>
+  [...document.querySelectorAll('[role="dialog"]')].some((d) => /keyboard/i.test(d.getAttribute("aria-label") ?? d.textContent ?? ""));
+const paletteOpen = (): boolean =>
+  document.querySelector('[role="dialog"][aria-label="Command palette"]') != null;
 
 async function waitFor(cond: () => boolean, what: string): Promise<void> {
   // Bounded by TIME, not by a tick count: 40 zero-delay ticks read as "never" at load 100.
@@ -347,11 +379,11 @@ describe("pressing Compose puts the caret in To, and the mailbox keys go quiet",
   it("`c` mounts the composer with the To field focused", async () => {
     const container = await shell();
     await key("c");
-    await waitFor(() => container.querySelector(".view-compose") != null, "`c` did not open Compose");
+    await waitFor(() => composing(container), "`c` did not open Compose");
     expect(
       document.activeElement,
       "the composer opened with nothing focused — typing goes nowhere, and every letter is a shortcut",
-    ).toBe(container.querySelector("#compose-to"));
+    ).toBe(toField(container));
   });
 
   it("blurred, typed characters navigate nothing — `/`, `g o` and the pile digits go quiet", async () => {
@@ -365,7 +397,7 @@ describe("pressing Compose puts the caret in To, and the mailbox keys go quiet",
     const container = await shell();
     await waitFor(() => rows(container).length > 0, "the demo Ohbox never grew rows");
     await key("c");
-    await waitFor(() => container.querySelector(".view-compose") != null, "`c` did not open Compose");
+    await waitFor(() => composing(container), "`c` did not open Compose");
     await act(async () => {
       (document.activeElement as HTMLElement | null)?.blur?.();
     });
@@ -382,7 +414,7 @@ describe("pressing Compose puts the caret in To, and the mailbox keys go quiet",
         `${after} typed at a blurred composer changed the route`,
       ).toBe("#/compose");
       expect(
-        container.querySelector(".view-compose"),
+        letter(container),
         `${after} typed at a blurred composer took the composer off the screen`,
       ).not.toBeNull();
     };
@@ -399,24 +431,25 @@ describe("pressing Compose puts the caret in To, and the mailbox keys go quiet",
   it("Escape, ⌘K and `?` still work over the composer — it is not a modal", async () => {
     const container = await shell();
     await key("c");
-    await waitFor(() => container.querySelector(".view-compose") != null, "`c` did not open Compose");
+    await waitFor(() => composing(container), "`c` did not open Compose");
     await act(async () => {
       (document.activeElement as HTMLElement | null)?.blur?.();
     });
 
     await key("?");
-    expect(document.querySelector(".ks"), "`?` no longer opens the sheet over Compose").not.toBeNull();
+    /* The frame's overlays are lazy parts: they settle across real tasks (the press is one). */
+    await waitFor(() => sheetOpen(), "`?` no longer opens the sheet over Compose");
     await key("Escape"); // the sheet dismisses
-    await waitFor(() => document.querySelector(".ks") == null, "Escape did not close the sheet");
+    await waitFor(() => !sheetOpen(), "Escape did not close the sheet");
 
     await key("k", { metaKey: true });
-    expect(document.querySelector(".palette"), "⌘K no longer opens the palette over Compose").not.toBeNull();
+    await waitFor(() => paletteOpen(), "⌘K no longer opens the palette over Compose");
     await key("Escape"); // the palette closes
-    await waitFor(() => document.querySelector(".palette") == null, "Escape did not close the palette");
+    await waitFor(() => !paletteOpen(), "Escape did not close the palette");
 
     await key("Escape");
     await waitFor(
-      () => container.querySelector(".view-compose") == null,
+      () => !composing(container),
       "Escape stopped leaving Compose — the cascade broke",
     );
   });
@@ -424,14 +457,14 @@ describe("pressing Compose puts the caret in To, and the mailbox keys go quiet",
   it("keys typed INTO the To field stay typing — the claim never reaches a focused field", async () => {
     const container = await shell();
     await key("c");
-    await waitFor(() => container.querySelector(".view-compose") != null, "`c` did not open Compose");
-    const to = container.querySelector<HTMLInputElement>("#compose-to")!;
+    await waitFor(() => composing(container), "`c` did not open Compose");
+    const to = toField(container)!;
     const e = new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true });
     await act(async () => {
       to.dispatchEvent(e);
     });
     expect(e.defaultPrevented, "a letter headed into the To field was claimed by the registry").toBe(false);
-    expect(container.querySelector(".view-compose"), "`r` typed in To navigated or filed").not.toBeNull();
+    expect(letter(container), "`r` typed in To navigated or filed").not.toBeNull();
   });
 
   it("⌫ in the focused To field still takes the recipient back — the editing key edits", async () => {
@@ -440,8 +473,8 @@ describe("pressing Compose puts the caret in To, and the mailbox keys go quiet",
     // claim ever reached a FOCUSED field, this chip would survive and a message would go instead.
     const container = await shell();
     await key("c");
-    await waitFor(() => container.querySelector(".view-compose") != null, "`c` did not open Compose");
-    const to = container.querySelector<HTMLInputElement>("#compose-to")!;
+    await waitFor(() => composing(container), "`c` did not open Compose");
+    const to = toField(container)!;
     const setter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype, "value",
     )!.set!;
@@ -449,7 +482,7 @@ describe("pressing Compose puts the caret in To, and the mailbox keys go quiet",
       setter.call(to, "sam@example.com, ");
       to.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    const chips = () => container.querySelectorAll(".view-compose .rcp-chip").length;
+    const chips = () => people(container);
     await waitFor(
       () => chips() > 0,
       "the typed recipient never became a chip — the control has nothing to take back",
@@ -459,7 +492,7 @@ describe("pressing Compose puts the caret in To, and the mailbox keys go quiet",
       to.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
     });
     expect(chips(), "⌫ in the focused To field stopped removing the recipient").toBe(before - 1);
-    expect(container.querySelector(".view-compose"), "⌫ in To left the composer").not.toBeNull();
+    expect(letter(container), "⌫ in To left the composer").not.toBeNull();
   });
 });
 
@@ -467,7 +500,10 @@ describe("where the caret lands is the first empty field, decided once", () => {
   /** Type into an input the way React sees it — the native setter, then an input event. */
   async function typeInto(input: HTMLInputElement, value: string): Promise<void> {
     const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype, "value",
+      input instanceof window.HTMLTextAreaElement
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype,
+      "value",
     )!.set!;
     await act(async () => {
       setter.call(input, value);
@@ -480,38 +516,38 @@ describe("where the caret lands is the first empty field, decided once", () => {
 
     // First open: To is empty, To gets the caret (asserted above; the premise here).
     await key("c");
-    await waitFor(() => container.querySelector(".view-compose") != null, "`c` did not open Compose");
-    await typeInto(container.querySelector<HTMLInputElement>("#compose-to")!, "sam@example.com, ");
+    await waitFor(() => composing(container), "`c` did not open Compose");
+    await typeInto(toField(container)!, "sam@example.com, ");
 
     // Leave and reopen — the shell keeps the form, the view remounts, and the decision reruns.
     await key("Escape");
-    await waitFor(() => container.querySelector(".view-compose") == null, "Escape did not leave Compose");
+    await waitFor(() => !composing(container), "Escape did not leave Compose");
     await key("c");
-    await waitFor(() => container.querySelector(".view-compose") != null, "`c` did not reopen Compose");
+    await waitFor(() => composing(container), "`c` did not reopen Compose");
     expect(
       document.activeElement,
       "with To answered the caret belongs in Subject — the writing resumes where it stopped",
-    ).toBe(container.querySelector("#compose-subject"));
+    ).toBe(subjectField(container));
 
-    await typeInto(container.querySelector<HTMLInputElement>("#compose-subject")!, "Friday");
+    await typeInto(subjectField(container)!, "Friday");
     await key("Escape");
-    await waitFor(() => container.querySelector(".view-compose") == null, "Escape did not leave Compose");
+    await waitFor(() => !composing(container), "Escape did not leave Compose");
     await key("c");
-    await waitFor(() => container.querySelector(".view-compose") != null, "`c` did not reopen Compose");
+    await waitFor(() => composing(container), "`c` did not reopen Compose");
     // The body focus is the editor's own `autoFocus`, which fires when the editor exists —
     // after `immediatelyRender: false` resolves. Wait for it, then ask where the caret is.
     await waitFor(
-      () => container.querySelector(".compose-editor [contenteditable=true]") != null,
+      () => textField(container)?.getAttribute("contenteditable") === "true",
       "the editor never mounted",
     );
     await waitFor(
-      () => container.querySelector(".compose-editor")?.contains(document.activeElement) === true,
+      () => textField(container)?.contains(document.activeElement) === true,
       "with To and Subject answered the caret belongs in the body",
     );
     // And the caret STAYS there across a re-render: the decision must not rerun.
-    await typeInto(container.querySelector<HTMLInputElement>("#compose-subject")!, "Friday again");
+    await typeInto(subjectField(container)!, "Friday again");
     expect(
-      container.querySelector("#compose-to") === document.activeElement,
+      toField(container) === document.activeElement,
       "a re-render moved the caret back to To — the mount decision reran",
     ).toBe(false);
   });

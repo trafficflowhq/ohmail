@@ -1,15 +1,16 @@
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import {
   workflowRuns, workflows as workflowsTbl, UNMETERED, isSpendMetered,
-  type SpendComposition, type Tx,
+  type EntitlementsComposition, type Tx,
 } from "@trafficflow/db";
-import { makeOwnedDb, makeEntitlementsClient, entitlementsFaultRecorder, ENTITLEMENTS_CALL_BUDGET_MS } from "@trafficflow/db/cloud";
-import type { SpendPort } from "@trafficflow/db";
-import { WorkflowExecutor, silentLogger, type DraftPort, type Logger, type WorkflowTrigger } from "@trafficflow/core";
+import { makeOwnedDb, makeEntitlementsClient, entitlementsFaultRecorder, refundObligationsOn, ENTITLEMENTS_CALL_BUDGET_MS } from "@trafficflow/db/cloud";
+import type { AccessPort, RefundObligationPort, SpendPort } from "@trafficflow/db";
+import { WorkflowExecutor, silentLogger, type DraftPort, type Logger, type WorkflowProposal } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import { loadServedAccounts } from "./mailboxes.js";
-import { isCliEntry } from "./entry.js";
+import { bindWorker } from "./start/bind.js";
+import { isCliEntry } from "@ohmail/organizer/entry";
 import { cronEvent, runCronCli } from "./cron-log.js";
 import { attributedWorkflowDrafter, makeAiUsageBuffer } from "./ai-usage.js";
 
@@ -33,6 +34,8 @@ export interface WorkflowDrainDeps {
    * be a silent AI action — nothing may act on mail without the user having decided it.
    */
   credits?: SpendPort;
+  access?: AccessPort;
+  consentRefunds?: RefundObligationPort;
   /** Scope the drain to ONE account — the worker loops its served accounts. Omitted ⇒ all accounts. */
   accountId?: string;
   /**
@@ -122,7 +125,7 @@ export async function workflowDrainPass(
     if (!claimed) continue;
 
     await executor.runOne(
-      { db, drafter: deps.drafter, credits: deps.credits, now: () => now },
+      { db, drafter: deps.drafter, credits: deps.credits, access: deps.access, consentRefunds: deps.consentRefunds, now: () => now },
       { id: row.id, accountId: row.accountId, workflowId: row.workflowId, stepCursor: row.stepCursor, status: "running" },
     );
     drained++;
@@ -186,6 +189,8 @@ async function reapStaleClaims(db: Tx, deps: WorkflowDrainDeps, now: Date): Prom
   }
   return reaped;
 }
+
+type WorkflowTrigger = WorkflowProposal["trigger"];
 
 /** A `time` trigger carries an optional recurrence interval (ms) alongside `nextRunAt`. */
 type TimeTrigger = WorkflowTrigger & { intervalMs?: number };
@@ -297,6 +302,9 @@ export async function runWorkflowCron(
 
   const owned = makeOwnedDb(config.databaseUrl);
   const db = owned.db;
+  // The pool's two views, as the organizer's own tail has them: the accounts this shard serves are
+  // read on the one that names none, and each account's runs are found and worked on its handle.
+  const binding = bindWorker(db);
   try {
     const now = new Date();
     let drained = 0;
@@ -311,8 +319,9 @@ export async function runWorkflowCron(
         onCallFault: entitlementsFaultRecorder(() => db as unknown as Tx, "worker", { log }),
       })
       : undefined;
-    const entitlements: SpendComposition = client ?? UNMETERED;
+    const entitlements: EntitlementsComposition = client ?? UNMETERED;
     const spend = isSpendMetered(entitlements) ? entitlements : undefined;
+    const consentRefunds = spend ? refundObligationsOn(db as unknown as Tx) : undefined;
     // The worker body's usage composition, for this fallback run: workflow lines into a buffer
     // flushed before the pool closes, the relay armed beside the real port.
     const usageRelay = spend && config.drafter ? config.aiUsage : undefined;
@@ -320,19 +329,20 @@ export async function runWorkflowCron(
       ? makeAiUsageBuffer({ port: { recordUsage: client.recordUsage.bind(client) }, log, budgetMs: ENTITLEMENTS_CALL_BUDGET_MS })
       : undefined;
     usageRelay?.arm();
-    for (const accountId of await loadServedAccounts(db, selectionOf(config))) {
+    for (const accountId of await loadServedAccounts(binding.roster, selectionOf(config))) {
       try {
+        const own = binding.forAccount(accountId).db as unknown as Tx;
         // Enqueue any due time-triggered runs FIRST, then drain them this same pass.
-        await workflowTimeScanPass(db as unknown as Tx, { accountId }, now);
+        await workflowTimeScanPass(own, { accountId }, now);
         const res = await workflowDrainPass(
-          db as unknown as Tx,
+          own,
           {
             drafter: config.drafter && usageRelay && usageBuffer
               ? attributedWorkflowDrafter(config.drafter, accountId, usageRelay.hook, usageBuffer)
               : config.drafter ?? unconfiguredDrafter,
             // ONE port for the pass, not a gate per account: the account is an argument to the
             // spend, and the step's terms come from `SPEND_ACTIONS.workflow`.
-            ...(spend ? { credits: spend } : {}),
+            ...(spend ? { credits: spend, access: spend, consentRefunds } : {}),
             accountId,
           },
           now,

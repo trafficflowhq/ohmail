@@ -5,9 +5,9 @@ import { REFRESH_REUSE_CAUSE, mirrorDbName } from "@ohmail/client-engine";
 import {
   SETTLE_DEADLINE_MS, mintWitness, mintedSince, registerRevokeDoor, type MintWitness,
 } from "./session-refresh";
-import { durableRemove, durableSet } from "./shell/durable";
-import { isOwnerShaped, readOwner } from "./shell/owner-cookie";
-import { subscribeSessionRevival } from "./shell/session-truth";
+import { durableRemove, durableSet } from "@ohmail/app-logic/storage/durable";
+import { isOwnerShaped, readOwner } from "@ohmail/app-logic/storage/owner-cookie";
+import { subscribeSessionRevival } from "@ohmail/app-logic/session/session-truth";
 import { holdSignedOutLeave, leaveSignedOutTab } from "./signed-out-signal";
 import {
   REVOKE_OWED_PREFIX, shareSignedOutNote, takeSharedSignedOutNote, type SignedOutReason,

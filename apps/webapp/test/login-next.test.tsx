@@ -4,11 +4,12 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import type { Continuation } from "../app/(product)/login/continuation.js";
 
 /**
  * `/login?next=manage` — a NAMED continuation, never an address. After a sign-in (or at once, for a
  * browser already signed in) the page goes to `/account/manage`, which mints a fresh account-page
- * link; any other `next` is no continuation and the page goes to the app as it always has.
+ * link. An unknown `next` continues to the app as usual.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -74,8 +75,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function mount(next: "/account/manage" | "/join" | null): Promise<void> {
-  const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+async function mount(next: Continuation | null): Promise<void> {
+  const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -88,13 +89,14 @@ async function mount(next: "/account/manage" | "/join" | null): Promise<void> {
 }
 
 describe("the continuation is a name read once, never a URL", () => {
-  it("`manage` and `join` and nothing else name a route", async () => {
+  it("accepts the listed continuations and rejects arbitrary destinations", async () => {
     const { continuationOf } = await import("../app/(product)/login/continuation.js");
     expect(continuationOf("manage")).toBe("/account/manage");
     expect(continuationOf("join")).toBe("/join");
     for (const other of [
       "https://evil.example", "/account/manage", "//evil.example", "Manage", "manage ", ["manage"], "", undefined, null,
       "/join", "Join", "join ", ["join"], "join?step=mailbox",
+      "calendar-icloud", ["calendar-google"], "/#/cal/cal-setup?via=google",
     ]) {
       expect(continuationOf(other), JSON.stringify(other)).toBeNull();
     }
@@ -124,6 +126,13 @@ describe("a browser already signed in continues without the form", () => {
     expect(routed).toEqual([]);
   });
 
+  it.each(["google", "microsoft"])("requires a handoff for a desktop calendar destination (%s)", async (provider) => {
+    const { continuationOf } = await import("../app/(product)/login/continuation.js");
+    await mount(continuationOf(`calendar-${provider}`));
+    expect(assigned).toEqual([]);
+    expect(routed).toEqual(["/"]);
+  });
+
   it("without it, the app as always (the control)", async () => {
     await mount(null);
     expect(routed).toEqual(["/"]);
@@ -139,35 +148,35 @@ describe("a browser already signed in continues without the form", () => {
   });
 });
 
-describe("the form says where it goes", () => {
+describe("the continuation stays off the form", () => {
   const status = (): HTMLElement[] => [...host.querySelectorAll<HTMLElement>("[role=status]")];
 
-  it("names the account page in the context slot when there is a continuation, and says nothing extra otherwise", async () => {
+  it("offers the same password form with and without an account continuation", async () => {
     session = () => json({ error: { code: "unauthorized", message: "no" } }, 401);
     await mount("/account/manage");
-    // In the one status slot, not a second lede beside the factor sentence.
-    expect(status().map((el) => el.textContent)).toEqual([messages.login.continueManage]);
+    expect(status()).toEqual([]);
     expect(assigned).toEqual([]);
     await act(() => root!.unmount());
     root = null;
     await mount(null);
-    expect(host.textContent).not.toContain(messages.login.continueManage);
+    expect(host.textContent).not.toContain("Sign in, and your account page opens.");
     expect(status()).toEqual([]);
   });
 
-  it("names the setup, not the account page, when the continuation is the wizard", async () => {
+  it("omits both context sentences when the continuation is setup", async () => {
     session = () => json({ error: { code: "unauthorized", message: "no" } }, 401);
     await mount("/join");
-    expect(status().map((el) => el.textContent)).toEqual([messages.login.continueJoin]);
-    expect(host.textContent).not.toContain(messages.login.continueManage);
+    expect(status()).toEqual([]);
+    expect(host.textContent).not.toContain("Sign in, and your setup carries on where it stopped.");
+    expect(host.textContent).not.toContain("Sign in, and your account page opens.");
   });
 
-  it("a sign-out's reason and the continuation share that one slot, the reason first", async () => {
+  it("shows the sign-out reason beside the sign-in form", async () => {
     session = () => json({ error: { code: "unauthorized", message: "no" } }, 401);
     sessionStorage.setItem("ohmail.signed-out-reason", "expired");
     await mount("/account/manage");
-    const slots = status();
-    expect(slots).toHaveLength(1);
-    expect(slots[0]!.textContent).toBe(`${messages.resume.expiredBody} ${messages.login.continueManage}`);
+    expect(status()).toEqual([]);
+    expect(host.textContent).toContain(messages.resume.expiredBody);
+    expect(host.querySelector("#login-email")).not.toBeNull();
   });
 });

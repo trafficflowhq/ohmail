@@ -1,8 +1,9 @@
+import type { AiCallOptions } from "../../ai-call-report.js";
 import {
-  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA,
+  CLASSIFY_RESULT_SCHEMA, DRAFT_RESULT_SCHEMA,
   SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
-  draftUserPayload, ModelDeclinedError,
+  draftSystemPrompt, draftUserPayload, ModelDeclinedError,
 } from "../../mail.js";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
@@ -115,9 +116,10 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
    * unrelated 400 stays a 400; both fields drop together because the models that refuse one refuse
    * the other, and two conditional retries would be three billable requests for one answer.
    */
-  const call = async (body: Record<string, unknown>, what: string): Promise<unknown> => {
+  const call = async (body: Record<string, unknown>, what: string, options?: AiCallOptions): Promise<unknown> => {
     const meter = usageMeter(opts.onUsage, String(body.model));
     const send = async (payload: Record<string, unknown>): Promise<Response> => {
+      if (options?.beforeDispatch) await options.beforeDispatch();
       meter.attempt();
       const res = await fetchWithDeadline(opts.fetchImpl, `${OPENAI_BASE}/v1/chat/completions`, {
         method: "POST",
@@ -173,7 +175,7 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
   ];
 
   return {
-    async classify(input: ClassifierInput): Promise<ClassifierResult> {
+    async classify(input: ClassifierInput, options?: AiCallOptions): Promise<ClassifierResult> {
       // Screens for authentication material and THROWS before a payload exists. Shared with every
       // other provider, deliberately: one sink, so there is one thing to get right.
       const userPayload = classifyUserPayload(input);
@@ -185,7 +187,7 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
         temperature: 0,
         messages: turns(TAXONOMY_PREFIX, userPayload),
         response_format: responseFormat("routing", CLASSIFY_RESULT_SCHEMA),
-      }, "classifier");
+      }, "classifier", options);
       return coerceClassifierResult(raw);
     },
 
@@ -198,7 +200,7 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
      * call per first-contact sender, same size and difficulty, so a model chosen for routing is
      * chosen for this.
      */
-    async screen(input: ClassifierInput): Promise<ClassifierResult> {
+    async screen(input: ClassifierInput, options?: AiCallOptions): Promise<ClassifierResult> {
       const userPayload = classifyUserPayload(input);
       const raw = await call({
         model: opts.classifyModel,
@@ -206,21 +208,21 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
         temperature: 0,
         messages: turns(SCREENING_PREFIX, userPayload),
         response_format: responseFormat("screening", SCREENING_RESULT_SCHEMA),
-      }, "screener");
+      }, "screener", options);
       // A label outside the five piles becomes the gate, where a person decides — never a guess.
       return coerceScreeningResult(raw);
     },
 
-    async draft(input: DraftInput): Promise<DraftResult> {
+    async draft(input: DraftInput, options?: AiCallOptions): Promise<DraftResult> {
       // Asserts the redaction allow-list and THROWS before a payload exists. Also shared.
       const userPayload = draftUserPayload(input);
       const raw = await call({
         model: opts.draftModel,
         max_tokens: 2048,
         temperature: 0,
-        messages: turns(DRAFT_PREFIX, userPayload),
+        messages: turns(draftSystemPrompt(input), userPayload),
         response_format: responseFormat("reply_draft", DRAFT_RESULT_SCHEMA),
-      }, "drafter");
+      }, "drafter", options);
       return coerceDraftResult(raw);
     },
 

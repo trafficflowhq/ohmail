@@ -24,30 +24,28 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { appPasswordPresetFor, unsentDraftsOf } from "@ohmail/client-engine";
 import { storageRowSentence } from "./storage-row-sentence.js";
-import {
-  Button, Gloss, SettingsActions, SettingsField, SettingsNote, SettingsRow, SettingsSection,
-  SettingsVerdict,
-} from "@ohmail/ui";
+import { Button, Dialog, Field, RefusalLine, Tag } from "@ohmail/ui/base";
+import { Gloss } from "@ohmail/ui/body-parts";
+import { SettingActs, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 
 import {
   desktopFiler, deviceHoldings, filerKey, filerSentence, holdingsSpeak, isRemovedMailbox, readerStandDown,
   showInboundQuiet, type MailboxFacts,
-} from "../../webapp/app/shell/mail-state";
-import { addressKey } from "../../webapp/app/shell/address-key";
+} from "@ohmail/app-logic/mail-state/mail-state";
+import { addressKey } from "@ohmail/app-logic/mail-state/address-key";
 import { holderIsLive, holderStopped, organizerSituation, standingOf } from "@trafficflow/core/reader-refusal";
 import { agoStamp, dayStamp, waterlineStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
-import { storeRefusalsFigure } from "../../webapp/app/shell/mailbox-error-key";
-import { useEngineOrNull } from "../../webapp/app/shell/engine";
-import { useMailState } from "../../webapp/app/shell/MailStateProvider";
-import { goFirstRun } from "../../webapp/app/shell/routing";
+import { storeRefusalsFigure } from "../../webapp/app/shell/store-refusals-figure";
+import { useEngineOrNull } from "@ohmail/app-logic/engine";
+import { useMailState } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import {
   type HolderWho, holderSentence, phoneHolder, phoneHolderKey, readerHolder,
-} from "../../webapp/app/shell/reader-holder";
-import { useManagedService } from "../../webapp/app/shell/managed-service";
+} from "@ohmail/app-logic/reading/reader-holder";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import {
   clearReadingAlong, readingAlong, setReadingAlong,
-} from "../../webapp/app/shell/reading-along";
+} from "@ohmail/app-logic/reading/reading-along";
 import { bridgeFetch, engineLogout, retryingBridgeFetch, type EngineStatus } from "./bridge-fetch.js";
 import { firstRunDoorFor } from "./doors.js";
 import {
@@ -55,13 +53,15 @@ import {
 } from "./sign-in-again-server.js";
 import { LocalWireError, localPlaintextOffer } from "./local-first-run.js";
 import { LOCAL_SERVER_CALL_DEADLINE_MS } from "./local-server-deadline.js";
-import { PlaintextConsent, plaintextClaims } from "../../webapp/app/shell/PlaintextConsent";
+import { Consents } from "@ohmail/app/mailboxes/connect";
 import {
-  CertificateTrust, certificateOfferOf, trustClaims, type TrustOffer,
-} from "../../webapp/app/shell/CertificateTrust";
+  certificateOfferOf, certificateConsentLines, plaintextClaims, plaintextConsentLines, trustClaims, type TrustOffer,
+} from "@ohmail/app-logic/mailboxes/connect/consents";
 import { refusalCopy } from "../../webapp/app/shell/server-refusal";
-import { openServerMailboxes, openWeb } from "./native.js";
+import { openWeb } from "./native.js";
 import { linksOutToBilling } from "./distribution.js";
+
+const SIGN_IN_CONSENT_ID = { plain: "mbx-sign-in-insecure", certificate: "mbx-sign-in-trust" } as const;
 
 /** Whether this install can reach ONE mailbox's server right now — see {@link MailboxReachSlice}. */
 export interface MailboxReach {
@@ -692,7 +692,7 @@ const signInEnded = (id: string): void => {
  * confirmation states the extra consequence only when it is true.
  */
 export function DesktopMailboxes(
-  { door, host, flavor, server, onShellStatus }: {
+  { door, host, flavor, server, openServer, onShellStatus, scope, goToSetup, removalDoor, filingsFor }: {
     door?: string | null;
     /**
      * THE OTHER COMPUTER THIS INSTALL READS THROUGH, when it reads through one.
@@ -709,6 +709,13 @@ export function DesktopMailboxes(
     /** A SELF-HOSTED door's server, by host (`selfHostedServerOf`): the place its mailboxes are managed. */
     server?: string | null;
     onShellStatus?: (next: EngineStatus) => void;
+    /** The mounted mailbox's scope: whose choice to read along this pane reads and keeps. */
+    scope: string;
+    removalDoor?: { readonly active: boolean; readonly version?: number };
+    openServer?: () => Promise<void>;
+    goToSetup?(how: "add" | "again", mailbox?: string): void;
+    /** One mailbox's waiting filings, drawn as lines of that mailbox's own sheet. */
+    filingsFor?: (mailbox: MailboxFacts) => ReactNode;
   },
 ) {
   const t = useTranslations("mailboxes");
@@ -972,6 +979,7 @@ export function DesktopMailboxes(
   const [removing, setRemoving] = useState<MailboxFacts | null>(null);
   /** True while the DELETE is in flight, so the destructive button cannot be pressed twice. */
   const [removeBusy, setRemoveBusy] = useState(false);
+  const removeOpener = useRef<HTMLButtonElement | null>(null);
   /** The unsent drafts the removal in question keeps — the confirmation names them. */
   const removingDrafts = removing !== null && engine !== null
     ? unsentDraftsOf(engine.read(), removing.id).length
@@ -1019,7 +1027,8 @@ export function DesktopMailboxes(
   const paired = cloud && !!host;
   /* SELF-HOSTED: a cloud door on a server the person runs. Its mailboxes are managed on THAT
      server's web app, never ohmail.app, where this install has no account. */
-  const selfHosted = cloud && !paired && flavor === "selfhost" && !!server;
+  const selfHosted = cloud && !paired && flavor === "selfhost";
+  const managedWeb = cloud && !paired && flavor === "managed";
   /* WHO FILES WHAT THIS DOOR SHOWS, for the heading and the one organizer sentence a hosted or
      paired row can carry — the refused stop. This computer on its own door; ohmail Cloud, the
      self-hosted server or the other computer on the rest. */
@@ -1204,7 +1213,7 @@ export function DesktopMailboxes(
         /* A PRESS WITHDRAWS THE INTENTION, and a refused one is exactly when the sentence is
            needed back: somebody who asked to organize the mailbox here is no longer reading
            along on purpose, whatever they pressed earlier. */
-        clearReadingAlong(id);
+        clearReadingAlong(id, scope);
       } finally {
         setReclaiming((q) => {
           const next = new Set(q);
@@ -1292,11 +1301,13 @@ export function DesktopMailboxes(
     setProblem(null);
     setRemoveBusy(true);
     const last = isLastLive(m);
+    const stillHere = () => removalDoor?.active ?? true;
     void (async () => {
       try {
         const res = await bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
           method: "DELETE",
         });
+        if (!stillHere()) return;
         if (!res.ok) {
           /* ── THE ONE REFUSAL THIS PANE SAYS IN ITS OWN WORDS ──────────────────────────────
            * The engine refuses when it could not take this computer's copy of the mailbox's
@@ -1321,6 +1332,7 @@ export function DesktopMailboxes(
          * `true` released; `false` attempted and not completed; ABSENT is an engine that
          * predates the field — "older engine", not a claim left behind. */
         const outcome = await res.json().catch(() => null) as { claimReleased?: boolean } | null;
+        if (!stillHere()) return;
         if (outcome?.claimReleased === false) setProblem(t("desktopRemovedClaimLeftBehind"));
         /* ── AND THE WINDOW'S OWN MIRROR, BEFORE THE PANE SAYS THE REMOVAL HAPPENED ────────
          * The route deletes the mailbox's mail from the engine's store; this window renders a
@@ -1342,6 +1354,7 @@ export function DesktopMailboxes(
          * seed") — it would sign the whole install out while mailboxes were running, or skip
          * the sign-out once the seed was gone. `isLastLive` above is the roster's own answer,
          * and the sign-out it gates runs below, after the route rather than inside it. */
+        if (!stillHere()) return;
         setRemoving(null);
         /**
          * ── WHEN IT WAS THE LAST ONE, STOP BEING CONFIGURED FOR IT ──────────────────────
@@ -1353,14 +1366,17 @@ export function DesktopMailboxes(
          * the LAST, else it would remove mailboxes nobody asked about — and AFTER the route:
          * a stopped engine cannot release a claim or wipe a mirror.
          */
-        if (last) {
+        if (last && onShellStatus && removalDoor?.version !== undefined) {
           try {
-            onShellStatus?.((await engineLogout()).status);
+            const signedOut = await engineLogout(null, removalDoor.version);
+            if (!stillHere()) return;
+            onShellStatus(signedOut.status);
           } catch (logoutErr) {
             /* THE MAILBOX IS GONE EITHER WAY. The removal committed; what failed is the tidying
                that keeps it gone across a relaunch. Reported rather than swallowed, because the
                consequence is one a person can act on — the pane says so, and quitting and
                reopening is where the stale door would otherwise reappear. */
+            if (!stillHere()) return;
             setProblem(logoutErr instanceof Error ? logoutErr.message : String(logoutErr));
           }
         }
@@ -1369,9 +1385,10 @@ export function DesktopMailboxes(
         /* THE PANEL STAYS OPEN ON A FAILURE, on the browser pane's rule: dropping somebody back
            to a list that still shows the mailbox says nothing about whether the removal
            happened. The sentence goes to the pane's one problem line, above the rows. */
+        if (!stillHere()) return;
         setProblem(err instanceof Error ? err.message : String(err));
       } finally {
-        setRemoveBusy(false);
+        if (stillHere()) setRemoveBusy(false);
       }
     })();
   };
@@ -1406,10 +1423,9 @@ export function DesktopMailboxes(
 
   if (facts === null) {
     return (
-      <SettingsSection>
-        <h2 className="acct-h">{heading}</h2>
-        <p className="set-note-inline">{t("desktopLoading")}</p>
-      </SettingsSection>
+      <SettingsSheet title={heading}>
+        <p className="oh-text">{t("desktopLoading")}</p>
+      </SettingsSheet>
     );
   }
 
@@ -1808,6 +1824,9 @@ export function DesktopMailboxes(
        nothing: the caption reads that from `organizerSituation`, the liveness the rail and the
        sentence under the chip read, never "Organized by" a machine that stopped. */
     const standing = standingOf(organizerSituation(m));
+    const refusal = refused.get(m.id);
+    const refusalHolder = refusal === undefined ? null : whoOf(m);
+    const refusalRemedy = refusalHolder ? holderSentence({ who: refusalHolder, verb: "reclaim", managed }) : null;
     const chipLabel =
       role === "organizer"
         ? (stopState ? t("chipStopping") : t("stateOrganizing"))
@@ -1823,13 +1842,13 @@ export function DesktopMailboxes(
        person comes here to read is labelled as the thing they came to read. */
     return (
       <div
-        className="mbx-org"
+        data-organizer=""
         data-role={role}
         data-state={stopState}
         role="group"
         aria-label={t("readerAlongWho")}
       >
-        <div className="mbx-role">
+        <SettingLine label="">
         {/* THE CHIP IS THE (i). One button: its caption is the role's label, the sentence that
             stood under the label is its accessible description, and hover, focus or a press opens
             that sentence beside it. The banner rendered label and sentence as two sibling text
@@ -1837,9 +1856,8 @@ export function DesktopMailboxes(
             and never the sentence; `aria-describedby` is what a reader computes a description
             from, and the primitive sets it from the caption. */}
         <Gloss
-          className="mbx-chip"
           placement="chip"
-          caption={chipLabel}
+          caption={<Tag>{chipLabel}</Tag>}
           text={
             /* THE ORGANIZER'S SENTENCE, NEWEST WORD FIRST: this window's own stop press
                (`stopQueued`), then the row's standing stop — pending, or refused by a live
@@ -1929,11 +1947,11 @@ export function DesktopMailboxes(
             repeated here in a polite live node a sighted person never sees: silent at rest, it
             speaks when the label moves — "Stopping" at the press, then the role the row settles
             into. The same `chipLabel`, so it cannot say something the chip does not. */}
-        <span className="mbx-say" role="status">{chipLabel}</span>
+        <span className="oh-vh" role="status">{chipLabel}</span>
         {/* WHAT THE STOP LEFT IN THE SETTINGS DOCUMENT, once the claim is no longer this computer's:
             the stop itself went through, and this computer's decisions may be here only. */}
         {role !== "organizer" && reached?.settingsLeft ? (
-          <span className="mbx-say-set">
+          <span className="oh-text">
             {t(reached.settingsLeft === "kept_other" ? "stateReleasedSettingsOther" : "stateReleasedSettingsUnsaved")}
           </span>
         ) : null}
@@ -1945,14 +1963,14 @@ export function DesktopMailboxes(
             everything, because the intention was about the one that was there. Offered only on a
             reader row with a holder to be reading along WITH. */}
         {role === "reader" && whoOf(m) && !lapsed ? (
-          readingAlong(m.id, whoOf(m), undefined, alongSaid) ? (
-            <span className="mbx-say-set">{t("readerAlongSet", { name: holderOf(m) })}</span>
+          readingAlong(m.id, whoOf(m), scope, alongSaid) ? (
+            <span className="oh-text">{t("readerAlongSet", { name: holderOf(m) })}</span>
           ) : (
             <Button
-              variant="ghost"
-              className="mbx-quiet"
-              onClick={() => {
-                setReadingAlong(m.id, whoOf(m));
+              kind="quiet"
+              size="s"
+              onPress={() => {
+                setReadingAlong(m.id, whoOf(m), scope);
                 /* See {@link alongSaid}: the record moved, and only this makes the pane read it
                    again. `refresh()` is the SHARED poller and answers a different question. */
                 setAlongSaid((n) => n + 1);
@@ -1985,13 +2003,13 @@ export function DesktopMailboxes(
             /* LOCAL DOOR ONLY, as `reclaim` is: a hosted or paired door serves no takeover, and
                the organizer its gloss says keeps organizing is not this computer there. */
             m.releaseRequestedAt ? (cloud ? null : (
-              <span className="mbx-verb">
-                <Button className="mbx-btn" onClick={() => setClaimFor(m.id)}>{t("organizeHere")}</Button>
+              <SettingActs>
+                <Button kind="quiet" size="s" onPress={() => setClaimFor(m.id)}>{t("organizeHere")}</Button>
                 <Gloss placement="chip" text={t("organizeHereCountermandWhat")} />
-              </span>
+              </SettingActs>
             )) : (
-              <span className="mbx-verb">
-                <Button variant="ghost" className="mbx-quiet" onClick={() => setReleaseFor(m.id)}>
+              <SettingActs>
+                <Button kind="quiet" size="s" onPress={() => setReleaseFor(m.id)}>
                   {t("stopOrganizingHandBack")}
                 </Button>
                 {/* WHAT FOLLOWS THE PRESS, for the person who has not made it: this computer
@@ -2001,13 +2019,13 @@ export function DesktopMailboxes(
                     taken; it never promises a hand-over that happens. The confirm well under it
                     says what stays where it is, which is the other half of the same decision. */}
                 <Gloss placement="chip" text={t("stopOrganizingHandBackWhat")} />
-              </span>
+              </SettingActs>
             )
           ) : takeoverStanding(m) ? null : (
             <Button
-              className="mbx-btn"
-              variant={role === "released" ? "primary" : undefined}
-              onClick={() => setClaimFor(m.id)}
+              size="s"
+              kind="quiet"
+              onPress={() => setClaimFor(m.id)}
             >
               {/* ── "INSTEAD" NEEDS SOMETHING TO BE INSTEAD OF ────────────────────────
                   One key served both states and its words were written for the one with a
@@ -2019,7 +2037,7 @@ export function DesktopMailboxes(
               {role === "released" ? t("organizeHere") : t("organizeHereInstead")}
             </Button>
           )}
-        </div>
+        </SettingLine>
         {/* AND WHY A DECISION CANNOT BE MADE HERE, on the mailboxes where the answer is the
             sign-in rather than a version somebody can update. A password mailbox lets both
             installs derive the same signing key from the credential they already share; an OAuth
@@ -2027,7 +2045,7 @@ export function DesktopMailboxes(
             organizes there is no refusal to explain — and only where the field says so, so a
             build that cannot tell says nothing. */}
         {role !== "organizer" && m.authKind === "oauth" ? (
-          <SettingsNote>{t("oauthDecideElsewhere")}</SettingsNote>
+          <SettingNote>{t("oauthDecideElsewhere")}</SettingNote>
         ) : null}
         {/* ── THE HANDOVER, AND WHAT IT COSTS THE OTHER SIDE, BEFORE IT IS TAKEN ───────────
             The other install is not killed: it becomes a reader on its next pass and keeps
@@ -2038,8 +2056,8 @@ export function DesktopMailboxes(
             engine spends the stamp at its next process assembly, so that sentence says to
             quit and reopen — and names no holder, because a legacy row carries none. */}
         {open ? (
-          <div className="mbx-handover">
-            <p className="mbx-handover-what">
+          <>
+            <p className="oh-text" data-organizer-confirmation="">
               {/* THE WELL NAMES A HOLDER, so a row that has none may not use this sentence: it
                   promises that "{name} stops organizing it on its next pass", and with nothing
                   organizing the mailbox `holderOf` supplies "another install" — a consequence
@@ -2052,11 +2070,11 @@ export function DesktopMailboxes(
                   ? t("organizeHereWhatNobody")
                   : t("organizeHereWhat", { name: holderOf(m) })}
             </p>
-            <SettingsActions>
+            <SettingActs>
               <Button
-                variant="primary"
+                kind="ink"
                 disabled={reclaiming.has(m.id)}
-                onClick={() => {
+                onPress={() => {
                   setClaimFor(null);
                   /* THE HOLDER, READ HERE — in the statement that makes the request, so the note
                      under it names the install that was there when the button was pressed rather
@@ -2066,9 +2084,9 @@ export function DesktopMailboxes(
               >
                 {t("organizeHereConfirm")}
               </Button>
-              <Button variant="ghost" onClick={() => setClaimFor(null)}>{t("cancel")}</Button>
-            </SettingsActions>
-          </div>
+              <Button kind="quiet" onPress={() => setClaimFor(null)}>{t("cancel")}</Button>
+            </SettingActs>
+          </>
         ) : null}
         {/* ── AND THE OTHER DIRECTION, WHICH IS THE ONE THAT WAS MISSING ─────────────────────
             Until this control existed the only way to make an install stop organizing a mailbox
@@ -2077,22 +2095,22 @@ export function DesktopMailboxes(
             them stay exactly where they are, and any install can take the mailbox afterwards,
             including this one. Nothing about it is destructive, and nothing about it is red. */}
         {releasing ? (
-          <div className="mbx-handover">
-            <p className="mbx-handover-what">{t("stopOrganizingWhat")}</p>
-            <SettingsActions>
+          <>
+            <p className="oh-text" data-organizer-confirmation="">{t("stopOrganizingWhat")}</p>
+            <SettingActs>
               <Button
-                variant="primary"
+                kind="ink"
                 disabled={releasingIds.has(m.id)}
-                onClick={() => {
+                onPress={() => {
                   setReleaseFor(null);
                   release(m.id);
                 }}
               >
                 {t("stopOrganizingConfirm")}
               </Button>
-              <Button variant="ghost" onClick={() => setReleaseFor(null)}>{t("cancel")}</Button>
-            </SettingsActions>
-          </div>
+              <Button kind="quiet" onPress={() => setReleaseFor(null)}>{t("cancel")}</Button>
+            </SettingActs>
+          </>
         ) : null}
         {/* WHAT THE ENGINE ANSWERED — and the ROW is what ends it, for real now (0.14.1).
             The comment here used to claim "the row is what ends them" while nothing did: both
@@ -2120,21 +2138,20 @@ export function DesktopMailboxes(
         {takeoverStanding(m) ? (
           reclaimed.get(m.id)!.outcome === "authorized" ? (
             role !== "organizer" ? (
-              <SettingsVerdict
-                state="off"
-                headline={m.legacyStandDown === true ? t("organizeHereQueuedLegacy") : t("organizeHereQueued", {
+              <SettingNote said>
+                {m.legacyStandDown === true ? t("organizeHereQueuedLegacy") : t("organizeHereQueued", {
                   name: reclaimed.get(m.id)!.heldBy?.name?.trim()
                     || (reclaimed.get(m.id)!.heldBy?.kind === "cloud"
                       ? "ohmail Cloud"
                       : t("readerHolderUnknown")),
                 })}
-              />
+              </SettingNote>
             ) : null
           ) : (
             /* The other three outcomes take the same predicate rather than bare `reclaimed.has`:
                "this mailbox is not here any more" is an answer to a press too, and one that has
                been superseded is as stale as the queued one. */
-            <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(m.id)!.outcome}`)}</SettingsNote>
+            <SettingNote>{t(`desktopOrganizeHere_${reclaimed.get(m.id)!.outcome}`)}</SettingNote>
           )
         ) : null}
         {/* ── A REFUSED PRESS, ON THE ROW IT IS ABOUT ──────────────────────────────────────────
@@ -2143,22 +2160,14 @@ export function DesktopMailboxes(
             what went wrong, the sentence says what to do — and neither was on screen before
             (issue #5): the reason went to the pane's line above every row, and the holder went
             nowhere at all. */}
-        {refused.has(m.id) ? (
-          <SettingsNote>
-            {t("organizeHereRefused", { reason: refused.get(m.id)! })}
-            {whoOf(m) ? (
-              <>
-                {" "}
-                {t(
-                  holderSentence({ who: whoOf(m)!, verb: "reclaim", managed }).key,
-                  holderSentence({ who: whoOf(m)!, verb: "reclaim", managed }).params,
-                )}
-              </>
-            ) : null}
-          </SettingsNote>
-        ) : null}
+        {refusal === undefined ? null : (
+          <SettingNote>{[
+            t("organizeHereRefused", { reason: refusal }),
+            refusalRemedy ? t(refusalRemedy.key, refusalRemedy.params) : "",
+          ].filter(Boolean).join(" ")}</SettingNote>
+        )}
         {released.has(m.id) && released.get(m.id) !== "requested" ? (
-          <SettingsNote>{t("stopOrganizingNot")}</SettingsNote>
+          <SettingNote>{t("stopOrganizingNot")}</SettingNote>
         ) : null}
       </div>
     );
@@ -2169,28 +2178,28 @@ export function DesktopMailboxes(
      account's own disconnected mailboxes, whose copy stays on the server. */
   const listed = cloud ? facts : facts.filter((m) => !isRemovedMailbox(m));
   return (
-    <SettingsSection>
-      <h2 className="acct-h">{heading}</h2>
+    <>
+    <SettingsSheet title={heading}>
       {listed.length === 0 ? (
-        <p className="set-note-inline">
+        <p className="oh-text">
           {paired
             ? t("desktopNoneHost", { host: host! })
-            : selfHosted
-              ? t("desktopNoneServer", { host: server! })
-              : cloud ? t("desktopNoneCloud") : t("desktopNoneLocal")}
+            : selfHosted && server ? t("desktopNoneServer", { host: server })
+            : !cloud ? t("desktopNoneLocal")
+            : managedWeb ? t("desktopNoneCloud") : t("noneYet")}
         </p>
       ) : null}
       {/* SETUP IN THE BROWSER for a Cloud account with nothing connected. The page leads on to the
           purchase step, so a store build keeps the sentence alone. */}
-      {listed.length === 0 && cloud && !paired && !selfHosted && linksOutToBilling() ? (
-        <div className="join-actions">
+      {listed.length === 0 && managedWeb && linksOutToBilling() ? (
+        <SettingActs>
           <Button
-            variant="primary"
-            onClick={() => void openWeb("setup").catch(() => setProblem(t("desktopNoBrowser")))}
+            kind="ink"
+            onPress={() => void openWeb("setup").catch(() => setProblem(t("desktopNoBrowser")))}
           >
             {t("desktopOpenSetup")}
           </Button>
-        </div>
+        </SettingActs>
       ) : null}
       {/* ── ADD MAILBOX — ABOVE THE LIST, because it is about the list, not a row. The route
           (`POST /local/mailboxes`) writes the row, proves its password against its own server
@@ -2203,21 +2212,22 @@ export function DesktopMailboxes(
           1, 2, 3, 4, 7, 8, 9, no welcome and no AI question. THE STANDALONE DOOR ALONE:
           hosted mailboxes are the ACCOUNT's, managed in the browser. */}
       {firstRunDoorFor(statusOf(door)) === "local" ? (
-        <SettingsRow
+        <SettingLine
           label={t("desktopAdd")}
           description={t("desktopAddWhy")}
-          control={
-            <Button variant="primary" onClick={() => goFirstRun({ add: true })}>
+        >
+          <Button kind="ink" onPress={() => goToSetup?.("add")}>
               {t("desktopAddAction")}
             </Button>
-          }
-        />
+        </SettingLine>
       ) : null}
 
       {/* Above the rows rather than inside one: both things that can fail here — a refused resync
           and a refused browser — are about the pane, and a sentence that moves around as the
           failure changes is harder to find than one that does not. */}
-      {problem ? <p className="join-error">{problem}</p> : null}
+      {problem && !removing ? <RefusalLine alert>{problem}</RefusalLine> : null}
+
+    </SettingsSheet>
 
       {/* ── ONE ROW PER ADDRESS, folded with the SAME key the rail and the browser pane use.
           A stood-down mailbox is taken back with the row's own "Organize from this machine"
@@ -2234,8 +2244,9 @@ export function DesktopMailboxes(
           note and the organizer block that stand between one mailbox's row and the next; the
           browser's pane wraps its rows in `.mbx-entry` for the same reason. */}
       {foldByAddress(listed).map(({ shown, superseded }) => (
-        <div className="mbx-card" key={shown.id}>
-          <SettingsRow
+        <section data-mailbox="" key={shown.id}>
+        <SettingsSheet>
+          <SettingLine
             label={shown.address}
             description={
               /* ── THE ROLE, BESIDE WHEN IT LAST LOOKED ──────────────────────────────────
@@ -2256,42 +2267,31 @@ export function DesktopMailboxes(
                  `organizeConsentedAt` is the truth-condition and it is already on the facts. */
               /* A MAILBOX THE SERVER IS NOT CHECKING leads with that and since when: "Last
                  checked" read as news of the day before for 26 hours. */
-              organizesHere(shown) ? (
-                <>
-                  {t("desktopLastChecked", { when: when(shown.lastSyncAt) })}
-                  {" · "}
-                  {t("desktopRoleOrganizer")}
-                </>
-              ) : notCheckedOf(shown) ? t("notChecked", notCheckedOf(shown)!)
+              organizesHere(shown) ? [
+                t("desktopLastChecked", { when: when(shown.lastSyncAt) }),
+                t("desktopRoleOrganizer"),
+              ].join(" · ") : notCheckedOf(shown) ? t("notChecked", notCheckedOf(shown)!)
                 : t("desktopLastChecked", { when: when(shown.lastSyncAt) })
             }
-            /* THE STATE CELL IS A LIVE REGION. It carries the one fact on the row a person most
-               needs — whether the mail server can be reached at all — and it changes on its own,
-               from the reach poll. A bare span with text in it is dropped from the accessibility
-               tree on Linux, so a reader heard the row's buttons and never this; `role="status"`
-               puts it in the tree with its text and announces the change when "Up to date" turns
-               into the outage sentence. The ticking stamp stands BESIDE the live node, not inside
-               it (see `stateOf`): in the tree as a note, never announced. The text and its place
-               in the row are untouched. */
-            value={(() => {
+          >
+            {(() => {
               const s = stateOf(shown);
               /* Nothing to say and nothing set aside: no state cell, rather than an empty one. */
               if (s.said === "" && !((reach.rows[shown.id]?.setAside ?? 0) > 0)) return undefined;
               return (
-                <>
-                  {s.said === "" ? null : <span className="mbx-reach" role="status">{s.said}</span>}
-                  {s.when ? <> <span className="mbx-reach-when" role="note">{s.when}</span></> : null}
+                <span className="oh-settingline-facts">
+                  {s.said === "" ? null : <span data-reach="" role="status">{s.said}</span>}
+                  {s.when ? <> <span role="note">{s.when}</span></> : null}
                   {/* MESSAGES SET ASIDE ON THIS COMPUTER: a second line, a count and nothing else. */}
                   {(reach.rows[shown.id]?.setAside ?? 0) > 0 ? (
-                    <span className="mbx-set-aside" role="note">
+                    <span data-set-aside="" role="note">
                       {t("desktopSetAside", { n: reach.rows[shown.id]!.setAside })}
                     </span>
                   ) : null}
-                </>
+                </span>
               );
             })()}
-            control={
-              /* ── THE CLAIM IS NOT A ROW CONTROL ANY MORE — it was offered here on the OLD
+            {/* ── THE CLAIM IS NOT A ROW CONTROL ANY MORE — it was offered here on the OLD
                  schema's stand-down (`status === "disabled" && disabledReason`). The role is
                  its own column now and the backfill moved every stood-down row to
                  `connected` + `organizer_role='reader'`, so this arm named a state nothing
@@ -2299,12 +2299,12 @@ export function DesktopMailboxes(
                  does not resurrect removed mailboxes). The control was offered on exactly the
                  set the handler declines. It lives in the banner UNDER THIS ROW now (see
                  `claimable`, `organizerBlock`). What stays here is Sync now, withheld on a
-                 disconnected mailbox: nothing is opening it, so a pass cannot be asked for. */
-              shown.status === "disabled" ? undefined : (
+                 disconnected mailbox: nothing is opening it, so a pass cannot be asked for. */}
+            {shown.status === "disabled" ? undefined : (
                 <>
                   <Button
-                    className="mbx-btn"
-                    onClick={() => resync(shown.id)}
+                    kind="quiet" size="s"
+                    onPress={() => resync(shown.id)}
                     disabled={queued.has(shown.id)}
                   >
                     {queued.has(shown.id) ? t("syncQueued") : t("syncNow")}
@@ -2319,8 +2319,8 @@ export function DesktopMailboxes(
                       the account's second factor, which a desktop session cannot satisfy. */}
                   {!cloud ? (
                     <Button
-                      className="mbx-btn"
-                      onClick={() => {
+                      kind="quiet" size="s"
+                      onPress={() => {
                         setProblem(null);
                         setSignedIn(null);
                         setNewPassword("");
@@ -2343,8 +2343,8 @@ export function DesktopMailboxes(
                       window gives the flow a host on (`local-first-run.ts`). */}
                   {firstRunDoorFor(statusOf(door)) === "local" ? (
                     <Button
-                      className="mbx-btn"
-                      onClick={() => goFirstRun({ rerun: true, mailboxId: shown.id })}
+                      kind="quiet" size="s"
+                      onPress={() => goToSetup?.("again", shown.id)}
                     >
                       {t("setupAgainAction")}
                     </Button>
@@ -2360,50 +2360,60 @@ export function DesktopMailboxes(
                       ceremony and it has to carry its weight. */}
                   {!cloud ? (
                     <Button
-                      className="mbx-btn"
-                      variant="ghost"
-                      onClick={() => { setProblem(null); setRemoving(shown); }}
+                      size="s"
+                      kind="quiet"
+                      onPress={(event) => {
+                        removeOpener.current = event.currentTarget;
+                        setProblem(null);
+                        setRemoving(shown);
+                      }}
                     >
                       {t("remove")}
                     </Button>
                   ) : null}
                 </>
-              )
-            }
-          />
+              )}
+          </SettingLine>
           {/* ── SENDING, WHEN IT IS NOT SET UP ───────────────────────────────────────────────
               Its own line rather than folded into the state value, because the state value is
               about RECEIVING and this mailbox is receiving perfectly. `set-note-inline` is the
               pane's quiet standing-fact line — not `join-error`, which is for something that just
               failed here; this is a condition the mailbox has been carrying since it connected. */}
           {sendingProblem(shown)
-            ? <p className="set-note-inline">{sendingProblem(shown)}</p>
+            ? <p className="oh-text">{sendingProblem(shown)}</p>
             : null}
           {/* WHO IS NOT CHECKING IT, and that nothing is lost: the strip's sentence, for this
               mailbox. ohmail Cloud or the server somebody runs; a paired computer's rows carry no
               such word of a service, so that door says the row's line alone. */}
           {notCheckedOf(shown) && (filer === "cloud" || filer === "server")
-            ? <p className="set-note-inline">{t(filerKey("notChecked", filer), notCheckedOf(shown)!)}</p>
+            ? <p className="oh-text">{t(filerKey("notChecked", filer), notCheckedOf(shown)!)}</p>
             : null}
           {/* ── WHO ORGANIZES THIS ONE, UNDER THE ROW IT IS ABOUT ────────────────────────────
               Per row, because the pane holds several and each can be held by somebody different.
               On a row this machine organizes it is the release; on every other one it is the fact and
               the way back — see `organizerBlock`. */}
           {organizerBlock(shown)}
+          {/* ── THE FILINGS THAT WAIT, UNDER THIS ROW'S OTHER LINES ──────────────────────────
+              They used to stand below every row, in a sheet of their own, so a pane with four
+              mailboxes put one mailbox's wait after all four — the strip's link landed on a
+              heading that was not beside the row it named. The block draws its lines in the row's
+              own sheet now; it asks for nothing while nothing waits, and a press that cleared the
+              wait keeps the lines standing to say what the press did. */}
+          {filingsFor ? filingsFor(shown) : null}
           {/* ══ THE PASSWORD THIS MAILBOX IS REFUSED WITH — one field, because the engine merges
               the server, the port and the username from what it keeps; asking again would be
               asking somebody to re-type what is already right. The server fields appear ONLY
               for a mailbox an earlier version signed out with nothing kept and no provider fact
               to place it (`serverAsk`), pre-filled. Under the row: a machine with two addresses
               must never show a form with an ambiguous subject. */}
+        </SettingsSheet>
           {signingIn?.id === shown.id ? (
+            <SettingsSheet title={t("signInAgainTitle", { address: shown.address })}>
             <form
-              className="acct-confirm"
               aria-label={t("signInAgainTitle", { address: shown.address })}
               onSubmit={(e) => { e.preventDefault(); signInAgain(shown, newPassword); }}
             >
-              <h3 className="acct-sub">{t("signInAgainTitle", { address: shown.address })}</h3>
-              <p className="acct-fine">
+              <p className="oh-text">
                 {serverAsk?.id === shown.id ? t("signInAgainAskWhy")
                   : t(signsInWithAppPassword(shown.address) ? "signInAgainWhy_gmail" : "signInAgainWhy")}
               </p>
@@ -2411,133 +2421,130 @@ export function DesktopMailboxes(
                   the tick, as the setup stage does (`FirstRun.tsx`'s `retireConsent`). */}
               {serverAsk?.id === shown.id ? (
                 <>
-                  <SettingsField
-                    htmlFor="mbx-server-host"
+                  <Field
                     label={t("signInAgainAskServer")}
                     hint={serverAsk.ask.outgoingHost
-                      ? t("signInAgainAskServerHint", { host: serverAsk.ask.outgoingHost })
-                      : undefined}
-                  >
-                    <input
-                      id="mbx-server-host"
+                    ? t("signInAgainAskServerHint", { host: serverAsk.ask.outgoingHost })
+                    : undefined}
+
+                    id="mbx-server-host"
                       type="text"
                       autoComplete="off"
-                      spellCheck={false}
                       value={serverAsk.ask.host}
-                      onChange={(e) => {
-                        const host = e.target.value;
+                      onChange={(host) => {
                         setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, host } } : a));
                         setPlaintextAsk(null);
                       }}
                       disabled={signInHeld}
-                    />
-                  </SettingsField>
-                  <SettingsField htmlFor="mbx-server-port" label={t("signInAgainAskPort")}>
-                    <input
-                      id="mbx-server-port"
+                  />
+                  <Field
+                    label={t("signInAgainAskPort")}
+                    id="mbx-server-port"
                       type="text"
                       inputMode="numeric"
                       autoComplete="off"
                       value={serverAsk.ask.port}
-                      onChange={(e) => {
-                        const port = e.target.value;
+                      onChange={(port) => {
                         setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, port } } : a));
                         setPlaintextAsk(null);
                       }}
                       disabled={signInHeld}
-                    />
-                  </SettingsField>
-                  <SettingsField htmlFor="mbx-server-user" label={t("signInAgainAskUser")}>
-                    <input
-                      id="mbx-server-user"
+                  />
+                  <Field
+                    label={t("signInAgainAskUser")}
+                    id="mbx-server-user"
                       type="text"
                       autoComplete="off"
-                      spellCheck={false}
                       value={serverAsk.ask.user}
-                      onChange={(e) => {
-                        const user = e.target.value;
+                      onChange={(user) => {
                         setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, user } } : a));
                         setPlaintextAsk(null);
                       }}
                       disabled={signInHeld}
-                    />
-                  </SettingsField>
+                  />
                 </>
               ) : null}
-              <SettingsField
-                htmlFor="mbx-new-password"
-                label={t(signsInWithAppPassword(shown.address) ? "signInAgainPassword_gmail" : "signInAgainPassword")}
-                hint={serverAsk?.id === shown.id ? t("signInAgainAskHint") : t("signInAgainHint")}
-              >
-                <input
-                  id="mbx-new-password"
+              <Field
+                    label={t(signsInWithAppPassword(shown.address) ? "signInAgainPassword_gmail" : "signInAgainPassword")}
+                    hint={serverAsk?.id === shown.id ? t("signInAgainAskHint") : t("signInAgainHint")}
+
+                    id="mbx-new-password"
                   type="password"
                   autoComplete="off"
-                  spellCheck={false}
                   value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
+                  onChange={setNewPassword}
                   disabled={signInHeld}
-                />
-              </SettingsField>
+                  />
               {plaintextAsk?.id === shown.id ? (
-                <PlaintextConsent
-                  id="mbx-sign-in-insecure"
-                  offer={plaintextAsk.offer}
-                  checked={plaintextAsk.checked}
-                  sameHost={plaintextAsk.sameHost === true}
-                  onChange={(k, on) => setPlaintextAsk((a) => (
-                    a ? { ...a, checked: { ...a.checked, [k]: on } } : a))}
+                <Consents
+                  lines={[
+                    ...plaintextConsentLines(plaintextAsk.offer, plaintextAsk.checked, plaintextAsk.sameHost === true),
+                    ...certificateConsentLines(plaintextAsk.trustOffer ?? {}, plaintextAsk.trusted ?? {}, plaintextAsk.sameHost === true),
+                  ]}
+                  words={t}
+                  checkboxId={(line) => `${SIGN_IN_CONSENT_ID[line.kind]}-${line.legs}`}
+                  tick={(line, on) => setPlaintextAsk((ask) => {
+                    if (ask === null) return ask;
+                    const legs = line.legs;
+                    if (line.kind === "plain") {
+                      const checked = legs === "both" ? { imap: on, smtp: on } : { ...ask.checked, [legs]: on };
+                      return { ...ask, checked };
+                    }
+                    const fingerprint = on ? line.sha256 : undefined;
+                    const trusted = { ...ask.trusted };
+                    for (const leg of legs === "both" ? (["imap", "smtp"] as const) : [legs]) {
+                      if (fingerprint === undefined) delete trusted[leg];
+                      else trusted[leg] = fingerprint;
+                    }
+                    return { ...ask, trusted };
+                  })}
                 />
               ) : null}
-              {plaintextAsk?.id === shown.id && plaintextAsk.trustOffer ? (
-                <CertificateTrust
-                  id="mbx-sign-in-trust"
-                  offer={plaintextAsk.trustOffer}
-                  ticked={plaintextAsk.trusted ?? {}}
-                  sameHost={plaintextAsk.sameHost === true}
-                  onChange={(k, sha256) => setPlaintextAsk((a) => (
-                    a ? { ...a, trusted: { ...a.trusted, [k]: sha256 } } : a))}
-                />
-              ) : null}
-              <div className="acct-actions">
+              <SettingActs>
                 <Button
-                  type="button"
+                  kind="quiet" type="button"
                   disabled={signInHeld}
-                  onClick={() => {
+                  onPress={() => {
                     setSigningIn(null); setNewPassword(""); setServerAsk(null); setPlaintextAsk(null);
                   }}
                 >
                   {t("signInAgainCancel")}
                 </Button>
                 <Button
-                  variant="primary"
+                  kind="ink"
                   type="submit"
                   disabled={signInHeld || newPassword === ""
                     || (serverAsk?.id === shown.id && incomingFromAsk(serverAsk.ask) === null)}
                 >
                   {signInHeld ? t("signInAgainWorking") : t("signInAgainConfirm")}
                 </Button>
-              </div>
+              </SettingActs>
             </form>
+            </SettingsSheet>
           ) : null}
-          {signedIn === shown.id ? <SettingsNote>{t("signInAgainDone")}</SettingsNote> : null}
-          {/* ══ THE REMOVAL CONFIRMATION — FIVE CONSEQUENCES, THE FIFTH THIS DOOR'S OWN. The
-              hosted pane's panel, verbatim in four statements, true on both doors: organizing
-              stops, THE MAIL IS UNTOUCHED (no IMAP connection is opened to delete anything),
-              the stored password goes, scheduled sends are closed rather than sent. The fifth
-              differs and had to: hosted erasure is account-scoped, so "the copy stays" is
-              true there; on THIS door the local mirror IS deleted, by this route, in the same
-              request — the honest sentence here. Under the row rather than over the pane, so
-              a machine with two addresses cannot show a confirmation with an ambiguous
-              subject. `role="alertdialog"`, SAFE ANSWER FIRST in the DOM. */}
+          {signedIn === shown.id ? <SettingNote>{t("signInAgainDone")}</SettingNote> : null}
           {removing?.id === shown.id ? (
-            <div
-              className="acct-confirm"
-              role="alertdialog"
-              aria-label={t("removeTitle", { address: shown.address })}
+            <Dialog
+              open
+              inline
+              alert
+              hot
+              title={t("removeTitle", { address: shown.address })}
+              keysOn="cancel"
+              keysShown
+              returnFocus={() => removeOpener.current}
+              onClose={() => { if (!removeBusy) setRemoving(null); }}
+              dismissOnScrim={!removeBusy}
+              said={problem ? { line: problem, refused: true } : undefined}
+              confirm={{
+                label: removeBusy ? t("removeWorking") : t("removeConfirm"),
+                onPress: () => remove(shown),
+                disabled: removeBusy,
+                keyHint: "↵",
+              }}
+              cancel={{ label: t("removeCancel"), disabled: removeBusy, keyHint: t("removeCancelKey") }}
             >
-              <h3 className="acct-sub">{t("removeTitle", { address: shown.address })}</h3>
-              <ul className="acct-fine mbx-remove-list">
+              <ul className="oh-dialog-facts" data-removal-consequences="">
                 {/* ── THE FIRST BULLET USED TO CLAIM WORK THIS INSTALL NEVER DID ─────────────
                     "ohmail stops organizing this mailbox." — measured on the released 0.13.7 on
                     an install that had never organized it, one pane away from the banner saying
@@ -2548,10 +2555,10 @@ export function DesktopMailboxes(
                     `readerStandDown` on THIS ROW, not the roster-wide `screenerReadOnly` the
                     panes above use — this confirmation is about one mailbox, and it is the row
                     the pane already has in hand. Same predicate underneath. */}
-                <li>{readerStandDown(shown) ? t("removeStopsReader") : t("removeStops")}</li>
+                <li><Tag>{readerStandDown(shown) ? t("removeStopsReader") : t("removeStops")}</Tag></li>
                 <li>{t("removeMailSafe")}</li>
-                <li>{t("removeCredential")}</li>
-                <li>{t("removeScheduled")}</li>
+                <li><Tag>{t("removeCredential")}</Tag></li>
+                <li><Tag>{t("removeScheduled")}</Tag></li>
                 {/* No keep-or-erase choice on this door: the store is both server and mirror, so
                     the removal IS the erase of this computer's copy (`local-mirror.ts`). */}
                 <li>{t("removeCopyLocal")}</li>
@@ -2570,29 +2577,14 @@ export function DesktopMailboxes(
                     it would be false: the install stays configured and keeps organizing them. */}
                 {isLastLive(shown) ? <li>{t("removeLastDoor")}</li> : null}
               </ul>
-              <p className="acct-fine">{t("removeReconnect")}</p>
-              <div className="acct-actions">
-                <Button onClick={() => setRemoving(null)} disabled={removeBusy}>
-                  {t("removeCancel")}
-                </Button>
-                {/* `primary danger` — the account section's convention for a destructive
-                    confirm, so this and the browser's pane read as one product. */}
-                <Button
-                  variant="primary"
-                  className="danger"
-                  disabled={removeBusy}
-                  onClick={() => remove(shown)}
-                >
-                  {removeBusy ? t("removeWorking") : t("removeConfirm")}
-                </Button>
-              </div>
-            </div>
+              <p className="oh-text">{t("removeReconnect")}</p>
+            </Dialog>
           ) : null}
           {/* THE ANSWER TO A PRESS IS INSIDE `organizerBlock` NOW, under the banner whose verb
               raised it. It used to stand here, three constructions away from the fact it was
               about, and it carried a third arm for a takeover the lease would refuse — a state
               that no longer exists. */}
-          {superseded > 0 ? <SettingsNote>{t("superseded")}</SettingsNote> : null}
+          {superseded > 0 ? <SettingNote>{t("superseded")}</SettingNote> : null}
           {/* ── THE FORWARDING-DETECTION NOTICE (mail 0078), the browser pane's twin ─────────
               `showInboundQuiet` (shared shell, one rule for both surfaces) gates it: a standing
               quiet episode on a HEALTHY row, not dismissed since this episode's evidence. Its
@@ -2601,24 +2593,26 @@ export function DesktopMailboxes(
               "the last mail came {when}" is false for a mailbox that never received any, and
               the pass stamps `createdAt` there, told apart by identity. */}
           {showInboundQuiet(shown, Date.now()) ? (
-            <SettingsRow
+            <SettingLine
               label=""
               description={shown.inboundQuietSince === shown.createdAt
                 ? t("inboundQuietNever")
                 : t("inboundQuiet", { when: agoStamp(shown.inboundQuietSince!, Date.now()).rel })}
-              control={
-                <Button
-                  className="mbx-btn"
-                  onClick={() => dismissQuiet(shown.id)}
+            >
+              <Button
+                  size="s"
+                  onPress={() => dismissQuiet(shown.id)}
                   disabled={dismissing.has(shown.id)}
                 >
                   {t("inboundQuietDismiss")}
                 </Button>
-              }
-            />
+            </SettingLine>
           ) : null}
-        </div>
+
+        </section>
       ))}
+
+      <SettingsSheet>
 
       {/* THE HAND-OFF, ON THE HOSTED DOOR ONLY. See this file's header for why there is no edit
           form to offer beside the resync above: the account asks for a fresh second factor before
@@ -2642,39 +2636,37 @@ export function DesktopMailboxes(
           plain noun is the honest substitute; every other paired sentence in the WINDOW's own
           panes still says "this Mac". */}
       {paired ? (
-        <SettingsRow
+        <SettingLine
           label={t("desktopManageOnHost", { host: host! })}
           description={t("desktopManageOnHostWhy", { host: host! })}
         />
-      ) : selfHosted ? (
-        <SettingsRow
+      ) : selfHosted && server ? (
+        <SettingLine
           label={t("desktopManageOnServer")}
           description={t("desktopManageOnServerWhy", { host: server! })}
-          control={
-            <Button
-              onClick={() =>
-                void openServerMailboxes().catch(() =>
+        >
+          <Button
+              onPress={() =>
+                void (openServer?.() ?? Promise.reject()).catch(() =>
                   setProblem(t("desktopNoBrowserServer", { host: server! })))
               }
             >
               {t("desktopOpenServer", { host: server! })}
             </Button>
-          }
-        />
-      ) : cloud ? (
-        <SettingsRow
+        </SettingLine>
+      ) : managedWeb ? (
+        <SettingLine
           label={t("desktopManageOnWeb")}
           description={t("desktopManageOnWebWhy")}
-          control={
-            <Button
-              onClick={() =>
+        >
+          <Button
+              onPress={() =>
                 void openWeb("mailboxes").catch(() => setProblem(t("desktopNoBrowser")))
               }
             >
               {t("desktopOpenWeb")}
             </Button>
-          }
-        />
+        </SettingLine>
       ) : null}
 
       {/* ── HOW MUCH OF THE ACCOUNT IS ON THIS COMPUTER — a fact, not an alarm. This was a
@@ -2682,7 +2674,7 @@ export function DesktopMailboxes(
           the shared shell carries the argument): a windowed copy in front of working
           reach-past doors is correct behaviour, and alarming about it trains people to
           ignore real alarms. Stated here, where somebody asking "what is on this machine"
-          stands, with no icon (`set-note-inline`, not `SettingsNote`). THE CLAIM IS PINNED: it
+          stands, with no icon (`set-note-inline`, not `SettingNote`). THE CLAIM IS PINNED: it
           promises behaviour: `cloud-read.ts` does NOT answer `GET /messages` from the mirror
           and `cloud-engine.ts` falls a body read through — served locally, this sentence must
           go. `deviceHoldings` is the SHARED derivation, so this pane cannot disagree with the
@@ -2703,7 +2695,7 @@ export function DesktopMailboxes(
            account" — it is the other computer. The promise is the same and it is still true: the
            reach-past doors are served by whatever is on the far side, which here is a host. */
         return held === null ? null : (
-          <p className="set-note-inline">
+          <p className="oh-text">
             {paired
               ? t("desktopHoldsCountHost", { count: held.count, total: held.total, host: host! })
               : t("desktopHoldsCount", { count: held.count, total: held.total })}
@@ -2718,12 +2710,13 @@ export function DesktopMailboxes(
           control at the foot of a list of three names none of them — it would have re-run setup
           for whichever row happened to be first. It is a row control now, carrying
           `?mailbox=<id>`. */}
-      <SettingsNote>
+      <SettingNote>
         {/* WHERE THE MAIL ACTUALLY IS, said on the screen that lists it. The claim is the
             product's own and is true on both doors: the master copy is the mailbox on the server,
             and what is on this machine is a copy that can be deleted without losing anything. */}
         {t("desktopCopyIsACopy")}
-      </SettingsNote>
-    </SettingsSection>
+      </SettingNote>
+    </SettingsSheet>
+    </>
   );
 }

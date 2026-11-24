@@ -17,6 +17,9 @@ import {
 } from "../rule-order.js";
 import { DESTINATIONS, canonicalDestination, isConsentingDestination, type Destination } from "../types.js";
 import type { KnownSenders, Rule } from "../rules.js";
+import { isSubjectHeading, type SubjectHeading } from "../preferences.js";
+/* The closed words a copy may state, at this door too: whoever reads or writes a copy names them from here. */
+export { SUBJECT_HEADINGS, SUBJECT_HEADING_DEFAULT, isSubjectHeading, subjectHeadingOf, type SubjectHeading } from "../preferences.js";
 
 /**
  * The portable organizer profile — how a mailbox carries its own organizer configuration. The
@@ -262,6 +265,18 @@ export interface ProfileGap {
   at: string;
 }
 
+/**
+ * WHAT THE PERSON STATED FOR EVERY INSTALL OF THE MAILBOX. An ENVELOPE key, outside the payload and
+ * the fingerprint as `screening` is, so a document differing only here is no import question. Each
+ * member is a closed word with the instant it was stated (`toISOString`'s form): the newer
+ * statement holds. A member that is absent is NOT STATED: a reader leaves what it holds alone, and
+ * an organizer that does not know the key writes a document without it. `PROFILE_VERSION` does not move.
+ */
+export interface ProfilePreferences {
+  /** Where a conversation's subject stands in the reader. */
+  subject?: { value: SubjectHeading; at: string };
+}
+
 /** The longest install id a gap key may name; the lease's ids are far shorter. */
 const GAP_BY_MAX = 256;
 
@@ -300,6 +315,8 @@ export interface OrganizerProfileDoc extends OrganizerProfilePayload {
    * ENVELOPE key, out of the fingerprint; absent = none recorded (an older organizer records none).
    */
   removedRules?: ProfileRemovedRule[];
+  /** What the person stated for every install ({@link ProfilePreferences}); absent = nothing stated. */
+  preferences?: ProfilePreferences;
 }
 
 /**
@@ -830,6 +847,8 @@ export function makeProfileDoc(
   meta: {
     updatedAt: Date; producer: { kind: string; version: string }; screening?: ProfileScreening; gap?: ProfileGap;
     applied?: readonly string[]; removedRules?: readonly ProfileRemovedRule[];
+    /** REQUIRED, so that no site that makes a document can leave it out: `{}` states nothing and writes no key. */
+    preferences: ProfilePreferences;
   },
   version: number = PROFILE_VERSION,
 ): OrganizerProfileDoc {
@@ -850,6 +869,8 @@ export function makeProfileDoc(
     ...(meta.applied === undefined ? {} : { applied: meta.applied.slice(0, PROFILE_APPLIED_MAX) }),
     // ENVELOPE, after `applied`: absent when there is none to record.
     ...(removedRules.length === 0 ? {} : { removedRules }),
+    // ENVELOPE, after `removedRules`: only what is stated, in the form its reader reads back.
+    ...preferencesAsWritten(meta.preferences),
     screener: canonical.screener,
     rules: withRuleAges(canonical.rules, payload.rules),
     notifyRules: canonical.notifyRules,
@@ -864,6 +885,22 @@ export function makeProfileDoc(
     // The same rule: present only when the canonical form kept it, so an older copy's bytes stand.
     ...(canonical.impersonationFiling === false ? { impersonationFiling: false as const } : {}),
   };
+}
+
+/**
+ * The stated preferences as a document carries them. A member is written only as a word of its
+ * closed set with an instant in the written form; anything else is left out, and nothing stated is
+ * no key at all. A caller that is not compiled hands none, which states nothing.
+ */
+function preferencesAsWritten(stated: ProfilePreferences | undefined): { preferences?: ProfilePreferences } {
+  // Through the reader: a copy carries exactly what a reader of it reads back.
+  const read = readProfilePreferences(stated);
+  return statesNothing(read) ? {} : { preferences: read };
+}
+
+/** Does `p` state no member at all? */
+export function statesNothing(p: ProfilePreferences | undefined): boolean {
+  return p === undefined || Object.keys(p).length === 0;
 }
 
 /** A removal's order among same-instant ties: its rule key as the import spells it. */
@@ -1092,6 +1129,19 @@ function isWrittenInstant(s: string): boolean {
 }
 
 /**
+ * AN INSTANT A COPY STATES, as a reader takes it: the written form, from 1970 on and not after
+ * `notAfterMs`. The written form also spells years before 1 (`0000-…`, `-000001-…`) and after 9999
+ * (`+010000-…`), which no store holds, and a copy is anyone's to write. A reader with no clock at
+ * hand (the parser) bounds it from below only; where a copy is taken in, `notAfterMs` is the reader's
+ * clock plus the lease's skew bound.
+ */
+export function isStatedInstant(at: unknown, notAfterMs: number = Number.POSITIVE_INFINITY): at is string {
+  if (typeof at !== "string" || !isWrittenInstant(at)) return false;
+  const t = Date.parse(at);
+  return t >= 0 && t <= notAfterMs;
+}
+
+/**
  * THE ENVELOPE'S SCREENING KEY, well-formed only: absent ⇒ `undefined`; present and readable ⇒ the
  * window; present and anything else ⇒ the reason, and no window. Read the same at every `v`.
  */
@@ -1103,12 +1153,47 @@ export function readProfileScreening(raw: unknown): ProfileScreening | { refused
   if (base !== null && !(typeof base === "string" && isWrittenInstant(base))) {
     return { refused: "screening.baselineAt is neither null nor the ISO form ohmail writes" };
   }
+  // The cutoff the Screener's queries bind: a year no store holds would fail them for every reader.
+  if (base !== null && !isStatedInstant(base)) return { refused: "screening.baselineAt is before 1970" };
   const days = o.dormancyDays;
   if (typeof days !== "number" || !Number.isInteger(days) || days < SCREENING_DAYS_MIN || days > SCREENING_DAYS_MAX) {
     return { refused: "screening.dormancyDays is not a whole number of days in range" };
   }
   if (o.scope !== "window" && o.scope !== "all_time") return { refused: "screening.scope is not a known mode" };
   return { baselineAt: base as string | null, dormancyDays: days, scope: o.scope };
+}
+
+/** `o`'s own member `key`, never one its prototype answers for. */
+function own(o: object, key: string): unknown {
+  return Object.prototype.hasOwnProperty.call(o, key) ? (o as Record<string, unknown>)[key] : undefined;
+}
+
+/** One stated member: a word of its closed set with a stated instant ({@link isStatedInstant}). */
+function readStated<W extends string>(
+  raw: unknown, isWord: (word: unknown) => word is W, notAfterMs: number,
+): { value: W; at: string } | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const value = own(raw, "value");
+  const at = own(raw, "at");
+  if (!isWord(value)) return undefined;
+  if (!isStatedInstant(at, notAfterMs)) return undefined;
+  return { value, at };
+}
+
+/**
+ * THE ENVELOPE'S `preferences` KEY, READ LIKE A LETTER: anything that can write to the folder can
+ * write this key, so each member is read by its own name, as a word of its closed set with the
+ * instant `toISOString` writes, and built new. Nothing of the raw value is copied or spread, and a
+ * member this build does not name is not carried. Not an object, a member of another type, a word
+ * outside its set, an instant in another form, one before 1970 or one after `notAfterMs`: NOT STATED,
+ * for that member alone. It never refuses the copy, and what is not stated clears nothing anywhere.
+ * `notAfterMs` is the reader's clock plus the lease's skew bound where a clock is at hand (a copy
+ * is taken in); the parser has none and reads every instant.
+ */
+export function readProfilePreferences(raw: unknown, notAfterMs: number = Number.POSITIVE_INFINITY): ProfilePreferences {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const subject = readStated(own(raw, "subject"), isSubjectHeading, notAfterMs);
+  return { ...(subject === undefined ? {} : { subject }) };
 }
 
 /**
@@ -1123,6 +1208,8 @@ export function readProfileGap(raw: unknown, installId: string | null): ProfileG
   if (typeof o.since !== "string" || !isWrittenInstant(o.since)) return { refused: "gap.since is not the ISO form ohmail writes" };
   if (typeof o.at !== "string" || !isWrittenInstant(o.at)) return { refused: "gap.at is not the ISO form ohmail writes" };
   if (Date.parse(o.since) > Date.parse(o.at)) return { refused: "gap.since is after gap.at" };
+  // Where a reader's look opens its window: a year no store holds would fail that write on every look.
+  if (!isStatedInstant(o.since)) return { refused: "gap.since is before 1970" };
   // eslint-disable-next-line no-control-regex
   if (typeof o.by !== "string" || o.by.length === 0 || o.by.length > GAP_BY_MAX || /[\u0000-\u001f\u007f]/.test(o.by)) {
     return { refused: "gap.by is not an install id" };
@@ -1146,8 +1233,9 @@ const REMOVED_KINDS: ReadonlySet<string> = new Set(["sender", "domain", "header"
 
 /**
  * THE ENVELOPE'S `removedRules` KEY, entry by entry: absent or not a list ⇒ `undefined`; an entry with
- * a bad kind, match, term, instant or install id, or one removed after the copy's own `updatedAt`, is
- * dropped alone; only the first {@link PROFILE_REMOVED_MAX} are read. It never refuses the copy.
+ * a bad kind, match, term, instant or install id, or one removed before 1970 ({@link isStatedInstant}:
+ * an Import records it and dates its queries by it) or after the copy's own `updatedAt`, is dropped
+ * alone; only the first {@link PROFILE_REMOVED_MAX} are read. It never refuses the copy.
  */
 export function readProfileRemovedRules(raw: unknown, updatedAt: string): ProfileRemovedRule[] | undefined {
   if (!Array.isArray(raw)) return undefined;
@@ -1162,7 +1250,7 @@ export function readProfileRemovedRules(raw: unknown, updatedAt: string): Profil
     const subjectContains = term(o.subjectContains);
     const bodyContains = term(o.bodyContains);
     if (subjectContains === undefined || bodyContains === undefined) continue;
-    if (typeof o.removedAt !== "string" || !isWrittenInstant(o.removedAt) || !(Date.parse(o.removedAt) <= copyAt)) continue;
+    if (!isStatedInstant(o.removedAt) || !(Date.parse(o.removedAt) <= copyAt)) continue;
     // eslint-disable-next-line no-control-regex
     if (typeof o.by !== "string" || o.by.length === 0 || o.by.length > GAP_BY_MAX || /[\u0000-\u001f\u007f]/.test(o.by)) continue;
     out.push({
@@ -1438,6 +1526,7 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
   const gapRefused = gap !== undefined && "refused" in gap ? gap.refused : undefined;
   const applied = readProfileApplied(rawDoc.applied);
   const removedRules = readProfileRemovedRules(rawDoc.removedRules, updatedAt);
+  const preferences = readProfilePreferences(own(rawDoc, "preferences"));
   const producerRaw = typeof rawDoc.producer === "object" && rawDoc.producer !== null
     ? rawDoc.producer as Record<string, unknown> : {};
   const doc: OrganizerProfileDoc = {
@@ -1453,6 +1542,7 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
     ...(gap === undefined || gapRefused !== undefined ? {} : { gap: gap as ProfileGap }),
     ...(applied === undefined ? {} : { applied }),
     ...(removedRules === undefined ? {} : { removedRules }),
+    ...(statesNothing(preferences) ? {} : { preferences }),
     ...payload,
   };
   return {

@@ -9,13 +9,14 @@
  * And an embedded (cid:) picture reaches the drawn document once its bytes land, through the reader's
  * own subscription over a real engine.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { createElement as h, act, useState, type ReactNode } from "react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   INLINE_IMAGE_MAX_PARTS, MemoryMirrorStore, OhmailEngine, contrastRatio, parseCssColor,
-  type EngineAdapter, type EngineMessage, type SyncChange,
+  type EngineAdapter, type SyncChange,
 } from "@ohmail/client-engine";
 import { fireLayout, mount, styleOf } from "./_rendered-dom";
 import { letterInDark, paletteOf } from "../src/theme/palette";

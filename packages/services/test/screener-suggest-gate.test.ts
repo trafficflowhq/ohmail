@@ -5,7 +5,7 @@ import { accounts, routingDecisions, type LedgerTx, type Tx } from "@trafficflow
 import { CLASSIFY_DESTINATIONS } from "@trafficflow/core/mail";
 import type { ClassifierPort, ClassifierInput, ClassifierResult, Destination } from "@trafficflow/core";
 import { ScreenerService, setScreeningPreference } from "../src/index.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 import { eq } from "drizzle-orm";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
 
@@ -82,7 +82,7 @@ class Stub implements ClassifierPort {
  * what this file is about is whether the Screener asks it and acts on what it says.
  */
 async function billable(_credits = 50) {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "screener-gate" });
   return { ...w, gate: fakeSpendPort() };
 }

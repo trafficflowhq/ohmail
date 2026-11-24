@@ -7,11 +7,12 @@ import { sql } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, schema, type OwnedDb } from "@trafficflow/db/cloud";
 import {
   BUDGET, EXPECTED_FACTS, costOf, ctxOf, factsOf, seed74k, svc, timed, withoutAccountBound, type PlanNode,
 } from "./helpers/mailbox-facts-74k.js";
 import { outstandingDrift, type Db } from "./helpers/mailbox-facts-seed.js";
+import { statementSeam } from "./helpers/statement-seam.js";
 
 /**
  * GET /mailboxes AT 74k ON REAL POSTGRES — `mailbox-facts-budget.test.ts`'s budget, through the
@@ -26,6 +27,10 @@ describe.skipIf(!PG_UP)("GET /mailboxes at 74k on real Postgres", () => {
   let admin: ReturnType<typeof postgres>;
   let client: ReturnType<typeof postgres> | undefined;
   let db: Db;
+  // The context's handle is the factory's: the binder takes a server handle only from the factory
+  // that registered its door.
+  let owned: OwnedDb | undefined;
+  let served: Db;
   const sent: Array<{ text: string; params: unknown[] }> = [];
 
   beforeAll(async () => {
@@ -39,10 +44,13 @@ describe.skipIf(!PG_UP)("GET /mailboxes at 74k on real Postgres", () => {
     db = brandDialect(drizzle(client, {
       schema, logger: { logQuery: (text, params) => { sent.push({ text, params }); } },
     }), "pg") as unknown as Db;
+    owned = makeOwnedDb(urlFor(NAME));
+    served = owned.db as unknown as Db;
     await seed74k(db, false);
   }, 240_000);
 
   afterAll(async () => {
+    await owned?.close().catch(() => {});
     await client?.end({ timeout: 5 }).catch(() => {});
     await admin?.unsafe(`drop database if exists "${NAME}" with (force)`).catch(() => {});
     await admin?.end({ timeout: 5 }).catch(() => {});
@@ -50,7 +58,11 @@ describe.skipIf(!PG_UP)("GET /mailboxes at 74k on real Postgres", () => {
 
   it("reads the caller's outstanding filings alone, in five statements", async () => {
     sent.length = 0;
-    const rows = await svc.list(ctxOf(db));
+    // The census rides the context's own handle: a seam at the drizzle builder of the account's
+    // handle sees each statement the service sends, text and parameters, as `logQuery` saw them.
+    const census = ctxOf(served);
+    census.db = statementSeam(census.db, (text, params) => { sent.push({ text, params }); return null; });
+    const rows = await svc.list(census);
     const statements = [...sent];
     expect(factsOf(rows)).toEqual(EXPECTED_FACTS);
     expect(statements, "the list read and four facts").toHaveLength(5);
@@ -76,6 +88,6 @@ describe.skipIf(!PG_UP)("GET /mailboxes at 74k on real Postgres", () => {
       }
     }
     expect(await outstandingDrift(db)).toBe(0);
-    console.log(`mailbox-facts-budget pg: list() ${JSON.stringify(await timed(() => svc.list(ctxOf(db))))} ms`);
+    console.log(`mailbox-facts-budget pg: list() ${JSON.stringify(await timed(() => svc.list(ctxOf(served))))} ms`);
   }, 120_000);
 });

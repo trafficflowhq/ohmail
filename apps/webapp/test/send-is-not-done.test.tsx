@@ -1,15 +1,18 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { FixturesAdapter, type EngineMutation } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
+import { cursorRow, openRow } from "./ohbox/_finders.js";
 
 /**
- * SEND IS NOT DONE — through the whole shell (the desktop mounts this same AppShell).
+ * SEND IS NOT DONE — through the mounted mail frame.
  *
  * Reported 2026-10-22: "I had a resurfaced message and clicked only send on it and not send and
  * done and it marked as done!" A plain Send leaves a pinned row under Resurfaced and a booked
@@ -52,12 +55,17 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
+  /* The address a key writes is announced by the browser as a task (`hashchange`), and this file's clock is fake:
+     run what is due now, so the seated place, which follows the address, hears it. No time passes. */
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 };
 const click = async (el: Element | null | undefined): Promise<void> => {
   expect(el, "nothing to click").toBeTruthy();
   await act(async () => {
     el!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
+  /* A press that writes the address: let the browser's announcement of it arrive (the clock is fake; none passes). */
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 };
 const drain = async (): Promise<void> => {
   for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
@@ -68,7 +76,7 @@ async function settle(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -78,38 +86,42 @@ async function mountShell(): Promise<void> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
   });
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-  const { preloadRichEditor } = await import("../app/shell/RichEditorLazy.js");
-  await act(async () => { await preloadRichEditor(); });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
   await key("j");
 }
 
-const barButton = (label: string): HTMLButtonElement | undefined =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".abar button")]
-    .find((b) => (b.textContent ?? "").trim().startsWith(label));
+const page = () => within(host!);
+const reader = () => page().queryByRole("region", { name: "Open message" });
+const barButton = (label: string): HTMLElement | null => {
+  const reading = reader();
+  const item = within(document.body).queryByRole("menuitem", {
+    name: (name) => name === label || name.startsWith(`${label} `),
+  });
+  return item ?? (reading === null ? null : within(reading).queryByRole("button", { name: label }));
+};
+
 function idsInGroup(label: string): string[] {
-  const box = host!.querySelector(`[role="listbox"][aria-label="${label}"]`);
-  if (!box) return [];
-  return [...box.querySelectorAll(".row[data-id]")].map((r) => (r as HTMLElement).dataset.id!);
+  const box = page().queryByRole("listbox", { name: label });
+  return box === null ? [] : within(box).queryAllByRole("option").map((row) => row.dataset.id!);
 }
-const editors = (): HTMLElement[] =>
-  [...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
-    .flatMap((m) => [...m.querySelectorAll<HTMLElement>(".rte-surface")]);
-const doneButton = (): HTMLButtonElement | null =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .reply-send-done");
-const sendButton = (): HTMLButtonElement =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .btn.primary")!;
-const replyFor = (): string =>
-  host!.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? "";
+
+const editors = (): HTMLElement[] => {
+  const reading = reader();
+  return reading === null ? [] : within(reading).queryAllByRole("textbox", { name: messages.write.reply.text });
+};
+const doneButton = (): HTMLElement | null => barButton(messages.reply.sendAndDone);
+const sendButton = (): HTMLElement => barButton(messages.write.send)!;
+const replyFor = (): string => editors().length > 0 ? (openRow(host!)?.dataset.id ?? "") : "";
+
+const undoPress = (): HTMLElement | null => page().queryByRole("button", { name: /^Undo\b/ });
 
 async function pinSelected(): Promise<string> {
-  const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+  const id = cursorRow(host!)?.dataset.id;
   expect(id, "no row under the cursor").toBeTruthy();
   await key("Enter");
   await click(barButton("Resurface"));
@@ -164,9 +176,12 @@ const chord = async (shiftKey: boolean): Promise<void> => {
 };
 const kinds = (): string[] => sent.map((m) => m.kind);
 
-async function openBookedFromThePile(): Promise<string> {
-  const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+async function openBookedFromThePile(): Promise<{ id: string; name: string }> {
+  const ohboxRow = cursorRow(host!);
+  const id = ohboxRow?.dataset.id;
+  const name = ohboxRow?.getAttribute("aria-label");
   expect(id, "no row under the cursor").toBeTruthy();
+  expect(name, "the booked row has no sender and subject name").toMatch(/.+: .+/);
   await key("Enter");
   await click(barButton("Resurface"));
   await click(barButton("Tomorrow"));
@@ -175,15 +190,14 @@ async function openBookedFromThePile(): Promise<string> {
     window.dispatchEvent(new Event("hashchange"));
   });
   await settle();
-  await click(host!.querySelector<HTMLElement>(`.view-triage .row[data-id="${id}"]`));
-  await key("Enter");
+  await click(resurfacePile().getByRole("option", { name: name! }));
   await key("r");
   await drain();
   expect(replyFor()).toBe(id);
-  return id!;
+  return { id: id!, name: name! };
 }
-const pile = (): string[] =>
-  [...host!.querySelectorAll<HTMLElement>(".view-triage .row[data-id]")].map((r) => r.dataset.id!);
+const resurfacePile = () =>
+  within(within(host!).getByRole("listbox", { name: messages.resurface.title }));
 
 describe("a plain Send files nothing", () => {
   it("Send on a pinned row puts only the mail on the wire, and the row stays under Resurfaced", async () => {
@@ -199,7 +213,7 @@ describe("a plain Send files nothing", () => {
     await confirm();
     expect(kinds(), "a plain Send spent the pin").toEqual(["mail_send"]);
     expect(idsInGroup("Resurfaced"), "a plain Send filed the resurfaced row").toContain(id);
-    expect(host!.textContent).not.toContain("Sent · marked done");
+    expect(host!.textContent).not.toContain(messages.reply.toastSentAndDone);
   });
 
   it("⌘↩ on a pinned row is the same plain Send", async () => {
@@ -217,7 +231,7 @@ describe("a plain Send files nothing", () => {
 
   it("Send from the Resurface pile keeps the booking", async () => {
     await mountShell();
-    const id = await openBookedFromThePile();
+    const { id, name } = await openBookedFromThePile();
     await type("Danke.");
     sent = [];
     await act(async () => { sendButton().click(); });
@@ -228,16 +242,19 @@ describe("a plain Send files nothing", () => {
       window.dispatchEvent(new Event("hashchange"));
     });
     await settle();
-    expect(pile(), "the booked message left the Resurface pile").toContain(id);
+    expect(
+      resurfacePile().getByRole("option", { name }).dataset.id,
+      "the original booked message left the Resurface pile",
+    ).toBe(id);
   });
 });
 
 /** The reader eases the sent reply into view (`sent-reveal.ts`): every Send door tells it, not only the button. */
 describe("every Send door notes the press for the reader", () => {
   async function openAndReply(): Promise<{ id: string; notes: string[]; off: () => void }> {
-    const { onReplyPress } = await import("../app/shell/sent-reveal.js");
+    const { onReplyPress } = await import("@ohmail/app-logic/writing/sent-reveal");
     await mountShell();
-    const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+    const id = cursorRow(host!)?.dataset.id;
     expect(id, "no row under the cursor").toBeTruthy();
     await key("Enter");
     await key("r");
@@ -278,8 +295,8 @@ describe("CONTROL: Send + Done still files, and Undo restores", () => {
     expect(seen[0]!.messageIds).toEqual([id]);
     expect(seen[0]!.via).toBeUndefined();
     expect(idsInGroup("Resurfaced")).not.toContain(id);
-    expect(host!.textContent).toContain("Sent · marked done");
-    const undo = [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Undo");
+    expect(host!.textContent).toContain(messages.reply.toastSentAndDone);
+    const undo = undoPress();
     expect(undo, "no Undo on the Send + Done pill").toBeTruthy();
     await act(async () => { undo!.click(); });
     await confirm();
@@ -297,6 +314,6 @@ describe("CONTROL: Send + Done still files, and Undo restores", () => {
     await confirm();
     expect(kinds()).toContain("mark_seen");
     expect(idsInGroup("Resurfaced")).not.toContain(id);
-    expect(host!.textContent).toContain("Sent · marked done");
+    expect(host!.textContent).toContain(messages.reply.toastSentAndDone);
   });
 });

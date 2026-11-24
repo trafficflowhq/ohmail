@@ -279,7 +279,7 @@ describe("allowCookieAuth: false — cookie INGRESS and EGRESS are both refused"
     expect(res.status).toBe(204);
     expect(res.headers.getSetCookie()).toEqual([]);
 
-    // …and on the cookie host the same logout DOES clear all three.
+    // On the cookie host the same logout clears the entire session jar.
     const s2 = await seedSession(db, { now: FIXED_NOW });
     const onCookieHost = await real.handle(
       req("POST", "/auth/logout", {
@@ -298,8 +298,8 @@ describe("allowCookieAuth: false — cookie INGRESS and EGRESS are both refused"
     // reason: it is the name the web client opens a local mail mirror from BEFORE asking who is
     // signed in. Left behind on a shared machine it would have the app paint a signed-out
     // person's chrome from a database the sign-out was meant to end.
-    expect(onCookieHost.headers.getSetCookie()).toHaveLength(5);
+    expect(onCookieHost.headers.getSetCookie()).toHaveLength(6);
     expect(onCookieHost.headers.getSetCookie().map((c) => c.split("=")[0]).sort())
-      .toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+      .toEqual(["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
   });
 });

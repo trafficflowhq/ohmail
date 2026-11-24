@@ -1,0 +1,78 @@
+{
+  "component": "CameraSquare",
+  "state": "live",
+  "look": "paper-light-phone",
+  "place": "block",
+  "target": [24, 76, 342, 342],
+  "clip": [24, 76, 342, 342],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [
+    {
+      "borderTop": "3px solid rgb(255, 255, 255)",
+      "borderLeft": "3px solid rgb(255, 255, 255)",
+      "borderRadius": "12px 0px 0px"
+    },
+    {
+      "borderTop": "3px solid rgb(255, 255, 255)",
+      "borderRight": "3px solid rgb(255, 255, 255)",
+      "borderRadius": "0px 12px 0px 0px"
+    },
+    {
+      "borderBottom": "3px solid rgb(255, 255, 255)",
+      "borderLeft": "3px solid rgb(255, 255, 255)",
+      "borderRadius": "0px 0px 0px 12px"
+    },
+    {
+      "borderRight": "3px solid rgb(255, 255, 255)",
+      "borderBottom": "3px solid rgb(255, 255, 255)",
+      "borderRadius": "0px 0px 12px"
+    },
+    { "backgroundColor": "rgb(248, 67, 26)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Camera",
+      "box": [0, 0, 342, 342],
+      "drawn": {
+        "color": "rgb(255, 255, 255)",
+        "backgroundColor": "rgb(18, 16, 14)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "20px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(255, 255, 255)"
+      },
+      "surfaces": [
+        { "box": [75.2, 75.2, 32, 32], "paint": 0 },
+        { "box": [234.8, 75.2, 32, 32], "paint": 1 },
+        { "box": [75.2, 234.8, 32, 32], "paint": 2 },
+        { "box": [234.8, 234.8, 32, 32], "paint": 3 },
+        { "box": [316, 16, 10, 10], "paint": 4 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

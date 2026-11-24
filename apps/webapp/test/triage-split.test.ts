@@ -8,7 +8,7 @@
  * and no way to open the message. Answering something parked meant remembering where it was
  * and finding it again in the Ohbox.
  *
- * `TriageView` now composes `ListPane` + `MessagePane` — the same two components the Ohbox,
+ * `TriageView` now composes `ListPane` + the shared Reader — the same two components the Ohbox,
  * Tag and History compose — so reading a triage message is the same act, with the same verbs,
  * as reading an Ohbox message.
  *
@@ -30,15 +30,16 @@
  *    the new button to something else. `reply-run.test.ts` owns the run's own semantics (a
  *    failed send discharges nothing); this owns the fact that the header's button is that run.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { screen, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { OhmailEngine, type EngineMutation, type MutationResult } from "@ohmail/client-engine";
-import { triage } from "@ohmail/fixtures";
+import { OhmailEngine, type MutationResult } from "@ohmail/client-engine";
+import { triage } from "@ohmail/testing";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
-import { settleEditor } from "./_first-paint.js";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -108,7 +109,7 @@ async function drain(times = 8): Promise<void> {
 }
 
 async function mountTriage(pile = ""): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { DemoShell } = await import("../app/(product)/demo/DemoShell");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -119,7 +120,7 @@ async function mountTriage(pile = ""): Promise<void> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(DemoShell, { serverDemo: true, says: { service: "managed", sendCeiling: "strict" } }) }),
         }),
       }),
     );
@@ -130,48 +131,41 @@ async function mountTriage(pile = ""): Promise<void> {
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
   await drain();
+  await screen.findByRole("heading", { name: "Triage" });
 }
 
-const q = <T extends Element>(sel: string): T | null => host!.querySelector<T>(sel);
-const all = (sel: string): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(sel)];
-const rowNames = (): string[] =>
-  all(".view-triage .list-col .rows .row .who").map((n) => n.textContent ?? "");
+const later = () => within(screen.getByRole("listbox", { name: "Answer Later" }));
+const reader = () => within(screen.getByRole("region", { name: "Reading" }));
+const switcher = () => screen.getByRole("group", { name: "Piles" });
+const select = async (name: RegExp): Promise<void> => {
+  await act(async () => within(switcher()).getByRole("button", { name }).click());
+  await drain();
+};
+const laterRow = () => later().getByRole("option", { name: new RegExp(FIRST_SENDER) });
+
 const kindsOf = (kind: string): EngineMutation[] => dispatched.filter((m) => m.kind === kind);
 
 describe("triage renders a list and a reader", () => {
   it("is the split composition — a list column and a reading column, and no tile stack", async () => {
     await mountTriage();
 
-    const view = q<HTMLElement>(".view-triage");
-    expect(view, "triage did not render at all").not.toBeNull();
-    expect(view!.classList.contains("split"), "triage is not the split layout").toBe(true);
-    expect(q(".view-triage .list-col"), "triage has no list column").not.toBeNull();
-    expect(q(".view-triage .read-col"), "triage has no reading column").not.toBeNull();
-
-    // The tiles, by their own class names. This is the half that makes a revert impossible.
-    expect(q(".view-triage .piles"), "the PilesStack tile stack is back").toBeNull();
-    expect(q(".view-triage .pile-item"), "triage is rendering tiles again").toBeNull();
-
-    expect(rowNames(), "the demo Answer Later pile rendered no rows").toContain(FIRST_SENDER);
+    const list = screen.getByRole("listbox", { name: "Answer Later" });
+    const reading = screen.getByRole("region", { name: "Reading" });
+    expect(list.contains(reading)).toBe(false);
+    expect(reading.contains(list)).toBe(false);
+    expect(laterRow()).toBeTruthy();
   });
 
   it("opens a message in the reading column, with the message pane's own verbs", async () => {
     await mountTriage();
-    const row = all(".view-triage .list-col .rows button.row").find(
-      (r) => (r.querySelector(".who")?.textContent ?? "") === FIRST_SENDER,
-    );
-    expect(row, `no openable row for ${FIRST_SENDER}`).toBeDefined();
-
-    await act(async () => { row!.click(); });
+    const row = laterRow();
+    const selected = row.getAttribute("aria-label");
+    await act(async () => { row.click(); });
     await drain();
-
-    const pane = q<HTMLElement>(".view-triage .read-col .msg");
-    expect(pane, "clicking a triage row opened no message pane").not.toBeNull();
-    // The pane's action bar is what makes this the Ohbox's reader and not a preview.
-    expect(
-      q(".view-triage .read-col .abar"),
-      "the reading column has no action bar — triage mail still has no verbs",
-    ).not.toBeNull();
+    const heading = reader().getByRole("heading", { level: 2 });
+    expect(selected).toContain(heading.textContent);
+    expect(reader().getByRole("button", { name: /^Reply/ })).toBeTruthy();
+    expect(reader().getByRole("button", { name: /^Forward/ })).toBeTruthy();
   });
 });
 
@@ -179,85 +173,57 @@ describe("the pile switcher and the Reply Run are header furniture", () => {
   it("puts the segments ABOVE the scroller, not inside it", async () => {
     await mountTriage();
 
-    const seg = q<HTMLElement>(".view-triage .triage-seg");
-    expect(seg, "the pile switcher is gone").not.toBeNull();
-    expect(
-      seg!.parentElement!.classList.contains("list-col"),
-      "the pile switcher is back inside the scroller — it would scroll away with the rows",
-    ).toBe(true);
-    expect(
-      q(".view-triage .scroller .triage-seg"),
-      "the pile switcher is inside the scroller",
-    ).toBeNull();
-
-    // Three positions, each carrying its own count — the question this screen answers first.
-    const labels = all(".view-triage .triage-seg button").map((b) => b.textContent ?? "");
-    expect(labels.some((l) => l.startsWith("Answer Later")), `segments were: ${labels}`).toBe(true);
-    expect(labels.some((l) => l.startsWith("Parked")), `segments were: ${labels}`).toBe(true);
-    expect(labels.some((l) => l.startsWith("Resurface")), `segments were: ${labels}`).toBe(true);
+    const seg = switcher();
+    const rows = screen.getByRole("listbox", { name: "Answer Later" });
+    const scroller = rows.closest("[tabindex]");
+    expect(scroller).not.toBeNull();
+    expect(scroller!.contains(seg)).toBe(false);
+    expect(seg.compareDocumentPosition(rows) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const name of [/^Answer Later \d/, /^Parked \d/, /^Resurface \d/]) {
+      expect(within(seg).getByRole("button", { name })).toBeTruthy();
+    }
   });
 
   it("keeps the Reply Run on the Answer Later pane only, in the header", async () => {
     await mountTriage();
-    const cta = q<HTMLElement>(".view-triage .triage-cta");
-    expect(cta, "the Reply Run row is gone").not.toBeNull();
-    expect(
-      cta!.parentElement!.classList.contains("list-col"),
-      "the Reply Run is back inside the scroller — on a long pile it is below the fold",
-    ).toBe(true);
-    expect(cta!.querySelector("button"), "the Reply Run button is gone").not.toBeNull();
+    const start = screen.getByRole("button", { name: "Reply Run" });
+    const rows = screen.getByRole("listbox", { name: "Answer Later" });
+    expect(start.compareDocumentPosition(rows) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const scroller = rows.closest("[tabindex]");
+    expect(scroller).not.toBeNull();
+    expect(scroller!.contains(start)).toBe(false);
 
-    // Parked: the same row, the pile's own sentence, and NO button that acts on another pile.
-    await act(async () => {
-      window.location.hash = "#/triage/aside";
-      window.dispatchEvent(new HashChangeEvent("hashchange"));
-    });
-    await drain();
-    expect(
-      q(".view-triage .triage-cta button"),
-      "the Reply Run is offered on Parked, where it operates on a different pile",
-    ).toBeNull();
-    expect(q<HTMLElement>(".view-triage .triage-cta")!.textContent)
-      .toContain("Held here until you come back for it.");
+    await select(/^Parked/);
+    await waitFor(() => expect(within(switcher()).getByRole("button", { name: /^Parked/ }).getAttribute("aria-pressed")).toBe("true"));
+    expect(screen.queryByRole("button", { name: "Reply Run" })).toBeNull();
+    const parked = within(screen.getByRole("listbox", { name: "Parked" }));
+    expect(parked.getAllByRole("option").map((row) => row.querySelector(".oh-row-who")?.textContent))
+      .toEqual(triage.setAside.map((letter) => letter.title));
   });
 
   it("switching horizons drops the cursor — the reader never keeps the last pile's mail", async () => {
     await mountTriage();
-    const row = all(".view-triage .list-col .rows button.row")[0]!;
+    const row = laterRow();
     await act(async () => { row.click(); });
     await drain();
-    const first = q<HTMLElement>(".view-triage .read-col .msg")!.textContent ?? "";
-
-    await act(async () => {
-      window.location.hash = "#/triage/resurface";
-      window.dispatchEvent(new HashChangeEvent("hashchange"));
-    });
-    await drain();
-
-    const after = q<HTMLElement>(".view-triage .read-col .msg")?.textContent ?? "";
-    expect(after, "the reader is still on the previous pile's message").not.toBe(first);
+    const previous = reader().getByRole("heading", { level: 2 }).textContent!;
+    await select(/^Resurface/);
+    expect(reader().queryByRole("heading", { name: previous })).toBeNull();
   });
 });
 
 describe("the header's Reply Run IS the run, and it still clears reply_later", () => {
   it("opens the run over the Answer Later pile and discharges the debt on a delivered reply", async () => {
     await mountTriage();
-    expect(rowNames(), "the demo pile is empty — nothing below would prove anything")
-      .toContain(FIRST_SENDER);
+    const first = laterRow().getAttribute("aria-label");
+    const start = screen.getByRole("button", { name: "Reply Run" });
+    await act(async () => { start.click(); });
+    const box = await screen.findByRole("textbox", { name: "Reply body" });
+    const panel = within(screen.getByRole("toolbar", { name: "Reply run" }));
+    expect(first).toContain(reader().getByRole("heading", { level: 2 }).textContent);
 
-    await act(async () => { q<HTMLButtonElement>(".view-triage .triage-cta button")!.click(); });
-    await drain();
-    // The run's editor is behind `RichEditorLazy` — one seam, one helper.
-    await settleEditor();
-
-    const box = q<HTMLElement>(".fr-card .rte-surface");
-    expect(box, "the header's Reply Run button did not open the run").not.toBeNull();
-    // It is the ANSWER LATER pile the run stepped into, not some other list.
-    expect(q(".fr-card h3")?.textContent ?? "", "the run opened on a message from another pile")
-      .not.toBe("");
-
-    await act(async () => { typeInto(box!, "Grazie mille — perfetto."); });
-    await act(async () => { q<HTMLButtonElement>(".fr-foot button")!.click(); });
+    await act(async () => { typeInto(box, "Grazie mille — perfetto."); });
+    await act(async () => { panel.getByRole("button", { name: "Done → next" }).click(); });
     await drain(12);
 
     expect(kindsOf("mail_send"), "Done did not send").toHaveLength(1);

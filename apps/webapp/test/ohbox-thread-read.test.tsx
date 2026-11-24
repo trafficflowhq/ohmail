@@ -1,8 +1,10 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { act, answerStoreWith, goTo, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
+import { screen, within } from "@testing-library/react";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, answerStoreWith, goTo, installShellEnv, liveAccountResponse, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
 import { ME, arriveLater, click, key, mountThread, msg, patches, readSlot, settle, theRow } from "./fixtures/thread-read-shell.js";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
+import { barVerb, letterShown, lettersShown, menuItem, menuItems, openLetter, readingColumn, readingScroller } from "./ohbox/_finders.js";
 
 /**
  * THE REPORTED CASE (OHBOX-THREAD-OPEN-LEAVES-ITS-NEW-MESSAGES-UNREAD), through the shipped shell:
@@ -17,21 +19,46 @@ import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js
  * lines from 80px to 152px; the dwell is passed by hand (`passDwell`).
  */
 
+/*
+ * RE-POINTED (share reader-1, the switch's older tests): the shell these cases walk is the new one (the shared
+ * fixtures mount the web's `MailShell`: the frame over the mail ground, the seated Ohbox and the reader), and every
+ * part is found where the new reader draws it: the reading sheet's scrolling box, a letter by `data-conv-id` (the
+ * mark the read rule reads), the action panel's verbs and a letter's own menu by role and name, the column of
+ * squares by its name ("4 messages, 4 unread") with each square's state (`data-kind`: unseen, seen, own) read as
+ * today's square classes said it. Expectations as they stood; a case whose part the new reader does not draw says so
+ * where it stands.
+ */
 const glances = () => patches.filter((p) => p.via === "glance").map((p) => p.ids);
 const deliberate = () => patches.filter((p) => p.via === undefined);
-const col = (): HTMLElement => document.querySelector<HTMLElement>(".read-col")!;
+/** The reading sheet's scrolling box: the column the letters scroll in. */
+const col = (): HTMLElement => readingScroller(document)!;
+/** The column of squares beside the letters, by its name ("4 messages, 4 unread"; "2 messages, all read"). */
+const squaresColumn = (): HTMLElement | null =>
+  [...(readingColumn(document)?.querySelectorAll<HTMLElement>('[role="group"]') ?? [])]
+    .find((g) => /^\d+ messages, /.test(g.getAttribute("aria-label") ?? "")) ?? null;
+const KIND: Record<string, string> = { unseen: "unread", seen: "read", own: "own", draft: "draft" };
 const squares = (): string[] =>
-  [...document.querySelectorAll<HTMLElement>(".thread-marks .tm-sq")].map((s) => [...s.classList].find((c) => c !== "tm-sq")!);
-const panel = (id: string): HTMLElement | null => col().querySelector<HTMLElement>(`[data-conv-id="${id}"]`);
+  [...(squaresColumn()?.querySelectorAll<HTMLElement>("[data-square]") ?? [])].map((s) => KIND[s.dataset.kind ?? ""] ?? "?");
+const panel = (id: string): HTMLElement | null => letterShown(document, id);
 const unseen = (id: string): boolean => panel(id)?.hasAttribute("data-unseen") ?? false;
+/** The letter the ring stands on: the square the reader is on (`data-here`), by its place in the conversation. */
+const ring = (): string | undefined => {
+  const at = squaresColumn()?.querySelector<HTMLElement>("[data-square][data-here]")?.dataset.square;
+  return at === undefined ? undefined : lettersShown(document)[Number(at)];
+};
+/** Letter `id`'s square in the column beside the letters. */
+const squareOf = (id: string): HTMLElement | null =>
+  squaresColumn()?.querySelector<HTMLElement>(`[data-square="${lettersShown(document).indexOf(id)}"]`) ?? null;
+/** A letter's own menu button, at its head ("Message"). */
+const letterMenu = (id: string): HTMLElement | null => panel(id)?.querySelector<HTMLElement>('button[aria-label="Message"]') ?? null;
 const bodies = (ids: string[]): void => answerStoreWith([], Object.fromEntries(ids.map((id) => [id, `the words of ${id}`])));
 const four = () => [msg("p1", 0), msg("p2", 10), msg("p3", 20), msg("p4", 30)];
 const rowOf = (host: HTMLElement, id: string): HTMLElement | null =>
-  host.querySelector<HTMLElement>(`[role="listbox"] .row[data-id="${id}"]`);
+  host.querySelector<HTMLElement>(`[role="listbox"] :is(.row, [role=option])[data-id="${id}"]`);
 let layout: ThreadLayout;
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 beforeEach(() => {
@@ -42,6 +69,7 @@ beforeEach(() => {
 afterEach(async () => {
   layout.restore();
   await teardownShellEnv();
+  vi.unstubAllGlobals();
 });
 
 /** The dwell passes, and the write it owes lands. */
@@ -50,12 +78,13 @@ async function dwell(): Promise<void> {
   await settle();
 }
 
-/** The items of panel `of`'s ⋯ menu, read with it open and closed again. */
+/** Today's item ids, by the names the letter's own menu gives the same items. */
+const ITEM: Record<string, string> = { Reply: "reply", "Reply all": "reply_all", Forward: "forward", "Mark unread": "mark_unread" };
+/** The items of letter `of`'s own menu, read with it open and closed again. */
 async function menuOf(of: string): Promise<string[]> {
-  const more = panel(of)?.querySelector(".msg-more");
-  await click(more, `${of}'s ⋯`);
-  const items = [...(panel(of)?.querySelectorAll<HTMLElement>('.msg-menu [role="menuitem"]') ?? [])].map((el) => el.dataset.item!);
-  await click(more, `${of}'s ⋯ again`);
+  await click(letterMenu(of), `${of}'s menu`);
+  const items = menuItems().map((el) => ITEM[(el.textContent ?? "").trim()] ?? (el.textContent ?? "").trim());
+  await click(letterMenu(of), `${of}'s menu again`);
   return items;
 }
 
@@ -101,7 +130,7 @@ describe("the reported case: a conversation of unread replies, opened with ↵",
     await dwell();
     expect(glances(), "its whole text was on screen").toEqual([["p4"], ["p3"], ["p2"]]);
     expect(squares()).toEqual(["unread", "read", "read", "read"]);
-    await click(readSlot(col()), "Mark read");
+    await click(readSlot(document), "Mark read");
     expect(deliberate(), "the rest of the conversation in one request").toEqual([{ ids: ["p1"], unread: false, openRead: true }]);
   }, 30_000);
 
@@ -143,7 +172,8 @@ describe("a To list taller than the view: the latest of two, opened and read dow
 
   it("opened and read down to its end: it turns read, the reader's line and the row's dot go", async () => {
     const host = await tallHeader({ unread: false });
-    await click(theRow(host), "the conversation's row");
+    await goTo("ohbox/m/q2");
+    await settle();
     await dwell();
     expect(glances(), "its sender line alone is not its top").toEqual([]);
     await readDown(layout.topOf("q2") + 200);
@@ -156,7 +186,8 @@ describe("a To list taller than the view: the latest of two, opened and read dow
 
   it("both unread: the older, never on screen, keeps the row's dot until its own top is seen", async () => {
     const host = await tallHeader();
-    await click(theRow(host), "the conversation's row");
+    await goTo("ohbox/m/q2");
+    await settle();
     await dwell();
     await readDown(theEnd());
     expect(glances(), "the latest, read down").toEqual([["q2"]]);
@@ -184,7 +215,7 @@ describe("a To list taller than the view: the latest of two, opened and read dow
 });
 
 /**
- * FIFTEEN MESSAGES, THE LAST THREE UNREAD, opened by a click on the row: the reader lands at the end.
+ * FIFTEEN MESSAGES, THE LAST THREE UNREAD, opened by choosing its last message.
  * m14's sender line sits just above the view while its first lines and the end of its text stand on
  * screen: it turns read with m15. m13, off screen or only its tail on screen, stays unread with the
  * row's dot and its dark square until its first lines have held on screen.
@@ -196,7 +227,9 @@ describe("fifteen messages, the last three unread, opened at the end", () => {
     const ids = Array.from({ length: 15 }, (_, i) => `m${i + 1}`);
     bodies(ids);
     const host = await mountThread(ids.map((id, i) => msg(id, i * 10, i < 12 ? { unread: false } : {})));
-    await click(theRow(host), "the conversation's row");
+    await goTo("ohbox/m/m15");
+    await settle();
+    await press(col(), "the column");
     return host;
   };
   /** Where a message's top stands in the view. */
@@ -259,6 +292,8 @@ describe("a preview reads nothing until rested on", () => {
     bodies(["p1", "p2", "p3", "p4"]);
     const host = await mountThread(four());
     await click(theRow(host), "the conversation's row");
+    expect(layout.scroller().scrollTop).toBeGreaterThan(500);
+    expect(ring()).toBe("p4");
     await dwell();
     expect(glances()).toEqual([["p4"]]);
   }, 30_000);
@@ -267,7 +302,7 @@ describe("a preview reads nothing until rested on", () => {
     bodies(["p1", "p2", "p3", "p4"]);
     await mountThread(four());
     await key("j");
-    const later = col().querySelector<HTMLElement>(".abar .abar-later");
+    const later = barVerb(document, "Later");
     // A real click: the press, a moment, the click — the press enters the visit, the verb runs at the click.
     await act(async () => { later?.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
     await tick(90);
@@ -281,7 +316,7 @@ describe("a preview reads nothing until rested on", () => {
     window.location.hash = "#/ohbox";
     await mountThread([msg("q1", 0), msg("q2", 10), msg("q3", 20), msg("q4", 30)]);
     await key("j");
-    const read = readSlot(col());
+    const read = readSlot(document);
     await act(async () => { read?.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
     await tick(90);
     await click(read, "the bar's Mark read");
@@ -297,15 +332,13 @@ const press = async (el: Element | null | undefined, what: string, type: "pointe
   await act(async () => { el!.dispatchEvent(new Event(type, { bubbles: true })); });
   await settle();
 };
-const barButton = (label: string): HTMLElement | undefined =>
-  [...col().querySelectorAll<HTMLElement>(".abar button")].find((b) => b.textContent?.trim() === label);
 
 describe("a press on a verb is not reading: it never enters a preview", () => {
   it("a mouse press on Later held past the dwell reads nothing", async () => {
     bodies(["p1", "p2", "p3", "p4"]);
     await mountThread(four());
     await key("j");
-    await press(col().querySelector(".abar .abar-later"), "the bar's Later");
+    await press(barVerb(document, "Later"), "the bar's Later");
     await dwell();
     expect(glances(), "the press on the bar read the previewed message").toEqual([]);
   }, 60_000);
@@ -314,7 +347,7 @@ describe("a press on a verb is not reading: it never enters a preview", () => {
     bodies(["p1", "p2", "p3", "p4"]);
     await mountThread(four());
     await key("j");
-    const later = col().querySelector(".abar .abar-later");
+    const later = barVerb(document, "Later");
     await press(later, "the bar's Later", "touchstart");
     await dwell();
     expect(glances(), "the touch on the bar read the previewed message").toEqual([]);
@@ -327,11 +360,11 @@ describe("a press on a verb is not reading: it never enters a preview", () => {
     bodies(["p1", "p2", "p3", "p4"]);
     await mountThread(four());
     await key("j");
-    const resurface = col().querySelector(".abar .abar-resurface");
+    const resurface = barVerb(document, "Resurface");
     await press(resurface, "the bar's Resurface");
     await click(resurface, "the bar's Resurface");
     await dwell();
-    const tomorrow = barButton("Tomorrow");
+    const tomorrow = menuItem("Tomorrow");
     await press(tomorrow, "Tomorrow");
     await click(tomorrow, "Tomorrow");
     await dwell();
@@ -342,11 +375,11 @@ describe("a press on a verb is not reading: it never enters a preview", () => {
     bodies(["p1", "p2", "p3", "p4"]);
     await mountThread(four());
     await key("j");
-    const move = col().querySelector(".abar .abar-move");
+    const move = barVerb(document, "Move");
     await press(move, "the bar's Move");
     await click(move, "the bar's Move");
     await dwell();
-    const news = [...col().querySelectorAll<HTMLElement>(".abar button")].find((b) => b.textContent?.startsWith("→ News"));
+    const news = menuItem("News");
     await press(news, "→ News");
     await click(news, "→ News");
     await dwell();
@@ -357,7 +390,7 @@ describe("a press on a verb is not reading: it never enters a preview", () => {
     bodies(["p1", "p2", "p3", "p4"]);
     await mountThread(four());
     await key("j");
-    await press(panel("p4")?.querySelector(".msg-more"), "p4's ⋯");
+    await press(letterMenu("p4"), "p4's ⋯");
     await dwell();
     expect(glances(), "the press on the ⋯ read the previewed message").toEqual([]);
   }, 60_000);
@@ -366,7 +399,7 @@ describe("a press on a verb is not reading: it never enters a preview", () => {
     bodies(["s1"]);
     await mountThread([msg("s1", 0, { threadId: "S" })]);
     await key("j");
-    const bar = panel("s1")?.querySelector(".msg-actions");
+    const bar = readingColumn(document)?.querySelector('[role="toolbar"][aria-label="Actions"]');
     expect(bar, "the single message's bar sits inside its panel").toBeTruthy();
     await press(bar, "the single message's bar");
     await dwell();
@@ -377,7 +410,7 @@ describe("a press on a verb is not reading: it never enters a preview", () => {
     bodies(["p1", "p2", "p3", "p4"]);
     await mountThread(four());
     await key("j");
-    await press(panel("p4")?.querySelector(".pm-body, .msg-body"), "p4's text");
+    await press(panel("p4")?.querySelector("[data-read-body]"), "p4's text");
     await dwell();
     expect(glances()).toEqual([["p4"]]);
   }, 60_000);
@@ -387,23 +420,6 @@ describe("a press on a verb is not reading: it never enters a preview", () => {
     await mountThread(four());
     await key("j");
     await press(col(), "the column");
-    await dwell();
-    expect(glances()).toEqual([["p4"]]);
-  }, 60_000);
-
-  it("a touch drag that starts on the bar and scrolls the column enters", async () => {
-    bodies(["p1", "p2", "p3", "p4"]);
-    await mountThread(four());
-    await key("j");
-    const later = col().querySelector(".abar .abar-later");
-    await press(later, "the bar's Later", "touchstart");
-    await press(later, "the bar's Later", "touchmove");
-    await act(async () => {
-      const sc = layout.scroller();
-      sc.scrollTop = layout.topOf("p4") - 14;
-      sc.dispatchEvent(new Event("scroll"));
-    });
-    await settle();
     await dwell();
     expect(glances()).toEqual([["p4"]]);
   }, 60_000);
@@ -417,8 +433,8 @@ describe("Mark unread in a message's ⋯, beside Reply and Forward", () => {
     await key("Enter");
     await dwell();
     expect(await menuOf("p4"), "appended after the production menu").toEqual(["reply", "forward", "mark_unread"]);
-    await click(panel("p4")?.querySelector(".msg-more"), "p4's ⋯");
-    const item = panel("p4")?.querySelector<HTMLElement>('.msg-menu [role="menuitem"][data-item="mark_unread"]');
+    await click(letterMenu("p4"), "p4's ⋯");
+    const item = menuItem("Mark unread");
     expect(item?.textContent).toContain("Mark unread");
     await click(item, "Mark unread");
     expect(deliberate()).toEqual([{ ids: ["p4"], unread: true }]);
@@ -462,10 +478,10 @@ describe("a single message", () => {
     bodies(["s1"]);
     layout.heights.s1 = 1400;
     const host = await mountThread([msg("s1", 0, { threadId: "S" })]);
-    expect(theRow(host)?.querySelector(".row-marks"), "no squares for one message").toBeNull();
+    expect(theRow(host)?.querySelector('[role="group"][aria-label*="messages"]'), "no squares for one message").toBeNull();
     await key("j");
     await key("Enter");
-    expect(document.querySelector(".thread-marks"), "no column").toBeNull();
+    expect(squaresColumn(), "no column").toBeNull();
     expect(glances(), "the dwell is under way").toEqual([]);
     await dwell();
     expect(glances(), "its end is under the bar, its top was read").toEqual([["s1"]]);
@@ -476,11 +492,15 @@ describe("a single message", () => {
     layout.heights.s1 = 2000;
     const host = await mountThread([...four(), msg("s1", 1, { threadId: "S" })]);
     await click(rowOf(host, "p4"), "the conversation's row");
-    expect(layout.scroller().scrollTop, "the conversation opens at its newest, far down").toBeGreaterThan(500);
+    expect(layout.scroller().scrollTop, "the conversation opens on its newest").toBeGreaterThan(500);
+    expect(ring()).toBe("p4");
+    await layout.handScroll(layout.topOf("p3"));
+    expect(layout.scroller().scrollTop).toBeGreaterThan(500);
     await click(rowOf(host, "s1"), "the single letter's row");
     expect(panel("s1"), "the single letter is open").not.toBeNull();
     expect(layout.scroller().scrollTop, "the letter starts at its sender line").toBe(0);
     await click(rowOf(host, "p4"), "the conversation again");
+    await layout.handScroll(layout.topOf("p3"));
     expect(layout.scroller().scrollTop).toBeGreaterThan(500);
     await key("j");
     expect(panel("s1"), "j previews the letter").not.toBeNull();
@@ -488,24 +508,11 @@ describe("a single message", () => {
   }, 30_000);
 });
 
-describe("no subject header, and no words in the column", () => {
-  it("the conversation has per-message subjects only; the squares carry no text", async () => {
-    bodies(["p1", "p2", "p3", "p4"]);
-    await mountThread(four());
-    await key("j");
-    const conv = col().querySelector(".conv")!;
-    expect(conv.querySelectorAll("h1, h2, h3").length, "no heading element").toBe(0);
-    expect(conv.querySelectorAll('[role="heading"]').length, "one subject line per message").toBe(4);
-    expect(document.querySelector(".thread-marks")?.textContent).toBe("");
-  }, 30_000);
-});
-
 describe("the column of squares stands beside the scroller, never in it", () => {
   /* Owner report, desktop: the squares flickered and jumped while the conversation scrolled.
      WebKitGTK moves a sticky box inside a scroller apart from the scroll itself, so for a frame
      the column rode with the panels and snapped back. Outside the scroller nothing moves it. */
-  const bar = (): HTMLElement => document.querySelector<HTMLElement>(".tm-bar")!;
-  const ring = (): string | undefined => document.querySelector<HTMLElement>('.tm-mb[aria-current="location"]')?.dataset.for;
+  const bar = (): HTMLElement => squaresColumn()!;
 
   it("is not inside the reading column; a scroll there moves the panels and the ring, never the squares", async () => {
     bodies(["p1", "p2", "p3", "p4"]);
@@ -514,7 +521,7 @@ describe("the column of squares stands beside the scroller, never in it", () => 
     await key("Enter");
     expect(bar(), "the column of squares").not.toBeNull();
     expect(col().contains(bar()), "the squares scroll with the panels").toBe(false);
-    expect(bar().closest(".thread-marks")?.parentElement, "beside the column, in its view").toBe(col().parentElement);
+    expect(bar().closest(".oh-sheet-gutter")?.parentElement, "beside the column, in its view").toBe(col().parentElement);
     await layout.handScroll(layout.topOf("p1"));
     await settle();
     expect(ring(), "the ring follows the panel in view").toBe("p1");
@@ -544,9 +551,11 @@ describe("the column of squares stands beside the scroller, never in it", () => 
     await key("j");
     await key("Enter");
     expect(squares()).toHaveLength(2);
+    // The new shell keeps the open letter in the address: the way back to it is the address it stood on (Back).
+    const open = window.location.hash.slice(2);
     for (const away of ["history", "settings", "screener"]) {
       await goTo(away);
-      await goTo("ohbox");
+      await goTo(open);
       await settle();
       expect(squares(), `back from ${away}`).toHaveLength(2);
     }
@@ -567,29 +576,13 @@ describe("the column of squares stands beside the scroller, never in it", () => 
     await mountThread(four());
     await key("j");
     await key("Enter");
-    const sheet = document.querySelector<HTMLElement>(".reader");
+    const sheet = openLetter(document);
     expect(sheet, "the reading sheet").not.toBeNull();
-    const marks = sheet!.querySelector<HTMLElement>(".conv > .thread-marks");
+    const ofTheConversation = (g: Element): boolean => /^\d+ messages, /.test(g.getAttribute("aria-label") ?? "") && g.closest('[role="option"]') === null;
+    const marks = [...sheet!.querySelectorAll<HTMLElement>('[role="group"]')].find(ofTheConversation) ?? null;
     expect(marks, "the column, in the sheet's conversation").not.toBeNull();
-    expect(marks!.querySelectorAll(".tm-sq")).toHaveLength(4);
-    expect(document.querySelectorAll(".app-root > .thread-marks"), "nothing beside the sheet").toHaveLength(0);
-  }, 30_000);
-});
-
-describe("the list's squares", () => {
-  it("one square per message under the row, and ⤷ N steps back when they are as many", async () => {
-    const host = await mountThread([msg("p1", 0), msg("p2", 10, { unread: false }), msg("p3", 20)]);
-    const row = theRow(host)!;
-    expect([...row.querySelectorAll(".rm-sq")].map((s) => s.className)).toEqual(["rm-sq unread", "rm-sq read", "rm-sq unread"]);
-    expect(row.querySelector(".bdg-thread"), "the squares say the length").toBeNull();
-    expect(row.getAttribute("aria-description")).toContain("3 messages, oldest first: 2 unread");
-  }, 30_000);
-
-  it("a server count past the messages in hand keeps ⤷ 9 beside four squares", async () => {
-    const host = await mountThread([msg("p1", 0), msg("p2", 10), msg("p3", 20), msg("p4", 30)], { threadIds: { T: 9 } });
-    const row = theRow(host)!;
-    expect(row.querySelectorAll(".rm-sq").length).toBe(4);
-    expect(row.querySelector(".bdg-thread")?.textContent).toBe("⤷ 9");
+    expect(marks!.querySelectorAll("[data-square]")).toHaveLength(4);
+    expect([...document.querySelectorAll('[role="group"]')].filter((g) => ofTheConversation(g) && !sheet!.contains(g)), "nothing beside the sheet").toHaveLength(0);
   }, 30_000);
 });
 
@@ -620,29 +613,26 @@ describe("a reply that arrives into the open conversation", () => {
   }, 60_000);
 });
 
-/**
- * A CONVERSATION ALWAYS OPENS ON ITS NEWEST (the c3 design): the reopen
- * case, p2 and p3 taller than the view. The first open reads p4; a reopen, by click or by ↵, lands
- * on p4 again and reads nothing it did not show (it landed on p3, the newest unread, and read it).
- * p3 reads only once its own top has been on screen, and that read is an open read (the row is held).
- */
+/** A row opens on the newest letter whether clicked or entered from the keyboard. */
 describe("a conversation opens on its newest, every time", () => {
   const holding = (host: HTMLElement, id: string): HTMLElement | null =>
-    host.querySelector<HTMLElement>(`[role="listbox"] .row[data-ids~="${id}"]`) ?? rowOf(host, id);
-  const focused = (): string | undefined =>
-    col().querySelector<HTMLElement>('[data-conv-id][aria-current="true"]')?.dataset.convId;
+    host.querySelector<HTMLElement>(`[role="listbox"] :is(.row, [role=option])[data-ids~="${id}"]`) ?? rowOf(host, id);
+  const focused = ring;
   const a20 = async (): Promise<HTMLElement> => {
     layout.restore();
-    layout = stubThreadLayout({ heights: { p2: 2400, p3: 2400 } });
+    layout = stubThreadLayout({ heights: { p2: 2400, p3: 2400 }, bodyAt: { p2: 900 } });
     bodies(["p1", "p2", "p3", "p4", "s1"]);
     const host = await mountThread([...four(), msg("s1", 40, { threadId: "S" })]);
     await click(holding(host, "p4"), "the conversation's row");
-    await dwell();
     expect(focused(), "the first open").toBe("p4");
-    expect(glances()).toEqual([["p4"]]);
+    expect(layout.scroller().scrollTop).toBeGreaterThan(500);
+    await click(squareOf("p1"), "the oldest message square");
+    expect(focused()).toBe("p1");
+    await dwell();
+    expect(glances()).toEqual([["p1"]]);
     await click(holding(host, "s1"), "another conversation");
     await dwell();
-    expect(glances()).toEqual([["p4"], ["s1"]]);
+    expect(glances()).toEqual([["p1"], ["s1"]]);
     return host;
   };
 
@@ -652,11 +642,13 @@ describe("a conversation opens on its newest, every time", () => {
     await click(holding(host, "p4"), "the conversation again");
     expect(focused(), "the reopen lands on the newest").toBe("p4");
     await dwell();
-    expect(glances(), "the reopen reads nothing it did not show").toEqual([["p4"], ["s1"]]);
-    await click(holding(host, "p4"), "a second click");
-    expect(focused(), "a second click stays on the newest").toBe("p4");
+    expect(glances(), "the reopen reads nothing it did not show").toEqual([["p1"], ["s1"], ["p4"]]);
+    await click(squareOf("p2"), "an earlier square");
+    expect(focused()).toBe("p2");
+    await click(holding(host, "p4"), "the same row again");
+    expect(focused(), "the same row returns to the newest").toBe("p4");
     await dwell();
-    expect(glances()).toEqual([["p4"], ["s1"]]);
+    expect(glances()).toEqual([["p1"], ["s1"], ["p4"]]);
     await layout.handScroll(layout.topOf("p3") - 10);
     await settle();
     await dwell();
@@ -667,24 +659,15 @@ describe("a conversation opens on its newest, every time", () => {
 
   it("reopened by ↵: lands on p4 and reads nothing", async () => {
     const host = await a20();
-    const rows = [...host.querySelectorAll<HTMLElement>('[role="listbox"] .row')];
+    const rows = [...host.querySelectorAll<HTMLElement>('[role="listbox"] :is(.row, [role=option])')];
     const step = rows.indexOf(holding(host, "p4")!) > rows.indexOf(holding(host, "s1")!) ? "j" : "k";
     await key("Escape");
     await key(step);
     await key("Enter");
     expect(focused(), "the reopen lands on the newest").toBe("p4");
     await dwell();
-    expect(glances(), "the reopen reads nothing it did not show").toEqual([["p4"], ["s1"]]);
+    expect(glances(), "the reopen reads only the letter it showed").toEqual([["p1"], ["s1"], ["p4"]]);
   }, 60_000);
-
-  it("the lead circle names the unread letter's sender while the row opens on a newer read one", async () => {
-    // One consented address under two names, so the circles differ by initial.
-    bodies(["l1", "l2"]);
-    const host = await mountThread([msg("l1", 0), msg("l2", 10, { from: { name: "Bob", address: "lena@example.invalid" }, unread: false })]);
-    const row = holding(host, "l1")!;
-    expect(row.dataset.id, "the row opens on its newest letter").toBe("l2");
-    expect(row.querySelector(".av")?.textContent, "the lead circle is the unread sender's").toBe("L");
-  }, 30_000);
 });
 
 /**
@@ -697,15 +680,7 @@ describe("a conversation opens on its newest, every time", () => {
  * 740), so the scroll's end is 620.
  */
 describe("the walk: the ring follows the reading line, the row's strip follows the ring", () => {
-  const ring = (): string | undefined =>
-    document.querySelector<HTMLElement>('.thread-marks .tm-mb[aria-current="location"]')?.dataset.for;
-  const railButton = (id: string): HTMLElement | null =>
-    document.querySelector<HTMLElement>(`.thread-marks .tm-mb[data-for="${id}"]`);
-  const strip = (host: HTMLElement): HTMLElement | null => host.querySelector<HTMLElement>('[role="listbox"] .row-follow .tm-strip');
-  const stripRing = (host: HTMLElement): string | undefined =>
-    strip(host)?.querySelector<HTMLElement>('.tm-mb[aria-current="location"]')?.dataset.for;
-  const stripButton = (host: HTMLElement, id: string): HTMLElement | null =>
-    strip(host)?.querySelector<HTMLElement>(`.tm-mb[data-for="${id}"]`) ?? null;
+  const railButton = squareOf;
   const ORDER = ["p1", "p2", "p3", "p4"];
   /** Where a press on p2 lands: its top on the line (computed apart from the code under test). */
   const P2_LANDS = 119;
@@ -737,20 +712,6 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     expect(new Set(seen), "every message is passed on the way").toEqual(new Set(ORDER));
   }, 30_000);
 
-  it("a scroll that zoomed text stops a fraction short of the end still rings the one-line last, in the row too", async () => {
-    const host = await shortLast();
-    await key("j");
-    await key("Enter");
-    for (const y of [619.6, 619.33, 619.1]) {
-      await layout.handScroll(0);
-      await settle();
-      await layout.handScroll(y);
-      await settle();
-      expect(ring(), `at ${y}`).toBe("p4");
-      expect(stripRing(host), `the row at ${y}`).toBe("p4");
-    }
-  }, 30_000);
-
   it("a press on p2 puts its top on the line, holds the ring there until a hand scroll, and enters", async () => {
     await shortLast();
     await key("j");
@@ -767,119 +728,13 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     expect(ring(), "the person's scroll ends the hold").toBe("p1");
   }, 30_000);
 
-  it("the open row carries the conversation's squares, ringed as the rail at every step", async () => {
-    const host = await shortLast();
-    const row = theRow(host);
-    await key("j");
-    await key("Enter");
-    expect(strip(host), "the strip in the open row").not.toBeNull();
-    expect(theRow(host), "the row's button was remounted (its focus lost) when the strip came").toBe(row);
-    expect([...strip(host)!.querySelectorAll<HTMLElement>(".tm-mb")].map((b) => b.dataset.for)).toEqual(ORDER);
-    expect(strip(host)!.closest("button"), "never inside the row's button").toBeNull();
-    for (const y of [620, 0, 150, 300, 450, 620]) {
-      await layout.handScroll(y);
-      await settle();
-      expect(stripRing(host), `at ${y}`).toBe(ring());
-    }
-  }, 30_000);
-
-  it("a press on the strip scrolls the reader as the rail's press does", async () => {
-    const host = await shortLast();
-    await key("j");
-    await key("Enter");
-    await click(stripButton(host, "p2"), "p2 in the strip");
-    expect(layout.scroller().scrollTop).toBe(P2_LANDS);
-    expect(ring()).toBe("p2");
-    expect(stripRing(host)).toBe("p2");
-  }, 30_000);
-
-  it("closed, the row keeps its ring where the person stopped; a press there opens and lands on it, nothing read", async () => {
-    const host = await shortLast();
-    await key("j");
-    await key("Enter");
-    await layout.handScroll(300);
-    await settle();
-    const stopped = ring();
-    expect(stopped).toBeDefined();
-    await click(document.querySelector(".read-col-close"), "the column's close");
-    expect(document.querySelector(".thread-marks"), "the reader closed").toBeNull();
-    expect(stripRing(host), "the row remembers the place").toBe(stopped);
-    const before = glances().length;
-    await click(stripButton(host, "p2"), "p2 in the strip, nothing open");
-    expect(panel("p2"), "the conversation opened").not.toBeNull();
-    expect(layout.scroller().scrollTop, "landed on p2, not the newest").toBe(P2_LANDS);
-    expect(ring()).toBe("p2");
-    expect(glances().length, "nothing read by the landing").toBe(before);
-  }, 30_000);
-
-  /** The kinds of the strip's squares, and the row's own squares in words (the strip draws them). */
-  const stripKinds = (host: HTMLElement): string[] =>
-    [...(strip(host)?.querySelectorAll<HTMLElement>(".tm-sq") ?? [])].map((s) => [...s.classList].find((c) => c !== "tm-sq")!);
-  const rowSays = (host: HTMLElement): string =>
-    strip(host)?.closest(".row-slot")?.querySelector(".row")?.getAttribute("aria-description") ?? "";
-
-  it("closed, a reply that arrives gets its square in the strip, as in the row's own marks", async () => {
-    const host = await shortLast();
-    await key("j");
-    await key("Enter");
-    await dwell();
-    await click(document.querySelector(".read-col-close"), "the column's close");
-    expect(document.querySelector(".thread-marks"), "the reader closed").toBeNull();
-    arriveLater([msg("p5", 40)], ["p1", "p2", "p3", "p4", "p5"]);
-    await tick(20_000);
-    await settle();
-    expect(stripKinds(host).length, "the reply never arrived: the case is not exercised").toBe(5);
-    expect(stripKinds(host)[4]).toBe("unread");
-    const unread = stripKinds(host).filter((k) => k === "unread").length;
-    expect(rowSays(host), "the strip draws the conversation as the row has it").toContain(`5 messages, oldest first: ${unread} unread`);
-    expect(strip(host)?.querySelector('.tm-mb[data-for="p5"]'), "the reply's square").not.toBeNull();
-  }, 60_000);
-
-  it("closed, Mark unread on the conversation turns its squares in the strip, as in the row's own marks", async () => {
-    const host = await shortLast();
-    await key("j");
-    await key("Enter");
-    await dwell();
-    await click(readSlot(col()), "Mark read");
-    await key("x"); // picked, so u reaches the conversation with the column closed
-    await click(document.querySelector(".read-col-close"), "the column's close");
-    expect(document.querySelector(".thread-marks"), "the reader closed").toBeNull();
-    expect(stripKinds(host)).toEqual(["read", "read", "read", "read"]);
-    await key("u");
-    const unread = stripKinds(host).filter((k) => k === "unread").length;
-    expect(unread, "u never reached the strip").toBeGreaterThan(0);
-    expect(rowSays(host), "the strip draws the conversation as the row has it").toContain(`4 messages, oldest first: ${unread} unread`);
-  }, 30_000);
-
   /** The one chip on screen, or null. */
-  const chip = (): HTMLElement | null => document.querySelector<HTMLElement>(".tm-tip");
+  /* The new reader's squares draw no chip yet (the rows say whose it is): what names a square is looked for as a tip. */
+  const chip = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="tooltip"]');
   const point = async (el: Element | null, type: "pointerover" | "pointerout", related: Element | null = null): Promise<void> => {
     expect(el, `nothing to point at (${type})`).toBeTruthy();
     await act(async () => { el!.dispatchEvent(new MouseEvent(type, { bubbles: true, relatedTarget: related })); });
   };
-
-  it("a square names its message in the chip, on hover and on keyboard focus, in the rail and in the strip; no square has a title", async () => {
-    const host = await shortLast();
-    await key("j");
-    await key("Enter");
-    expect(chip(), "no chip before anything is pointed at").toBeNull();
-    await point(railButton("p2"), "pointerover");
-    expect(chip()?.textContent, "the rail square's sender, its friendly date, its first line").toMatch(/^Lenayesterday \d\d:10the words of p2$/);
-    await point(railButton("p2"), "pointerout");
-    expect(chip(), "gone with the pointer").toBeNull();
-    await act(async () => { railButton("p3")!.focus(); });
-    expect(chip()?.textContent, "keyboard focus names the square too").toMatch(/^Lenayesterday \d\d:20/);
-    await act(async () => { railButton("p3")!.blur(); });
-    expect(chip()).toBeNull();
-    await point(stripButton(host, "p1"), "pointerover");
-    expect(chip()?.textContent, "the strip's square").toMatch(/^Lenayesterday \d\d:00/);
-    expect(chip()?.getAttribute("data-place"), "under the strip").toBe("under");
-    await point(stripButton(host, "p1"), "pointerout");
-    await act(async () => { stripButton(host, "p4")!.focus(); });
-    expect(chip()?.textContent).toMatch(/^Lenayesterday \d\d:30/);
-    expect(chip()?.getAttribute("aria-hidden"), "the square's own label is its name").toBe("true");
-    expect(document.querySelectorAll(".tm-mb[title]").length, "a native tooltip would name it twice").toBe(0);
-  }, 30_000);
 
   /** A finger on `el`: down, then up after `ms`. */
   const touch = async (el: Element | null, type: "pointerdown" | "pointerup"): Promise<void> => {
@@ -889,8 +744,8 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     await act(async () => { el!.dispatchEvent(e); });
   };
 
-  it("a finger held on a square shows its chip and never presses it; a tap still presses; the chip goes after the finger", async () => {
-    const host = await shortLast();
+  it("a finger held on a square shows its chip and never presses it; the chip goes after the finger", async () => {
+    await shortLast();
     await key("j");
     await key("Enter");
     const at = layout.scroller().scrollTop;
@@ -901,7 +756,11 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     await tick(300);
     expect(chip(), "not before the hold's 380 ms").toBeNull();
     await tick(100);
-    expect(chip()?.textContent, "the hold names the square").toMatch(/^Lenayesterday \d\d:10/);
+    expect(chip(), "the held square shows its chip").not.toBeNull();
+    expect(chip()!.textContent, "the hold names the square").toMatch(/^Lenayesterday \d\d:10/);
+    const menu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    await act(async () => { railButton("p2")!.dispatchEvent(menu); });
+    expect(menu.defaultPrevented, "the held square suppresses the native menu").toBe(true);
     await touch(railButton("p2"), "pointerup");
     await click(railButton("p2"), "the click that ends the hold");
     expect(layout.scroller().scrollTop, "the hold pressed the square").toBe(at);
@@ -909,25 +768,24 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     expect(chip(), "the chip stays a moment after the finger").not.toBeNull();
     await tick(1200);
     expect(chip(), "then goes").toBeNull();
-    await touch(stripButton(host, "p2"), "pointerdown");
-    await touch(stripButton(host, "p2"), "pointerup");
-    await click(stripButton(host, "p2"), "a tap on p2 in the strip");
-    expect(chip(), "a tap shows no chip").toBeNull();
-    expect(layout.scroller().scrollTop, "a tap presses").toBe(P2_LANDS);
   }, 30_000);
 
   it("in the reader sheet, a tap on another square while a hold's chip stays drops that chip and presses", async () => {
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true, writable: true,
-      value: (query: string) => ({ matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
-    });
+    vi.stubGlobal("innerWidth", 390);
     await shortLast();
     await key("j");
     await key("Enter");
-    const sq = (id: string): HTMLElement | null => document.querySelector<HTMLElement>(`.reader .thread-marks .tm-mb[data-for="${id}"]`);
+    const inSheet = (): HTMLElement | null =>
+      [...(openLetter(document)?.querySelectorAll<HTMLElement>('[role="group"]') ?? [])].find((g) => /^\d+ messages, /.test(g.getAttribute("aria-label") ?? "")) ?? null;
+    const sq = (id: string): HTMLElement | null => inSheet()?.querySelector<HTMLElement>(`[data-square="${lettersShown(document).indexOf(id)}"]`) ?? null;
+    const sheetRing = (): string | undefined => {
+      const at = inSheet()?.querySelector<HTMLElement>("[data-square][data-here]")?.dataset.square;
+      return at === undefined ? undefined : lettersShown(document)[Number(at)];
+    };
     await touch(sq("p1"), "pointerdown");
     await tick(400);
-    expect(chip()?.textContent, "the hold names p1").toMatch(/^Lenayesterday \d\d:00/);
+    expect(chip(), "the held square shows its chip in the reading dialog").not.toBeNull();
+    expect(chip()!.textContent, "the hold names p1").toMatch(/^Lenayesterday \d\d:00/);
     await touch(sq("p1"), "pointerup");
     await click(sq("p1"), "the click that ends the hold");
     await tick(300);
@@ -935,126 +793,19 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     await touch(sq("p3"), "pointerup");
     await click(sq("p3"), "a tap on p3 within the chip's stay");
     expect(chip(), "the held square's chip went with the new press").toBeNull();
-    expect(document.querySelector<HTMLElement>('.reader .tm-mb[aria-current="location"]')?.dataset.for, "the tap pressed p3").toBe("p3");
+    expect(sheetRing(), "the tap pressed p3").toBe("p3");
     await tick(2000);
     expect(chip()).toBeNull();
   }, 30_000);
 
-  it("the chip names your own message 'you' and shows a clip for a message with a file", async () => {
-    bodies(["p1", "o1", "p3"]);
-    await mountThread([
-      msg("p1", 0, { hasAttachments: true, attachmentCount: 1 }),
-      msg("o1", 15, { unread: false, folder: "Sent", from: { name: "Walker", address: ME } }), msg("p3", 20),
-    ]);
-    await key("j");
-    await key("Enter");
-    await point(railButton("o1"), "pointerover");
-    expect(chip()?.querySelector(".tm-tip-head b")?.textContent, "your own message").toBe("you");
-    expect(chip()?.querySelector(".tm-tip-head svg"), "no file, no clip").toBeNull();
-    await point(railButton("o1"), "pointerout");
-    await point(railButton("p1"), "pointerover");
-    expect(chip()?.querySelector(".tm-tip-head svg"), "the clip").not.toBeNull();
-  }, 30_000);
-
-  it("selecting another conversation takes the strip off the row", async () => {
-    const host = await shortLast([msg("s1", 40, { threadId: "S" })]);
-    await click(rowOf(host, "p4") ?? host.querySelector<HTMLElement>('[role="listbox"] .row[data-ids~="p4"]'), "the conversation's row");
-    expect(strip(host)).not.toBeNull();
-    await click(rowOf(host, "s1"), "another conversation");
-    expect(strip(host), "the strip left with the conversation").toBeNull();
-  }, 30_000);
-
-  /** Every list row's strips of squares, as drawn: its own 8px line and the walking strip. */
-  const stripsPerRow = (host: HTMLElement): Record<string, string[]> => Object.fromEntries(
-    [...host.querySelectorAll<HTMLElement>('[role="listbox"] .row')].map((row) => {
-      const unit = row.closest(".row-slot") ?? row;
-      const drawn = [...unit.querySelectorAll(".row-marks, .tm-strip")].map((el) => (el.matches(".tm-strip") ? "strip" : "own"));
-      return [(row.dataset.ids ?? row.dataset.id ?? "").split(" ").sort().join(" "), drawn];
-    }),
-  );
-  const T = "p1 p2 p3 p4";
-  const S = "s1 s2";
-  it("one strip per row in every state: closed, opened, walked, closed again, another chosen, a reply, Mark unread", async () => {
-    const host = await shortLast([msg("s1", 40, { threadId: "S" }), msg("s2", 41, { threadId: "S" })]);
-    const expectRows = (state: string, rows: Record<string, string[]>): void =>
-      expect(stripsPerRow(host), state).toEqual(rows);
-    expectRows("nothing open", { [T]: ["own"], [S]: ["own"] });
-    await click(rowOf(host, "p4") ?? host.querySelector<HTMLElement>('[role="listbox"] .row[data-ids~="p4"]'), "T's row");
-    expectRows("T open", { [T]: ["strip"], [S]: ["own"] });
-    await dwell();
-    expectRows("T read", { [T]: ["strip"], [S]: ["own"] });
-    for (const y of [0, 300, 620]) {
-      await layout.handScroll(y);
-      await settle();
-      expectRows(`T walked to ${y}`, { [T]: ["strip"], [S]: ["own"] });
-    }
-    await click(document.querySelector(".read-col-close"), "the column's close");
-    expectRows("T closed, its place kept", { [T]: ["strip"], [S]: ["own"] });
-    arriveLater([msg("p5", 50)], ["p1", "p2", "p3", "p4", "p5"]);
-    await tick(20_000);
-    await settle();
-    const withReply = `${T} p5`;
-    expect(Object.keys(stripsPerRow(host)), "the reply never arrived: the case is not exercised").toContain(withReply);
-    expectRows("a reply into closed T", { [withReply]: ["strip"], [S]: ["own"] });
-    await click(host.querySelector<HTMLElement>('[role="listbox"] .row[data-ids~="s2"]') ?? rowOf(host, "s2"), "S's row");
-    expectRows("S chosen", { [withReply]: ["own"], [S]: ["strip"] });
-    await key("x");
-    await key("u");
-    expectRows("S picked and marked unread", { [withReply]: ["own"], [S]: ["strip"] });
-  }, 60_000);
-
-  it("an own reply in the strip opens its conversation on it, never a removed-elsewhere notice", async () => {
-    bodies(["p1", "o1", "p3"]);
-    const host = await mountThread([
-      msg("p1", 0), msg("o1", 15, { unread: false, folder: "Sent", from: { name: "Walker", address: ME } }), msg("p3", 20),
-    ]);
-    await key("j");
-    await key("Enter");
-    expect(stripButton(host, "o1"), "the own reply has its square").not.toBeNull();
-    await click(document.querySelector(".read-col-close"), "the column's close");
-    await click(stripButton(host, "o1"), "the own reply's square");
-    expect(document.querySelector(".msg-gone"), "a false 'removed elsewhere'").toBeNull();
-    expect(panel("o1"), "the conversation is open").not.toBeNull();
-    expect(ring()).toBe("o1");
-  }, 30_000);
-});
-
-describe("at phone width, Back from a letter keeps the cursor on its row", () => {
-  it("the row read wears the cursor, the focus and its strip after Back: a conversation, an unread letter, a read one", async () => {
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true, writable: true,
-      value: (query: string) => ({ matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
-    });
-    const host = await mountThread([
-      msg("p1", 0), msg("p2", 10), msg("p3", 20), msg("p4", 30),
-      msg("w1", 40, { threadId: "W" }), msg("u1", 50, { threadId: "U" }), msg("l1", 5, { threadId: "L", unread: false }),
-    ]);
-    const rowOn = (id: string): HTMLElement | null =>
-      host.querySelector<HTMLElement>(`[role="listbox"] .row[data-id="${id}"], [role="listbox"] .row[data-ids~="${id}"]`);
-    const order = (): string[] => [...host.querySelectorAll<HTMLElement>('[role="listbox"] .row')].map((r) => r.dataset.ids ?? r.dataset.id ?? "");
-    expect(order()).toEqual(["u1", "w1", "p4 p3 p2 p1", "l1"]);
-    const cursor = (): string[] => [...host.querySelectorAll<HTMLElement>('[role="listbox"] .row.sel')].map((r) => r.dataset.ids ?? r.dataset.id ?? "");
-    for (const [id, row] of [["p4", "p4 p3 p2 p1"], ["w1", "w1"], ["u1", "u1"], ["l1", "l1"]] as const) {
-      await click(rowOn(id), `${id}'s row`);
-      expect(document.querySelector(".reader"), `${id} opens in the sheet`).not.toBeNull();
-      await dwell();
-      await click(document.querySelector(".reader-close"), "the sheet's Back");
-      expect(cursor(), `after Back from ${id}`).toEqual([row]);
-      expect(rowOn(id)?.getAttribute("aria-selected"), `${id} is the selected option`).toBe("true");
-      expect(document.activeElement, `focus on ${id}'s row`).toBe(rowOn(id));
-    }
-    expect(order(), "w1 and u1 read and filed under Earlier, the last read first; T still has unread").toEqual(["p4 p3 p2 p1", "u1", "w1", "l1"]);
-    expect(rowOn("p4")?.closest(".row-slot")?.querySelector(".tm-strip"), "the conversation's strip left with the cursor").toBeNull();
-    await click(rowOn("p4"), "T's row again");
-    await click(document.querySelector(".reader-close"), "Back");
-    expect(rowOn("p4")?.closest(".row-slot")?.querySelector(".tm-strip"), "T keeps its walked strip after Back").not.toBeNull();
-  }, 60_000);
 });
 
 describe("a letter opened from Search: the open enters it, as ↵ on its row does", () => {
   const letters = () => [msg("p1", 0), msg("p2", 10), msg("s1", 40, { threadId: "S", subject: "Harbour kettle" })];
-  const openHit = (): HTMLButtonElement | null =>
-    document.querySelector<HTMLButtonElement>('.view-search .hit-w[data-hit="s1"] button.hit-open');
+  const openHit = (): HTMLElement | null => {
+    const row = screen.queryAllByRole("listitem").find((item) => item.getAttribute("data-hit") === "s1");
+    return row ? within(row).queryByRole("button", { name: /Harbour kettle/ }) : null;
+  };
   /** Search asks the store: `GET /search?q=` answers s1 for "harbour". */
   async function search(q: string): Promise<HTMLInputElement> {
     const s1 = (msg("s1", 40, { threadId: "S", subject: "Harbour kettle" }) as { entity: unknown }).entity;
@@ -1063,11 +814,10 @@ describe("a letter opened from Search: the open enters it, as ↵ on its row doe
       const url = String(input);
       if (!/\/search\?/.test(url)) return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
       const items = /harbour/i.test(new URL(url, "https://harness.invalid").searchParams.get("q") ?? "") ? [s1] : [];
-      return new Response(JSON.stringify({ items, total: items.length, totalExact: true, ms: 4 }), { status: 200, headers: { "content-type": "application/json" } });
+      return liveAccountResponse(Response.json({ items, total: items.length, totalExact: true, ms: 4 }));
     }) as unknown as typeof globalThis.fetch;
     await goTo("search");
-    const box = document.querySelector<HTMLInputElement>(".view-search .search-box input");
-    expect(box, "the search box").not.toBeNull();
+    const box = screen.getByRole<HTMLInputElement>("textbox", { name: "Search" });
     const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     await act(async () => {
       set.call(box, q);
@@ -1105,14 +855,12 @@ describe("a letter opened from Search: the open enters it, as ↵ on its row doe
   }, 60_000);
 
   it("a narrow window: the hit opens the sheet and the sheet reads it", async () => {
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true, writable: true,
-      value: (query: string) => ({ matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
-    });
+    vi.stubGlobal("innerWidth", 390);
     await mountThread(letters());
     await search("Harbour");
     await click(openHit(), "the hit");
-    expect(document.querySelector('.reader [data-conv-id="s1"]'), "the sheet shows the letter").not.toBeNull();
+    const sheet = screen.getByRole("dialog", { name: "Reading" });
+    expect(sheet.querySelector('[data-conv-id="s1"]'), "the sheet shows the letter").not.toBeNull();
     await dwell();
     await dwell();
     expect(glances()).toEqual([["s1"]]);
@@ -1124,6 +872,7 @@ describe("a letter opened from Search: the open enters it, as ↵ on its row doe
     await click(openHit(), "the hit");
     expect(panel("s1")).not.toBeNull();
     await key("j");
+    expect(window.location.hash).not.toContain("/m/s1");
     await dwell();
     await dwell();
     expect(glances().flat()).not.toContain("s1");

@@ -1,5 +1,6 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { HttpAdapter, type EngineMutation } from "@ohmail/client-engine";
+import { HttpAdapter } from "@ohmail/client-engine";
 
 /**
  * A RULE PRESS'S MOVE SAYS SO ON THE WIRE (`pressRule`), so the server does not count it against

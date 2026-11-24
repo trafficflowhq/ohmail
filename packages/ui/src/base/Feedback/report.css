@@ -1,0 +1,78 @@
+/*
+ * What was done, as a pill on the solid ground, with the way back at its right. What holds it places it.
+ * While it leaves it fades for the eye and still takes a press: the way back works until the report is gone.
+ */
+@layer oh {
+  .oh-report {
+    --oh-report-pad: 0 var(--s2) 0 var(--s5);
+    --oh-report-wash: color-mix(in srgb, var(--on-solid) 18%, transparent);
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-height: var(--h-l);
+    padding: var(--oh-report-pad);
+    border-radius: var(--r-pill);
+    background: var(--solid);
+    box-shadow: var(--lift);
+    color: var(--on-solid);
+    font-weight: var(--w-bold);
+    pointer-events: auto;
+  }
+  .oh-report-said {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .oh-report .oh-dot {
+    --dot-size: 0.4em;
+    background: var(--on-solid);
+  }
+  .oh-report > .oh-button {
+    flex: none;
+    margin-left: auto;
+    color: var(--on-solid);
+    font-weight: var(--w-bold);
+  }
+  .oh-report > .oh-button:hover {
+    background: var(--oh-report-wash);
+  }
+  .oh-report .oh-key {
+    background: var(--oh-key-on-ink);
+    color: var(--on-solid);
+  }
+
+  /* With a sentence: a block, not a pill, on the same ground in the same place. */
+  .oh-report:is([data-kind="why"], [data-kind="detail"]) {
+    --oh-report-pad: var(--s3) var(--s2) var(--s3) var(--s5);
+    flex-wrap: wrap;
+    border-radius: var(--r-sheet);
+  }
+  .oh-report-why {
+    flex: 1 1 0;
+    min-width: min(12em, 100%);
+    font-weight: var(--w-text);
+    line-height: 1.35;
+    text-wrap: pretty;
+  }
+  .oh-report-verdict {
+    font-weight: var(--w-bold);
+  }
+  :root[data-device="phone"] .oh-report:is([data-kind="why"], [data-kind="detail"]) {
+    --oh-report-pad: var(--s4) var(--s3) var(--s4) var(--s5);
+  }
+
+  :root[data-face="ohmarchy"] .oh-report {
+    min-height: var(--h-m);
+    box-shadow: none;
+  }
+  :root[data-face="ohmarchy"] .oh-report:not(:is([data-kind="why"], [data-kind="detail"])) {
+    --oh-report-pad: 0 var(--s2) 0 var(--s4);
+  }
+  :root[data-face="ohmarchy"] .oh-report .oh-key {
+    --oh-report-key-ring: inset 0 0 0 var(--oh-hair) color-mix(in srgb, currentColor 50%, transparent);
+    background: transparent;
+    box-shadow: var(--oh-report-key-ring);
+    color: inherit;
+  }
+}

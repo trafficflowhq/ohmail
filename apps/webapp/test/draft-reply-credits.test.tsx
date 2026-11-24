@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 
@@ -30,16 +30,20 @@ vi.mock("../app/api-client", async () => {
   return { ...actual, apiConfigured: () => true, api: (...a: unknown[]) => fetchMock(...a) };
 });
 
-const { useDraftReply } = await import("../app/shell/draft-reply");
+const { useDraftReply } = await import("@ohmail/app-logic/writing/draft-reply");
+/* The wire the web's host hands, over the server client mocked above: the mount hands it as that host does. */
+const { CLOUD_WIRE } = await import("../app/(product)/mailbox/draft-reply-wire");
 const { ApiError } = await import("../app/api-client");
-type Control = ReturnType<typeof useDraftReply>;
+type Control = NonNullable<ReturnType<typeof useDraftReply>>;
 
 function mount(locale: "en" | "de") {
   host = document.createElement("div");
   document.body.appendChild(host);
   let control: Control;
   function Harness() {
-    control = useDraftReply({ onDraft: () => { /* nothing is handed over on a failure */ } });
+    control = useDraftReply({
+      onDraft: () => { /* nothing is handed over on a failure */ }, wire: CLOUD_WIRE, t: useTranslations(),
+    })!;
     return <p data-testid="notice">{control.notice}</p>;
   }
   root = createRoot(host);
@@ -73,6 +77,31 @@ afterEach(() => {
 });
 
 describe("a draft that failed after the charge says what happened to the credits", () => {
+  it.each([
+    ["en", 503, "ai_draft_failed", "The draft stopped. Your credits were used."],
+    ["de", 422, "ai_draft_declined", "Der Entwurf wurde abgebrochen. Deine Punkte wurden verbraucht."],
+  ] as const)("renders the credits-used sentence in %s and starts a fresh attempt on the next press",
+    async (locale, status, code, sentence) => {
+      const h = mount(locale);
+      vi.mocked(globalThis.crypto.randomUUID)
+        .mockReturnValueOnce("a1111111-1111-1111-1111-111111111111")
+        .mockReturnValueOnce("a2222222-2222-2222-2222-222222222222");
+      const failure = new ApiError(status, code, "the draft stopped", { credits: "used" });
+      fetchMock.mockRejectedValue(failure);
+
+      act(() => { h.control.open("m1"); });
+      act(() => { h.control.confirm(); });
+      await flush();
+
+      expect(notice()).toBe(sentence);
+      act(() => { h.control.confirm(); });
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const keys = fetchMock.mock.calls.map(([, init]) => init.headers["Idempotency-Key"]);
+      expect(keys).toEqual(["a1111111-1111-1111-1111-111111111111", "a2222222-2222-2222-2222-222222222222"]);
+    },
+  );
+
   it("the reversal LANDED — the person is told the credits are back", async () => {
     const h = mount("en");
     fetchMock.mockRejectedValueOnce(failed("returned"));

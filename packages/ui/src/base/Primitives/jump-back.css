@@ -1,0 +1,58 @@
+/* One round control at a column's foot that takes you back to where the column starts. */
+@layer oh {
+  .oh-button.oh-jumpback {
+    --oh-jumpback-ring: var(--oh-ring-btn), var(--lift);
+    position: absolute;
+    right: var(--s3);
+    /* Its own margin, or the system's bar where that is more. */
+    bottom: max(var(--s3), var(--oh-inset-foot));
+    z-index: var(--oh-layer-jump);
+    visibility: hidden;
+    /* On the sheet of its column, unless what holds it says the ground of its second buttons. */
+    background: var(--oh-soft, var(--sheet));
+    box-shadow: var(--oh-jumpback-ring);
+    color: var(--ink);
+    opacity: 0;
+    pointer-events: none;
+    transform: var(--x-in);
+    /* It stays to be seen until it has left, and is there at once when it comes. */
+    transition:
+      opacity var(--d-fade) var(--e-std),
+      transform var(--d-in) var(--e-arrive),
+      translate var(--d-in) var(--e-out),
+      background-color var(--d-fade) var(--e-std),
+      color var(--d-fade) var(--e-std),
+      visibility var(--d-in) step-end;
+  }
+  .oh-button.oh-jumpback[data-on] {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+    transition-timing-function:
+      var(--e-std), var(--e-arrive), var(--e-out), var(--e-std), var(--e-std), step-start;
+  }
+  :root[data-touch="0"] .oh-jumpback:hover {
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+  .oh-button.oh-jumpback[data-on]:active {
+    transform: var(--x-press-l);
+  }
+  /* A report at the same foot lifts it. */
+  .oh-jumpback[data-lifted] {
+    translate: 0 calc((var(--h-l) + var(--s2)) * -1);
+  }
+  :root[data-touch="1"] .oh-jumpback::after {
+    --oh-jumpback-reach: -6px;
+    content: "";
+    position: absolute;
+    inset: var(--oh-jumpback-reach);
+  }
+  :root[data-face="ohmarchy"] .oh-jumpback[data-lifted] {
+    translate: 0 calc((var(--h-m) + var(--s2)) * -1);
+  }
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-jumpback[data-lifted] {
+    translate: none;
+  }
+}

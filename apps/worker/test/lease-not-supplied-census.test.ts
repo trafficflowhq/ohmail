@@ -1,10 +1,12 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { WriteDeclinedError, type MailboxWriteKind } from "@trafficflow/core/adapters/imap";
-import { assertMayWriteToMailbox, writeDoorOf, type NoOrganizerLease } from "../src/lease.js";
-import { FIXTURE_AUTHORITY, FIXTURE_DOOR } from "./_door.js";
+import { assertMayWriteToMailbox, writeDoorOf, type NoOrganizerLease } from "@ohmail/organizer/lease";
+import { FIXTURE_AUTHORITY, FIXTURE_DOOR } from "../../../packages/organizer/test/_door.js";
+import { readSource } from "./_start-function.js";
+import { isEnginePart, readingTheUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * A WRITE WITH NO LEASE IS REFUSED, AND ONLY A TEST CAN RIDE A LEASE IT DID NOT TAKE. The census
@@ -25,7 +27,9 @@ function productionSources(): Array<{ rel: string; text: string }> {
       if (e === "node_modules" || e === "dist" || e === "test" || e === "__tests__") continue;
       const p = join(d, e);
       if (statSync(p).isDirectory()) { walk(p); continue; }
-      if (/\.tsx?$/.test(p) && !/\.d\.ts$|\.test\.tsx?$/.test(p)) out.push({ rel: p.slice(REPO.length + 1), text: readFileSync(p, "utf8") });
+      if (/\.tsx?$/.test(p) && !/\.d\.ts$|\.test\.tsx?$/.test(p) && !isEnginePart(p)) {
+        out.push({ rel: p.slice(REPO.length + 1), text: readingTheUnit(readSource)(p) });
+      }
     }
   };
   for (const bucket of ["apps", "packages"]) {
@@ -93,7 +97,7 @@ const HAND_INS: Record<string, string> = {
   "apps/worker/src/index.ts:visitMailbox": "cycleWriteAuthority(rt.role, rt.leasePermit)",
   "apps/worker/src/reconcile-cron.ts:runReconcileCron": "cycleWriteAuthority(deps.role, permit)",
   // The passes inside a cycle ride the cycle's authority (folder ops, the rescue, the sweep port).
-  "apps/worker/src/sync.ts:syncCycleWithin": "writeAuthorityOf(deps)",
+  "packages/organizer/src/sync.ts:syncCycleWithin": "writeAuthorityOf(deps)",
   "apps/worker/src/index.ts:attach": "hooks.writeAuthority",
   // The operator sweep: a permit under `--execute`; a dry run holds none and asks no write.
   "apps/worker/src/run-junk-sweep.ts:<module>": `{ lease: permit ?? { noLease: "not_supplied" } }`,
@@ -103,28 +107,28 @@ const HAND_INS: Record<string, string> = {
 
 /** EVERY CALL OF THE TWO GUARDS, by what it is handed. A seeded carrier names the gate it sits under. */
 const GUARDS: Record<string, { arg: string; gate?: string }> = {
-  "apps/worker/src/sync.ts:fileChunk:assertMayWriteToMailbox": { arg: "writeAuthorityOf(deps)" },
-  "apps/worker/src/sync.ts:fileChunk:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
-  "apps/worker/src/sync.ts:fileOne:assertMayWriteToMailbox": { arg: "writeAuthorityOf(deps)" },
-  "apps/worker/src/sync.ts:fileOne:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
-  "apps/worker/src/sync.ts:remakeOwnFolder:assertMayWriteToMailbox": { arg: "writeAuthorityOf(deps)" },
-  "apps/worker/src/sync.ts:remakeOwnFolder:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
-  "apps/worker/src/sync.ts:reconcileFlags:assertMayWriteToMailbox": { arg: "writeAuthorityOf(deps)" },
-  "apps/worker/src/sync.ts:reconcileFlags:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
-  "apps/worker/src/folder-ops.ts:runCreate:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
-  "apps/worker/src/folder-ops.ts:runCreate:writeDoorOf": { arg: "deps.writeAuthority" },
-  "apps/worker/src/folder-ops.ts:runRename:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
-  "apps/worker/src/folder-ops.ts:runRename:writeDoorOf": { arg: "deps.writeAuthority" },
-  "apps/worker/src/folder-ops.ts:runDelete:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
-  "apps/worker/src/folder-ops.ts:runDelete:writeDoorOf": { arg: "deps.writeAuthority" },
-  "apps/worker/src/junk-rescue.ts:junkRescuePass:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
-  "apps/worker/src/junk-rescue.ts:junkRescuePass:writeDoorOf": { arg: "deps.writeAuthority" },
-  "apps/worker/src/news-fold.ts:newsFoldPass:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
-  "apps/worker/src/news-fold.ts:newsFoldPass:writeDoorOf": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/sync.ts:fileChunk:assertMayWriteToMailbox": { arg: "writeAuthorityOf(deps)" },
+  "packages/organizer/src/sync.ts:fileChunk:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
+  "packages/organizer/src/sync.ts:fileOne:assertMayWriteToMailbox": { arg: "writeAuthorityOf(deps)" },
+  "packages/organizer/src/sync.ts:fileOne:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
+  "packages/organizer/src/sync.ts:remakeOwnFolder:assertMayWriteToMailbox": { arg: "writeAuthorityOf(deps)" },
+  "packages/organizer/src/sync.ts:remakeOwnFolder:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
+  "packages/organizer/src/sync.ts:reconcileFlags:assertMayWriteToMailbox": { arg: "writeAuthorityOf(deps)" },
+  "packages/organizer/src/sync.ts:reconcileFlags:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
+  "packages/organizer/src/folder-ops.ts:runCreate:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/folder-ops.ts:runCreate:writeDoorOf": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/folder-ops.ts:runRename:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/folder-ops.ts:runRename:writeDoorOf": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/folder-ops.ts:runDelete:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/folder-ops.ts:runDelete:writeDoorOf": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/junk-rescue.ts:junkRescuePass:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/junk-rescue.ts:junkRescuePass:writeDoorOf": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/news-fold.ts:newsFoldPass:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/news-fold.ts:newsFoldPass:writeDoorOf": { arg: "deps.writeAuthority" },
   "apps/worker/src/junk-sweep.ts:junkSweepPass:assertMayWriteToMailbox": { arg: "writeAuthority" },
   "apps/worker/src/junk-sweep.ts:junkSweepPass:writeDoorOf": { arg: "writeAuthority" },
-  "apps/worker/src/blank-repair.ts:blankRepairPass:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
-  "apps/worker/src/blank-repair.ts:blankRepairPass:writeDoorOf": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/blank-repair.ts:blankRepairPass:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
+  "packages/organizer/src/blank-repair.ts:blankRepairPass:writeDoorOf": { arg: "deps.writeAuthority" },
   // A permit this function took itself.
   "apps/worker/src/reconcile-cron.ts:runReconcileCron:writeDoorOf": { arg: "{ lease: permit }" },
   "apps/worker/src/run-redacted-restore.ts:<module>:writeDoorOf": { arg: "{ lease: permit }" },
@@ -138,10 +142,10 @@ const GUARDS: Record<string, { arg: string; gate?: string }> = {
 
 /** EVERY NO-LEASE CONSTRUCTION. `not_supplied` at four defaults, each refused at both guards. */
 const NO_LEASE: Record<string, string> = {
-  "apps/worker/src/lease.ts:cycleWriteAuthority": `"reader"`,
+  "packages/organizer/src/lease.ts:cycleWriteAuthority": `"reader"`,
   "apps/worker/src/index.ts:attach": `"not_supplied"`, // the attach seed, before the gate
   "apps/sidecar/src/engine.ts:attachLocal": `"not_supplied"`, // the local seed, before the gate
-  "apps/worker/src/sync.ts:writeAuthorityOf": `"not_supplied"`, // an omitted required field
+  "packages/organizer/src/sync.ts:writeAuthorityOf": `"not_supplied"`, // an omitted required field
   "apps/worker/src/run-junk-sweep.ts:<module>": `"not_supplied"`, // the dry run, which asks nothing
 };
 

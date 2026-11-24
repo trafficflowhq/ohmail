@@ -1,7 +1,7 @@
+import type { MessageDTO, SyncChange, SyncResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { MessageDTO, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { HttpAdapter, MemoryMirrorStore, OhmailEngine, StoreSearchWalker } from "@ohmail/client-engine";
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
 import type { Tx } from "@trafficflow/db";
@@ -49,6 +49,7 @@ const emptyPage = (since: string): SyncResponse => ({
 
 /** The account's answers: a page of one hosted row, an exact count, its own server ms. */
 function accountSearch(url: URL): unknown {
+  if (url.searchParams.get("places") === "1") return { places: [{ folder: "Archive/Reports", count: 28 }] };
   const parts = url.searchParams.get("parts");
   if (url.searchParams.has("address")) return { items: [dto(HOSTED_ONLY, "From the heron")], total: 812, direction: "from" };
   if (parts === "estimate") {
@@ -157,6 +158,17 @@ describe("reachable: the whole-mailbox verdict and count are the account's", () 
     expect(info).toMatchObject({ fromMirror: false, indexed: { done: 1, total: 4 } });
   });
 
+  it("relays the Place inventory and lets the window use its own counts when the account is unavailable", async () => {
+    state.mode = "up";
+    const engine = await windowEngine();
+    expect(await engine.searchPlaces()).toEqual([{ folder: "Archive/Reports", count: 28 }]);
+
+    state.mode = "503";
+    expect((await get("/search?places=1")).status).toBe(503);
+    expect(await engine.searchPlaces()).toBeNull();
+    state.mode = "up";
+  });
+
   it("the address arm is the account's too", async () => {
     state.searches = [];
     const res = await get("/search?address=heron%40birds.test&direction=from");
@@ -178,13 +190,13 @@ describe("unreachable: the mirror answers, and says it is the mirror", () => {
     expect(info).toMatchObject({ total: 1, totalExact: true, fromMirror: true });
   });
 
-  // "Older mail is still being indexed" over a settled mirror. The mirror
-  // holds no search documents and no marker, and this composition runs no backfill to write them.
-  it("the mirror's answer carries no index progress: nothing here fills that index", async () => {
+  // "Older mail is still being indexed" over a settled mirror. The mirror writes each letter's
+  // search document with the letter and no marker: this composition runs no backfill to write one.
+  it("the mirror's answer carries no index progress: no pass here fills that index", async () => {
     state.mode = "503";
     const db = sidecar.db as unknown as Tx;
     expect(await searchIndexBuilt(db, sidecar.world.accountId)).toBe(false);
-    expect(await searchIndexProgress(db, sidecar.world.accountId)).toEqual({ done: 0, total: 1 });
+    expect(await searchIndexProgress(db, sidecar.world.accountId)).toEqual({ done: 1, total: 1 });
     const res = await get("/search?q=heron&parts=estimate&limit=50");
     const body = (await res.json()) as { answeredFrom?: string; total?: number; indexed?: unknown };
     expect(body).toMatchObject({ answeredFrom: "mirror", total: 1 });

@@ -11,9 +11,9 @@ import { asDatabaseFault, databaseAwayCodeOf } from "../src/db-fault.js";
 import { DEFAULT_DB_WAIT_BASE_MS, DEFAULT_DB_WAIT_CAP_MS } from "../src/config.js";
 import { DbDoor, refusingPostgres, surviveDriverWriteRace } from "./_dbdoor.js";
 import { acquireLeaderLock } from "../src/leader-lock.js";
-import { imapCfg, rawClient, emlOf } from "./_workerenv.js";
+import { imapCfg, rawClient, emlOf } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
 
 type Db = ReturnType<typeof makeDb>;
@@ -77,7 +77,7 @@ async function seedOneMailbox(db: Db) {
   await db.insert(contacts).values({ accountId, address: "anna@x.example" });
   const enc = await KP.encrypt(cfg.auth.pass);
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: cfg.host, port: cfg.port, secure: false, user: cfg.auth.user },
   });
   return { cfg, accountId, mailboxId: row!.id };
@@ -245,7 +245,7 @@ describe("worker standby + health", () => {
       .values({ accountId: randomUUID(), provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
     const enc = await kp.encrypt(randomUUID());            // the fake adapter never dials with it
     await db.insert(mailboxCredentials).values({
-      mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
     return row!.id;

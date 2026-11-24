@@ -13,12 +13,29 @@ name: ci
 #
 # What runs. The nightly, dispatch (the second line's nightly is a dispatch on `next`: a schedule fires on the default
 # branch alone), a batch branch (pr/batch-*), a fork's or a bot's pull request, a pull request into any branch but
-# `main` and `next`, and a pull request that touches the harness (dependencies, patches, tsconfigs, vitest.config.ts, test/setup,
-# the shard maps, this file, migrations) run the whole suite. Any other maintainer's pull request runs the
-# test files its diff can reach: vitest's module graph, the files that read the changed paths, root
-# test/ and the git-spawning files (.github/scripts/ci-select.mjs states the rules), packed into as few
-# jobs as their measured time needs. Every job keeps its services and checks; the plan's summary says
-# which run it is and why. A selected run is partial: main is proven whole by the batch and the nightly.
+# `main` and `next`, and a pull request into `main` that touches the harness (dependencies, patches, tsconfigs,
+# vitest.config.ts, a vitest workspace file, test/setup, the shard maps, this file, migrations, a deleted module) run the
+# whole suite. Any other
+# maintainer's pull request into `main` runs the test files its diff can reach: vitest's module graph, the files that
+# read the changed paths, root test/ and the git-spawning files (.github/scripts/ci-select.mjs states the rules), packed
+# into as few jobs as their measured time needs; main is proven whole by the batch and the nightly. main merged across
+# into `next` (pr/merge-main-*) is planned as a pull request into `main` is. Into `next` only what decides which files
+# run and under what (this file, the selector, the shard walker, the service reader, vitest.config.ts beyond an alias
+# line for a new package or for a new entry that no file of the base names, a root vitest workspace or projects file,
+# test/setup and what it loads) runs the whole suite. Every other maintainer's pull request into `next` runs the floor
+# (every root test, the git spawners, the bundle readers, the censuses of the whole tree; with a migration every test
+# of packages/db and packages/db-mail) and its direct set, held to one pass of the test machines (six jobs' measured
+# time, one job of the second store); a changed module outside apps/ and packages/ widens that set only by the tests
+# the graph relates to it (all it reaches when that reading fails). A dependency, a patch, a tsconfig, a shard map
+# beyond its own test files' entries, the lane database script, a migration or a deleted module is capped there, not
+# whole, and a change that only adds lines is deferred. Its plan's log says FAST
+# when nothing was cut and CAPPED when something was, and names each file that waits for the whole run on `next` at
+# night. Every job keeps its services and checks; the plan's summary says which run it is and why. On a pull request
+# the plan job says which merge it tested before it decides.
+#
+# A draft's push starts no job: plan and typecheck read `github.event.pull_request.draft != true`, and every other
+# job needs plan and is skipped with it, so a draft's run ends skipped and takes no runner. Marking the pull request
+# ready starts its run (ready_for_review below); dco.yml and guard.yml run on a draft as on any pull request.
 #
 # The hosted runners are one pool for the whole organisation, so each matrix bounds how many of its
 # jobs run at once (max-parallel): three suite shards, one alone file, one SQLite shard. On the maintainers'
@@ -36,7 +53,8 @@ name: ci
 
 on:
   pull_request:
-    # ready_for_review too: a lane PR opens as a draft, and marking it ready (land-pr.sh) starts its run.
+    # ready_for_review too: a lane PR opens as a draft, whose pushes start no job, and marking it ready (land-pr.sh)
+    # starts its run.
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
   schedule:
@@ -55,11 +73,15 @@ env:
 jobs:
   plan:
     name: suite · plan
+    # This job and typecheck carry the one condition; every other job needs this one and is skipped with it.
+    # A boolean comparison: the field is null on a dispatch and a schedule, which run. Marking the PR ready starts them.
+    if: github.event.pull_request.draft != true
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
     outputs:
       # The pool this job ran on, which the suite's bound reads.
       pool: ${{ runner.environment }}
+      scope: ${{ steps.plan.outputs.scope }}
       shards: ${{ steps.plan.outputs.shards }}
       alone: ${{ steps.plan.outputs.alone }}
       sqlite: ${{ steps.plan.outputs.sqlite }}
@@ -71,9 +93,8 @@ jobs:
           persist-credentials: false
 
       # NO SECRET IN WHAT A PULL REQUEST ADDS. A path the base's ignore rules match is refused (the base's,
-      # so a change cannot exempt itself). Then the added lines, under their files' headers, go through gitleaks
-      # by digest, offline, with .github/secret-scan.toml. It exits 1 on a fatal error too, so a control made
-      # here is scanned first and the report must name both of its rules.
+      # so a change cannot exempt itself). Then gitleaks scans each file's added lines independently, by digest
+      # and offline, with .github/secret-scan.toml. A control goes first and must report both of its rules.
       - name: No secret in the change
         if: github.event_name == 'pull_request'
         env:
@@ -91,17 +112,36 @@ jobs:
             exit 1
           fi
           [ "$rc" = 1 ] || { echo "::error::git check-ignore failed (exit $rc)"; exit 1; }
+          mkdir "$scan/control" "$scan/change"
           # A token of a default rule's shape and a key-ring key, made here; the key's name is built as the tests build it.
           ring="$(printf '%s_%s' TF KEK)_V1"
           printf '+++ b/secret-scan-control\n+GITHUB_TOKEN=ghp_%s\n+%s=%s%s\n' "$(echo control-1 | git hash-object --stdin | cut -c1-36)" "$ring" \
-            "$(echo control-2 | git hash-object --stdin | cut -c1-40)" "$(echo control-3 | git hash-object --stdin | cut -c1-24)" > "$scan/control"
-          git diff -U0 --no-color --no-ext-diff HEAD^1 HEAD | { grep '^+' || true; } > "$scan/change"
+            "$(echo control-2 | git hash-object --stdin | cut -c1-40)" "$(echo control-3 | git hash-object --stdin | cut -c1-24)" > "$scan/control/1"
+          # Give gitleaks numbered files so its default path exclusions cannot skip added lines based on the source path.
+          # Keep Git's printable path separately for diagnostics and retain each header in its own fragment.
+          git -c core.quotePath=true diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ HEAD^1 HEAD |
+            SCAN_FRAGMENTS="$scan/change" awk '
+              /^diff --git / { if (fragment) close(fragment); fragment = ""; hunk = 0 }
+              /^@@ / { hunk = 1 }
+              !hunk && /^\+\+\+ / && $0 != "+++ /dev/null" {
+                fragment = ENVIRON["SCAN_FRAGMENTS"] "/" ++file
+                print > fragment
+                path = substr($0, 5)
+                sub(/\t$/, "", path)
+                sub(/^b\//, "", path)
+                sub(/^"b\//, "\"", path)
+                print file, path
+                next
+              }
+              fragment && hunk && /^\+/ { print > fragment }
+            ' > "$scan/paths"
           for input in control change; do
             rc=0
-            docker run --rm -i --network none -v "$PWD/.github/secret-scan.toml:/secret-scan.toml:ro" "$GITLEAKS" \
-              stdin --config /secret-scan.toml --redact --no-banner --report-format json --report-path - \
-              < "$scan/$input" > "$scan/$input.json" || rc=$?
-            jq -e '. == null or type == "array"' "$scan/$input.json" > /dev/null \
+            docker run --rm --network none -v "$PWD/.github/secret-scan.toml:/secret-scan.toml:ro" \
+              -v "$scan/$input:/fragments:ro" "$GITLEAKS" \
+              dir --config /secret-scan.toml --redact --no-banner --report-format json --report-path - /fragments \
+              > "$scan/$input.json" || rc=$?
+            jq -es 'length == 1 and (.[0] == null or (.[0] | type == "array"))' "$scan/$input.json" > /dev/null \
               || { echo "::error::gitleaks wrote no report on the $input (exit $rc)"; exit 1; }
             if [ "$input" = control ]; then
               for rule in github-pat ohmail-key-ring; do
@@ -110,22 +150,29 @@ jobs:
               done
               continue
             fi
-            jq -r '(. // [])[] | "\(.StartLine) \(.RuleID)"' "$scan/change.json" > "$scan/found"
+            jq -r '.[]? | "\(.File | split("/") | last) \(.RuleID)"' "$scan/change.json" > "$scan/found"
             if [ -s "$scan/found" ]; then
               echo "::error::a secret in the added lines, by file and rule (the value is never printed):"
-              awk 'NR == FNR { rule[$1] = rule[$1] " " $2; next } /^\+\+\+ / { file = substr($0, 7) } FNR in rule { print file ":" rule[FNR] }' "$scan/found" "$scan/change"
+              awk 'FILENAME == ARGV[1] { path[$1] = substr($0, length($1) + 2); next }
+                   { print (($1 in path) ? path[$1] : "(unknown file)") ": " $2 }' "$scan/paths" "$scan/found"
               exit 1
             fi
             [ "$rc" = 0 ] || { echo "::error::gitleaks exited $rc with no finding"; exit 1; }
           done
 
+      # Which merge this run tests: the pull request's head on the base's tip as GitHub merged them. Landing it
+      # reads this line, so the tree that lands is the tree that ran.
+      - name: The merge this run tests
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "TESTED: merge of $(git rev-parse HEAD^2) onto $(git rev-parse HEAD^1)"
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22.23.4
 
-      # Whole for the nightly, dispatch, a batch branch, a fork, a bot and a harness change; selected for
-      # the rest (.github/scripts/ci-select.mjs). Any fault here leaves the run whole.
-      - name: Whole suite or a selection
+      # Build-only for landing rounds into next. Any fault in the selector leaves the run whole.
+      - name: Choose the suite scope
         id: scope
         continue-on-error: true
         run: node .github/scripts/ci-select.mjs scope >> "$GITHUB_OUTPUT"
@@ -162,7 +209,7 @@ jobs:
           walk=$(node test/support/ci-shards.mjs --alone)
           if [ "$alone" != "$walk" ]; then echo "::error::git grep and the shard map disagree on the files that run alone"; exit 1; fi
           printf 'alone:\n%s\n' "$files"
-          # The selected plan when the selector finished, the whole run otherwise; it says which and why.
+          # The outputs say which scope is running and why.
           node .github/scripts/ci-select.mjs outputs --indexes "$shards" --sqlite-indexes "$sqlite" --alone "$alone" \
             --scope "$SCOPE" --scope-why "$SCOPE_WHY" --select-outcome "$SELECT" --plan "$RUNNER_TEMP/ci-select.json" > "$RUNNER_TEMP/plan.out"
           cat "$RUNNER_TEMP/plan.out" >> "$GITHUB_OUTPUT"
@@ -173,7 +220,7 @@ jobs:
     needs: plan
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     if: needs.plan.outputs.shards != '[]'
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: ${{ needs.plan.outputs.pool == 'self-hosted' && 6 || 3 }}
@@ -225,7 +272,26 @@ jobs:
         run: node scripts/apply-patches.mjs apply
 
       - name: Install Chromium for the layout tests
-        run: npx playwright install --with-deps chromium
+        env:
+          BROWSER_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          set -euo pipefail
+          if [ "$BROWSER_RUNNER_ENVIRONMENT" = self-hosted ]; then
+            # The pinned project guest already supplies Chromium's system libraries.
+            ./node_modules/.bin/playwright install chromium
+            node --input-type=module <<'JS'
+          import { chromium } from "playwright";
+          const browser = await chromium.launch();
+          try {
+            const page = await browser.newPage();
+            await page.setContent("<title>Chromium startup</title>");
+          } finally {
+            await browser.close();
+          }
+          JS
+          else
+            npx playwright install --with-deps chromium
+          fi
 
       # Paper's UI face names Inter, and the geometry arms that sit near a threshold were measured in it
       # (apps/webapp/test/_measured-font.ts); without it they skip by name instead of measuring.
@@ -245,6 +311,10 @@ jobs:
           node apps/mobile/scripts/bundle-engine.mjs
           node scripts/bundle-host.mjs server
           node scripts/bundle-host.mjs worker
+          test -s build/engine.meta.json
+          test -s build/phone-engine/phone-engine.meta.json
+          test -s build/host-server.meta.json
+          test -s build/host-worker.meta.json
 
       # A service container cannot publish a port on loopback only, so RustFS starts by `docker run`.
       - name: Start RustFS
@@ -312,6 +382,11 @@ jobs:
             list=$FILES
           else
             list=$(node test/support/ci-shards.mjs --shard "$SHARD")
+            # Record the guest's memory budget before this long-running shard starts.
+            if [ "$SHARD" = 12 ] && [ "${RUNNER_ENVIRONMENT:-}" = self-hosted ]; then
+              awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/ { print }' /proc/meminfo || true
+              df -k --output=size,used,avail /tmp || true
+            fi
           fi
           mapfile -t files <<< "$list"
           echo "shard $SHARD runs ${#files[@]} file(s)"
@@ -346,7 +421,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.alone != '[]'
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: ${{ needs.plan.outputs.pool == 'self-hosted' && 6 || 1 }}
@@ -422,7 +497,7 @@ jobs:
     needs: plan
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     if: needs.plan.outputs.sqlite != '[]'
-    timeout-minutes: 20
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: ${{ needs.plan.outputs.pool == 'self-hosted' && 6 || 1 }}
@@ -490,7 +565,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build
-          npx vitest list --config vitest.sqlite.config.ts --filesOnly --json=build/sqlite-files.json
+          npx vitest list --config test/vitest.sqlite.config.ts --filesOnly --json=build/sqlite-files.json
 
       - name: Test on SQLite, the second store the schema runs on, shard ${{ matrix.shard }}
         run: |
@@ -502,7 +577,7 @@ jobs:
           fi
           mapfile -t files <<< "$list"
           echo "sqlite shard $SHARD runs ${#files[@]} file(s)"
-          npx vitest run --config vitest.sqlite.config.ts --reporter=default --reporter=json --outputFile="build/ci-sqlite-$SHARD.json" "${files[@]}"
+          npx vitest run --config test/vitest.sqlite.config.ts --reporter=default --reporter=json --outputFile="build/ci-sqlite-$SHARD.json" "${files[@]}"
 
       - name: Every file of the SQLite shard ran
         if: always()
@@ -527,6 +602,7 @@ jobs:
   proxy-e2e:
     name: suite · proxy e2e
     needs: plan
+    if: needs.plan.outputs.scope != 'build-only'
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 25
     services:
@@ -639,10 +715,14 @@ jobs:
   # The required check's name is this job's name, "typecheck": it is read by the repository's ruleset.
   typecheck:
     name: typecheck
+    if: github.event.pull_request.draft != true
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:
+      # Two commits deep: the tools read their baseline against this run's base, HEAD^1.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
@@ -658,10 +738,29 @@ jobs:
       - name: The project build
         run: npm run build
 
+      # The linter with the import borders, the style linter and the formatter, read against
+      # tools/baseline.tsv, and that file against the base's: a new violation is refused, and so is a
+      # baseline that grows (tools/README.md).
+      - name: The tools
+        run: node tools/check.mjs --base HEAD^1
+
+      # Every rule refuses its planted violation, in a copy of the tree.
+      - name: The tools' controls
+        run: node tools/check.mjs --controls
+
       # The web app's own program, over every .ts it can see, its tests included: the root's type
       # packages cover the drivers its tests reach. No test directory is dropped here.
       - name: The web app and its tests
         run: ./node_modules/.bin/tsc --noEmit -p apps/webapp/tsconfig.json
+
+      # The desktop window's sources, which neither program above holds. Without its vite config:
+      # that needs a plugin only apps/desktop's own install carries.
+      - name: The desktop window
+        run: ./node_modules/.bin/tsc --noEmit -p apps/desktop/tsconfig.src.json
+
+      # The paired page's sources, under the desktop's options (its tsconfig extends the desktop's).
+      - name: The paired page
+        run: ./node_modules/.bin/tsc --noEmit -p apps/paired-page/tsconfig.json
 
       # The phone app's program and its tests' program, the script apps/mobile is checked with.
       - name: The phone app and its tests
@@ -672,6 +771,7 @@ jobs:
   desktop:
     name: suite · desktop
     needs: plan
+    if: needs.plan.outputs.scope != 'build-only'
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:

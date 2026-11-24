@@ -1,0 +1,50 @@
+{
+  "address": {
+    "title": "All mail",
+    "loading": "Loading their mail",
+    "count": "{count, plural, one {1 message} other {# messages}}",
+    "side": {
+      "label": "Direction",
+      "all": "All",
+      "from": "From them",
+      "to": "To them"
+    },
+    "sideCount": {
+      "all": "All {count}",
+      "from": "From them {count}",
+      "to": "To them {count}"
+    },
+    "empty": {
+      "all": "Nothing with them",
+      "from": "Nothing from them",
+      "to": "Nothing to them"
+    },
+    "row": {
+      "to": "To {name}",
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "archive": {
+      "indexing": "Your recent mail is still being read, so more results will appear.",
+      "retry": "Try again",
+      "offline": "ohmail Cloud cannot be reached, so this is the mail on <device>this computer</device>.",
+      "unanswered": "Your server did not answer — showing the recent mail this device holds.",
+      "searching": "Searching your whole mailbox…",
+      "noRecipientsWhy": "This is the recent mail sent to this address. Older mail sent to it cannot be listed yet.",
+      "bySenderWhy": "Your whole mailbox is searched by sender only, so older mail sent to this address is not counted yet.",
+      "shown": "showing the first {shown}",
+      "importing": "The rest of your mail has not synced yet.",
+      "empty": {
+        "all": "Nothing from or to {address}.",
+        "from": "Nothing from {address}.",
+        "to": "Nothing sent to {address}."
+      }
+    },
+    "close": "Close"
+  }
+}

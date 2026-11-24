@@ -1,3 +1,6 @@
+import { UNWRITTEN_TABLES } from "../../db/test/_unwritten-tables.js";
+import { accountOfUser } from "@trafficflow/db";
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { managedDomain } from "../../../test/support/fixture-credentials.js";
 import { getTableColumns, getTableName, is, sql } from "drizzle-orm";
@@ -17,7 +20,6 @@ import {
   attachments,
   auditLog,
   awayReplies,
-  awayResponderSent,
   awaySenderState,
   awayResponders,
   changeLog,
@@ -57,13 +59,26 @@ import {
   mailboxFolders,
   folderOps,
   junkRescues,
+  messageInvitations,
+  mailboxPass,
+  writePassProgress,
   listAddresses,
+  calConnections,
+  calCredentials,
+  calCalendars,
+  calEvents,
+  calAttendees,
+  calAlarms,
+  calSettings,
+  calSuggestions,
+  calWrites,
 } from "@trafficflow/db";
 import {
   accountLifecycleNotices,
   alertState,
   authEvents,
   authThrottle,
+  accountCounters,
   connectAttempts,
   creditRefundObligations,
   credentials,
@@ -408,6 +423,12 @@ const PREDICATE_COLUMNS: ReadonlySet<string> = new Set([
  */
 const REFUSED_BY_CONSTRAINT: readonly string[] = [
   "sessions.scope",   // CHECK scope in ('full','enrollment')
+  // mail 0205: a connection's three growing lists are held to one lower-case word by a CHECK, and an
+  // event's kinds of time are a closed set; a zone, an end and an occurrence key stand only beside
+  // the kind or moment that CHECKs tie them to, and none is a person's words.
+  "cal_connections.provider", "cal_connections.status", "cal_connections.error_code",
+  "cal_events.start_kind", "cal_events.end_kind", "cal_events.start_zone", "cal_events.end_zone",
+  "cal_events.end_local", "cal_events.recurrence_id",
   // cloud 0040 / 0037 — both seeded since the account page reads their tables (cloud 0047):
   // a lifecycle notice's kind and an owed reversal's reason are closed sets behind a CHECK.
   "account_lifecycle_notices.kind",
@@ -480,6 +501,11 @@ const REFUSED_BY_CONSTRAINT: readonly string[] = [
   // refusal a fact about the database rather than a hope about callers — this classification and
   // that constraint's `SCHEMA_CHECK_MARKERS` entry land in the same commit, 0053's pairing.
   "account_settings.theme_face",
+  // mail 0210 — CHECK `subject_heading in ('head','each')`. `theme_face`'s bucket and argument: two words
+  // this repository enumerated, chosen by the account's owner or taken from the mailbox's settings copy
+  // only as one of the two, so no mail server, sender or message puts a value here, and
+  // `account_settings_subject_heading_closed` makes the refusal a fact about the database.
+  "account_settings.subject_heading",
   // mail 0083 — CHECK `screening_scope IN ('window','all_time')`. `theme_face`'s bucket and
   // `theme_face`'s argument member for member: two literals this repo enumerated, chosen by the
   // account owner on the first-run window screen (and in Settings after it), and
@@ -660,7 +686,7 @@ const REFUSED_BY_CONSTRAINT: readonly string[] = [
   // value comes FROM A MAIL SERVER'S RESPONSE and is still closed, because what a mail server
   // supplies is which MEMBER is chosen and never what the members ARE.
   //
-  // `classifyMoveRefusal` in `apps/worker/src/sync.ts` reads the server's bracketed IMAP response
+  // `classifyMoveRefusal` in `packages/organizer/src/sync.ts` reads the server's bracketed IMAP response
   // code through a closed switch whose default is `refused` — never its message text, which is
   // where a provider puts free prose and, on some hosts, echoes the folder path back. The
   // migration's own header states the same rule from the schema's side: `folder_state` forbids a
@@ -681,11 +707,12 @@ const REFUSED_BY_CONSTRAINT: readonly string[] = [
  * Columns the sweep cannot UPDATE because the ROW is immutable, and which {@link seedWorld}
  * therefore writes the marker into at INSERT.
  *
- * EMPTY today: the one append-only table in this schema left with the money. Kept as a named,
- * empty set rather than deleted, because the mechanism is what a future immutable table needs
- * and the sweep would otherwise throw on the first UPDATE against one.
+ * No immutable table today (the one append-only table left with the money); the mechanism stays for a future one.
+ * `pairing_tokens.challenge_hash` (mail 0209) is here for another reason: `pairing_tokens_handoff_bound` lets it stand
+ * only on an `app-handoff` row, where it is free text held to 43 base64url characters by its writer alone, so the
+ * seeded invitation refuses the sweep's UPDATE and the marker goes in at INSERT on a seeded handoff row.
  */
-const INSERT_TAINTED: ReadonlySet<string> = new Set<string>();
+const INSERT_TAINTED: ReadonlySet<string> = new Set<string>(["pairing_tokens.challenge_hash"]);
 
 /**
  * Tables this file plants no row in, so nothing in them can be tainted.
@@ -886,6 +913,16 @@ const UNSEEDED_TABLES: readonly string[] = [
   // `mailbox_storage_stats`, holds no text column and so is no part of this sweep.)
   "account_storage_prefs",
   "storage_mail_sent",
+  // Cloud 0105, a calendar's notice channels, which the worker's notice pass writes. Unseeded: its
+  // text columns are a provider's word the pass writes (`google`, `microsoft`), a channel's id of 36
+  // characters, a SHA-256 the pass computes, and the provider's own opaque name for what a channel
+  // watches. Nothing a person, a sender or a letter wrote reaches any of them. The staff role is
+  // granted nothing on the table, and no staff read selects it.
+  "cal_push_channels",
+  // ── Tables nothing writes yet (`packages/db/test/_unwritten-tables.ts`): no account has a row,
+  //    so there is nothing a staff surface could show. That list is held to the tree; a table's
+  //    first writer takes it off, and it then arrives here unseeded and red.
+  ...Object.keys(UNWRITTEN_TABLES),
 ];
 
 /**
@@ -1609,7 +1646,7 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     accountId, address: `ops-${tag}@example.com`, folders: [{ folder: "INBOX" }],
   });
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: `enc-${tag}`, keyVersion: 1,
+    mailboxId, accountId: accountOfMailbox(mailboxId), transport: "imap", secretEnc: `enc-${tag}`, keyVersion: 1,
     meta: { host: "imap.example.com", user: `ops-${tag}@example.com` },
   });
 
@@ -1666,7 +1703,7 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   // and land in REFUSED_BY_CONSTRAINT instead. The subject row is its own mailbox_folders line
   // so the CHECK pairing (`rename` ⇔ `to_folder IS NOT NULL`) holds under the sweep's UPDATE.
   const [cmdFolder] = await db.insert(mailboxFolders).values({
-    mailboxId, folder: `Mandate ${tag}`, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n,
+    mailboxId, accountId: accountOfMailbox(mailboxId), folder: `Mandate ${tag}`, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n,
   }).returning();
   await db.insert(folderOps).values({
     accountId, mailboxId, folderId: cmdFolder!.id,
@@ -1679,6 +1716,52 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   // state accounts are genuinely found in between a press and the organizer's next cycle.
   await db.insert(junkRescues).values({
     accountId, mailboxId, folder: `Junk ${tag}`, uidvalidity: 7n, uid: 3,
+  });
+  // The identity of an invitation a letter carried (mail 0204). SEEDED rather than exempted: its
+  // text is the sender's own (an event's id, the organizer's address) and no staff surface reads
+  // the table, which the sweep proves by tainting every column of it.
+  await db.insert(messageInvitations).values({
+    accountId, messageId: message.id, mailboxId, uid: `event-${tag}@calendar.example`, method: "REQUEST",
+    startRaw: "20261201T100000Z", organizer: `organizer-${tag}@example.com`, invitedAddress: `invited-${tag}@example.com`,
+  });
+  // THE CALENDAR (mail 0205). SEEDED rather than exempted: a calendar is the person's own diary,
+  // as private as their mail, and the staff role reads six columns of a connection (its kind and
+  // how its sync stands) and nothing else of the family. The sweep taints every text column.
+  const [calConn] = await db.insert(calConnections).values({
+    accountId, provider: "caldav", label: `Diary ${tag}`, serverUrl: `https://dav-${tag}.example/cal/`,
+    principal: `/principals/${tag}/`, sourceHost: `dav-${tag}.example`, mailboxId,
+  }).returning();
+  // Its sealed sign-in, the connect door's row. No staff role reads the table, and the sweep
+  // taints its two text columns.
+  await db.insert(calCredentials).values({ accountId, connectionId: calConn!.id, kind: "basic", secretEnc: `sealed-${tag}`, keyVersion: 1 });
+  const [calCal] = await db.insert(calCalendars).values({
+    accountId, connectionId: calConn!.id, providerId: `/cal/${tag}/`, name: `Clinic ${tag}`, timeZone: "Europe/Zurich",
+  }).returning();
+  const [calEv] = await db.insert(calEvents).values({
+    accountId, calendarId: calCal!.id, providerId: `/cal/${tag}/1.ics`, uid: `appt-${tag}@calendar.example`,
+    title: `Appointment ${tag}`, notes: `notes ${tag}`, place: `Room ${tag}`, startKind: "instant",
+    startLocal: "20261201T100000Z", startsAt: FIXED_NOW, endsAt: FIXED_NOW,
+  }).returning();
+  await db.insert(calAttendees).values({ accountId, eventId: calEv!.id, address: `guest-${tag}@example.com`, name: `Guest ${tag}` });
+  await db.insert(calAlarms).values({ accountId, eventId: calEv!.id, minutesBefore: 15 });
+  await db.insert(calSuggestions).values({
+    accountId, messageId: message.id, mailboxId, evidence: "dates",
+    proposed: { title: `Lunch ${tag}` }, sourceWords: `lunch on Saturday ${tag}`,
+  });
+  // A write the person made, owed to the provider: the act holds their words (a title), so no staff
+  // role reads the table, and the sweep taints every text column of it.
+  await db.insert(calWrites).values({
+    accountId, calendarId: calCal!.id, eventId: calEv!.id, op: "update", baseVersionTag: `"etag-${tag}"`,
+    idempotencyKey: `press-${tag}`, payload: { v: 1, act: { title: `Appointment ${tag}` } },
+  });
+  // The account's calendar settings (the switch): no staff role reads the table, and the sweep
+  // taints its one text column, the second zone.
+  await db.insert(calSettings).values({ accountId, enabledAt: FIXED_NOW, secondZone: "Asia/Tokyo", newEventsCalendarId: calCal!.id });
+  // Where a one-time pass stands (mail 0203). SEEDED rather than exempted: the staff role is
+  // granted the table's names and timestamps and never `cursor`, which names the letter a pass
+  // stopped at. The sweep taints both text columns, and every staff response is checked for them.
+  await writePassProgress(db as never, mailboxPass("sensitive_rescreen", accountId, mailboxId), {
+    cursor: message.id, startedAt: FIXED_NOW,
   });
   // PHYSICAL identity. SEEDED rather than exempted, deliberately: the
   // sweep then taints `message_instances.folder` and every staff response is checked for the
@@ -1704,7 +1787,7 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   });
   await db.insert(messageStates).values({ accountId, messageId: message.id, state: "answer_later" });
   await db.insert(flagState).values({
-    messageId: message.id, desiredSeen: false, observedSeen: false, lastSetBy: "us",
+    messageId: message.id, accountId: accountOfMessage(message.id), desiredSeen: false, observedSeen: false, lastSetBy: "us",
   });
   await db.insert(trackerEvents).values({
     accountId, messageId: message.id, kind: "pixel", trackerHost: "track.example.com",
@@ -1752,10 +1835,6 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   await db.insert(snippets).values({ accountId, title: `snip ${tag}`, body: `snip body ${tag}` });
   await db.insert(awayResponders).values({
     accountId, body: `away body ${tag}`, throttle: "per_day", enabledAt: FIXED_NOW,
-  });
-  await db.insert(awayResponderSent).values({
-    accountId, sender: `correspondent-${tag}@example.com`, responderUpdatedAt: FIXED_NOW,
-    mintedMessageId: `<away-reply-${tag}@ohmail.app>`,
   });
   /* mail 0087 — the away responder's LEDGER and its per-correspondent throttle state.
      SEEDED rather than exempted, and the reason is the sweep's own subject: both tables key on a
@@ -1828,15 +1907,15 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   });
 
   // Auth material — never staff-visible, and it is here so the sweep proves it.
-  await db.insert(credentials).values({ userId: session.userId, passwordHash: `password-hash-${tag}` });
+  await db.insert(credentials).values({ userId: session.userId, accountId: accountOfUser(session.userId), passwordHash: `password-hash-${tag}` });
   // With a replacement in progress (cloud 0046) seeded whole, so the CHECK that seals the trio
   // admits the sweep's marker in its ciphertext and that column is tainted rather than refused.
   await db.insert(totpSecrets).values({
-    userId: session.userId, secretEnc: `totp-${tag}`, keyVersion: 1,
+    userId: session.userId, accountId: accountOfUser(session.userId), secretEnc: `totp-${tag}`, keyVersion: 1,
     pendingSecretEnc: `totp-pending-${tag}`, pendingKeyVersion: 1, pendingStartedAt: FIXED_NOW,
   });
   await db.insert(recoveryCodes).values({
-    userId: session.userId, codeHash: `rec-${tag}`, batchId: crypto.randomUUID(),
+    userId: session.userId, accountId: accountOfUser(session.userId), codeHash: `rec-${tag}`, batchId: crypto.randomUUID(),
   });
   await db.insert(refreshTokens).values({
     accountId, userId: session.userId, sessionId: session.sessionId,
@@ -1844,15 +1923,21 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     expiresAt: new Date(FIXED_NOW.getTime() + 3600_000),
   });
   await db.insert(loginTokens).values({
-    userId: session.userId, tokenHash: `lt-${tag}`,
+    userId: session.userId, accountId: accountOfUser(session.userId), tokenHash: `lt-${tag}`,
     expiresAt: new Date(FIXED_NOW.getTime() + 3600_000),
   });
   // A pairing token (mail 0059) — a credential the user minted, whose `label` is the user's own
   // words. Part of the account's world, so it is SEEDED (unlike the operator-side tables in
   // UNSEEDED_TABLES) and the sweep proves no staff response carries its digest or its label.
   await db.insert(pairingTokens).values({
-    createdByUserId: session.userId, grant: "invite", tokenHash: `pt-${tag}`,
+    createdByUserId: session.userId, accountId: accountOfUser(session.userId), grant: "invite", tokenHash: `pt-${tag}`,
     label: `pairing-label-${tag}`, expiresAt: new Date(FIXED_NOW.getTime() + 3600_000),
+  });
+  // mail 0209 — a handoff code, whose challenge column stands on this grant alone: tainted at INSERT (INSERT_TAINTED).
+  await db.insert(pairingTokens).values({
+    createdByUserId: session.userId, accountId: accountOfUser(session.userId), grant: "app-handoff", tokenHash: `ph-${tag}`,
+    label: `handoff-label-${tag}`, expiresAt: new Date(FIXED_NOW.getTime() + 60_000),
+    challengeHash: `${markerFor("pairing_tokens", "challenge_hash")}-${tag}`, handoffFromDeviceId: crypto.randomUUID(),
   });
   await db.insert(invites).values({
     codeHash: `inv-${tag}`, email: `invited-${tag}@example.com`,
@@ -1869,6 +1954,7 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     reason: "drafter_failed", lastFault: `fault-${tag}`,
   });
   await db.insert(authThrottle).values({ key: `throttle-${tag}` });
+  await db.insert(accountCounters).values({ accountId, key: `counter-${tag}` });
   await db.insert(idempotencyKeys).values({
     accountId, key: `idemk-${tag}`, requestHash: `hash-${tag}`, responseStatus: 200,
     responseJson: { ok: true }, expiresAt: new Date(FIXED_NOW.getTime() + 3600_000),

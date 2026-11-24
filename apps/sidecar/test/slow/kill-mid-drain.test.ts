@@ -29,7 +29,7 @@ const FOLDS_BEFORE_KILL = 4;
  * defeat the whole cell. The periodic checkpointer is left at PRODUCTION's five minutes, so every
  * fold a run takes is the per-cycle one and the bound below is attributable to it.
  * It transcribes the drain's three deciding lines rather than running it: the lane (`engine.ts`),
- * one transaction carrying a message AND the folder cursor that names it (`apps/worker/src/sync.ts`)
+ * one transaction carrying a message AND the folder cursor that names it (`packages/organizer/src/sync.ts`)
  * and a fold per cycle that has more backlog.
  */
 const CHILD = `
@@ -43,7 +43,7 @@ const mb = await h.db.execute(
   "insert into mailboxes (account_id, provider, address) values ('" + acct + "', 'imap', 'me@ohmail.test') returning id");
 const mailboxId = String(Object.values((mb.rows ?? mb)[0])[0]);
 const fd = await h.db.execute(
-  "insert into mailbox_folders (mailbox_id, folder, uidnext) values ('" + mailboxId + "', 'INBOX', 1) returning id");
+  "insert into mailbox_folders (mailbox_id, account_id, folder, uidnext) select id, account_id, 'INBOX', 1 from mailboxes where id = '" + mailboxId + "' returning id");
 const folderId = String(Object.values((fd.rows ?? fd)[0])[0]);
 // The fixture is made durable BEFORE anything else: what is behind this fold must survive the kill.
 await h.checkpoint();

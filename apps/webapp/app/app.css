@@ -286,45 +286,6 @@ body.reading .shell {
   cursor: pointer;
 }
 
-/* The Tag page's header slot — Rename and Delete. It used to carry a reading-layout toggle
-   pushed to the right of them; History and Tag are the Ohbox's two-pane shape unconditionally
-   now, so there is no toggle and `.view-mode` went with it. Padding matches `.vhead`'s
-   horizontal so the row lines up under the tag name above. */
-.tag-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 30px 12px;
-  flex-wrap: wrap;
-}
-.tag-manage {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-input.tag-manage-input { /* by element: the row is the width, the field gives */
-  flex: 1 1 auto;
-  min-width: 0;
-  width: auto;
-}
-/* The delete question and the sentence about what survives — the same wording the Settings
-   pane uses, stacked tight so the confirm reads as one thing. */
-.tag-manage-ask {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  font-size:calc(12px + var(--type-up));
-}
-.tag-manage-ask b {
-  color: var(--ink);
-  font-weight: 600;
-}
-.tag-manage-ask span {
-  color: var(--ink3);
-}
-
 /* One quiet sentence above a list, explaining what the list IS. Used by History, where the
    word on the heading is one this product uses in a way no other mail client does. Sized and
    coloured like the settings notes rather than like body copy: it is furniture, not content,
@@ -388,19 +349,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
    mounted above the reader, and the window moves `scrollTop` by exactly what it inserted. */
 .view-screener .scn-read {
   overflow-anchor: none;
-}
-/* The Screener's primer (`ScreenerPrimer`, in the view and in the stage): laid out for one frame
-   so its styles resolve, never seen. */
-.scn-prime {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 0;
-  overflow: hidden;
-  visibility: hidden;
-  pointer-events: none;
-  contain: strict;
 }
 
 /* THE READING STREAMS' MOUNTED CARDS ARE MADE CHEAP OFF-SCREEN.
@@ -495,14 +443,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   box-shadow: none;
   content-visibility: visible;
 }
-.view-reads .stream .conv[data-stream],
-.view-receipts .stream .conv[data-stream] {
-  padding-left: 22px;
-}
-.view-reads .stream .conv[data-stream] > .thread-marks > .tm-bar,
-.view-receipts .stream .conv[data-stream] > .thread-marks > .tm-bar {
-  width: 22px;
-}
 @media (max-width: 699.98px) {
   .view-reads .stream .scast.in-place,
   .view-receipts .stream .scast.in-place {
@@ -513,48 +453,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   .view-reads .stream .scast.in-place,
   .view-receipts .stream .scast.in-place {
     margin-right: -12px;
-  }
-  /* The split's seam: list | 12 | 18 rail | 12 | paper. */
-  .view-reads .stream .conv[data-stream],
-  .view-receipts .stream .conv[data-stream] {
-    padding-left: calc(var(--tm-rail) + 2 * var(--gap-rail) - var(--gap-tile));
-  }
-  .view-reads .stream .conv[data-stream] > .thread-marks,
-  .view-receipts .stream .conv[data-stream] > .thread-marks {
-    top: var(--gap-edge);
-  }
-  .view-reads .stream .conv[data-stream] > .thread-marks > .tm-bar,
-  .view-receipts .stream .conv[data-stream] > .thread-marks > .tm-bar {
-    width: calc(var(--tm-rail) + var(--gap-rail));
-  }
-  .view-reads .stream .conv[data-stream] .tm-mb,
-  .view-receipts .stream .conv[data-stream] .tm-mb {
-    grid-template-columns: var(--tm-rail) minmax(0, 1fr);
-  }
-  .view-reads .stream .conv[data-stream] .tm-mb::before,
-  .view-receipts .stream .conv[data-stream] .tm-mb::before {
-    content: "";
-    align-self: stretch;
-    justify-self: stretch;
-    pointer-events: none;
-    border-radius: calc(var(--r-ctl) * 5 / 8);
-  }
-  .view-reads .stream .conv[data-stream] .tm-mb:hover,
-  .view-receipts .stream .conv[data-stream] .tm-mb:hover {
-    background: none;
-  }
-  .view-reads .stream .conv[data-stream] .tm-mb:hover::before,
-  .view-receipts .stream .conv[data-stream] .tm-mb:hover::before {
-    background: var(--tint);
-  }
-  .view-reads .stream .conv[data-stream] .tm-mb:focus-visible,
-  .view-receipts .stream .conv[data-stream] .tm-mb:focus-visible {
-    outline: none;
-  }
-  .view-reads .stream .conv[data-stream] .tm-mb:focus-visible::before,
-  .view-receipts .stream .conv[data-stream] .tm-mb:focus-visible::before {
-    outline: var(--focus-w) solid var(--accent);
-    outline-offset: -2px;
   }
   /* The squares stand a little left of the stream's box and the paper's ring at its right edge, as
      in the reading column (message.css): while a letter is in place the stream takes the frame on
@@ -583,115 +481,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
     margin-top: 0;
   }
 }
-
-/* ================= the sent-mail seed review ================= */
-/* One column, scrollable, on the panel — the same furniture the gate cards use, sized for a
-   list that may hold four hundred people. Nothing here is a modal: the screen replaces the
-   stage, and "Not now" is always reachable without scrolling to the bottom of the list. */
-.view-seed {
-  overflow: auto;
-}
-
-.seed-card {
-  width: min(680px, 100%);
-  margin: 24px auto;
-  padding: 22px;
-  background: var(--panel);
-  border-radius:var(--r-card);
-  box-shadow: var(--lift-1);
-}
-
-.seed-card h1 {
-  margin: 0 0 6px;
-  font-size: 20px;
-  line-height: 1.25;
-}
-
-.seed-card .view-note {
-  padding: 0 0 10px;
-  border-bottom: 0;
-}
-
-/* `TextField` (box); only its place in the column is decided here. */
-.seed-filter {
-  margin: 6px 0 10px;
-}
-
-/* The refusal sits ABOVE the list, so the list — and everything ticked in it — stays put. */
-.seed-error {
-  margin: 0 0 10px;
-  padding: 8px 10px;
-  font-size:calc(12.5px + var(--type-up));
-  line-height: 1.45;
-  color: var(--ink);
-  background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--danger, #c0392b) 32%, transparent);
-  border-radius:calc(var(--r-ctl) * 9 / 8);
-}
-
-/* Bulk ticks, right-aligned above the list they act on so the pairing is obvious. */
-.seed-bulk {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-  margin: 0 0 8px;
-}
-
-.seed-list {
-  max-height: 46vh;
-  margin: 0;
-  padding: 0;
-  overflow: auto;
-  list-style: none;
-  border: 1px solid var(--hair-soft);
-  border-radius:calc(var(--r-ctl) * 10 / 8);
-}
-
-.seed-row {
-  border-bottom: 1px solid var(--hair-soft);
-}
-
-.seed-row:last-child {
-  border-bottom: 0;
-}
-
-.seed-row label,
-.seed-row > span {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  padding: 7px 10px;
-  font-size:calc(13px + var(--type-up));
-}
-
-.seed-who {
-  font-weight: 500;
-  color: var(--ink);
-}
-
-.seed-addr,
-.seed-count,
-.seed-note {
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink3);
-}
-
-/* Pushed right so the counts line up down the list rather than trailing each name. */
-.seed-count {
-  margin-left: auto;
-}
-
-.seed-excluded {
-  margin: 10px 0 0;
-  font-size:calc(12px + var(--type-up));
-  color: var(--ink3);
-}
-
-.seed-excluded summary {
-  padding: 4px 0;
-  cursor: pointer;
-}
-
 
 /* ================= demo ribbon ================= */
 .demo-ribbon {
@@ -840,21 +629,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 .sync-bar.warn .num {
   color: var(--accent-ink);
-}
-/* The strip's spoken sentence (`SyncBar.SyncAnnouncer`). Out of flow and one pixel, so it adds no
-   flex slot and no gap to either shape; clipped rather than `display:none` or `visibility:hidden`,
-   both of which would take it off the accessibility tree, which is the one place it exists for. */
-.sync-say,
-.rail-sync .sync-say {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
 }
 .sync-bar a {
   font-weight: 600;
@@ -1277,265 +1051,8 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   color: var(--ink);
 }
 
-.storage-title {
-  font-size: calc(15px + var(--type-up));
-  font-weight: 600;
-  margin: 4px 0 14px;
-}
-.storage-fig {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.storage-fig b {
-  font-size: 22px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.storage-fig span {
-  font-size: calc(12.5px + var(--type-up));
-  color: var(--ink2);
-}
-.storage-fig .storage-tag {
-  font-size: calc(11px + var(--type-up));
-  font-weight: 600;
-  padding: 1px 7px;
-  color: var(--tg-buch-ink);
-  background: var(--tg-buch-bg);
-}
-.storage-fig .storage-tag.full {
-  color: var(--danger-ink);
-  background: color-mix(in srgb, var(--danger-ink) 16%, transparent);
-}
-.storage-bar {
-  margin: 34px 0 10px;
-}
-.storage-track {
-  position: relative;
-  height: 16px;
-  background: var(--tint2);
-}
-.storage-seg {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-}
-.storage-seg.m0, .storage-sw.m0 { background: var(--accent); }
-.storage-seg.m1, .storage-sw.m1 { background: var(--tg-olive-ink); }
-.storage-seg.m2, .storage-sw.m2 { background: var(--tg-denim-ink); }
-.storage-seg.m3, .storage-sw.m3 { background: var(--tg-iris-ink); }
-.storage-seg.m4, .storage-sw.m4 { background: var(--tg-heather-ink); }
-.storage-seg.todo {
-  background: repeating-linear-gradient(-45deg, var(--hair-soft) 0 3px, transparent 3px 7px);
-  box-shadow: inset 0 0 0 1px var(--hair-soft);
-}
-.storage-seg.out {
-  background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--danger-ink) 30%, transparent) 0 3px, transparent 3px 7px);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger-ink) 45%, transparent);
-}
-.storage-mark {
-  position: absolute;
-  top: -24px;
-  bottom: -4px;
-  width: 0;
-  border-left: 2px solid var(--ink);
-}
-.storage-mark span {
-  position: absolute;
-  bottom: calc(100% - 18px);
-  left: 6px;
-  white-space: nowrap;
-  font-size: calc(11px + var(--type-up));
-  font-weight: 600;
-  line-height: 1;
-}
-.storage-mark.soft {
-  border-left: 1px dashed var(--ink3);
-}
-.storage-mark.soft span {
-  color: var(--ink3);
-  font-weight: 500;
-}
-.storage-mark.end {
-  border-left-color: var(--ink3);
-}
-.storage-mark.end span {
-  left: auto;
-  right: 6px;
-}
-.storage-scale {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 6px;
-  font-size: calc(10.5px + var(--type-up));
-  color: var(--ink3);
-  font-variant-numeric: tabular-nums;
-}
-.storage-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 14px;
-  font-size: calc(12px + var(--type-up));
-  font-variant-numeric: tabular-nums;
-}
-.storage-table th,
-.storage-table td {
-  text-align: left;
-  padding: 7px 10px 7px 0;
-  border-bottom: 1px solid var(--hair-soft);
-  white-space: nowrap;
-}
-.storage-table th {
-  color: var(--ink3);
-  font-weight: 500;
-  font-size: calc(11px + var(--type-up));
-}
-.storage-table .r {
-  text-align: right;
-  padding-right: 0;
-  padding-left: 10px;
-}
-.storage-table tfoot td {
-  font-weight: 600;
-  border-bottom: 0;
-}
-.storage-sw {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 8px;
-}
-.storage-who {
-  display: inline-block;
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: bottom;
-}
-.storage-p {
-  margin: 12px 0 0;
-  font-size: calc(12.5px + var(--type-up));
-  color: var(--ink2);
-  line-height: 1.6;
-  max-width: 66ch;
-}
-.storage-p b,
-.storage-kept b {
-  color: var(--ink);
-  font-weight: 600;
-}
-.storage-manage {
-  color: var(--ink);
-}
-.storage-kept {
-  margin: 14px 0 0;
-  padding: 10px 12px;
-  background: var(--tint2);
-  font-size: calc(12.5px + var(--type-up));
-  line-height: 1.55;
-  color: var(--ink2);
-}
-.storage-sub {
-  font-size: calc(12px + var(--type-up));
-  font-weight: 600;
-  color: var(--ink3);
-  margin: 26px 0 0;
-}
-.storage-sub + .storage-p {
-  margin-top: 8px;
-}
-.storage-plans {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
-  margin-top: 8px;
-}
-.storage-plan {
-  padding: 12px;
-  box-shadow: var(--lift-0);
-  background: var(--panel);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.storage-plan.fitted {
-  box-shadow: 0 0 0 2px var(--accent);
-  background: var(--accent-wash, var(--tint));
-}
-.storage-plan.addon {
-  box-shadow: inset 0 0 0 1px var(--hair);
-  background: transparent;
-}
-.storage-plan-tag {
-  align-self: flex-start;
-  min-height: 1.4em;
-  font-size: calc(10.5px + var(--type-up));
-  font-weight: 600;
-  color: var(--ink3);
-}
-.storage-plan-tag:empty {
-  visibility: hidden;
-}
-.storage-plan.fitted .storage-plan-tag {
-  padding: 0 6px;
-  background: var(--accent);
-  color: var(--on-accent);
-}
-.storage-plan-name {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-weight: 600;
-  font-size: calc(13px + var(--type-up));
-}
-.storage-plan-price {
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-}
-.storage-plan-gb {
-  font-size: 17px;
-  font-weight: 600;
-  margin-top: 4px;
-}
-.storage-plan-facts,
-.storage-plan-fit {
-  font-size: calc(11.5px + var(--type-up));
-  color: var(--ink2);
-  line-height: 1.5;
-}
-.storage-plan-fit {
-  margin-top: auto;
-  padding-top: 8px;
-  border-top: 1px solid var(--hair-soft);
-}
-.storage-plan.fitted .storage-plan-fit {
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-.storage-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  padding: 16px 0 0;
-}
-.storage-actions small {
-  font-size: calc(11.5px + var(--type-up));
-  color: var(--ink3);
-}
 .storage .set-row {
   margin-top: 22px;
-}
-@media (max-width: 640px) {
-  .storage-who {
-    max-width: 120px;
-  }
-  .storage-mark.soft span {
-    display: none;
-  }
 }
 
 .emptied {
@@ -1619,27 +1136,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .rail-sync-slot {
   display: none;
 }
-/* THE PAIRED DESKTOP'S STANDING LINE, resting state, beside the sync pair's and for its reason:
-   the two declarations that decide which copy is on screen sit together, directly above the one
-   query that swaps them, so the source order that resolves them is visible in one screenful.
-   `.rail-host`'s resting `display: none` is in `rail.css` with the rest of the rail's furniture;
-   that sheet loads first, so this query still wins at width. */
-.host-strip {
-  display: flex;
-}
-/* AND THE RAIL FORM'S RESTING STATE IS HERE TOO, not in `rail.css` with the rest of its styling.
-   That sheet is concatenated AFTER this one, and a media query adds no specificity — so a
-   `display:none` there would beat the query below at every width and the line would never render
-   anywhere. Both halves of the decision live beside each other, above the one rule that swaps
-   them, which is the arrangement the sync pair already uses two lines up. */
-.rail-host {
-  display: none;
-}
-/* THE ORGANIZER NOTICE'S PAIR, on the same rule: the topbar twin at rest, the rail's slot at
-   width, both halves beside the one query (DESIGN-026 §1.3). */
-.notice-shell {
-  display: flex;
-}
 .rail-notice-slot {
   display: none;
 }
@@ -1647,33 +1143,9 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   .sync-bar {
     display: none;
   }
-  /* The abandoned-changes strip is mounted in BOTH arrangements exactly as the sync line is, so it
-     joins the same single query rather than getting one of its own. Its rail copy lives inside
-     `.rail-sync-slot` and is already gated by the rule below; without this line the shell copy
-     stayed visible above the breakpoint and the same sentence stood on screen twice, with two
-     `role="status"` regions announcing it in turn — the exact failure the comment above this block
-     describes, reintroduced by a strip that did not know about it. */
-  .unsaved-shell {
-    display: none;
-  }
-  /* THE PAIRED DESKTOP'S STANDING LINE joins the SAME query, for the reason the strip above it
-     does: two complementary queries are not the same thing as one rule, and the gap between two
-     numbers once put a sentence on screen twice with two live regions reading it out. Its rail
-     copy is hidden at rest (`rail.css`) and revealed here, so exactly one is painted at every
-     width — including inside an OPEN drawer under 1024px, where the rail exists but this query
-     does not match and the shell form is the visible one. */
-  .host-strip {
-    display: none;
-  }
-  .rail-host {
-    display: flex;
-  }
   /* flex: the slot rests on its end (`rail.css`) */
   .rail-sync-slot {
     display: flex;
-  }
-  .notice-shell {
-    display: none;
   }
   .rail-notice-slot {
     display: block;
@@ -1721,18 +1193,9 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .rail-pull .ic {
   flex: none;
 }
-.pull-busy .ic {
-  animation: pull-turn 900ms linear infinite;
-}
 @keyframes pull-turn {
   to {
     transform: rotate(360deg);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .pull-busy .ic {
-    animation: none;
-    opacity: 0.55;
   }
 }
 /* ── BOTH HALVES OF THE SENTENCE WRAP. NEITHER IS EVER ELLIPSIZED. ──────────────────────
@@ -1815,101 +1278,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   color: var(--accent-ink);
   background: var(--accent-soft);
 }
-/* THE SENDING LINE (`SendingLine.tsx`): a send that left its editor finishes in the sync line's
-   own look, the rail box above the dock or the corner pill under 1024px (the `.sync-bar` /
-   `.rail-sync-slot` pair above shows exactly one). Its Open and Dismiss wear the line's link pill. */
-.sync-bar .sl-act,
-.rail-sync .sl-act {
-  font: inherit;
-  font-weight: 600;
-  color: inherit;
-  border: 0;
-  border-radius: var(--r-pill);
-  padding: 1px 9px;
-  background: oklch(1 0 0 / 0.5);
-  cursor: pointer;
-}
-.sync-bar .sl-act:hover,
-.rail-sync .sl-act:hover {
-  background: oklch(1 0 0 / 0.75);
-}
-[data-theme="dark"] .sync-bar .sl-act,
-[data-theme="dark"] .rail-sync .sl-act {
-  background: var(--canvas);
-}
-[data-theme="dark"] .sync-bar .sl-act:hover,
-[data-theme="dark"] .rail-sync .sl-act:hover {
-  background: var(--panel);
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar .sl-act,
-  :root:not([data-theme="light"]):not([data-theme="dark"]) .rail-sync .sl-act {
-    background: var(--canvas);
-  }
-  :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar .sl-act:hover,
-  :root:not([data-theme="light"]):not([data-theme="dark"]) .rail-sync .sl-act:hover {
-    background: var(--panel);
-  }
-}
-.sl-act.sl-quiet {
-  font-weight: 500;
-}
-.rail-sync .sl-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-/* The pill stacks above the first-sync pill when both float (`--pill-h` is that one's room). It is
-   capped as the rail's slot is and rests on its end (`column-reverse` over one stack, `rail.css`):
-   what overflows is the oldest note, at the top, and the live rows stay in the window. */
-.sync-bar.busy.sending-pill {
-  bottom: max(18px, calc(var(--pill-h, 0px) + 8px));
-  flex-direction: column-reverse;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  max-height: calc(45vh / var(--ui-zoom, 1));
-  max-height: calc(45dvh / var(--ui-zoom, 1));
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-.sending-pill .sl-stack {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-/* ONE ROW PER KIND (`lineRows`): an ending that waits for the person stands above the sends still
-   going, a hairline between them; an outcome's sentence wraps under the message it names. */
-.rail-sync .sl-row {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-}
-.sending-pill .sl-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 3px 8px;
-  min-width: 0;
-}
-.rail-sync .sl-row + .sl-row,
-.sending-pill .sl-row + .sl-row {
-  padding-top: 6px;
-  border-top: 1px solid var(--hair);
-}
-.rail-sync .sl-say,
-.sending-pill .sl-say {
-  overflow-wrap: anywhere;
-}
-.sending-pill .sl-say {
-  flex-basis: 100%;
-}
-.sending-pill .sl-actions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 .rail-sync.stopped {
   color: var(--on-accent);
   background: var(--accent);
@@ -1980,51 +1348,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   }
 }
 
-/* ================= the "get ohmail for desktop" prompt =================
-   A quiet line at the foot of the rail, shown ONLY in the signed-in browser — never in the
-   desktop app it invites you to install, never the demo (the gate is `showDesktopCta` in
-   AppShell). It sits inside `.rail-mail`, which already carries the muted foot-of-rail tone and
-   the top gutter, so this only lays out the link and its dismiss. Subtle by construction: the
-   link is one small line, the × is a bare glyph that lifts on hover. */
-.rail-desktop-cta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-}
-.rail-desktop-cta-link {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--ink2);
-  text-decoration: none;
-  font-size:calc(11px + var(--type-up));
-  line-height: 1.35;
-}
-.rail-desktop-cta-link:hover {
-  color: var(--ink);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.rail-desktop-cta-x {
-  flex: none;
-  border: 0;
-  background: none;
-  padding: 1px 4px;
-  border-radius:calc(var(--r-ctl) * 6 / 8);
-  color: var(--ink3);
-  cursor: pointer;
-  font-size:calc(14px + var(--type-up));
-  line-height: 1;
-}
-.rail-desktop-cta-x:hover {
-  color: var(--ink);
-  background: var(--tint);
-}
-.rail-desktop-cta-x:focus-visible {
-  outline: 2px solid var(--focus, var(--ink2));
-  outline-offset: 1px;
-}
-
 /* ================= reads pending-AI chip row ================= */
 .reads-chip-row {
   padding: 2px 18px 14px;
@@ -2064,15 +1387,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
     justify-content: flex-end;
     padding-bottom: 10px;
   }
-}
-/* …and at any width where a row's Accept also names the unsubscribe it asks for: that word beside the
-   text crushed the sender's name to a letter at 1440, so its verbs stand under the text too. */
-.view-screener .row-slot:has(.scn-act-yes-unsub) {
-  grid-template-columns: minmax(0, 1fr);
-}
-.view-screener .row-slot:has(.scn-act-yes-unsub) > .row-actions {
-  justify-content: flex-end;
-  padding-bottom: 10px;
 }
 
 /* ================= ohbox multi-select ============================
@@ -2137,60 +1451,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   .ohbox-where {
     margin: 0 20px 8px;
   }
-}
-
-/* ============ ohbox away notice: one quiet line ========================================
-   The away responder is the only thing this product does that sends mail on its own, and
-   this is its tell on the pane its owner actually reads (shell/AwayNotice.tsx). Ambient,
-   not an alert: muted ink, the doorbell's own 26px gutter, no background strip — legible when
-   looked for, silent otherwise. The one affordance leads to the pane that controls it. */
-.ohx-notice {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 2px 10px;
-  margin: 10px 26px 0;
-  font-size:calc(12px + var(--type-up));
-  color: var(--ink2);
-}
-.ohx-notice button {
-  font-size:calc(11.5px + var(--type-up));
-  font-weight: 600;
-  color: var(--accent-ink);
-  border-radius:var(--r-pill);
-  padding: 2px 9px;
-}
-.ohx-notice button:hover {
-  background: var(--accent-soft);
-}
-@media (max-width: 699.98px) {
-  .ohx-notice {
-    margin: 8px 14px 0;
-  }
-}
-
-/* ── THE AWAY RESPONDER'S NOTICE IS A STANDING PANE — the `Banner` primitive ─────────────
-   It used to be `.ohx-notice.ohx-standing`, the pane's rules written here beside the subline's.
-   The pane is `packages/ui`'s `Banner` now (primitives/banner.css: the soft accent ground over
-   the panel, the card radius, the 2px leading rule, the quiet verb — and the ONE media rule that
-   pins it at 1024px and up while it scrolls with the rows below), and `AwayNotice` renders through
-   `OhboxView`'s `standingNotice` slot INSIDE the scroller rather than in this header slot. */
-
-/* ============ the organizer notice, under 1024px: the topbar's twin ====================
-   The rail carries the notice at width, under the piles (`.rail-notice`, rail.css); where the rail is a
-   closed drawer this is the one copy — one quiet line in the strip register of the host line,
-   never over the Ohbox rows. Its `display` is declared beside `.host-strip`, above the single
-   1024px query that swaps the pair. The inner marks, rows and verbs are rail.css's `.rn-*`. */
-.notice-shell {
-  flex: none;
-  flex-direction: column;
-  gap: 3px;
-  padding: 8px 14px;
-  font-size: calc(12px + var(--type-up));
-  line-height: 1.45;
-  color: var(--ink2);
-  box-shadow: inset 0 -1px 0 var(--hair-soft);
-  background: var(--canvas);
 }
 
 /* ============ settings found on a mailbox: the restore card ============================
@@ -2339,10 +1599,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
     padding-left: 18px;
     padding-right: 18px;
   }
-  .list-col .triage-seg {
-    margin-left: 18px;
-    margin-right: 18px;
-  }
 }
 .scn-seg button {
   padding: 5.5px 13px;
@@ -2408,24 +1664,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .scn-act-more .chev {
   transform: rotate(-90deg);
 }
-.scn-act-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  min-width: 150px;
-  padding: 4px;
-  gap: 1px;
-  border-radius:calc(var(--r-card) * 12 / 14);
-  border: 1px solid var(--line);
-  background: var(--float);
-  box-shadow: var(--lift-2);
-  /* opened from a revealed control; the popover itself lives inside the click-through slot
-     (`.row-actions`), so it opts back into pointer events or its own items are not clickable. */
-  pointer-events: auto;
-}
 .scn-act-dest {
   font: inherit;
   font-size:calc(12px + var(--type-up));
@@ -2443,26 +1681,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 .scn-act-dest:hover {
   background: var(--tint);
-}
-/* What Screen out and Spam send, in the menu that offers them, before either is pressed. */
-.scn-act-unsub {
-  margin: 4px 8px 2px;
-  max-width: 220px;
-  font-size: calc(11px + var(--type-up));
-  line-height: 1.4;
-  color: var(--ink2);
-}
-/* A menu capped to the room it has (`row-menu-fit.ts`) scrolls; the note leads, so it is read first. */
-.scn-act-menu[data-capped] .scn-act-unsub {
-  order: -1;
-  margin: 2px 8px 4px;
-}
-/* The same sentence beside the two bulks. */
-.scn-bulk-unsub {
-  margin: 6px 0 0;
-  font-size: calc(11px + var(--type-up));
-  line-height: 1.4;
-  color: var(--ink2);
 }
 @media (hover: none) {
   .scn-act {
@@ -2516,45 +1734,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
     pointer-events: auto;
   }
 }
-/* WHAT THE AI ALLOWANCE IS DOING. `flex-basis: 100%` puts it on its own line under the bulk
-   strip's buttons — the same device `.scn-sg-note` uses — so it is a footnote to that row and
-   never a fourth control in it. Same 11.5px/--ink3 as every other quiet line here: the sentence
-   has to be findable at the moment it matters and must not compete with the button that spends.
-   `order` keeps it under the whole row when the control that renders it sits mid-strip. */
-.scn-ai-credits {
-  flex-basis: 100%;
-  order: 1;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  margin: 0;
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink3);
-}
-/* The way to the plan, as a link and not a button: it navigates, it buys nothing, and the loudest
-   thing in a spending surface must stay the thing that spends. */
-.scn-ai-cta {
-  font: inherit;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-/* The auto-work opt-in's confirm, in the General pane. Indented under the row it belongs to and
-   sharing that row's price and note type with the manual purchase above — one presentation for
-   "here is what the server says this costs", wherever it is being asked. */
-.set-auto-confirm {
-  padding: 2px 2px 6px 2px;
-  border-top: 1px solid var(--hair-soft);
-}
-.set-auto-confirm .set-note-inline {
-  padding: 8px 0 0;
-  max-width: 62ch;
-  line-height: 1.55;
-}
 /* The editable Ohbox bar — a free-text preference threaded into the AI's relevance judgement. */
 .set-screening-bar {
   padding: 4px 2px 8px 2px;
@@ -2566,24 +1745,10 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   padding: 0;
   font-weight: 600;
 }
-/* The look is the text field's (`TextField`, box): one edge, one ring, one ground wherever text
-   is typed. This field's own: the settings prose measure, and a floor tall enough to say it takes
-   a paragraph rather than a line. */
-.set-screening-textarea {
-  max-width: 62ch;
-  min-height: 88px;
-}
 .set-screening-bar .set-note-inline {
   padding: 0;
   max-width: 62ch;
   line-height: 1.55;
-}
-/* The price sits between the sentences and the confirm, so it cannot be missed on the way. */
-.set-auto-quote {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  padding: 12px 0;
 }
 /* held-mail preview — the sender's actual mail, stream-style cards */
 .scn-mails {
@@ -2591,286 +1756,15 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   margin: 0 auto;
   padding: 20px 30px 60px;
 }
-.scn-why {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  font-size:calc(12px + var(--type-up));
-  color: var(--ink2);
-  margin: 0 0 14px;
-  line-height: 1.5;
-}
-.scn-why svg {
-  color: var(--accent-ink);
-  flex: none;
-  margin-top: 2px;
-}
-.scn-why b {
-  color: var(--ink);
-}
-.scn-why .conf {
-  font-variant-numeric: tabular-nums;
-  font-weight: 650;
-  color: var(--ink);
-}
-.scn-why .why {
-  color: var(--ink3);
-}
-/* Two claims, one under the other: what ohmail MEASURED about the sender, then what the model
-   ADVISED. The wrapper exists because `.scn-why` is a flex ROW built for one sentence beside the
-   glyph, and putting a second sentence in it laid them side by side. */
-.scn-why-lines {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.scn-why-checked {
-  color: var(--ink);
-  font-weight: 600;
-}
 /* The no-suggestion state: stated, not advertised. It carries no spark glyph — the icon
    means "a model said something" and there is no model. Quieter than the AI line because
    it is a standing condition, not a per-sender finding. */
 .scn-why-none {
   color: var(--ink3);
 }
-.scn-caption {
-  font-size:calc(11px + var(--type-up));
-  color: var(--ink3);
-  margin: 0 0 10px;
-}
-/* WHERE THE DECISION VERBS WOULD BE, on a mailbox this install does not organize — the pane's
-   standing condition rather than an error, so it takes the caption's quiet voice with one line
-   of emphasis on the fact itself. It sits inside `.decide` (the sticky bar) on all three
-   segments, so no geometry of its own is needed beyond the stack. */
-.scn-reader {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.scn-reader b {
-  font-size:calc(12.5px + var(--type-up));
-  color: var(--ink);
-}
-.scn-reader span {
-  font-size:calc(11px + var(--type-up));
-  color: var(--ink3);
-  line-height: 1.45;
-}
-/* The way to the control, in the note itself. The sentence names Settings → Mailboxes; on a
-   phone that is a route to remember, so the note carries the press — the Ohbox notice's own
-   quiet verb (`.ohx-notice button`), which navigates and files nothing. */
-.scn-reader button {
-  align-self: flex-start;
-  /* The note sits in the decision bar's own padded panel, and this capsule is the one thing in it
-     that does not wrap. A label longer than the panel is wide would sit in the gutter rather than
-     break — seven pixels of it, on the narrowest face in German, before the label was shortened.
-     The ceiling keeps that from returning the next time a language is longer than English. */
-  max-width: 100%;
-  white-space: normal;
-  margin-top: 2px;
-  font-size:calc(11.5px + var(--type-up));
-  font-weight: 600;
-  color: var(--accent-ink);
-  border-radius: var(--r-pill);
-  padding: 2px 9px;
-}
-.scn-reader button:hover {
-  background: var(--accent-soft);
-}
-/* NOTHING ORGANIZES THIS MAILBOX YET — in the Screener's empty state, where the screening hint would stand. The
-   reader note's voice and its quiet press, stacked and centred like the empty state around it. */
-.scn-not-yet {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  margin-top: 6px;
-}
-.scn-not-yet button {
-  margin-top: 4px;
-  font-weight: 600;
-  color: var(--accent-ink);
-  border-radius: var(--r-pill);
-  padding: 2px 9px;
-}
-.scn-not-yet button:hover {
-  background: var(--accent-soft);
-}
-/* ── DECIDING ON A MAILBOX ANOTHER INSTALL ORGANIZES, WHEN THAT INSTALL TAKES THE DECISION ──
-   The opposite of `.scn-reader`, and it must never be mistaken for it. There the verbs are GONE
-   and a two-line note stands in their place; here the verbs are present and work — a press is
-   sent to the organizer, which files the sender on its next pass — so what changes is not the
-   bar but where a decided sender goes: out of the queue and under a waterline, the Ohbox's own
-   device for "dealt with, not gone", until the organizer applies it and the mirror moves the
-   sender on.
-
-   Three statements, each made once. The standing fact sits ABOVE THE QUEUE in the list head —
-   a running sentence whose bold lead says what a press does here — never where the verbs would
-   be. The per-sender state sits under the bar, in the AI line's place, because it is the same
-   kind of thing: a finding about this sender. The refusal is the one failure state and the only
-   louder thing: its lead takes the accent's ink and the row's badge is the one outlined badge
-   in the list. The palette has no red, and nothing here is anyone's fault — the organizer
-   answered, and said no — so it is set apart by shape, not by alarm. */
-/* MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — a quiet block in the header, not
-   a banner. It is an OFFER about mail that is not in the list, so it sits apart from the bulk
-   strip (which acts on what is on screen) and carries its own rule lines: address or domain, where
-   it would go, how much of it there is. Ink and rhythm are the relay note's — the same register,
-   because both are the surface telling you something rather than asking. The group list is the one
-   place a `ul` earns itself here: the rows are a set of facts of equal weight, and a person reads
-   down them before pressing. */
-.scn-held {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: flex-start;
-  max-width: 62ch;
-}
-.scn-held-lead {
-  margin: 0;
-  font-size: calc(12px + var(--type-up));
-  line-height: 1.5;
-  color: var(--ink);
-  font-weight: 600;
-}
 /* The same note at the top of News and Receipts: letters there from senders nobody let in. */
 .pile-note {
   margin: 0 0 16px;
-}
-.scn-held-groups {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: calc(11.5px + var(--type-up));
-  line-height: 1.5;
-  color: var(--ink2);
-}
-/* A contact nobody wrote a rule for: one line each under the lead, in the facts' register. */
-.scn-held-lead.scn-held-sender {
-  font-weight: 400;
-  color: var(--ink2);
-}
-/* A letter its provider failed: its line, the check behind the shield, its two answers. */
-.scn-failed-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.scn-failed-check {
-  display: flex;
-  gap: 8px;
-  margin: 0;
-  font-size: calc(12px + var(--type-up));
-  line-height: 1.45;
-  color: var(--ink2);
-}
-.scn-failed-check svg {
-  color: var(--accent-ink);
-  flex: none;
-  margin-top: 2px;
-}
-/* Mark all spam's question: the held block's sentences, its two answers side by side. */
-.scn-ask-acts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-/* "Filed automatically" under the auto-apply switch: one row per message, its Put back beside it. */
-.scn-autofiled {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: flex-start;
-  padding: 4px 0 12px;
-}
-.scn-autofiled ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-}
-.scn-autofiled-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-}
-.scn-autofiled-row > button {
-  flex: none;
-  white-space: nowrap;
-}
-/* Two lines at most, so a narrow window keeps the subject rather than the address alone. */
-.scn-autofiled-what {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow-wrap: anywhere;
-  font-size: calc(12px + var(--type-up));
-  color: var(--ink2);
-}
-/* A letter ohmail filed to Spam for claiming a company: what it was over why it went, its Put back beside. */
-.scn-impersonated-letter {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.scn-impersonated-why {
-  font-size: calc(11.5px + var(--type-up));
-  line-height: 1.45;
-  color: var(--ink3);
-  overflow-wrap: anywhere;
-}
-.scn-relay {
-  margin: 0;
-  font-size:calc(11.5px + var(--type-up));
-  line-height: 1.5;
-  color: var(--ink2);
-  max-width: 62ch;
-}
-.scn-relay b {
-  color: var(--ink);
-  font-weight: 600;
-}
-/* `display: block`, not `.scn-why`'s flex: the bold lead and the sentence are one line of prose
-   and must flow as one, or a narrow preview puts the lead in a column of its own beside a
-   wrapped sentence. */
-.scn-relay-state {
-  display: block;
-  margin: 0 0 14px;
-  font-size:calc(12px + var(--type-up));
-  line-height: 1.5;
-  color: var(--ink2);
-  max-width: 62ch;
-}
-.scn-relay-state b {
-  color: var(--ink);
-  font-weight: 600;
-}
-.scn-relay-state[data-state="refused"] b {
-  color: var(--accent-ink);
-}
-/* The refused row's badge — `MessageRow`'s `stateNote`, on a row wearing `scn-refused`: the
-   accent's ink inside a hairline of the same hue, on no fill. Distinct from the filled AI badge
-   beside it (a model's suggestion) and from the quiet "Not saved" place badge (a write that did
-   not land here), because it is neither. */
-.row.scn-refused .badge.place {
-  color: var(--accent-ink);
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--accent-hair);
 }
 /* ── THE TRASH VIEW'S LIVE SECTION ────────────────────────────────────────────────────────
    The mail server's own Trash, under the mirrored deletes. A hairline above the heading is
@@ -2882,103 +1776,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   margin-top: 14px;
   padding-top: 4px;
 }
-.trash-live-head {
-  margin: 10px 14px 6px;
-  font-size: calc(11.5px + var(--type-up));
-  font-weight: 600;
-  letter-spacing: .02em;
-  color: var(--ink3);
-}
-.trash-live-note {
-  font-size: calc(11px + var(--type-up));
-  color: var(--ink3);
-  margin: 10px 14px 12px;
-}
-.trash-live-older {
-  display: flex;
-  justify-content: center;
-  margin: 10px 0 12px;
-}
-/* The live reading half: no verb strip, so the head line carries the whole frame. The
-   read-only sentence sits between the subject and the body, where a bar would have been. */
-.trash-live-read {
-  padding: 18px 22px 28px;
-  min-width: 0;
-  overflow-y: auto;
-}
-.trash-live-read-who {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: calc(12.5px + var(--type-up));
-}
-.trash-live-read-from {
-  font-weight: 600;
-  color: var(--ink);
-}
-.trash-live-read-addr,
-.trash-live-read-time {
-  color: var(--ink3);
-}
-.trash-live-read-time {
-  margin-left: auto;
-}
-.trash-live-read-subj {
-  margin: 6px 0 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--ink);
-}
-.trash-live-readonly {
-  margin: 10px 0 16px;
-}
 
-/* The Junk window's footnotes — the per-mailbox degrades and the digit-free retention
-   sentence — quiet lines under the rows, in the caption's own voice, padded to the row gutter. */
-.scn-junk-note {
-  font-size:calc(11px + var(--type-up));
-  color: var(--ink3);
-  margin: 10px 14px 0;
-}
-.scn-junk-retention {
-  margin-bottom: 12px;
-}
-/* "Show older" — an explicit press, centred so it reads as the list's foot and not a row. */
-.scn-junk-older {
-  display: flex;
-  justify-content: center;
-  margin: 10px 0 2px;
-}
-/* The Junk window's search — one quiet field above the rows, the list pane's own gutter. It
-   filters what is loaded as you type; the server is asked only when that finds nothing. */
-.scn-junk-search {
-  margin: 4px 14px 8px;
-}
-/* The field itself is `TextField` (box). The rule that stood here read `var(--line)`, a token
-   declared nowhere — so the whole `border` declaration was invalid and the search had no edge. */
-/* The one-time sweep offer — a card at the head of the segment, the empty-state's voice, with
-   its number, its one press, and the way to say "not now". */
-.scn-junk-sweep {
-  margin: 6px 14px 12px;
-  padding: 12px 14px;
-  background: var(--float);
-  border-radius:var(--r-card);
-  box-shadow: var(--lift-1);
-  font-size:calc(12.5px + var(--type-up));
-  color: var(--ink2);
-}
-.scn-junk-sweep b {
-  display: block;
-  color: var(--ink);
-  margin-bottom: 4px;
-}
-.scn-junk-sweep .scn-junk-sweep-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
 .hmail {
   background: var(--float);
   border-radius:var(--r-overlay);
@@ -3001,13 +1799,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
    takes the line under the name, as in the reader's header, and only an address longer than that line
    is cut, in its local part (address-text.css). `.hm-name` is the plain line's wrapper, laid out as
    the press is, and no press target. */
-.hm-line .hm-name {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex: 1 1 0;
-  min-width: 0;
-}
 .hm-line :is(.hm-who, .hm-name) {
   flex-wrap: wrap;
   row-gap: 2px;
@@ -3118,28 +1909,12 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   line-height: 1.3;
   text-wrap: balance;
 }
-.hm-chips {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin: 0 0 10px;
-}
 /* No `white-space` here: the held mail's line breaks are `.msg-plain`'s, on the paragraphs. */
 .hm-body {
   font-size:calc(13.5px + var(--type-up));
   line-height: 1.7;
   color: var(--ink);
   max-width: 62ch;
-}
-/* A sibling on a conversation whose body has been hydrated renders through the SAME viewer as
-   the focused message, so its slot takes the same measure the focused message gets rather than
-   the preview measure above. 62ch is right for a line of held-mail preview and wrong for a
-   letter: the identical mail would otherwise be laid out in a narrower column as a sibling than
-   as the message you opened, which is the seam a reader would notice first.
-   `--msg-measure` is declared on `.msg` (packages/ui/.../message.css) and inherits down. */
-.hm-body.hm-rich {
-  max-width: var(--msg-measure);
-  white-space: normal;
 }
 /* Whether the text above is the whole held message. Set apart from `.hm-body` and
    quieter than it: the product speaking about the mail, never mistakable for the mail. */
@@ -3151,33 +1926,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 .hm-state.warn {
   color: var(--accent);
-}
-/* The unsubscribe control (C): a chip naming the offer beside the action — a button that POSTs
-   one-click, or a link out to the sender's own page. Quiet, sat below the mail like `.hm-state`,
-   never competing with the decision bar above the preview. */
-.hm-unsub {
-  margin: 12px 0 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  font-size:calc(12px + var(--type-up));
-}
-.hm-unsub.note {
-  color: var(--ink3);
-  max-width: 62ch;
-  line-height: 1.6;
-}
-.hm-unsub-link {
-  color: var(--ink2);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.hm-unsub-link:hover {
-  color: var(--ink);
-}
-.hm-unsub-result {
-  color: var(--ink3);
 }
 /* spam-grade mail renders quieter and duller — less light, less ink */
 .hmail.dull {
@@ -3211,28 +1959,12 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .scn-read .empty {
   padding-top: 96px;
 }
-/* THE SEARCH EMPTY STATE'S ADDRESS DOOR AND JUNK SENTENCE — each on its own line. The shared
-   `.empty` children are inline spans by design, so without this each runs straight on from the
-   scope sentence, one word into the next (the address door on the demo frame that shipped it, the
-   junk sentence on 0.24.0). The junk sentence is a `<p>`: the margin resets its default. */
-.view-search .empty .empty-addr,
-.view-search .empty .empty-junk,
-.view-search .empty .empty-reach {
-  display: block;
-  margin: 10px 0 0;
-}
 /* …and the Ohbox's resting reading column, which is the same situation: `.empty` is sized for
    the TOP of a list, where 52px of padding sits under a header. A reading column has no header,
    so the same block floats near the ceiling of a full-height panel. The Screener solved this
    first; this is that rule, aimed at the one other column that now has a resting state. */
 .view-ohbox .read-col .empty {
   padding-top: 96px;
-}
-/* The Ohbox with no mailbox: the card's one verb on its own line under the sentence. */
-.empty-connect .btn {
-  display: flex;
-  width: fit-content;
-  margin: 16px auto 0;
 }
 
 /* ================= the open message's marks =================
@@ -3255,9 +1987,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   gap: 7px;
   align-items: center;
 }
-/* The tag row: the folded pill (present only when the message carries a mark) and the add-tag
-   affordance, which stays OUT of the fold and always reachable — see MessagePane for why `addRef`
-   must not sit inside a collapsed `<details>`. */
+/* Keep the add-tag control outside the folded pill so it is always reachable. */
 .tag-chrome {
   display: flex;
   align-items: baseline;
@@ -3300,59 +2030,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .stamp-toggle:focus-visible {
   outline: 2px solid var(--focus, var(--ink2));
   outline-offset: 2px;
-}
-
-/* ================= triage =================
-   The pile switcher and the Reply Run are `ListPane.header` furniture now, above the scroller
-   instead of inside it — which is what keeps the run reachable on a pile longer than the pane.
-   The 30px gutter is the header's (`.vhead`, `.tag-head`), so the segments line up with the
-   title above them and the rows below. */
-.triage-cta {
-  padding: 0 30px 12px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.triage-cta span {
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink3);
-  min-width: 0;
-}
-/* THE REPLY RUN'S SESSION MARK. It replaces `style={{ opacity: 0.38 }}` on the tile stack —
-   the same purely visual dim, on the row language, so nothing about what it signals changed.
-   A message answered in a run is on its way out of the pile; this is what it looks like in the
-   moment between the send settling and the pile losing the row. */
-.row.fr-done {
-  opacity: 0.38;
-}
-/* A pile entry with no message behind it (the demo world's `triage_item` rows). Same `.row`
-   chrome, rendered as a div — see `TriageView`: there is nothing to open, so there is no
-   button. `.row` is styled for a `<button>`, and these two are what a div does not inherit. */
-.view-triage .row:not(button) {
-  display: flex;
-  flex-direction: column;
-  text-align: left;
-}
-.view-triage .row .prev {
-  display: block;
-}
-
-/* ================= search ================= */
-.search-wrap {
-  max-width: 740px;
-  margin: 0 auto;
-  /* The 6px top is not decorative. `.scroller` (list-pane.css) pads only its BOTTOM — "room
-     for the dock + full shadow falloff" — so the search pill, which is the one lifted element
-     sitting at the very top of a scroller, had its upper shadow sliced off by the clip edge
-     and read as a cut border. */
-  padding: 6px 30px 0;
-  width: 100%;
-}
-.search-cols {
-  display: grid;
-  grid-template-columns: 1fr 180px;
-  gap: 28px;
 }
 
 /* ================= compose =================
@@ -3523,22 +2200,6 @@ textarea.c-input:read-only {
 .c-select:has(select:disabled)::after {
   border-top-color: var(--ink3);
 }
-/* THE SENDER CHANGED BECAUSE OF WHO THIS IS GOING TO — the same job `.reply-from-sub` does one
-   surface over, and the same reasoning about its weight: it reports a decision the product took
-   while the user was typing in another field, so it carries the accent rather than sitting at
-   `--ink3` like a caption. Smaller than the value it follows, because the address is the fact and
-   this is the note about it.
-
-   `margin-left: auto` pins it to the row's trailing edge, which is the one place in this block
-   that is always free: the shrink-wrapped `.c-select` leaves the rest of the row empty, and the
-   one-mailbox `<output>` takes `flex: 1` and would otherwise push the note out of the panel. */
-.compose-from-hint {
-  flex: none;
-  margin-left: auto;
-  padding-left: 10px;
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--accent);
-}
 /* A REJECTED RECIPIENT, named. Sits directly under the row it belongs to, on the accent's own
    soft surface rather than a red the system does not have; the field's `aria-describedby`
    points at it, so the reason reaches a screen reader with the field and not as a stray line. */
@@ -3551,62 +2212,11 @@ textarea.c-input:read-only {
   padding: 7px 11px;
   margin: 8px 0 0;
 }
-/* THE CC/BCC AFFORDANCE, ON THE RIGHT EDGE OF THE ROW IT ACTS ON.
-   `.c-ccbcc-row` — a full-width strip between To and Subject holding one 11.5px word — is
-   deleted with the markup that used it. It read as a fourth field and cost the form a band of
-   vertical space to say something that belongs to the recipient row. `flex: none` so it never
-   takes width from the addresses beside it, and the row's own `:focus-within` hairline now runs
-   under both, which is what makes it read as part of the field rather than as a control between
-   two of them. */
-.c-ccbcc-toggle {
-  flex: none;
-  align-self: center;
-  border: 0;
-  background: none;
-  padding: 2px 4px;
-  font: inherit;
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink3);
-  cursor: pointer;
-  border-radius:calc(var(--r-ctl) * 6 / 8);
-}
-.c-ccbcc-toggle:hover {
-  color: var(--ink);
-}
-.c-ccbcc-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-/* SUBJECT, BARE. No label gutter (the markup renders no `<label>`; `aria-label` carries the
-   name), and one step up in size from the address rows above it — a subject is the message's
-   own heading, so it is typed at something nearer the body's scale than the envelope's. The
-   placeholder is the visible label, at `--ink3` like every other placeholder here. */
-.c-subject {
-  padding: 10px 2px;
-}
-.c-subject .tf {
-  font-size:max(var(--input-floor), calc(15px + var(--type-up)));
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-.c-subject .tf::placeholder {
-  font-weight: 500;
-  letter-spacing: 0;
-}
 .draft-card {
   border-radius:var(--r-overlay);
   background: var(--accent-soft);
   padding: 20px 22px;
   margin: 20px 0 18px;
-}
-.draft-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size:calc(11px + var(--type-up));
-  font-weight: 650;
-  color: var(--accent-ink);
-  margin-bottom: 12px;
 }
 /* The draft's line breaks are `.msg-plain`'s (packages/ui message.css), set on the element. */
 .draft-body {
@@ -3659,12 +2269,6 @@ textarea.c-input:read-only {
     background: oklch(1 0 0 / 0.08);
   }
 }
-.draft-btns {
-  display: flex;
-  gap: 7px;
-  margin-top: 16px;
-  flex-wrap: wrap;
-}
 /* COMPOSE'S EDITOR SHELL. These three selectors used to style a `<textarea>` and now style
    the `.rte` wrapper around a `contenteditable`, which is why `:focus` became `:focus-within`
    — the element that takes focus is the surface INSIDE this box, so a `:focus` rule here
@@ -3703,15 +2307,6 @@ textarea.c-input:read-only {
   outline-offset: 0;
   border-color: transparent;
 }
-.send-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 14px;
-  /* Two notes can sit beside Send on a narrow window; they wrap under it rather than
-     compressing the button they explain. */
-  flex-wrap: wrap;
-}
 .send-note {
   font-size:calc(11.5px + var(--type-up));
   color: var(--ink2);
@@ -3723,14 +2318,6 @@ textarea.c-input:read-only {
    pins the pair to the bottom edge. */
 .compose-confirm {
   margin-top: 14px;
-}
-/* THE FORWARDING NOTE — a fact about the outgoing message, sitting with the header rows it
-   qualifies rather than down beside Send. Muted and small like `.send-note`, because it is the
-   same register: something true about this send that the form cannot show. */
-.compose-forwarding {
-  margin: 10px 0 0;
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink2);
 }
 /* THE ORIGINAL'S FILES under the forwarding note: the attach list's rows, a muted head and line. */
 .forward-files {
@@ -4223,22 +2810,6 @@ input.rcp-input { text-overflow: ellipsis; }
   0% { background: var(--accent-wash, var(--tint)); }
   100% { background: transparent; }
 }
-.row.is-located {
-  animation: locate-flash 1.6s var(--swift) forwards;
-}
-@media (prefers-reduced-motion: reduce) {
-  .row.is-located {
-    animation: none;
-    background: var(--accent-wash, var(--tint));
-  }
-}
-
-/* Triage: the three horizons as one control, above the open pile. */
-/* In the header slot, so its own gutter rather than the scroller's. The bottom margin is gone
-   with the stack it used to sit above — `.triage-cta` follows it now and carries the spacing. */
-.triage-seg {
-  margin: 0 30px 10px;
-}
 
 /* Settings → Tags: the rename field and the delete confirmation take the row's place. */
 .set-tag-edit {
@@ -4283,51 +2854,6 @@ input.set-tag-input {
   .set-row.set-tag-edit:has(> .set-tag-input) > .set-tag-input { flex: 1 1 0; width: auto; }
   .set-row.set-tag-edit:has(> .set-tag-input) > .set-tag-acts { flex-basis: 100%; }
 }
-
-/* The coloured dot doubles as the recolour trigger: a bare button so the dot sits exactly where a
-   static one would, with a hit area and a focus ring but no button chrome. */
-.set-tag-dot {
-  border: 0;
-  background: none;
-  padding: 5px;
-  margin: -5px;
-  cursor: pointer;
-  border-radius:calc(var(--r-ctl) * 7 / 8);
-  display: inline-flex;
-  line-height: 0;
-}
-.set-tag-dot:hover { background: var(--tint); }
-.set-tag-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-/* The recolour swatches — one button per renderable hue, the current one ringed. Ten of them
-   now, so the group wraps rather than compressing: `flex: 0 1 auto` lets it give back width
-   before the row does, and the wrap keeps every swatch at its full hit area. */
-.set-tag-hues {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-  flex: 0 1 auto;
-}
-.set-tag-hues .set-hue {
-  border: 0;
-  background: none;
-  padding: 5px;
-  cursor: pointer;
-  border-radius:calc(var(--r-pill) * 999 / 99);
-  display: inline-flex;
-  line-height: 0;
-  box-shadow: inset 0 0 0 1px transparent;
-  flex: 0 0 auto;
-}
-.set-tag-hues .set-hue:hover { box-shadow: inset 0 0 0 1px var(--hair); }
-.set-tag-hues .set-hue.on { box-shadow: inset 0 0 0 2px var(--accent-hair); }
-.set-tag-hues .set-hue:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-/* The duplicate-name refusal beneath the create row. */
-.set-tag-taken { color: var(--accent-ink); }
 
 .tagp {
   position: fixed;
@@ -4408,30 +2934,6 @@ input.set-tag-input {
    shadow, its own close button and its own everything. It is a settings pane now, so it is
    styled as one: the section primitive draws the panel, and these rules only set the prose
    measure inside it. */
-.about-pane {
-  padding-top: 18px;
-}
-/* The pane is a table of `SettingsRow`s now, so the paragraph rules that used to size five loose
-   lines here are gone with the paragraphs. What is left is the two things rows do not provide:
-   the support address inside a row's description reads as a link, and the three policy links sit
-   side by side rather than stacking into a column at the row's right edge. */
-.about-pane .set-row .lab a {
-  color: var(--accent-ink);
-}
-/* A row's control does not shrink (`.set-row > .lab ~ * { flex: 0 0 auto }`), which is right for
-   a button and wrong for three links: at 390 the German set ran 11px off the pane's right edge
-   with no affordance. Allowed to shrink here so `flex-wrap` can do its job and they take two
-   lines. TWO classes on purpose — the rule being overridden is `.set-row > .lab ~ *`, which is
-   one class plus one universal, so a bare `.about-links` loses to it and the fix silently does
-   nothing (measured: computed `flex` stayed `0 0 auto` and the links still clipped). */
-.about-pane .about-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  font-size:calc(12.5px + var(--type-up));
-  flex: 1 1 auto;
-  min-width: 0;
-}
 .about-links a {
   color: var(--accent-ink);
 }
@@ -4495,20 +2997,6 @@ input.set-tag-input {
 .gate .btn {
   text-decoration: none;
 }
-/* The server's first frame says it is late only once it is (CloudShell `FirstFrame`); no script. */
-.gate-late {
-  visibility: hidden;
-  animation: gate-late 0s 10s forwards;
-  font-size: calc(13px + var(--type-up));
-  color: var(--ink2);
-  margin: 0;
-}
-.gate-late a {
-  color: var(--accent-ink);
-}
-@keyframes gate-late {
-  to { visibility: visible; }
-}
 /* ── THE WALL — the refused account's whole screen ────────────────────────────────────────────
    `.gate-card`'s wider sibling: the lock used to be one sentence and two buttons, and the wall
    carries a dated headline, three statements and three actions with a line under each. Wider by
@@ -4527,79 +3015,6 @@ input.set-tag-input {
 .gate-card .wall-lead {
   margin: 0 0 6px;
 }
-.gate-card .wall-master {
-  font-size:calc(13px + var(--type-up));
-  font-weight: 560;
-  color: var(--ink);
-  line-height: 1.6;
-  margin: 0 0 14px;
-}
-.gate-card .wall-fine {
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink3);
-  line-height: 1.55;
-  margin: 0 0 20px;
-}
-/* ONE COLUMN, and the page's only emphasis. A row of three would make them look interchangeable;
-   two of the three cannot be undone by pressing again, so each gets its own line and its own
-   sentence underneath. The hairline is what separates "what happened" from "what you can do". */
-.gate-card .wall-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
-  padding: 18px 0 0;
-  margin: 0 0 18px;
-  border-top: 1px solid var(--hair);
-}
-.gate-card .wall-act {
-  width: 100%;
-  justify-content: center;
-  padding: 11px 18px;
-  font-size:calc(13.5px + var(--type-up));
-  text-decoration: none;
-  margin: 8px 0 0;
-}
-.gate-card .wall-hint {
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink3);
-  line-height: 1.5;
-  margin: 6px 2px 2px;
-}
-.gate-card .wall-hint a {
-  color: var(--ink2);
-  text-decoration: underline;
-}
-/* The export's refusal, said where the press was — the one line on the screen reporting that
-   something did NOT happen, so it is the one that is not ink-coloured. `--danger` WITH ITS
-   FALLBACK: the token is defined by the ohmarchy theme and not by the base one, so a bare
-   `var(--danger)` leaves this sentence inheriting body ink on the default theme. `.rte-linkpop-err`
-   is the other reader and carries the same pair. */
-.gate-card .wall-warn {
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--danger, #b3261e);
-  line-height: 1.55;
-  margin: 6px 2px 2px;
-}
-/* The two states of the wall's read after a hand-off: the row that stands in for the actions while
-   the answer is in flight (the hairline kept, so the card does not jump), and the quiet line above
-   the actions when the payment has not been confirmed yet. */
-.gate-card .wall-check {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 22px 0 18px;
-  margin: 0 0 18px;
-  border-top: 1px solid var(--hair);
-  font-size:calc(13px + var(--type-up));
-  color: var(--ink2);
-}
-.gate-card .wall-note {
-  font-size:calc(12px + var(--type-up));
-  color: var(--ink2);
-  line-height: 1.55;
-  margin: 8px 2px 4px;
-}
 /* The erasure ceremony, in place. It is Settings → Account's own pane, so it brings its own
    layout; all this does is give it the card's width back and put the way out under it. */
 .gate-card .wall-erase {
@@ -4614,77 +3029,8 @@ input.set-tag-input {
   font-size:calc(11px + var(--type-up));
   color: var(--ink3);
 }
-.login-passkey {
-  width: 100%;
-  justify-content: center;
-  padding: 11px 18px;
-  font-size:calc(13.5px + var(--type-up));
-}
-.login-passkey-note {
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink3);
-  line-height: 1.55;
-  margin: 12px 0 0;
-}
-.login-alt {
-  display: block;
-  margin: 18px auto 0;
-  font-size:calc(12px + var(--type-up));
-  font-weight: 600;
-  color: var(--ink2);
-}
-.login-alt:hover {
-  color: var(--ink);
-}
 .login-totp {
   margin-top: 4px;
-}
-.login-totp-label {
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink3);
-  margin: 0 0 10px;
-}
-.totp-boxes {
-  display: flex;
-  gap: 7px;
-  margin-bottom: 16px;
-}
-.totp-boxes input {
-  width: 42px;
-  height: 48px;
-  text-align: center;
-  font-size: 19px;
-  font-variant-numeric: tabular-nums;
-  border: 1px solid var(--hair); /* input field — kept */
-  border-radius:calc(var(--r-card) * 12 / 14);
-  background: var(--canvas);
-}
-.totp-boxes input:focus {
-  outline: 1.5px solid var(--accent);
-  outline-offset: 0;
-  border-color: transparent;
-}
-.login-beta {
-  margin-top: 22px;
-  border-radius:calc(var(--r-card) * 16 / 14);
-  background: var(--accent-soft);
-  padding: 14px 16px;
-  font-size:calc(12px + var(--type-up));
-  color: var(--ink2);
-  line-height: 1.55;
-}
-.login-beta b {
-  display: block;
-  color: var(--ink);
-  font-weight: 600;
-  margin-bottom: 2px;
-}
-.login-beta .btn {
-  margin-top: 10px;
-  font-size:calc(11.5px + var(--type-up));
-  padding: 5px 13px;
-  text-decoration: none;
-  display: inline-flex;
 }
 
 /* ================= onboarding =======================
@@ -4694,64 +3040,11 @@ input.set-tag-input {
 .join-card {
   width: min(520px, 100%);
 }
-.join-rail {
-  display: flex;
-  gap: 4px;
-  list-style: none;
-  margin: 0 0 22px;
-  padding: 0;
-}
-.join-rail li {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.join-rail-dot {
-  height: 3px;
-  border-radius:calc(var(--r-ctl) * 2 / 8);
-  background: var(--hair);
-}
-.join-rail li[data-state="done"] .join-rail-dot {
-  background: var(--accent-soft-ink, var(--ink3));
-}
-.join-rail li[data-state="now"] .join-rail-dot {
-  background: var(--accent);
-}
-.join-rail-label {
-  font-size:calc(10px + var(--type-up));
-  letter-spacing: 0.01em;
-  color: var(--ink3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.join-rail li[data-state="now"] .join-rail-label {
-  color: var(--ink);
-  font-weight: 600;
-}
 /* NARROW: six names cannot share 320px ("Acc… Pas… Rec…"). The dots stay — they are
    the progress — and the current step is named once, whole, under them; the first-run card's
    rule (`.ob-step`). Keyed on the CARD, so a zoomed desktop window gets it as a phone does. */
 .join-card {
   container: join-card / inline-size;
-}
-@container join-card (max-width: 420px) {
-  .join-rail {
-    position: relative;
-    padding-bottom: 20px;
-  }
-  .join-rail-label {
-    display: none;
-  }
-  .join-rail li[data-state="now"] .join-rail-label {
-    display: block;
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    max-width: 100%;
-  }
 }
 /* ── THE DOOR CHOOSER'S THREE TILES ───────────────────────────────────────────
    A STACK and not a grid, unlike the provider picker's tiles beside it, and the
@@ -4891,62 +3184,6 @@ input.set-tag-input {
   color: var(--ink);
 }
 
-/* ── THE OTHER COMPUTER IS NOT ANSWERING — the narrow arrangement ─────────────
-   The rail's twin (`.rail-host`, `rail.css`), for the widths where the rail is a
-   closed drawer. It joins the SAME single `min-width: 1024px` query the sync line
-   and the unsaved strip already swap on — one rule, both halves, so "exactly one
-   copy is on screen" holds at every width by construction. Two complementary
-   queries left a fractional gap once and printed the sentence twice; see the
-   block above `.rail-sync-slot`.
-
-   IT IS NOT THE SYNC BAR AND MUST NOT LOOK LIKE IT. The sync bar is centred and
-   tinted and every one of its states clears itself. This is a standing fact: ink
-   on the canvas, a hairline under it, left-aligned, and a static hollow mark. No
-   tone class, no spinner, no travelling track — `desktop-host-line.test.tsx`
-   asserts their absence, because the moment this wears a transient's clothes it
-   starts reading as something that is about to fix itself. */
-/* NO `display` HERE. It is declared beside `.rail-sync-slot`, immediately above the one
-   `min-width: 1024px` query, because the cascade resolves equal specificity by SOURCE ORDER and
-   this block sits two thousand lines BELOW that query — so a `display: flex` here would beat the
-   query's `display: none` and paint both copies at desktop widths. Measured by
-   `sync-notice-one-copy.test.ts`'s sweep, which is exactly the defect it was written for on the
-   sync pair. */
-.host-strip {
-  flex: none;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
-  padding: 8px 16px;
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink2);
-  box-shadow: inset 0 -1px 0 var(--hair-soft);
-  background: var(--canvas);
-}
-.host-strip .rh-mark {
-  align-self: center;
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-radius: var(--r-avatar);
-  box-shadow: inset 0 0 0 1.5px var(--ink3);
-}
-.host-strip b {
-  color: var(--ink);
-  font-weight: 600;
-}
-.host-strip a {
-  color: var(--ink2);
-  font-weight: 600;
-  white-space: nowrap;
-  text-decoration: underline;
-  text-decoration-color: var(--hair);
-  text-underline-offset: 2px;
-}
-.host-strip a:hover {
-  color: var(--ink);
-  text-decoration-color: var(--ink2);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .door-tile {
     transition: none;
@@ -4987,34 +3224,15 @@ input.set-tag-input {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   letter-spacing: 0.06em;
 }
-/* The OPTIONAL invite on the open signup path. A `<details>` so the common case
-   (no code) is a three-input form and the uncommon one (an invited person who lost the
-   link) is one click away rather than absent. */
-.join-invite-opt {
-  margin-top: 18px;
-  border-top: 1px solid var(--line);
-  padding-top: 14px;
-}
-.join-invite-opt > summary {
-  font-size:calc(12.5px + var(--type-up));
-  color: var(--ink2);
-  cursor: pointer;
-  list-style: none;
-  padding: 2px 0;
-}
-.join-invite-opt > summary::-webkit-details-marker { display: none; }
-.join-invite-opt > summary::before {
-  content: "+";
-  display: inline-block;
-  width: 1em;
-  color: var(--ink3);
-}
-.join-invite-opt[open] > summary::before { content: "−"; }
-.join-invite-opt > summary:hover { color: var(--ink1); }
-.join-invite-opt > summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-  border-radius:calc(var(--r-ctl) * 4 / 8);
+/* The fingerprint a trust line claims, on its own line under the line that asks for it. */
+.join-fingerprint {
+  margin: var(--s2) 0 0;
+  max-width: 34em;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--w-mid);
+  letter-spacing: .02em;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .join-hint,
 .join-note {
@@ -5084,20 +3302,6 @@ input.set-tag-input {
 .join-alt:hover {
   color: var(--ink);
 }
-/* A row of small text controls under a block (Copy key, Open in app; Copy codes, Download). */
-.join-actions-tight {
-  flex-wrap: wrap;
-  gap: 4px 16px;
-  margin-top: 6px;
-}
-.join-actions-tight + .join-check {
-  margin-top: 14px;
-}
-/* "Did you mean …?" under the address field: the one suggestion, pressable. */
-.join-suggest {
-  margin-top: 4px;
-  color: var(--accent-ink);
-}
 .join-qr {
   width: 168px;
   margin: 14px 0 10px;
@@ -5135,103 +3339,6 @@ input.set-tag-input {
   font-size:calc(12.5px + var(--type-up));
   letter-spacing: 0.04em;
   color: var(--ink);
-}
-.join-check {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size:calc(12.5px + var(--type-up));
-  color: var(--ink2);
-}
-/* The two add-on buttons sit as one control cluster in the settings row's control slot. */
-.bill-addon-ctl {
-  display: inline-flex;
-  gap: 6px;
-}
-/* Monthly/annual, the same two-button idiom as the landing's toggle (this tree does not load
-   landing.css, so the classes are restated here rather than shared across bundles). */
-.join-interval {
-  display: inline-flex;
-  gap: 4px;
-  margin: 0 0 10px;
-  padding: 3px;
-  border-radius:calc(var(--r-ctl) * 10 / 8);
-  background: var(--tint);
-}
-.join-interval .l-interval-btn {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  padding: 5px 13px;
-  border-radius:var(--r-ctl);
-  font: inherit;
-  font-size:calc(12.5px + var(--type-up));
-  font-weight: 600;
-  color: var(--ink2);
-  cursor: pointer;
-}
-.join-interval .l-interval-btn[aria-pressed="true"] {
-  background: var(--float);
-  color: var(--ink);
-  box-shadow: var(--lift-1);
-}
-.join-plans {
-  display: grid;
-  gap: 8px;
-  margin-top: 6px;
-}
-.join-plan {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: baseline;
-  gap: 2px 12px;
-  text-align: left;
-  padding: 14px 16px;
-  border-radius:calc(var(--r-card) * 16 / 14);
-  background: var(--float);
-  box-shadow: var(--lift-1);
-  transition: box-shadow 0.18s ease, transform 0.18s ease;
-}
-.join-plan:hover:not(:disabled) {
-  box-shadow: var(--lift-2);
-  transform: translateY(-1px);
-}
-.join-plan:disabled {
-  opacity: 0.55;
-}
-.join-plan b {
-  font-size:calc(14px + var(--type-up));
-  font-weight: 650;
-  color: var(--ink);
-}
-.join-plan .num {
-  font-size:calc(13px + var(--type-up));
-  font-variant-numeric: tabular-nums;
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-/* "after the trial" sits under the price, quietly. The number is context — what the card
-   is asking you to do is the line below it, not the price above. */
-.join-plan-after {
-  grid-column: 2;
-  justify-self: end;
-  font-size:calc(10.5px + var(--type-up));
-  color: var(--ink3);
-  line-height: 1.2;
-}
-.join-plan-sub {
-  grid-column: 1 / -1;
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink3);
-}
-/* The action. Accent-coloured so the eye lands here rather than on the price — this is the
-   one line that answers "what happens when I click?", which nothing else on the card did. */
-.join-plan-go {
-  grid-column: 1 / -1;
-  margin-top: 6px;
-  font-size:calc(12px + var(--type-up));
-  font-weight: 600;
-  color: var(--accent-ink);
 }
 /* ── provider picker (shared: /join mailbox step + Settings → Mailboxes) ──
    The named providers are shadow-lifted tiles — a real choice, not a form
@@ -5384,32 +3491,6 @@ input.set-tag-input {
   }
 }
 
-.login-methods {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 18px;
-}
-.login-methods .join-alt {
-  margin: 0;
-}
-.login-invite-note {
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink3);
-  line-height: 1.55;
-  margin: 14px 0 0;
-}
-.login-invite-note a {
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-
-/* The address view's name, in the meta register: drawn only where the topbar carries the address
-   (the drawer band below), hidden at the desktop head, whose h1 is the name. */
-.vhead .meta-name {
-  display: none;
-}
-
 /* ================= mobile =================
    THE WIDTH LADDER (DESIGN-FOLD-WIDTHS §0; the numbers live in `@ohmail/tokens` `layout`, and
    `shell/narrow.ts` asks the same two in JS). Three bands, two thresholds, ONE query pair per
@@ -5423,17 +3504,11 @@ input.set-tag-input {
 .topbar {
   display: none;
 }
-.rail-bg {
-  display: none;
-}
 /* The rail-head's ≡ (AppShell's `wordmark` slot). At rest it exists nowhere: only the Zero
    layout's ribbon tiers reveal it (zero-layout.css), where the docked 52px rail needs a
    pointer path to the full drawer beside `h`. Hidden HERE, unconditionally, so classic —
    either face — renders the rail it always rendered. */
 .rail-expand {
-  display: none;
-}
-.stream-top {
   display: none;
 }
 /* ═══ THE DRAWER BAND, < 1024: the rail is a drawer, the topbar stands over the deck ═══════ */
@@ -5449,19 +3524,6 @@ input.set-tag-input {
     padding: 12px 16px 8px;
     flex: none;
   }
-  /* The page's one title below 1024 (DESIGN-FOLD-WIDTHS §5): the topbar's register, never the pile title's 20px —
-     `list-title-size.test.ts` keeps the two registers apart. A long folder or tag name
-     ellipsises rather than pushing the ↻ and ⌘K capsules off the bar. */
-  .topbar .tb-title {
-    font-size:calc(13.5px + var(--type-up));
-    font-weight: 650;
-    letter-spacing: -0.01em;
-    margin: 0 auto 0 0;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   /* ONE TITLE, SO THE VIEW'S OWN HEADING GOES: the name stood twice, in this bar and as the
      page heading directly under it ("Settings / Settings", "Compose / Compose"). The head row
      keeps its meta and action where the heading stood (top padding 10 instead of 22); a head
@@ -5474,20 +3536,6 @@ input.set-tag-input {
   }
   .view .vhead:not(:has(> :not(h1))) {
     display: none;
-  }
-  /* THE READING STREAMS' OWN HEAD (`.stream-top`, News and Receipts on one column) carries the
-     pile's name too: hidden here, its meta count stays. */
-  .stream-top h1 {
-    display: none;
-  }
-  /* The address view: the topbar carries the address (the view's identity) and the head keeps
-     the PERSON — the name in the meta register (`.meta-name`, drawn at this width only) under the
-     hidden heading; the address meta goes, or the same text would stand twice. */
-  .view-address .vhead .meta {
-    display: none;
-  }
-  .view-address .vhead .meta-name {
-    display: block;
   }
   .tb-btn {
     display: inline-flex;
@@ -5527,15 +3575,6 @@ input.set-tag-input {
   .deck > .rail.open {
     transform: none;
   }
-  .rail-bg {
-    position: fixed;
-    inset: 0;
-    z-index: calc(var(--z-drawer) - 1);
-    background: var(--scrim);
-  }
-  .rail-bg.open {
-    display: block;
-  }
   .ritem.on::before {
     left: -8px;
   }
@@ -5560,79 +3599,6 @@ input.set-tag-input {
   .set-nav button {
     width: auto;
   }
-  /* THE WAY BACK FROM A SETTINGS SECTION (DESIGN-FOLD-WIDTHS §5): the topbar's ≡ yields to "‹ Settings" while a
-     section is open on a phone (`AppShell`). The chevron is the rail's own glyph, turned. */
-  .tb-back {
-    gap: 4px;
-    padding-left: 8px;
-  }
-  .tb-back .chev {
-    width: 12px;
-    height: 12px;
-    transform: rotate(180deg);
-  }
-}
-
-/* THE PHONE'S SETTINGS LIST (DESIGN-FOLD-WIDTHS §5), styled wherever the view draws it: the view
-   decides by `readColumnHidden()` — 699.98 under classic, 721 under Zero — so these rules carry no
-   width of their own (a 699.98 query under them left Zero's list at 700–721 unstyled). The
-   server-rendered tab row is hidden in the phone band below. */
-.set-list {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 4px 14px calc(28px + env(safe-area-inset-bottom, 0px));
-}
-.set-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.set-group .grouplabel {
-  padding: 2px 8px 4px;
-}
-.set-rows {
-  display: flex;
-  flex-direction: column;
-  background: var(--panel);
-  border-radius: var(--r-card);
-  box-shadow: var(--lift-1);
-  overflow: hidden;
-}
-/* THE LIST'S ROWS, BY THEIR PARENT. Written as a bare `.set-row` these rules reached every settings
-   pane's rows (packages/ui settings.css shares the class) at every width: 6px foot padding, a rule
-   drawn as the row's own bottom shadow, and every note's -9px tuck crossing it. */
-.set-rows > .set-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 6px 12px 6px 14px;
-  border: 0;
-  background: none;
-  color: var(--ink);
-  font: inherit;
-  font-size: calc(14px + var(--type-up));
-  line-height: 1.35;
-  text-align: left;
-  cursor: pointer;
-  box-shadow: inset 0 -1px 0 var(--hair-soft);
-}
-.set-rows > .set-row:last-child {
-  box-shadow: none;
-}
-.set-rows > .set-row:active {
-  background: var(--tint);
-}
-.set-row-label {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.set-rows > .set-row .chev {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  color: var(--ink3);
 }
 
 /* ═══ THE PHONE BAND, < 700: one column; the floating reader is the open ═══════════════════ */
@@ -5654,15 +3620,6 @@ input.set-tag-input {
   .view.split > .read-col {
     display: none;
   }
-  /* Trash's live read in its sheet starts where the reader's own message does, under the way back. */
-  .reader .trash-live-read {
-    padding-top: 30px;
-  }
-  /* …and the header slot keeps the list's horizontal padding on a phone. */
-  .tag-head {
-    padding-left: 20px;
-    padding-right: 20px;
-  }
   /* Reads + Receipts on mobile: the stream IS the view */
   .view-reads .list-col,
   .view-receipts .list-col {
@@ -5680,40 +3637,12 @@ input.set-tag-input {
      `stream.css`) — the card's action pill is sticky against the scrollport, and bottom padding
      would push its resting edge up by exactly that much. So the phone's value goes to the
      variable the spacer is sized from, and the padding here stays 0. */
-  /* `--pill-h` is the first-sync pill's own height while it floats over the bottom-left corner
-     (`.sync-bar.busy`, measured and written by SyncBar, 0 when it is not drawn), so the last row
-     or control rests clear of it at scroll end. */
   .view .stream {
     padding: 0 6px 0;
-    --stream-tail: calc(48px + var(--pill-h, 0px) + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px));
+    --stream-tail: calc(48px + env(safe-area-inset-bottom, 0px));
   }
   .view .scroller {
-    padding-bottom: calc(48px + var(--pill-h, 0px) + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px));
-  }
-  /* The sent-mail seed review scrolls the whole card (`.view-seed { overflow:auto }`), and its
-     Confirm / Not now actions sit at the bottom of it. */
-  .view-seed {
-    padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
-  }
-  .stream-top {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    max-width: 620px;
-    margin: 0 auto;
-    padding: 14px 20px 8px;
-  }
-  /* The same size the list-pane title carries (`packages/ui` `list-pane.css`) — this is the same
-     pile label, drawn by the stream instead of the list, and it must not be a second number. */
-  .stream-top h1 {
-    font-size: 20px;
-    font-weight: 600;
-    letter-spacing: -0.025em;
-    margin: 0;
-  }
-  .stream-top .meta {
-    font-size:calc(12px + var(--type-up));
-    color: var(--ink3);
+    padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
   }
   .view .stream-hints {
     display: none;
@@ -5770,12 +3699,6 @@ input.set-tag-input {
   .scn-mails {
     padding: 16px 18px calc(48px + env(safe-area-inset-bottom, 0px));
   }
-  .search-wrap {
-    padding: 0 14px;
-  }
-  .search-cols {
-    grid-template-columns: 1fr;
-  }
   .compose-wrap {
     width: calc(100% - 28px);
     padding: 8px 16px 16px;
@@ -5786,15 +3709,6 @@ input.set-tag-input {
      whatever slack the column has. */
   .compose-editor {
     min-height: 160px;
-  }
-  .c-subject .tf {
-    font-size:max(var(--input-floor), calc(14.5px + var(--type-up)));
-  }
-  .triage-cta {
-    padding: 0 14px 10px;
-  }
-  .triage-seg {
-    margin: 0 14px 8px;
   }
   .view .msg {
     padding: 20px 20px 40px;
@@ -5860,20 +3774,6 @@ input.set-tag-input {
     margin-left: 22px;
   }
 }
-/* THE EMPTY COLUMN'S SENTENCE UNDER A THUMB, at every width: the keycap sentence names a key a
-   coarse-pointer device does not have (the 1024 touch frame showed it), so the touch twin stands
-   instead. Both are rendered; one is painted. */
-.read-col .empty .empty-hint-touch {
-  display: none;
-}
-@media (pointer: coarse) {
-  .read-col .empty .empty-hint-keys {
-    display: none;
-  }
-  .read-col .empty .empty-hint-touch {
-    display: block;
-  }
-}
 /* THE SCREENER ROW AT A NARROW LIST — the phone's full width and the two-pane band's 300–380px
    list alike (below 1024). The subject is what a person screens on, so the badge strip takes at
    most a third of the row and the mailbox chip ellipsizes inside it; the subject gets the rest.
@@ -5891,11 +3791,6 @@ input.set-tag-input {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-}
-@media (min-width: 1024px) {
-  .rail-bg {
-    display: none !important;
   }
 }
 
@@ -5929,17 +3824,6 @@ input.set-tag-input {
      used to sit directly under the add-on note), 6px below. */
   margin: 22px 0 6px;
 }
-/* Sign out — text left, action right. It used to carry a bottom rule to separate it from the
-   erasure ceremony it shared a card with; it has its own card now, so the rule is gone. A rule
-   inside one panel still reads as two parts of one ceremony, which is the thing being fixed. */
-.acct-signout {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 2px 0 0;
-}
-.acct-signout > div { min-width: 0; }
 /* ── A SETTINGS ROW'S CONTROL IS FLUSH RIGHT, ALWAYS ───────────────────────────────────
    `.set-row` is a flex row and `.lab` carries no `flex:1`, so a control placed after it sits
    wherever the label's text happens to end — which means two rows in one card line their
@@ -5954,27 +3838,6 @@ input.set-tag-input {
   display: inline-flex;
   gap: 7px;
   flex: 0 0 auto;
-}
-
-/* Sign out is its own CARD, not a rule inside the delete one — see `AccountSection`. The gap
-   is what makes them two subjects rather than two parts of one ceremony. */
-.acct-session {
-  margin-bottom: 14px;
-}
-
-/* The button is the one thing on this row that must not be squeezed. It sat at the flex
-   default (`shrink:1`) next to a paragraph that wants the full width, so the label broke
-   across two lines — reported as a sign-out button that breaks a line. */
-.acct-signout-btn {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-@media (max-width: 560px) {
-  .acct-signout {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
 }
 
 .acct-cols {
@@ -6065,15 +3928,6 @@ input.set-tag-input {
 }
 .acct-actions .btn {
   text-decoration: none;
-}
-.acct-methods {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-top: 4px;
-}
-.acct-methods .join-alt {
-  margin: 14px 0 0;
 }
 /* The one destructive affordance in the product. `primary` gives it the weight; this takes
    the accent fill back off, because an irreversible action should not look like the happy
@@ -6600,38 +4454,6 @@ input.set-tag-input {
   .mbx-role .mbx-btn { white-space: normal; }
 }
 
-/* ================= Settings → Subscription ================= */
-.bill-plans {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px;
-  margin: 10px 0 4px;
-}
-.bill-plan {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  padding: 13px 15px;
-  border: 0;
-  border-radius:var(--r-card);
-  background: var(--panel);
-  box-shadow: var(--lift-1);
-  cursor: pointer;
-  text-align: left;
-  font-family: inherit;
-  transition: box-shadow .18s var(--swift), transform .18s var(--swift);
-}
-.bill-plan:hover:not(:disabled) { box-shadow: var(--lift-2); transform: translateY(-1px); }
-.bill-plan:focus-visible { outline: none; box-shadow: 0 0 0 1.5px var(--accent), var(--lift-2); }
-/* The plan already held is not a thing to buy again — flat, tinted, and not pressable. */
-.bill-plan.is-current { background: var(--tint); box-shadow: none; cursor: default; }
-.bill-plan-name { font-size:calc(13.5px + var(--type-up)); color: var(--ink); }
-.bill-plan-price { font-size: 18px; color: var(--accent-ink); font-variant-numeric: tabular-nums; }
-.bill-plan-meta { font-size:calc(11px + var(--type-up)); color: var(--ink2); }
-.bill-plan-cur { font-size:calc(10.5px + var(--type-up)); color: var(--ink3); text-transform: uppercase; letter-spacing: .06em; }
-
 /* ================= the sender affordance in a row ============================
    Clicking a row's circle or address opens that sender's screening. The handler
    is ONE capture-phase listener on <main class="stage"> (AppShell), so the hint
@@ -6650,31 +4472,6 @@ input.set-tag-input {
   box-shadow: var(--lift-2);
 }
 
-/* ================= the conversation =============================
-   The thread as a COLUMN OF PANELS. `.conv` is the wrapper `MessagePane` renders instead of a
-   `ReadingPane` article when a conversation exists: every message is its own full-width,
-   full-body panel (`.pm`) on the canvas, oldest first — no peek rows, no counts, nothing
-   standing in for mail. The `.read-col` drops its panel skin for this case and stays the one
-   scroller (`packages/ui` message.css); the panels are separated by the canvas itself.
-
-   NO INNER SCROLLER, ANYWHERE. `.read-col` and `.reader` already
-   scroll; nesting a second scroller inside them is a trap on a phone and for a keyboard, and
-   the conversation is not a sidebar — it IS the message you are reading. The one exception
-   used to be the reply editor's own 190px `.reply-context`, which existed so the editor could
-   stay reachable below a deep chain. That copy of the conversation is gone — a reply must not
-   repeat the message that is already on screen — and the editor scrolls itself
-   into view on open instead — see `InlineReply`. So the rule has no exceptions left.
-
-   FLUSH AT BOTH ENDS, EDGE-TO-EDGE IN BETWEEN. The wrapper carries no vertical padding of its
-   own — the scroller's scroll-internal 16px (`.read-col:has(> .conv)`, packages/ui message.css)
-   is the whole vertical spacing — so at rest the lede tops out on the columns' shared top line
-   and, scrolled to the end, the column bottoms out on the same baseline the neighbouring panels
-   end on; mid-scroll the panels run past those lines to the viewport's own edges, the way the
-   reading stream's cards do. The sub-pixel remainder engines would leave at
-   the maximum scroll offset is absorbed as ≤1px of padding inside the LAST panel, by the same
-   anchor effect that opens the thread at its opened message (`MessagePane`). Flush, sticky and
-   the opening scroll are LIVE-ONLY facts — jsdom applies no layout, so the live pass is the
-   acceptance for this block, not the unit suite. */
 .conv {
   display: flex;
   flex-direction: column;
@@ -6759,429 +4556,6 @@ input.set-tag-input {
   opacity: 1;
 }
 
-/* ── THE THREAD-READ TINT AND SQUARES — the Ohbox's column and sheet only (`data-thread-read`) ──
-   An unread message sits on the unread wash with a 3px accent edge; once read (its top was on
-   screen for the 0.7s dwell, `reader-seen.ts`) it settles to the panel over 850ms; turning unread
-   brings the wash back in 320ms. A single message's panel is the column itself, so the column
-   carries its tint. Reduced motion: instant. */
-.tr-sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-.conv[data-thread-read] > article.pm,
-.reader .msg[data-thread-read],
-.read-col:has(> .msg[data-thread-read]) {
-  transition: background-color 850ms cubic-bezier(.22, .61, .36, 1), box-shadow 850ms cubic-bezier(.22, .61, .36, 1);
-}
-.conv[data-thread-read] > article.pm {
-  box-shadow: inset 0 0 0 0 transparent, var(--lift-1);
-}
-.reader .msg[data-thread-read] {
-  box-shadow: inset 0 0 0 0 transparent, var(--lift-3);
-}
-.read-col:has(> .msg[data-thread-read]) {
-  box-shadow: inset 0 0 0 0 transparent, var(--lift-1);
-}
-.conv[data-thread-read] > article.pm[data-unseen] {
-  background: var(--unread-wash);
-  box-shadow: inset 3px 0 0 0 var(--accent), var(--lift-1);
-  transition-duration: 320ms;
-  transition-delay: 0s;
-}
-.reader .msg[data-thread-read][data-unseen] {
-  background: var(--unread-wash);
-  box-shadow: inset 3px 0 0 0 var(--accent), var(--lift-3);
-  transition-duration: 320ms;
-  transition-delay: 0s;
-}
-.read-col:has(> .msg[data-thread-read][data-unseen]) {
-  background: var(--unread-wash);
-  box-shadow: inset 3px 0 0 0 var(--accent), var(--lift-1);
-  transition-duration: 320ms;
-  transition-delay: 0s;
-}
-/* The column of squares: the reading column's sibling, laid over the conversation's own left
-   padding (the column's grid area is the conversation's box), so it never covers a panel and no
-   scroll moves it. Sticky inside the scroller, WebKitGTK drew it a frame apart from the scroll.
-   THE EVEN SEAM (owner 2026-10-24, o9): in the split view the squares stand on an 18px rail (the
-   ring's width), --gap-rail from the list's box and from the paper's — 12 | 18 | 12 in ohmarchy (10
-   from each ring, the tile gap's 10), 16 | 18 | 16 in paper — at every width. The column of squares
-   starts that far past the list, so the conversation's padding is the rail and the two rail gaps
-   less the column gap before it. The press area is the rail and the gap to the paper.
-   A conversation under 560px only packs its slots closer (30, from 24). The reader sheet keeps its
-   34px (22px thin) bar. */
-.conv[data-thread-read] {
-  padding-left: 34px;
-}
-.view.split {
-  --tm-rail: 18px;
-  /* the reading track's start to the paper: the rail's room (zone-cursor.css rings the paper past it) */
-  --tm-gutter: calc(var(--tm-rail) + 2 * var(--gap-rail) - var(--gap-tile));
-}
-.view.split > .read-col > .conv[data-thread-read] {
-  padding-left: var(--tm-gutter);
-}
-.conv:has(> .thread-marks[data-narrow]) {
-  padding-left: 22px;
-}
-.view.split:has(> .thread-marks) {
-  position: relative;
-}
-.thread-marks {
-  position: absolute;
-  grid-row: 1;
-  grid-column: -2 / -1;
-  top: 0;
-  left: 0;
-  height: 0;
-  z-index: 2;
-}
-/* The reader sheet is no split view: there the column stays in the conversation, sticky, its bar
-   in the conversation's left padding. */
-.conv > .thread-marks {
-  position: sticky;
-  grid-row: auto;
-  grid-column: auto;
-  left: auto;
-}
-.conv > .thread-marks > .tm-bar {
-  left: auto;
-  right: 100%;
-}
-/* A line longer than its room never scrolls (owner 2026-10-26): `ThreadMarksBar` stands a window over
-   it (`squaresWindow`). Each slot is --tm-pitch × --s long (0 beyond the window), its square 10px × --s;
-   at an edge that hides more the squares taper and a --tm-more slot holds "+N". */
-.tm-bar {
-  --tm-pitch: 24px;
-  --tm-more: 16px;
-  position: absolute;
-  left: 0;
-  top: 10px;
-  width: 34px;
-  max-height: calc(100dvh / var(--ui-zoom, 1) - 160px);
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  overflow: hidden;
-}
-.thread-marks[data-narrow] .tm-bar {
-  --tm-pitch: 30px;
-}
-.conv > .thread-marks[data-narrow] > .tm-bar {
-  width: 22px;
-}
-.view.split > .thread-marks {
-  left: calc(var(--gap-rail) - var(--gap-tile));
-}
-.view.split > .thread-marks > .tm-bar {
-  width: calc(var(--tm-rail) + var(--gap-rail));
-}
-.tm-mb {
-  position: relative;
-  flex: 0 0 auto;
-  height: calc(var(--tm-pitch) * var(--s, 1));
-  height: round(calc(var(--tm-pitch) * var(--s, 1)), 1px);
-  min-height: 0;
-  width: 100%;
-  display: grid;
-  /* one track the slot's size: the 18px ring overflows a tapered slot centred, never sizing it */
-  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: calc(var(--r-ctl) * 5 / 8);
-  background: none;
-  cursor: pointer;
-}
-.tm-mb[data-off] {
-  pointer-events: none;
-}
-.tm-mb > .tm-sq,
-.tm-mb::after,
-.tm-mb::before {
-  grid-area: 1 / 1;
-}
-.tm-mb:hover {
-  background: var(--tint);
-}
-.tm-bar .tm-mb {
-  transition: height .22s var(--swift);
-}
-.tm-strip .tm-mb {
-  transition: width .22s var(--swift);
-}
-.tm-mb:focus-visible {
-  outline-offset: -2px;
-}
-/* Beside the reader the button is the press area (rail + gap); the hover tint and the focus ring
-   stand on the rail alone, where the square is. */
-.view.split > .thread-marks .tm-mb {
-  grid-template-columns: var(--tm-rail) minmax(0, 1fr);
-}
-.view.split > .thread-marks .tm-mb::before {
-  content: "";
-  align-self: stretch;
-  justify-self: stretch;
-  pointer-events: none;
-  border-radius: calc(var(--r-ctl) * 5 / 8);
-}
-.view.split > .thread-marks .tm-mb:hover {
-  background: none;
-}
-.view.split > .thread-marks .tm-mb:hover::before {
-  background: var(--tint);
-}
-.view.split > .thread-marks .tm-mb:focus-visible {
-  outline: none;
-}
-.view.split > .thread-marks .tm-mb:focus-visible::before {
-  outline: var(--focus-w) solid var(--accent);
-  outline-offset: -2px;
-}
-/* The message most in view: a quiet neutral ring — never the accent, which means new. It switches
-   at once: a fading ring on a box hung outside its sticky parent left stale rings painted in
-   WebKitGTK (several squares ringed at once until hovered), and the one ring is a place, not news.
-   `transition: none` is declared, not left out: without it the property falls back to `all`, and
-   reduced motion's `.01ms` (base.css) then gives the ring a real opacity transition again. */
-.tm-mb::after {
-  content: "";
-  width: 18px;
-  height: 18px;
-  border-radius: calc(var(--r-ctl) * 7 / 8);
-  box-shadow: inset 0 0 0 1.5px var(--ink3);
-  opacity: 0;
-  pointer-events: none;
-  transition: none;
-}
-.tm-mb[aria-current="location"]::after {
-  opacity: 1;
-}
-.tm-sq {
-  display: block;
-  width: calc(10px * var(--s, 1));
-  height: calc(10px * var(--s, 1));
-  border-radius: calc(var(--r-ctl) * 3 / 8 * var(--s, 1));
-  background: var(--accent);
-  transition: opacity 850ms cubic-bezier(.22, .61, .36, 1), width .22s var(--swift), height .22s var(--swift);
-}
-/* ohmarchy's square corners want whole pixels: 3.5 / 5.5 / 7.5 draw as 4 / 6 / 8 */
-[data-face="ohmarchy"] .tm-sq {
-  width: round(calc(10px * var(--s, 1)), 1px);
-  height: round(calc(10px * var(--s, 1)), 1px);
-}
-.tm-sq.unread {
-  transition-duration: 320ms, .22s, .22s;
-  transition-delay: 0s;
-}
-.tm-sq.read {
-  opacity: var(--mark-read);
-}
-.tm-sq.mine {
-  background: transparent;
-  box-shadow: inset 0 0 0 calc(2px * var(--s, 1)) var(--accent);
-  opacity: var(--mark-mine);
-}
-/* THE OPEN CONVERSATION'S ROW carries the same squares under its preview (`ThreadStrip`, in the
-   row's `.row-follow`): one row, oldest first, 20px buttons for the 18px ring. Its first box, a
-   square (5px into its slot) or "+N", stands at the subject's left (owner 2026-10-26); a longer
-   line stands a window, so the row grows in height only and no column moves. */
-.tm-strip {
-  --tm-pitch: 20px;
-  --tm-more: 32px;
-  position: relative;
-  display: flex;
-  align-items: center;
-  margin: -4px 0 0;
-  padding: 0 14px 10px 9px;
-  overflow: hidden;
-}
-/* Under a lead circle the subject starts past it: the 30px `.av` and the row's 11px gap (row.css). */
-.row-slot:has(> .row.srow) > .row-follow > .tm-strip {
-  padding-left: calc(9px + 30px + 11px);
-}
-.tm-strip .tm-mb {
-  width: calc(var(--tm-pitch) * var(--s, 1));
-  width: round(calc(var(--tm-pitch) * var(--s, 1)), 1px);
-  height: 20px;
-}
-/* "+N": the squares an edge hides, in the preview's ink, in a slot of its own that folds to 0 */
-.tm-more {
-  flex: none;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: calc(11px + var(--type-up));
-  color: var(--ink3);
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-  user-select: none;
-  opacity: 0;
-  transition: width .22s var(--swift), height .22s var(--swift), opacity .16s var(--swift);
-}
-.tm-more[data-on] {
-  opacity: 1;
-}
-.tm-strip .tm-more {
-  width: 0;
-  line-height: 20px;
-}
-.tm-strip .tm-more[data-on] {
-  width: var(--tm-more);
-}
-.tm-strip .tm-more[data-side="new"] {
-  text-align: right;
-}
-/* The widest count the strip can draw ("+N" for all of them), measured for its slot and never shown */
-.tm-strip .tm-more[data-probe] {
-  position: absolute;
-  width: auto;
-  visibility: hidden;
-}
-/* "+N" starts where a square's face would, 5px into the line, at the subject's left */
-.tm-strip .tm-more[data-side="old"] {
-  text-indent: calc((var(--tm-pitch) - 10px) / 2);
-}
-.tm-bar .tm-more {
-  height: 0;
-  width: 100%;
-  line-height: 16px;
-  font-size: calc(10px + var(--type-up));
-  text-align: center;
-}
-.tm-bar .tm-more[data-on] {
-  height: var(--tm-more);
-}
-/* Beside the reader the count is centred on the rail; a longer one ("+109") runs on into the gap
-   beside it rather than being cut. */
-.view.split > .thread-marks .tm-more {
-  display: grid;
-  grid-template-columns: var(--tm-rail);
-  justify-items: center;
-  justify-items: safe center;
-}
-/* A windowed line's one ring (`ThreadMarksBar`), at the current square's rest place: the squares
-   flow past it. It switches on and off at once, as the button's ring does. */
-.tm-ring {
-  position: absolute;
-  width: 18px;
-  height: 18px;
-  border-radius: calc(var(--r-ctl) * 7 / 8);
-  box-shadow: inset 0 0 0 1.5px var(--ink3);
-  pointer-events: none;
-  transition: left .22s var(--swift), top .22s var(--swift);
-}
-.tm-bar > .tm-ring {
-  top: var(--tm-ring);
-  left: 50%;
-  translate: -50% 0;
-}
-.view.split > .thread-marks .tm-ring {
-  left: calc(var(--tm-rail) / 2);
-}
-.tm-strip > .tm-ring {
-  top: 1px;
-  left: var(--tm-ring);
-}
-[data-window] > .tm-mb::after {
-  display: none;
-}
-.row-slot:hover .tm-more,
-.tm-bar:hover .tm-more {
-  color: var(--ink2);
-}
-/* A held finger shows the chip: no callout, no text selection over the squares. */
-.tm-mb {
-  -webkit-touch-callout: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-/* THE CHIP (o9): the sender and the stamp of the square the pointer rests on or keyboard focus
-   holds. One fixed box in the body (the column and the list clip their overflow), placed by
-   `tipAt`: beside the reader its right edge 6px before the rail, over the list's gap and the open
-   row's end, never over message text; under the row's strip it hangs 4px below the square, inside
-   the list column; in the reader sheet it follows the bar, on keyboard focus only. */
-.tm-tip {
-  position: fixed;
-  left: 0;
-  top: 0;
-  z-index: var(--z-fr);
-  translate: -100% -50%;
-  pointer-events: none;
-  width: max-content;
-  max-width: 272px;
-  padding: 3px 9px;
-  font-size: calc(12px + var(--type-up));
-  line-height: 18px;
-  color: var(--ink);
-  background: var(--float);
-  box-shadow: var(--lift-2);
-  border-radius: var(--r-ctl);
-  animation: tm-tip-in .12s var(--swift);
-}
-/* Two lines (o10): who and when, a clip where there is a file; under them the first line. */
-.tm-tip-head {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-  white-space: nowrap;
-}
-.tm-tip b {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 600;
-}
-.tm-tip-when {
-  flex: none;
-  color: var(--ink3);
-  font-variant-numeric: tabular-nums;
-}
-.tm-tip-head .tm-tip-clip {
-  align-self: center;
-  width: 12px;
-  height: 12px;
-  stroke-width: 1.4;
-  color: var(--ink3);
-}
-.tm-tip-line {
-  max-width: 252px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-size: calc(11.5px + var(--type-up));
-  color: var(--ink3);
-}
-.tm-tip[data-place="right"] {
-  translate: 0 -50%;
-}
-.tm-tip[data-place="under"] {
-  translate: 0 0;
-}
-@keyframes tm-tip-in {
-  from {
-    opacity: 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .tm-tip {
-    animation: none;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .conv[data-thread-read] > article.pm,
-  .reader .msg[data-thread-read],
-  .read-col:has(> .msg[data-thread-read]),
-  .tm-sq,
-  .tm-mb,
-  .tm-more,
-  .tm-ring {
-    transition: none;
-  }
-}
 @media (max-width: 560px) {
   .pm-in {
     padding: 20px 18px 24px;
@@ -7487,27 +4861,6 @@ input.set-tag-input {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-/* The chevron that folds an expanded sibling back to a peek row. Sits in the from-line's `.t`
-   slot beside the stamp; points up because pressing it collapses. */
-.msg-collapse {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  border-radius:var(--r-pill);
-  border: 0;
-  background: none;
-  color: var(--ink3);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.msg-collapse:hover {
-  background: var(--tint);
-  color: var(--ink);
-}
-.msg-collapse svg {
-  transform: rotate(180deg);
-}
 
 /* ================= inline reply =======================================
    Inside <article class="msg">, under the actions: grip, head, editor, controls, status.
@@ -7527,8 +4880,7 @@ input.set-tag-input {
    ── BOUNDED BY THE VIEWPORT, NEVER TALLER ────────────────────────────────────────────────
    `min-height` is the resting posture (roomy on a desk, backing off on a short window);
    `max-height` is the hard bound that keeps every control reachable — a panel taller than the
-   viewport is chrome nobody can reach. The user's own height (the grip → an inline style,
-   clamped in `InlineReply.clampReplyHeight`) lives between the drag floor and the same bound.
+   viewport would hide controls.
    Each pair states `vh` first and `dvh` over it, so a browser without dynamic units keeps a
    correct, slightly conservative bound.
 
@@ -7622,10 +4974,6 @@ input.set-tag-input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* THE HEAD IS A BUTTON NOW — pressing the audience opens it for editing (`InlineReply`).
-   It keeps the head's exact anatomy (the class rides along), sheds the UA button chrome, and
-   says what pressing does in a quiet trailing hint rather than by looking like a control:
-   the sentence is still the content, the affordance is the cursor, the hint and focus. */
 .reply-head-btn {
   border: 0;
   background: none;
@@ -7947,7 +5295,11 @@ input.set-tag-input {
 
 /* The eight marks, as the recipient will see them. Deliberately the same list as the toolbar
    and the server's outbound allowlist — a style here for something the editor cannot produce
-   would be a style for a message nobody can write. */
+   would be a style for a message nobody can write.
+   One thing is drawn closer here than a letter is read: the air around a list (the rules under
+   this block). The sheet a letter is read by keeps its own 0.7em round a list, because a received
+   letter must not move; so a sent letter read again shows a little more room round its list than
+   was drawn while it was written. That was chosen. */
 .rte-surface > :first-child { margin-top: 0; }
 .rte-surface > :last-child { margin-bottom: 0; }
 .rte-surface p {
@@ -7958,8 +5310,24 @@ input.set-tag-input {
   margin: 0 0 0.7em;
   padding-left: 1.4em;
 }
+/* A LETTER IS WRITTEN IN LINES, AND A LIST STANDS ON THEM. An empty line is one line tall, and it is
+   the only air between two lines of text. A list used to bring air of its own: 0.7em under the
+   paragraph before it and 0.7em under itself, on top of the empty line a person had left there, and
+   0.15em round each item. So a list after an empty line stood almost a line and a half from the text
+   around it (31.7px where a line is 22.3px; the item's air falls into the paragraph's), and its items
+   stood further apart than the lines of the text (24.3px).
+   Now a paragraph that a list follows, and a list that a paragraph follows, end without air, and an
+   item has none: a list after an empty line starts exactly one empty line under the text, a list
+   right after a line starts on the next line, and its items stand one line apart. A quote and a code
+   block keep their 0.7em. */
+.rte-surface p:has(+ ul),
+.rte-surface p:has(+ ol),
+.rte-surface ul:has(+ p),
+.rte-surface ol:has(+ p) {
+  margin-bottom: 0;
+}
 .rte-surface li {
-  margin: 0.15em 0;
+  margin: 0;
 }
 .rte-surface li p {
   margin: 0;
@@ -8007,28 +5375,6 @@ input.set-tag-input {
 .rte-surface a {
   color: var(--accent);
   text-decoration: underline;
-}
-
-/* THE REPLY RUN'S EDITOR. The overlay's own `textarea` rules live in `focus-reply.css` and
-   still serve every caller that hands in no editor; this is the frame for the one that does,
-   and it matches that textarea rather than the inline reply's so the run keeps looking like
-   the run. */
-.fr-editor {
-  width: 100%;
-  border: 1px solid var(--hair); /* input field — kept */
-  border-radius:calc(var(--r-card) * 16 / 14);
-  background: var(--canvas);
-  box-sizing: border-box;
-}
-.fr-editor .rte-surface {
-  min-height: 100px;
-  font-size:calc(13px + var(--type-up));
-  line-height: 1.6;
-}
-.fr-editor:focus-within {
-  outline: 1.5px solid var(--accent);
-  outline-offset: 0;
-  border-color: transparent;
 }
 
 /* ═══ THE AI DRAFTER'S OFFER ════════════════════════════════════════════════════════════
@@ -8140,12 +5486,6 @@ input.set-tag-input {
 /* ================= the ? shortcut sheet ============================
    Generated from the keyboard registry; see shell/ShortcutSheet.tsx. Two
    columns on a desk, one on a phone, and it scrolls rather than growing. */
-.ks-bg {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-pal);
-  background: var(--scrim);
-}
 .ks {
   position: fixed;
   z-index: var(--z-pal);
@@ -8162,93 +5502,6 @@ input.set-tag-input {
   box-shadow: var(--lift-3);
   padding: 20px 24px 18px;
   animation: rise 0.22s var(--spring);
-}
-.ks-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.ks-head h2 {
-  font-size:calc(13px + var(--type-up));
-  font-weight: 650;
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.ks-head h2 svg {
-  color: var(--accent-ink);
-}
-.ks-head .x {
-  margin-left: auto;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius:var(--r-pill);
-  color: var(--ink3);
-}
-.ks-head .x:hover {
-  background: var(--tint);
-  color: var(--ink);
-}
-.ks-cols {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 6px 26px;
-  margin-top: 14px;
-  /* a group's rows stay together: a column never breaks inside one */
-  align-items: start;
-}
-.ks-cols h3 {
-  font-size:calc(10.5px + var(--type-up));
-  font-weight: 650;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink3);
-  margin: 10px 0 4px;
-}
-.ks-cols ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.ks-cols li {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 4px 0;
-  font-size:calc(12.5px + var(--type-up));
-  color: var(--ink);
-}
-/* Declared but inert here — still listed, because a key that vanishes from the
-   documentation when the list is empty is a key nobody learns. */
-.ks-cols li.off {
-  color: var(--ink3);
-}
-.ks-keys {
-  display: inline-flex;
-  gap: 3px;
-  flex: none;
-  min-width: 62px;
-}
-/* two chords to one sentence: "1 · g o" */
-.ks-chord {
-  display: inline-flex;
-  gap: 3px;
-  align-items: baseline;
-}
-.ks-or {
-  color: var(--ink3);
-  padding: 0 2px;
-}
-.ks-lab {
-  min-width: 0;
-}
-.ks-foot {
-  margin: 16px 0 0;
-  font-size:calc(10.5px + var(--type-up));
-  color: var(--ink3);
 }
 @media (max-width: 640px) {
   .ks {
@@ -8281,113 +5534,7 @@ input.set-tag-input {
   padding: 4px 0;
   border-bottom: 1px solid var(--hair-soft);
 }
-.draft-row-main {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-width: 0;
-  border-radius: calc(var(--r-card) * 12 / 14);
-  transition: background .15s var(--swift);
-}
-/* THE ROW'S SURFACE IS THE WHOLE LINE, Discard included: the hover and keyboard-focus tint is
-   drawn on `.draft-row-main`, so the trailing control stands on the row and not beside it (the
-   `.row-slot` rule the lists keep, row.css). The two controls stay siblings. */
-.draft-row-main:hover,
-.draft-row-main:has(> .draft-open:focus-visible) { background: var(--tint); }
-/* WHILE THE QUESTION IS OPEN THE LINE MAY WRAP: the confirm sits at the trailing edge where the
-   Discard control was, and where the pane is too narrow for both it drops to a second line, still
-   right-aligned — the row expands, nothing is squeezed. Only then: an ordinary row never wraps. */
-.draft-row-confirming .draft-row-main,
-.draft-row-held .draft-row-main { flex-wrap: wrap; }
-/* The row's trailing controls — Discard, or the held row's two acts and Discard. */
-.draft-actions {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-}
-.draft-row.draft-row-last { border-bottom: 0; }
-/* THE ROW A REFUSED DISCARD WAS ABOUT. The press moves focus into that row's "Did this message
-   arrive?" group; this is the same fact for a reader who was watching the toast rather than the
-   list, on a screen where every held row carries an identical pair. The accent ground is
-   `.draft-state`'s, so the row and its reason read as one thing. */
-.draft-row-asked {
-  background: var(--accent-soft);
-  border-radius: calc(var(--r-ctl) * 9 / 8);
-}
 .draft-resolve { display: flex; align-items: center; gap: 4px; }
-/* A refused discard says why IN THE ROW, at the trailing edge the press came from. */
-.draft-refusal {
-  justify-self: end;
-  max-width: 100%;
-  margin: 0 4px 4px 0;
-  padding: 6px 12px;
-  font-size: calc(12px + var(--type-up));
-  color: var(--ink2);
-  background: var(--accent-soft);
-  border-radius: calc(var(--r-card) * 12 / 14);
-}
-.draft-refusal:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
-.draft-open {
-  /* A basis of 12rem, not 0: while the confirm shares the line the draft keeps a readable floor
-     and the confirm wraps below it instead — the collapse to padding this row once had. */
-  flex: 1 1 12rem;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 11px 12px;
-  border: 0;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  color: var(--ink);
-  border-radius:calc(var(--r-card) * 12 / 14);
-  background: transparent;
-  transition: background .15s var(--swift);
-}
-.draft-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.draft-subject {
-  font-size:calc(13px + var(--type-up));
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.draft-when {
-  margin-left: auto;
-  flex: none;
-  font-size:calc(11px + var(--type-up));
-  color: var(--ink3);
-  font-variant-numeric: tabular-nums;
-}
-.draft-to {
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink2);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.draft-badge {
-  flex: none;
-  font-size:calc(10px + var(--type-up));
-  font-weight: 650;
-  padding: 1px 8px;
-  border-radius:var(--r-pill);
-  color: var(--accent-ink);
-  background: var(--accent-soft);
-}
-.draft-preview {
-  font-size:calc(11.5px + var(--type-up));
-  line-height: 1.5;
-  color: var(--ink3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* A send that did not confirm, said in the row (DraftsView). The same treatment as
    `.send-status.warn` — accent-soft ground, hairline edge — because it is the same standing
    condition on a second surface, and two dialects for one state is how a reader learns to
@@ -8419,26 +5566,6 @@ input.set-tag-input {
   transition: background .15s var(--swift), color .15s var(--swift);
 }
 .draft-discard:hover { color: var(--accent-ink); background: var(--accent-soft); }
-/* THE CONFIRM IS WHERE THE HAND IS: one short sentence and two controls, in the row's action area
-   at the trailing edge, replacing the Discard control that was pressed. `flex: 0 0 auto` with
-   `max-width: 100%` and NO grow, NO 100% basis — the shape that once collapsed the draft to its
-   padding is unrepresentable here; when it does not fit beside the draft it wraps under it
-   (`.draft-row-confirming`), right-aligned. */
-.draft-confirm {
-  flex: 0 0 auto;
-  max-width: 100%;
-  min-width: 0;
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  padding: 4px 4px 4px 12px;
-  border-radius: var(--r-pill);
-  background: var(--accent-soft);
-}
-.draft-confirm .set-note-inline { padding: 0; margin: 0; }
-.draft-confirm .gate-actions { flex-wrap: nowrap; gap: 4px; }
 .compose-confirm {
   min-width: 0;
   padding: 10px 12px 12px;
@@ -8462,38 +5589,7 @@ input.set-tag-input {
   background: var(--accent-soft);
 }
 .send-later .set-note-inline { padding: 0 0 9px; margin: 0; }
-.send-later-custom {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-.send-later-custom label {
-  font-size:calc(11.5px + var(--type-up));
-  color: var(--ink2);
-}
-.send-later-custom input[type="datetime-local"] {
-  font: inherit;
-  font-size:max(var(--input-floor), calc(12.5px + var(--type-up)));
-  color: var(--ink);
-  background: var(--panel);
-  border: 1px solid var(--hair);
-  border-radius:calc(var(--r-ctl) * 9 / 8);
-  padding: 5px 9px;
-}
 .send-later .send-note { display: block; margin-top: 8px; }
-
-/* The Scheduled group's heading in Drafts — the list's own quiet register, not a second
-   view title. */
-.drafts-group-head {
-  font-size:calc(11.5px + var(--type-up));
-  font-weight: 600;
-  color: var(--ink2);
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  padding: 12px 14px 6px;
-}
 
 /* ================= drag-to-file (a list row, dragged onto the rail) =================
    The gesture's chrome only — the semantics are the existing verbs (`shell/drag-file.ts`).
@@ -8560,16 +5656,6 @@ body.dnd-active * { cursor: grabbing !important; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ritem.drop-ok {
-  color: var(--ink);
-  background: var(--tint2);
-  box-shadow: inset 0 0 0 1.5px var(--accent-hair);
-}
-.ritem.drop-hit {
-  color: var(--ink);
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1.5px var(--accent-hair);
-}
 
 /* ================= session-end prompt (the re-auth surface) =================
    Rendered by `shell/engine.tsx` when the SERVER has confirmed this tab's session is over —
@@ -8598,19 +5684,6 @@ body.dnd-active * { cursor: grabbing !important; }
 .session-end.session-signin > .gate { min-height: 0; padding: 0; margin: auto; width: 100%; }
 /* Before the window has read any mail there is nothing to keep in view: the launch's own page. */
 .session-end.session-whole { background: var(--canvas); }
-/* The desktop's ask before a marked link opens (`apps/desktop/src/LinkAsk.tsx`), on the same layer
-   and card: the address in full, however long, under the sentence that names its host. */
-.gate-card .link-ask-url {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: calc(12px + var(--type-up));
-  color: var(--ink);
-  background: var(--tint2);
-  border-radius: var(--r-ctl);
-  padding: 8px 10px;
-  max-height: 8.5em;
-  overflow-y: auto;
-  overflow-wrap: anywhere;
-}
 
 /* ── the signature block — every compose surface ──────────────────────────────────────────
    The removable tail of the outgoing message (`SignatureBlock.tsx`; `signature.ts` owns the
@@ -8654,12 +5727,6 @@ body.dnd-active * { cursor: grabbing !important; }
 .sig-remove:disabled {
   opacity: 0.5;
   cursor: default;
-}
-/* Help & contact's copy controls, where a mailto would not leave the window (`HelpContactPane.tsx`). */
-.help-copy {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 7px;
 }
 /* A mail to support: the diagnostics block's strip under the editor (`SupportDiagnostics.tsx`). */
 .support-diag-what {
@@ -8785,12 +5852,6 @@ input.reply-subject-input { /* by element: this width and type outrank the line 
   -moz-tab-size: 4;
   tab-size: 4;
 }
-.sig-settings-preview {
-  margin-top: 8px;
-  border: 1px solid var(--hair);
-  border-radius:var(--r-ctl);
-  padding: 6px 8px;
-}
 /* The preview is the same editor read-only, so the line breaks are the DOCUMENT's paragraphs
    and `<br>`s — `white-space: pre-wrap` came off with the textarea, where it was what made a
    stored newline visible. Left on a wrapper of real elements it would render the whitespace
@@ -8892,10 +5953,6 @@ input.reply-subject-input { /* by element: this width and type outrank the line 
      own — 10.5px between the boxes, and there were 9. A tap 21px under the ghost's centre
      landed on a chip. Row-gap only: the column gap, every width and the wrap are untouched. */
   .scn-head{row-gap:11px}
-  .ohx-notice button{min-height:44px}
-  .rn-verbs button{min-height:44px}
-  .draft-open{min-height:44px}
-  .rail-desktop-cta-x{min-width:44px;min-height:44px}
 }
 /* UNDER A COARSE POINTER, the controls that were each the only way to their action measured under
    44px. Drawn to 44 where a sideways strip would overlap the control beside it, the strip where
@@ -8912,7 +5969,6 @@ input.reply-subject-input { /* by element: this width and type outrank the line 
   .frow span.ftw{flex-basis:25px;width:25px}
   .frow:has(> button.ftw) .fglyph{display:none}
   .frow .cnt:empty{display:none}
-  .rail-desktop-cta-x{min-width:44px;min-height:44px}
   .set-nav button{min-width:44px}
   /* The first row's strip was clipped 4px by the settings scroller's top edge. */
   .set-nav{padding-top:5px}

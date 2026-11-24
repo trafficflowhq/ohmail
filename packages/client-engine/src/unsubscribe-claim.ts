@@ -2,16 +2,13 @@
  * WHAT A SCREEN-OUT PRESS SAYS ABOUT THE ONE-CLICK UNSUBSCRIBE, BEFORE THE PRESS — one decider for
  * every surface (web card, row, bulk and sheet; the desktop; the phone's sheet and toasts).
  *
- * The server asks for the SENDER, not for the letters on screen: the press's own moves, the past-mail
- * pass and the hourly drain all send for any of their mail that offers one-click and whose provider
- * confirmed the sender. So an armed press always says the sender-level condition (`may_send`), and a
- * held letter seen offering one-click from a confirmed sender (`authVerdict` `pass`) strengthens it
- * (`sends`); any other verdict, or none, never does. `none` is the caller's alone: the account's
- * switch off, a door that sends nothing, no mailbox whose provider's word is read
- * ({@link autoUnsubscribeConfirms}), or a press that does not reach the decide route.
+ * A confirmed press can send for the waiting letters it files. A held letter with a one-click
+ * route and a confirmed sender makes the warning definite (`sends`). An armed press that cannot
+ * establish a definite send describes the condition (`may_send`). The account's switch, its
+ * mailboxes' confirmation support and the press's filing path decide whether it is armed.
  */
+import type { EngineMessage, MessageBodyRecord, UnsubscribeHeaderState } from "@ohmail/wire";
 import type { EntityReader } from "./store.js";
-import type { EngineMessage, MessageBodyRecord, UnsubscribeHeaderState } from "./types.js";
 
 export type UnsubscribeClaim = "sends" | "may_send" | "none";
 

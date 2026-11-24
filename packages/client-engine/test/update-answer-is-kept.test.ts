@@ -1,6 +1,6 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   HttpAdapter,
   MemoryMirrorStore,
   MutationRejectedError,
@@ -12,9 +12,9 @@ import {
   readUpdateAnswer,
   updateAnswerOf,
   type EngineAdapter,
-  type EngineMutation,
   type FetchLike,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { classifyRefusal, UPDATE_ANSWER_CODES } from "../src/adapters/refusal-shape.js";
 
 /**
@@ -184,7 +184,7 @@ describe("a send and a move, and an update answer", () => {
     { name: "a composed letter", m: COMPOSED },
     { name: "a composed letter with a blind copy", m: BLIND },
   ];
-  const MOVE: EngineMutation = { kind: "move", messageId: "giulia", folder: "archive" };
+  const MOVE: EngineMutation = { kind: "move", messageId: "giulia", folder: "ohmail/News" };
   const ANSWERS: Array<{ name: string; refuse: () => Response }> = [
     { name: "426 client_too_old", refuse: () => answer(426, { code: "client_too_old", message: "too old", retryable: true }) },
     { name: "503 server_updating naming 30 s", refuse: () => answer(503, { code: "server_updating", retryable: true }, { "retry-after": "30" }) },

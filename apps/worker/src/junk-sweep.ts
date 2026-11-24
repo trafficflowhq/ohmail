@@ -5,19 +5,19 @@
  * by an operator (`run-junk-sweep.ts`) with the account owner's standing spam verdicts as its authority. NOT
  * SCHEDULED and never must be: a recurring pass would be the organizer acting on its own initiative. Two
  * explicit callers: the operator runner, and the worker cycle's sweep-command consumption (`sync.ts`) once
- * per recorded press (`mailboxes.junk_sweep_requested_at`, mail 0076, `POST /screener/junk/sweep`) —
+ * per recorded press (`pass_progress`, `POST /screener/junk/sweep`) —
  * §16.1's carve-out. Same claims discipline as the live path: `completeFiling` runs only for members the
  * server named, so a vanished member (`gone`) is left for `changesSince` and nothing is husked in error. */
 
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { folderState, junkSweepCandidateWhere, mailboxes, messages, type Tx } from "@trafficflow/db";
 import {
   FILING_BATCH_MAX, MessageGoneError, WriteDeclinedError, type MailboxAdapter, type MoveManyResult,
 } from "@trafficflow/core/adapters/imap";
 import type { NativeLocator } from "@trafficflow/core";
 import type { WorkerRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
-import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "./junk-filing.js";
-import { assertMayWriteToMailbox, writeDoorOf, type MailboxWriteAuthority } from "./lease.js";
+import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "@ohmail/organizer/junk-filing";
+import { assertMayWriteToMailbox, writeDoorOf, type MailboxWriteAuthority } from "@ohmail/organizer/lease";
 
 /**
  * THE SCAN'S STATE ACROSS CYCLES — a pure decision, extracted so it can be pinned by test (a fully
@@ -30,7 +30,7 @@ import { assertMayWriteToMailbox, writeDoorOf, type MailboxWriteAuthority } from
  */
 export interface SweepScanState {
   /**
-   * WHICH PRESS this state describes — the observed `junk_sweep_requested_at` token, or null before any
+   * WHICH PRESS this state describes — the observed command ID, or null before any
    * press has been seen. The cursor, the moved-since-top flag and the deferral allowance are all progress
    * through ONE command, and keyed to nothing they outlived it: a command that spent its allowance and
    * retired left the counter at its ceiling on a live attachment, so the person's NEXT press inherited a
@@ -60,7 +60,7 @@ export interface SweepScanState {
    * holds for {@link SWEEP_MAX_DEFERRED_SCANS} completed scans and then stops — the same shape as the
    * sensitivity repair's bounded re-walks. It is PROCESS-LOCAL: a restart/reconnect/roster re-add resets it
    * to zero, so it bounds how long ONE attachment holds a press open, not the press's life (a durable
-   * per-press column beside `junk_sweep_requested_at` is its own slice). Any scan that MOVES something
+   * per-press progress marker is its own slice). Any scan that MOVES something
    * resets the counter — correct, because a draining pile has not stalled. */
   deferredScans: number;
 }
@@ -185,6 +185,14 @@ export interface JunkSweepResult {
   optedOut: boolean;
 }
 
+export function confirmedJunkSweepWhere(accountId: string, mailboxId: string, ids?: readonly string[]) {
+  return and(
+    junkSweepCandidateWhere(accountId, mailboxId),
+    ids === undefined ? undefined : sql`${messages.id} in
+      (select value::uuid from jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))`,
+  );
+}
+
 export async function junkSweepPass(opts: {
   db: Tx;
   repo: WorkerRepo & { transaction: <T>(fn: (r: WorkerRepo) => Promise<T>) => Promise<T> };
@@ -193,6 +201,8 @@ export async function junkSweepPass(opts: {
   mailboxId: string;
   execute: boolean;
   limit?: number;
+  /** The account's queued command. A CLI sweep uses its own mailbox-scoped authority instead. */
+  confirmed?: { readonly ids: readonly string[]; readonly folder: string };
   /**
    * KEYSET cursor: only candidates whose id sorts AFTER this one (the pass's stable id order).
    * The worker cycle carries the last id it examined across cycles, so a refused prefix is
@@ -213,7 +223,7 @@ export async function junkSweepPass(opts: {
    */
   writeAuthority: MailboxWriteAuthority;
 }): Promise<JunkSweepResult> {
-  const { db, repo, adapter, accountId, mailboxId, execute, limit, afterId, writeAuthority } = opts;
+  const { db, repo, adapter, accountId, mailboxId, execute, limit, afterId, writeAuthority, confirmed } = opts;
 
   // Physically in the pile, still alive in the mirror, still DESIRED there — the ONE predicate
   // the API's preview counts by too (`junkSweepCandidateWhere`, packages/db). `native_locator`
@@ -224,9 +234,8 @@ export async function junkSweepPass(opts: {
     locator: messages.nativeLocator,
   }).from(messages)
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
-    .where(afterId !== undefined
-      ? and(junkSweepCandidateWhere(accountId, mailboxId), gt(messages.id, afterId))
-      : junkSweepCandidateWhere(accountId, mailboxId))
+    .where(and(confirmedJunkSweepWhere(accountId, mailboxId, confirmed?.ids),
+      afterId !== undefined ? gt(messages.id, afterId) : undefined))
     .orderBy(messages.id)
     .limit(limit ?? 10_000);
 
@@ -239,7 +248,10 @@ export async function junkSweepPass(opts: {
   // `sentFolder` null: the sweep files SPAM only, and the delete completion's Sent exclusion —
   // the one reader of that field — is unreachable from a spam-pile desire.
   const special: SpecialFolderMap = typeof adapter.findSpecialFolders === "function"
-    ? await adapter.findSpecialFolders().then((f) => ({ junkFolder: f.junk, trashFolder: f.trash, sentFolder: null }))
+    ? await adapter.findSpecialFolders().then((f) => ({
+      junkFolder: confirmed === undefined || f.junk === confirmed.folder ? f.junk : null,
+      trashFolder: f.trash, sentFolder: null,
+    }))
     : { junkFolder: null, trashFolder: null, sentFolder: null };
 
   const result: JunkSweepResult = {

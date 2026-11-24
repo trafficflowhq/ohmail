@@ -7,9 +7,19 @@
  * Every `note` is the app-password path, written to be true today. OAuth is
  * Microsoft-only and gated live by `GET …/oauth/microsoft/availability` —
  * no button that cannot work; Gmail stays app-password only.
+ *
+ * A LEAF: this file imports nothing, and it is an entry of its own,
+ * `@ohmail/client-engine/providers`, where the connect form takes it. So a
+ * page that holds no engine (the phone's door) carries this file and no
+ * other of the package (`apps/mobile/test/door-page.test.ts`).
  */
 
-import { domainOfAddress } from "./consent-cutline.js";
+/** The domain half of an address, lower-cased, or `null` when there is not one. */
+export function domainOfAddress(address: string): string | null {
+  const at = address.lastIndexOf("@");
+  if (at < 0 || at === address.length - 1) return null;
+  return address.slice(at + 1).trim().toLowerCase();
+}
 
 export interface ProviderPreset {
   /** Stable id — also the mailbox's stored `provider`, which adapter selection reads. */

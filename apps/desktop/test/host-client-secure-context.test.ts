@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -28,20 +28,12 @@ const read = (rel: string): string => readFileSync(join(here, rel), "utf8");
 
 describe("the served browser client's secure-context dependencies (the API-only premise)", () => {
   it("the shared shell calls crypto.randomUUID() bare in the tag flows — absent on an insecure origin, so the flow would throw", () => {
-    // `crypto.randomUUID` is [SecureContext]: on `http://<lan-ip>` it is undefined and the call
-    // is a TypeError. The shell was ONE file at the audit; the 0.22.1 extraction cut it into
-    // app/shell/*.ts{,x} and carried these calls verbatim into shell-verbs.ts, leaving this pin
-    // reading a file its subject had left. So the subject is the DIRECTORY, asked once.
-    const dir = join(here, "../../webapp/app/shell");
-    const files = readdirSync(dir).filter((f) => /\.tsx?$/.test(f));
-    // A zero-file read is not an answer: it would pass this pin for an empty directory.
-    expect(files.length).toBeGreaterThan(0);
-    const shell = files.map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
-    expect(shell).toMatch(/crypto\.randomUUID\(\)/);
+    const tags = read("../../../packages/app/src/tags/TagsRail.tsx");
+    expect(tags).toMatch(/kind: "tag_create", tagId: crypto\.randomUUID\(\)/);
   });
 
   it("the bearer manager's cross-tab rotation lock is navigator.locks — absent on an insecure origin, where a two-tab double-present reads as theft and unpairs the phone", () => {
-    const bearer = read("../src/host-client/bearer.ts");
+    const bearer = read("../../paired-page/src/bearer.ts");
     expect(bearer).toContain("navigator.locks");
     // The manager itself documents that the bare fallback cannot close the double-present
     // window; on this door's strict reuse detection that residual is a family revocation.

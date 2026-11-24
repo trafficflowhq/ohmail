@@ -10,11 +10,8 @@
  */
 
 /*
- * NO BROWSER HANDOFF ON THIS DOOR: `openWeb` takes a PLACE and the shell resolves it to an
- * address it owns — every one of those is ohmail.app's. Sending an operator's browser there
- * to sign in to THEIR server would be nonsense, and letting the shell open a URL typed into
- * this window would hand the webview an "open anything on this machine" command. So the
- * self-hosted arm offers the password-and-code form: no browser, no new shell capability.
+ * Self-hosted sign-in uses the engine's password-and-code form. Password recovery opens in
+ * the browser, with the native shell checking the configured server and providing the path.
  */
 
 import { engineConfigure, engineLogout, bridgeFetch, type EngineStatus } from "./bridge-fetch.js";

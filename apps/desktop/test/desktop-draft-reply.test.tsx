@@ -6,7 +6,8 @@ import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import { draftReplyOverBridge, draftReplyOverBridgeFor } from "../src/local-draft-reply.js";
-import { message, mountShell, press, replySurface, stubDom, unmountAll, waitFor } from "../../webapp/test/_draft-shell.js";
+import { act, message, mountShell, press, stubDom, unmountAll, waitFor } from "../../webapp/test/_draft-shell.js";
+import write from "../../../packages/app/messages/write.en.json";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -62,30 +63,49 @@ afterEach(async () => {
   delete desktop.__TAURI_INTERNALS__;
 });
 
-async function openDraftReplyOffer(shell: Awaited<ReturnType<typeof mountShell>>) {
-  const row = shell.el.querySelector(".row[data-id='m1']");
-  await press(row, "the message row");
-  await waitFor(() => shell.el.querySelector(".abar-more") !== null, "the message action bar");
-  await press(shell.el.querySelector(".abar-more"), "more actions");
-  await waitFor(
-    () => [...shell.el.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Draft reply"),
-    "the Draft reply action",
-  );
-  const action = [...shell.el.querySelectorAll("button")]
-    .find((button) => button.textContent?.trim() === "Draft reply");
-  await press(action ?? null, "Draft reply");
-  await waitFor(
-    () => shell.el.querySelector('[role="group"][aria-label="Draft a reply with AI"]') !== null,
-    "the AI draft offer",
-  );
+// Drive the desktop reply from its Ohbox row with the keyboard. Draft reply makes one request from the reply footer, which also reports its status.
+const OPEN = '[role="region"][aria-label="Open message"]';
+/** Write's reply text in the open letter (before, today's `.read-col .msg .rte-surface`). */
+const replySurface = (el: HTMLElement): HTMLElement | null =>
+  el.querySelector<HTMLElement>(`${OPEN} [role="textbox"][aria-label="Reply body"]`);
+/** The drafter's one control at the reply's foot. */
+const draftControl = (el: HTMLElement): HTMLButtonElement | null =>
+  [...el.querySelectorAll<HTMLButtonElement>(`${OPEN} button`)]
+    .find((b) => (b.textContent ?? "").includes(write.write.draft.verb) || b.getAttribute("aria-label") === write.write.draft.verb) ?? null;
+/** Write's reply in the open letter: the sheet named "Reply to <name>" that holds the reply's text. */
+const replySheet = (el: HTMLElement): HTMLElement | null =>
+  [...el.querySelectorAll<HTMLElement>(`${OPEN} [aria-label^="Reply to "]`)]
+    .find((s) => s.querySelector('[role="textbox"][aria-label="Reply body"]') !== null) ?? null;
+/**
+ * The drafter's sentence: the line the reply says over its foot (a status; a reply with no files, no forward and no
+ * refusal of its send says no other), or null where it says none.
+ */
+const draftNote = (el: HTMLElement): string | null => {
+  const said = [...(replySheet(el)?.querySelectorAll<HTMLElement>('[role="status"]') ?? [])]
+    .map((n) => (n.textContent ?? "").trim()).filter((t) => t !== "");
+  if (said.length > 1) throw new Error(`the reply says more than one line: ${JSON.stringify(said)}`);
+  return said[0] ?? null;
+};
+
+/** Open the letter m1 at the Ohbox and its reply, where a person writes one. */
+async function openReply(shell: Awaited<ReturnType<typeof mountShell>>) {
+  await waitFor(() => shell.el.querySelector("section[aria-label=\"Messages\"] [role=option][data-id='m1']") !== null, "the message row");
+  await press(shell.el.querySelector("section[aria-label=\"Messages\"] [role=option][data-id='m1']"), "the message row");
+  await waitFor(() => shell.el.querySelector(`${OPEN} h2`) !== null, "the open letter");
+  await act(async () => {
+    (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true }));
+  });
+  await waitFor(() => replySurface(shell.el) !== null, "the reply");
+}
+
+/** Open the reply and request its draft. */
+async function pressDraftReply(shell: Awaited<ReturnType<typeof mountShell>>) {
+  await openReply(shell);
+  await waitFor(() => draftControl(shell.el) !== null, "the Draft reply control");
+  await press(draftControl(shell.el), "Draft reply");
 }
 
 describe("Desktop AI reply drafts", () => {
-  it("hands the shared shell its bridge wire on every Desktop door", () => {
-    const repo = existsSync(resolve("apps/desktop/src")) ? resolve(".") : resolve("../..");
-    const gate = readFileSync(resolve(repo, "apps/desktop/src/DesktopGate.tsx"), "utf8");
-    expect(gate).toContain("draftReplyWire={draftReplyOverBridgeFor(status)}");
-  });
 
   it("picks the no-model sentence by who can choose the model", () => {
     expect(standalone.noModel).toBe("noModelHere");
@@ -101,29 +121,22 @@ describe("Desktop AI reply drafts", () => {
 
   it("reproduces the pre-fix Desktop notice when no draft wire is supplied", async () => {
     // Before this transport was wired, Desktop's refusing Cloud API stub was the only route.
+    // In 2.0 (its never-red row): over no draft wire the reply draws no Draft control, so nothing can be pressed and
+    // no request leaves; today's refusing notice was the only route there (Write: no wire, no control).
     const shell = await mountShell("#/ohbox", [message("m1")]);
-    await openDraftReplyOffer(shell);
+    await openReply(shell);
 
-    const confirm = [...shell.el.querySelectorAll("button")]
-      .find((button) => button.textContent?.trim() === "Draft it");
-    await press(confirm ?? null, "Draft it");
-    await waitFor(() => shell.el.querySelector(".dr-note") !== null, "the draft refusal");
-
-    expect(shell.el.querySelector(".dr-note")?.textContent).toBe("Drafting needs a connected account.");
+    expect(draftControl(shell.el), "a Draft reply control stands over no draft wire").toBeNull();
     expect(engineRequests).toEqual([]);
   }, 15_000);
 
   it("shows the unavailable notice when Desktop has no engine bridge", async () => {
     delete desktop.__TAURI_INTERNALS__;
     const shell = await mountShell("#/ohbox", [message("m1")], [], { draftReplyWire: draftReplyOverBridge });
-    await openDraftReplyOffer(shell);
+    await pressDraftReply(shell);
+    await waitFor(() => draftNote(shell.el) !== null, "the unavailable notice");
 
-    const confirm = [...shell.el.querySelectorAll("button")]
-      .find((button) => button.textContent?.trim() === "Draft it");
-    await press(confirm ?? null, "Draft it");
-    await waitFor(() => shell.el.querySelector(".dr-note") !== null, "the unavailable notice");
-
-    expect(shell.el.querySelector(".dr-note")?.textContent).toBe("Drafting needs a connected account.");
+    expect(draftNote(shell.el)).toBe("Drafting needs a connected account.");
     expect(engineRequests).toEqual([]);
   }, 15_000);
 
@@ -131,20 +144,17 @@ describe("Desktop AI reply drafts", () => {
   async function refusedNotice(refusal: { status: number; body: string }, wire = standalone): Promise<string | null> {
     draftRefusal = refusal;
     const shell = await mountShell("#/ohbox", [message("m1")], [], { draftReplyWire: wire });
-    await openDraftReplyOffer(shell);
-    const confirm = [...shell.el.querySelectorAll("button")]
-      .find((button) => button.textContent?.trim() === "Draft it");
-    await press(confirm ?? null, "Draft it");
-    await waitFor(() => shell.el.querySelector(".dr-note") !== null, "the engine's refusal");
+    await pressDraftReply(shell);
+    await waitFor(() => draftNote(shell.el) !== null, "the engine's refusal");
     expect(engineRequests.map(({ method, url }) => [method, url])).toEqual([["POST", "/messages/m1/draft"]]);
-    return shell.el.querySelector(".dr-note")?.textContent ?? null;
+    return draftNote(shell.el);
   }
   const envelope = (code: string, message: string, details?: unknown): string =>
     JSON.stringify({ error: { code, message, ...(details !== undefined ? { details } : {}) } });
   const NO_DRAFTER = { status: 503, body: envelope("drafter_unconfigured", "this deployment has no AI drafter connected") };
 
   it("says where to choose a model when this install has none, from the catalogue", async () => {
-    expect(await refusedNotice(NO_DRAFTER)).toBe(en.draftReply.noModelHere);
+    expect(await refusedNotice(NO_DRAFTER)).toBe(write.draftReply.noModelHere);
   }, 15_000);
 
   it("keeps the engine's sentence for a missing drafter on the account door, as the web does", async () => {
@@ -154,12 +164,12 @@ describe("Desktop AI reply drafts", () => {
   it("says its own failure sentence for a refusal that is no envelope", async () => {
     // An HTML 502 from a relay: no code, and "the mail engine answered 502" is no sentence for a person.
     expect(await refusedNotice({ status: 502, body: "<html><body>Bad Gateway</body></html>" }))
-      .toBe(en.draftReply.failed);
+      .toBe(write.draftReply.failed);
   }, 15_000);
 
   it.each([
-    ["returned", en.draftReply.creditsReturned],
-    ["owed", en.draftReply.creditsOwed],
+    ["returned", write.draftReply.creditsReturned],
+    ["owed", write.draftReply.creditsOwed],
   ])("says the credits were %s when a charged draft failed", async (credits, said) => {
     expect(await refusedNotice({
       status: 503, body: envelope("ai_draft_failed", "the draft could not be written", { credits }),
@@ -174,11 +184,7 @@ describe("Desktop AI reply drafts", () => {
 
   it("creates and reads through the engine, keeps the press key, and lands text in the editor", async () => {
     const shell = await mountShell("#/ohbox", [message("m1")], [], { draftReplyWire: draftReplyOverBridge });
-    await openDraftReplyOffer(shell);
-
-    const confirm = [...shell.el.querySelectorAll("button")]
-      .find((button) => button.textContent?.trim() === "Draft it");
-    await press(confirm ?? null, "Draft it");
+    await pressDraftReply(shell);
     await waitFor(
       () => replySurface(shell.el)?.textContent?.includes("Thursday works.") === true,
       "the generated text in the reply editor",
@@ -191,6 +197,6 @@ describe("Desktop AI reply drafts", () => {
     expect(engineRequests[0]?.headers.find(([name]) => name.toLowerCase() === "idempotency-key")?.[1])
       .toBe("draft-key-1111-1111-1111-111111111111");
     expect(engineRequests[1]?.headers.some(([name]) => name.toLowerCase() === "idempotency-key")).toBe(false);
-    expect(shell.el.querySelector(".dr-note")).toBeNull();
+    expect(draftNote(shell.el)).toBeNull();
   }, 15_000);
 });

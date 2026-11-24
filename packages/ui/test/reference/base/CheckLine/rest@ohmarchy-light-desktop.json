@@ -1,0 +1,55 @@
+{
+  "component": "CheckLine",
+  "state": "rest",
+  "look": "ohmarchy-light-desktop",
+  "place": "cell",
+  "target": [25, 25, 251.0156, 42],
+  "clip": [25, 25, 252, 42],
+  "studioCommit": null,
+  "kitCommit": "fb49d823f4631edece85985237308d4a814e0e44",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    {
+      "backgroundColor": "rgb(16, 15, 15)",
+      "boxShadow": "rgb(134, 132, 125) 0px 0px 0px 1px inset"
+    },
+    { "backgroundColor": "rgb(255, 252, 240)" }
+  ],
+  "nodes": [],
+  "loose": {
+    "text": [{ "said": "Allow same-network access", "type": 0 }],
+    "surfaces": [
+      { "box": [207, 8, 44, 26], "paint": 0 },
+      { "box": [229, 12, 18, 18], "paint": 1 }
+    ]
+  }
+}

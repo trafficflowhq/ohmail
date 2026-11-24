@@ -1,7 +1,8 @@
+import { bindDb } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { authEvents, pushSubscriptions } from "@trafficflow/db/cloud";
-import { deleteAccount } from "@trafficflow/services";
+import { deleteAccount, type Db } from "@trafficflow/services";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, users, devices, sessions, refreshTokens, type Tx } from "@trafficflow/db";
 import {
@@ -120,7 +121,7 @@ describe("reapStaleWebSessions", () => {
     const lifecycle = makeSessionLifecycle({ config: makeTestAuthDeps().config });
     const daysAgo = (d: number) => new Date(NOW.getTime() - d * DAY);
     const ctx = (at: Date): ServiceContext =>
-      ({ db: db as unknown as ServiceContext["db"], accountId: "", userId: null, now: () => at, requestId: "reap" });
+      ({ db: bindDb(db as unknown as Db, { account: null }), accountId: "", userId: null, now: () => at, requestId: "reap" });
     const renew = async (at: Date, token: string, surface: "cookie" | "native") =>
       (await lifecycle.refresh(ctx(at), { refreshToken: token }, { surface })).tokens!.refreshToken;
     const answerAtNow = (token: string) => renew(NOW, token, "cookie").then(() => "renewed", (e: { code?: string }) => e.code);

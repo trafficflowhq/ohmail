@@ -113,7 +113,7 @@ export const oauthRoutes: Route[] = [
     pattern: "/oauth/token",
     relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
-    options: { public: true, credentialSubject: true },
+    options: { public: true, credentialSubject: true, credentialLookup: true },
     handler: async (req, deps) => {
       const body = await readBody<TokenBodyAuthCode | TokenBodyRefresh>(req);
       try {

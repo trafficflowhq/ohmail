@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
  */
 
 const ROOT = join(__dirname, "..", "..", "..");
-const TREES = ["apps/worker/src", "apps/sidecar/src", "packages/services/src", "packages/core/src"];
+const TREES = ["apps/worker/src", "packages/organizer/src", "apps/sidecar/src", "packages/services/src", "packages/core/src"];
 
 function files(dir: string): string[] {
   const out: string[] = [];

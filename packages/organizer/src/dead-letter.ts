@@ -1,0 +1,714 @@
+import {
+  classifyStoreFault, classifyStoreStatementFault, EmptySourceError, faultCodeOf as codeOf, isMessageLimit,
+  MimeParseError, MimeTooLargeError, sqlStateClass, StoreStatementFaultError,
+  type IngestFault, type MessageFailureCode, type NativeLocator,
+} from "@trafficflow/core/mail";
+import { epochOf, isImapBoundExceeded, parseRef, sameEpoch } from "@trafficflow/core/adapters/imap";
+
+/* The device store's mark lives beside `storeFaultOf` in core's log leaf, which imports nothing: the
+   stores that throw it (apps/sidecar's db.ts and mobile.ts) must not reach this module's IMAP import. */
+export { markStoreStatement, StoreStatementFaultError } from "@trafficflow/core/mail";
+/* The database classes this classifier reads are core's (`statement-fault.ts`): a writer that keeps
+   a letter without one of its rows reads the same ones, typed once. */
+export type { IngestFault, MessageFailureCode } from "@trafficflow/core/mail";
+
+/**
+ * A throw that came out of THIS PROCESS'S DATABASE, whatever code it carries. {@link isDatabaseFault}
+ * answers "is this the database's" from `code`, and must stay narrow: measured against real Postgres on
+ * :5433, a down database throws `ECONNREFUSED`/`EPERM`/`ETIMEDOUT`/`ENOTFOUND` — byte-identical to a
+ * dead IMAP host — while `CONNECTION_ENDED`, `57014`, `3D000` are its own. The information is in WHERE
+ * THE CALL WAS MADE, so the worker records origin there (`db-fault.ts`) and the cycle loop exempts BY
+ * CLASS. The tag names ORIGIN only: Postgres answering `23505`/`22021` is per-message, so
+ * {@link classifyIngestFault} unwraps this class first and {@link isSharedDatabaseFault} subtracts those
+ * SQLSTATE classes back out. `cause` is always the original (`log.ts#describeCause` publishes
+ * `causeClass`/`causeCode`). Lives here because this module is in the desktop engine's published closure. */
+export class DatabaseFaultError extends Error {
+  /** Which database call threw — `"repo.commitChange"`, `"fence.transaction"`. Built from our own
+   *  method names, never from anything a server chose. */
+  readonly op: string;
+
+  constructor(op: string, cause: unknown) {
+    super(`the database failed at ${op}`, { cause });
+    this.name = "DatabaseFaultError";
+    this.op = op;
+  }
+}
+
+/**
+ * Is this throw the DEVICE STORE refusing — a store mark in its chain whose cause no structured field
+ * names as the message's value? A marked constraint or bind refusal is the message's and raises nothing.
+ */
+export function isDeviceStoreFault(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  for (let depth = 0; depth < 5 && cur !== null && cur !== undefined && !seen.has(cur); depth++) {
+    if (cur instanceof StoreStatementFaultError) return classifyStoreStatementFault(cur.cause).domain === "infrastructure";
+    seen.add(cur);
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/** Is a store mark anywhere on this throw or its causes (the throw and four causes, cycle-safe)? */
+export function isStoreStatementFault(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  for (let depth = 0; depth < 5 && cur !== null && cur !== undefined && !seen.has(cur); depth++) {
+    if (cur instanceof StoreStatementFaultError) return true;
+    seen.add(cur);
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
+ * THE PER-MESSAGE TERMINAL-FAILURE LEDGER. A throw out of `planChange(P)`/`commitChange(P)` used to exit
+ * the ingest loop, so message B and everything behind P was never processed — one malformed message
+ * stopped organizing a mailbox permanently. The fix was not a retry but a way to record a failure and
+ * MOVE PAST IT, now durable (mail 0041): `message_failures` is the durable half, this class the in-cycle
+ * half, joined by {@link hydrate} once per cycle. It closed a mail-loss defect where a Sent UID watermark
+ * (`UID FETCH <uidNext>:*`) let a process-local skip advance the cursor past `own_copy` mail with no
+ * `messages` row. Two safety properties: the watermark still advances (retry is BY UID,
+ * `MailboxAdapter.fetchByUid`), and the durable write is not best-effort (a failed write becomes
+ * {@link DeadLetterLedger.revoke} `retry`; the `audit_log` row stays best-effort). The skipped UID joins {@link knownFor} via `buildCursor`, so its body leaves the batch and `hasBacklog` does not spin. */
+
+/** One terminally-skipped, or still-retrying, message. Content-free by construction. */
+export interface MessageFailure {
+  folder: string;
+  uidValidity: string;
+  uid: number;
+  code: MessageFailureCode;
+  attempts: number;
+  firstFailedAt: Date;
+  lastFailedAt: Date;
+  /** True once the item has been declared consumed and the cursor may cross it. */
+  terminal: boolean;
+}
+
+/**
+ * Postgres SQLSTATE prefixes that mean OUR storage or connection failed.
+ *
+ * Deliberately by CLASS and not by individual code, the way `index.ts` exempts
+ * `ClassifierFaultError` by class: a new member of class 08 that nobody has enumerated must land
+ * on the infrastructure side by default, because the failure mode of guessing wrong there is
+ * discarding somebody's mail.
+ */
+const INFRA_SQLSTATE_CLASSES: readonly string[] = [
+  "08",   // connection_exception
+  "25",   // invalid_transaction_state
+  "40",   // transaction_rollback (serialization failure, deadlock) — retryable, never terminal
+  "53",   // insufficient_resources (disk_full 53100 — an early production outage)
+  "54",   // program_limit_exceeded — the cluster's unless MESSAGE_LIMIT_ROUTINES names the routine
+  "55",   // object_not_in_prerequisite_state (55P03 lock_not_available): shared contention
+  "57",   // operator_intervention (query_canceled, admin_shutdown)
+  "58",   // system_error
+  "XX",   // internal_error
+];
+
+/**
+ * postgres.js's OWN non-SQLSTATE codes — unambiguously the database, whoever is asking.
+ *
+ * `CONNECT_TIMEOUT` is deliberately NOT here: imapflow@1.5.0 uses that exact string for a provider
+ * dial that timed out (see `TIMEOUT_ERRNOS`, mailboxes.ts), so it cannot identify a domain on its
+ * own.
+ */
+const PG_DRIVER_CODES: ReadonlySet<string> = new Set([
+  "CONNECTION_CLOSED", "CONNECTION_ENDED", "CONNECTION_DESTROYED", "CONNECTION_CONNECT_TIMEOUT",
+  "NOT_TAGGED_ERROR", "MAX_PARAMETERS_EXCEEDED",
+]);
+
+/**
+ * Raw socket errnos. THESE DO NOT NAME A DOMAIN BY THEMSELVES, and that is the whole reason
+ * {@link isDatabaseFault} exists separately from {@link classifyIngestFault}.
+ *
+ * On the INGEST path the only socket in play is the database's, so treating them as infrastructure
+ * is right. At `attach()` the socket in play is the CUSTOMER'S PROVIDER, and an `ECONNREFUSED` from
+ * a mailbox's own host is the most ordinary per-mailbox failure there is — `classifyMailboxError`
+ * has always called it `connect` and quarantined that mailbox. Four worker tests caught exactly
+ * this confusion the first time the two questions shared one predicate.
+ */
+const TRANSPORT_ERRNOS: ReadonlySet<string> = new Set([
+  "ECONNRESET", "ECONNREFUSED", "EPIPE", "ETIMEDOUT", "ESOCKETTIMEDOUT", "ENOTFOUND", "EAI_AGAIN",
+  "EHOSTUNREACH", "ENETUNREACH", "EADDRNOTAVAIL", "CONNECT_TIMEOUT",
+]);
+
+/* The device store's classes, the bind codes, the class-54 routines that are one message's value
+   and the reading of a marked store throw are core's (`statement-fault.ts`), imported above. */
+
+/**
+ * Classify one ingest throw. It MAY read the error's message; it may never store it — the output
+ * is a six-value enum, exactly as `classifyMailboxError` is a seven-value one.
+ *
+ * Note what is NOT here: `ClassifierFaultError` and `LeaseUnavailableError`. Those are exempted BY
+ * CLASS at their own arms in `index.ts` and must keep propagating untouched, so `sync.ts` rethrows
+ * them before this function is ever called. Adding them here would convert a model outage into a
+ * write-off of the mail it was asked to route.
+ */
+export function classifyIngestFault(err: unknown): IngestFault {
+  // THE ORIGIN TAG IS UNWRAPPED FIRST, AND THIS LINE IS LOAD-BEARING.
+  //
+  // Since the worker wraps its repo (see `db-fault.ts`), every throw from a database call arrives
+  // as a `DatabaseFaultError` whose `code` is undefined. Without this unwrap the fall-through at
+  // the bottom would call each of them `{ message, unclassified }` — so an outage would spend two
+  // attempts per message and then DECLARE THE MAIL CONSUMED. Tagging the origin would have
+  // converted a database blip into mail loss, which is the exact failure this file exists to
+  // prevent, reintroduced by the fix for a different one. The tag says WHERE the throw came from;
+  // the domain question below is unchanged and still answered from what the database said.
+  // The device store's mark FIRST: the parent arm below would unwrap it and lose it.
+  if (err instanceof StoreStatementFaultError) return classifyStoreStatementFault(err.cause);
+  if (err instanceof DatabaseFaultError) return classifyIngestFault(err.cause);
+
+  // Deterministic in the raw bytes, by the contract on `mime.ts`'s two typed errors: "the same
+  // source fails the same way every time … what makes them safe for a quarantine record to treat
+  // as permanent". This is the first consumer that contract was written for.
+  if (err instanceof MimeTooLargeError) {
+    return { domain: "message", code: "mime_too_large", deterministic: true };
+  }
+  if (err instanceof MimeParseError) {
+    // A parse that did not settle inside its deadline says nothing about the bytes, so it takes
+    // the non-deterministic arm: retried, then the clock, escalated at three — never written off
+    // on its first occurrence. A refusal stays deterministic.
+    return err.reason === "parse_timeout"
+      ? { domain: "message", code: "unclassified", deterministic: false }
+      : { domain: "message", code: "mime_unparseable", deterministic: true };
+  }
+  // An empty source is a read that brought nothing, not the letter's bytes: deferred, and the next
+  // read of the UID brings the letter. Named, so the arm is a decision rather than the fall-through.
+  if (err instanceof EmptySourceError) {
+    return { domain: "message", code: "unclassified", deterministic: false };
+  }
+
+  // The device store's one driver code says nothing; its SQLite class does.
+  const store = classifyStoreFault(err);
+  if (store !== null) return store;
+
+  const code = codeOf(err);
+  if (code) {
+    // A SERVER-CEILING BREACH IS THE HOST'S, NOT THE MESSAGE'S. `EIMAPBOUND` is the adapter's refusal
+    // when the mailbox's IMAP server exceeds a ceiling IT chose (folders in a LIST, UIDs, SEARCH hits,
+    // `RFC822.SIZE`, a clock); usually no message was read and the ones that were are fine. Without
+    // this arm it fell to the catch-all (`domain: "message"`, `"unclassified"`), retried twice then
+    // WRITTEN OFF — up to {@link MAX_DEAD_LETTERS_PER_CYCLE} durable failure rows/cycle against readable
+    // mail. The infrastructure domain is correct (neither socket is the message's fault), so the row is
+    // left as-is and the cycle fails; the mailbox's quarantine cadence makes it visible. Duck-typed on
+    // the code, not by importing the error class. NOT every bound: this also backs `sync.ts`'s
+    // `isTransportFailure`, and `candidate_body_probes` (a Message-ID the pre-check cannot disambiguate)
+    // keeps the message domain so it enters the reconciler's widening backoff rather than re-SEARCHing.
+    if (code === "EIMAPBOUND" && (err as { bound?: unknown }).bound !== "candidate_body_probes") {
+      return { domain: "infrastructure" };
+    }
+    // ── AN UNKNOWN UIDVALIDITY IS THE MAILBOX'S CONDITION, BY THE SAME ARGUMENT ─────────────
+    //
+    // `EIMAPEPOCHUNKNOWN` is the adapter refusing a locator-addressed command because the server
+    // named no UIDVALIDITY for the selected folder (or named zero, which RFC 3501 forbids). No
+    // message has been read and none is at fault: the mailbox's own host cannot answer the one
+    // question that makes a UID mean anything. Left to the catch-all it would be retried twice
+    // and then written off as a durable failure of mail that is still on the server, which is the
+    // lie this module exists to prevent. Duck-typed on the code, like the bound above.
+    if (code === "EIMAPEPOCHUNKNOWN") return { domain: "infrastructure" };
+    // A store limit this message's own statement met, attributed exactly (see isMessageLimit).
+    // The driver's MAX_PARAMETERS_EXCEEDED is not one: it can land on another caller's query.
+    if (isMessageLimit(err)) return { domain: "message", code: "data_too_large", deterministic: true };
+    // Both sets, because on the ingest path the only socket is the database's.
+    if (PG_DRIVER_CODES.has(code) || TRANSPORT_ERRNOS.has(code)) return { domain: "infrastructure" };
+    const cls = sqlStateClass(code);
+    if (cls) {
+      if (INFRA_SQLSTATE_CLASSES.includes(cls)) return { domain: "infrastructure" };
+      // Class 22 is a DATA exception: the value this message carried cannot be stored (a decoded
+      // NUL in a subject, a date outside the timestamp range). Deterministic in the bytes, so it
+      // needs no second attempt to prove itself.
+      if (cls === "22") return { domain: "message", code: "data_exception", deterministic: true };
+      // Class 23 is a constraint. `23505` can also be a concurrent second ingest of the same mail
+      // rather than a defect in it, so this one earns its retries before it is written off.
+      if (cls === "23") return { domain: "message", code: "constraint_violation", deterministic: false };
+    }
+  }
+
+  // Everything else, INCLUDING a bug in our own pipeline. Retried first, and skipped only under
+  // {@link MAX_DEAD_LETTERS_PER_CYCLE} — see the cap for why a broken build must not go green.
+  return { domain: "message", code: "unclassified", deterministic: false };
+}
+
+/**
+ * Is this throw UNAMBIGUOUSLY THE DATABASE'S — not one mailbox's provider? `attach()` is the consumer,
+ * and the credential read sits inside its isolation boundary, so without an exemption one database blip
+ * would quarantine every mailbox of the shard (`status='error'`). Deliberately NARROWER than
+ * {@link classifyIngestFault}: SQLSTATEs and postgres.js's own code names only, never a raw errno (at
+ * this seam an `ECONNREFUSED` is more likely the customer's IMAP host than our database). The residual:
+ * postgres.js surfaces a bare `ECONNREFUSED` when Postgres is down, so a total outage reads as a per-
+ * mailbox connect failure (self-clearing). The cycle path closed that via origin tagging
+ * ({@link isSharedDatabaseFault}, `db-fault.ts`); the one call this seam makes, `loadMailboxCreds`, is
+ * not wrapped (a credential that will not decrypt is the most per-mailbox failure there is). */
+export function isDatabaseFault(err: unknown): boolean {
+  // An ORIGIN tag outranks any code, because it is the one thing a code cannot say. See
+  // `db-fault.ts` for the measurement: three of the six database faults this worker can suffer
+  // are byte-identical, in `name` and in `code`, to a dead IMAP host.
+  if (err instanceof DatabaseFaultError) return true;
+  const code = codeOf(err);
+  if (!code) return false;
+  if (PG_DRIVER_CODES.has(code)) return true;
+  if (isMessageLimit(err)) return false;
+  const cls = sqlStateClass(code);
+  return cls !== null && INFRA_SQLSTATE_CLASSES.includes(cls);
+}
+
+/**
+ * SQLSTATE classes in which Postgres is answering about the VALUE WE SENT, not about itself.
+ *
+ * The same two {@link classifyIngestFault} maps to the message domain, and named here rather than
+ * derived from it because the two questions are genuinely different: that one asks "may this
+ * message be written off", this one asks "may this mailbox be quarantined". They agree today, and
+ * a change to either must be an explicit change to both.
+ */
+const DATA_SQLSTATE_CLASSES: readonly string[] = [
+  "22",   // data_exception — a decoded NUL in a subject, a timestamp out of range
+  "23",   // integrity_constraint_violation
+];
+
+/**
+ * Is this throw about a dependency THE WHOLE SHARD SHARES — never about the mailbox mid-cycle when it
+ * landed? The cycle loop's question, deliberately not {@link classifyIngestFault}'s (that calls the
+ * customer's IMAP host "infrastructure", right there and wrong here — a provider that will not answer is
+ * what quarantine is for). Widening this to that domain is the inverse defect (it dissolves mailbox
+ * isolation; `connection-error.e2e.test.ts` and `mailbox-failure.e2e.test.ts` go red). Two arms: TAGGED
+ * — from `SyncDeps.repo` or the fence's transaction, so shared UNLESS Postgres named a data class
+ * (per-message cadence); UNTAGGED — back to {@link isDatabaseFault}'s narrow code-only question, so an
+ * ambiguous timeout stays a per-mailbox fault (a missed exemption costs a self-clearing quarantine, a
+ * wrong one costs isolation). */
+export function isSharedDatabaseFault(err: unknown): boolean {
+  if (err instanceof DatabaseFaultError) {
+    if (isMessageLimit(err.cause)) return false;
+    const cls = sqlStateClass(codeOf(err.cause));
+    return cls === null || !DATA_SQLSTATE_CLASSES.includes(cls);
+  }
+  return isDatabaseFault(err);
+}
+
+/**
+ * How many times a NON-deterministic message-local failure is retried before it is written off.
+ *
+ * Two, not three, and the arithmetic is deliberate: `DEFAULT_MAX_SYNC_FAILURES` is 3, so a poison
+ * message that defers on cycle 1 and goes terminal on cycle 2 never reaches the mailbox-level
+ * quarantine threshold. At three attempts the terminal cycle and the quarantine cycle collide and
+ * whether the mailbox is detached depends on which counter is compared first.
+ */
+export const DEFAULT_MAX_MESSAGE_ATTEMPTS = 2;
+
+/**
+ * THE SAFETY VALVE: how many messages ONE cycle may terminally skip. Without it a bug in our own
+ * pipeline that throws for every message would — after {@link DEFAULT_MAX_MESSAGE_ATTEMPTS} cycles —
+ * write off the whole batch, advance the cursor and report SUCCESS, the mailbox green while dropping
+ * every message. Beyond this cap the surplus stays deferred (not consumed), the folder cursor is held
+ * and the cycle fails, so `maxSyncFailures` quarantines the mailbox. Five, not one, because a mailbox
+ * with a handful of genuinely poison messages must still drain: the cap bounds how much one cycle can
+ * write off, not how much ever can.
+ */
+export const MAX_DEAD_LETTERS_PER_CYCLE = 5;
+
+/**
+ * How many written-off UIDs ONE cycle may re-read by UID.
+ *
+ * Small on purpose, and for a different reason from {@link MAX_DEAD_LETTERS_PER_CYCLE}. That cap
+ * bounds how much a broken build may WRITE OFF; this one bounds how much a cycle spends looking
+ * BACKWARDS. A mailbox with a thousand owed UIDs must not spend its cycle re-reading history while
+ * new mail waits behind it — the retry rides at the end of the cycle, after the cursors are
+ * written, so the mailbox drains regardless and the backlog of owed UIDs clears at five a cycle.
+ */
+export const MAX_MESSAGE_RETRIES_PER_CYCLE = 5;
+
+/**
+ * Attempts after which a still-failing message is ESCALATED — reported rather than merely retried.
+ * Three, chosen against the retry schedule: a deterministic failure gets exactly one attempt per
+ * deployed build (see {@link nextAttemptAfter}), so three attempts is three separate builds that could
+ * not read the message — the point where "the next deploy might fix it" has stopped being plausible. A
+ * non-deterministic one reaches it inside a day on the backoff. Escalation does NOT stop the retrying:
+ * a message the product cannot read must become VISIBLE, not abandoned, because the deploy that fixes
+ * it may be weeks away and one targeted probe per build is a size fetch.
+ */
+export const ESCALATE_AFTER_ATTEMPTS = 3;
+
+/**
+ * WHEN a failed UID is next owed a CLOCK-scheduled look, or `null` for "not on a clock". Deterministic
+ * failures are `null`: `MimeTooLargeError` and `MimeParseError` carry "the same source fails the same
+ * way every time", so no future instant is better than now — an hourly backoff would re-download a body
+ * it is about to refuse for the life of the account. The only event that changes the answer is NEW CODE,
+ * which is the version arm of the due predicate in `claimMessageFailures` (no timestamp needed). The
+ * non-deterministic pair (`constraint_violation`, `unclassified`) does get a clock, doubling from an hour
+ * and capped at a day: `23505` can be a concurrent second ingest and `unclassified` our own transient
+ * bug, both worth re-trying without a deploy; capped so a permanent one is still probed occasionally.
+ */
+export function nextAttemptAfter(
+  code: MessageFailureCode, attempts: number, now: Date,
+): Date | null {
+  if ((DETERMINISTIC_MESSAGE_FAILURE_CODES as readonly string[]).includes(code)) {
+    return null;
+  }
+  const hours = Math.min(24, 2 ** Math.max(0, attempts - 1));
+  return new Date(now.getTime() + hours * 60 * 60 * 1000);
+}
+
+/**
+ * The codes whose failure is a function of the MESSAGE BYTES — retrying on a clock re-runs the identical
+ * computation on identical input, so their `next_attempt_at` is NULL and their next look is a NEW BUILD
+ * (the `attempted_version` arm of `claimMessageFailures`' due-predicate). Exported because the CLAIM
+ * needs the same list: `claimMessageFailures` stamps the next clock instant in the statement that claims
+ * the row, and for years it stamped the generic hourly schedule regardless of code — so a
+ * `mime_too_large` message was size-probed hourly for ever (a production row reached 297 attempts). The
+ * repo method cannot import this app's types, so the caller passes this list; this is its one definition.
+ */
+export const DETERMINISTIC_MESSAGE_FAILURE_CODES = [
+  "mime_too_large", "mime_unparseable", "data_exception", "data_too_large",
+] as const satisfies readonly MessageFailureCode[];
+
+/**
+ * The codes the LOCAL BACKSTOP'S RUN never counts, in memory or in the store (`writeOffRun`). The hold
+ * exists for a build of ours refusing readable mail; a `mime_too_large` row is a bound ohmail applied
+ * to the server's bytes (an overrun, a stated size past the MIME ceiling, or `normalizeMime`'s
+ * refusal), so a run of them is no evidence of that and holding ordinary write-offs over it strands
+ * mail for no reason. The per-cycle cap still applies to every code. The repo cannot import this
+ * app's types, so the caller passes this list; this is its one definition.
+ */
+export const HOLD_EXEMPT_CODES = ["mime_too_large"] as const satisfies readonly MessageFailureCode[];
+
+/** Does a write-off under this code stay out of the backstop's run? See {@link HOLD_EXEMPT_CODES}. */
+export const holdExemptCode = (code: string): boolean =>
+  (HOLD_EXEMPT_CODES as readonly string[]).includes(code);
+
+/**
+ * The ledger's in-memory identity for one message coordinate — DELIMITED, because the three parts are
+ * variable-length and a folder name is chosen by the mail server. The first version was
+ * `${folder}${uidValidity}${uid}`, and concatenating variable-length parts with no separator is
+ * ambiguous: `("Notes1","2",34)` and `("Notes","12",34)` both make `Notes1234`. That decides whether a
+ * message is SKIPPED — `has()` answers `terminal`, `runSyncCycle` skips it, and on a UID-watermarked
+ * folder such as Sent nothing enumerates it again — so one malformed message could make a good one
+ * permanently invisible. `JSON.stringify` of the tuple, not a chosen separator, because every separator
+ * legal in an IMAP folder name can appear IN one; a Map key only (never persisted, parsed or shown), so
+ * the encoding is free to be verbose. */
+const keyOf = (folder: string, uidValidity: string, uid: number): string =>
+  JSON.stringify([folder, storedEpoch(uidValidity), uid]);
+
+/* THE EPOCH AS `recordMessageFailure` STORES IT: digits as a number, anything else `0`. A ref with no
+   UIDVALIDITY parses as "undefined" while its row reads back "0"; keyed apart, one message counted twice. */
+const storedEpoch = (v: string): string => (/^[0-9]+$/.test(v) ? String(BigInt(v)) : "0");
+
+/**
+ * WAS THIS BREACH PROGRESS? A `body_overrun` that names its message, and THIS CYCLE wrote that message
+ * off ({@link DeadLetterLedger.wroteOffThisCycle}; `revoke` takes it back when the durable row could
+ * not be written). One that names none (a batch total) when THIS CYCLE stored new mail into, re-learned
+ * a message under the live epoch of, or wrote a message off from, its folder
+ * ({@link DeadLetterLedger.progressedThisCycleIn}): the mail read before the breach was kept. Each of
+ * those happens once per message (a re-learned one is repointed to that epoch), so this cannot loop.
+ * A row from an earlier cycle is not progress: a server naming no UIDVALIDITY hands the same liar back every pass.
+ * Asked at cycle end by both engines: progress does not climb the reconnect ladder, arm the outage
+ * clock or count toward quarantine. Anything else — a total over nothing new, a set-aside the cap
+ * refused, a revoked or an older row — stays a failure.
+ */
+export function breachSetAside(
+  err: unknown, ledger: Pick<DeadLetterLedger, "wroteOffThisCycle" | "progressedThisCycleIn"> | undefined,
+): boolean {
+  if (ledger === undefined || !isImapBoundExceeded(err) || err.bound !== "body_overrun") return false;
+  if (err.folder === undefined) return false;
+  if (err.site === undefined) return ledger.progressedThisCycleIn(err.folder);
+  return ledger.wroteOffThisCycle(err.folder, err.site.uidValidity, err.site.uid);
+}
+
+/**
+ * The ledger itself: per mailbox, held on the `MailboxRuntime`'s `SyncDeps` so it lives as long as
+ * the attachment does.
+ */
+/** The store's run of write-offs ({@link DeadLetterLedger.hydrateRunFrom}): the repo's `writeOffRun`. */
+export interface WriteOffRunSource {
+  writeOffRun?(
+    mailboxId: string, version: string, cap: number, exemptCodes: readonly string[],
+    newestStored?: { at: Date | null },
+  ): Promise<{ count: number; heldSince: Date | null; newestStored?: { at: Date | null } }>;
+}
+
+export class DeadLetterLedger {
+  private readonly items = new Map<string, MessageFailure>();
+  private readonly maxAttempts: number;
+  private readonly perCycleCap: number;
+  /** Terminal decisions taken in the CURRENT cycle; reset by {@link beginCycle}. */
+  private thisCycle = 0;
+  /** The keys {@link record} wrote off in the CURRENT cycle (and {@link revoke} did not take back). */
+  private readonly writtenThisCycle = new Set<string>();
+  /** Folders the CURRENT cycle stored new mail into, re-learned a message in, or wrote one off from. */
+  private readonly progressIn = new Set<string>();
+  /** See {@link holdsAtCap}; the instant the hold engaged, or null. */
+  private heldSince: Date | null = null;
+  /** See {@link storeFaultSince}. */
+  private storeFaultFirst: Date | null = null;
+  /** The store's write count when the last store fault was noted. */
+  private storeWritesAtFault = 0;
+  private readonly storeWrites: (() => number) | undefined;
+  /** Write-offs since the last stored message: as the store said at cycle start, and this cycle's. */
+  private runBefore = 0;
+  private runThisCycle = 0;
+  /** The store's newest stored message as last read; undefined until read or after one is stored. */
+  private newestStored: { at: Date | null } | undefined;
+  /**
+   * THE LOCAL BACKSTOP. The per-cycle cap assumes a failing cycle quarantines the mailbox; a local
+   * engine has none, so a defect refusing every message would write the mail off as it arrives, at
+   * any rate. With this set, the cap's number of write-offs in a row with NO message stored between
+   * them holds every further write-off. Only a stored message resets the run and lifts the hold; a
+   * clean cycle with nothing new does not. The run is the store's (`hydrateRun`), so it survives a
+   * relaunch under the same build label and a new label starts it again.
+   */
+  readonly holdsAtCap: boolean;
+
+  constructor(opts: {
+    maxAttempts?: number; perCycleCap?: number; holdAtCap?: boolean;
+    /** The device store's committed-write count, which lowers {@link storeFaultSince}. */
+    storeWrites?: () => number;
+  } = {}) {
+    this.storeWrites = opts.storeWrites;
+    this.maxAttempts = Math.max(1, opts.maxAttempts ?? DEFAULT_MAX_MESSAGE_ATTEMPTS);
+    this.perCycleCap = Math.max(1, opts.perCycleCap ?? MAX_DEAD_LETTERS_PER_CYCLE);
+    this.holdsAtCap = opts.holdAtCap === true;
+  }
+
+  /** Since when write-offs are held ({@link holdsAtCap}), or null when they are not. */
+  get writeOffsHeldSince(): Date | null { return this.heldSince; }
+
+  /**
+   * Since when the device store has refused a statement ({@link StoreStatementFaultError}) with no
+   * write committed since: the hold's sentence for a fault that writes nothing off. Lowered by the
+   * next committed store write of any kind, never by a drain that wrote nothing (a full disk still reads).
+   */
+  get storeFaultSince(): Date | null { return this.storeFaultFirst; }
+
+  /** The device store refused a statement: raise the sentence, keeping the first instant. */
+  noteStoreFault(now: Date = new Date()): void {
+    this.storeFaultFirst ??= now;
+    this.storeWritesAtFault = this.storeWrites?.() ?? 0;
+  }
+
+  /**
+   * A drain ended, with what it threw (or nothing). A device store fault anywhere on the throw
+   * ({@link isDeviceStoreFault}) raises the sentence, wherever in the drain it was thrown; otherwise a
+   * write the store committed since the fault lowers it.
+   */
+  settleStoreFault(err: unknown, now: Date = new Date()): void {
+    if (err !== undefined && err !== null && isDeviceStoreFault(err)) { this.noteStoreFault(now); return; }
+    if (this.storeFaultFirst !== null && this.storeWrites !== undefined && this.storeWrites() > this.storeWritesAtFault) {
+      this.storeFaultFirst = null;
+    }
+  }
+
+  /**
+   * The run as the store answers it at the top of a cycle: write-offs under this build's label since
+   * the last stored message, and when the run reached the cap. Authoritative over memory, so a
+   * relaunch keeps a hold and a new build label (whose rows do not count) lifts it.
+   */
+  hydrateRun(run: { count: number; heldSince: Date | null }): void {
+    this.runBefore = run.count;
+    this.runThisCycle = 0;
+    this.heldSince = run.count >= this.perCycleCap ? (this.heldSince ?? run.heldSince ?? new Date()) : null;
+  }
+
+  /**
+   * The run from the store, at the top of a cycle; nothing when the repo keeps no run. The newest
+   * stored message is read once and kept until {@link noteStored}: only a stored message moves it,
+   * so every idle cycle reused one reading instead of sorting the mailbox again.
+   */
+  async hydrateRunFrom(repo: WriteOffRunSource, mailboxId: string, version: string): Promise<void> {
+    if (typeof repo.writeOffRun !== "function") return;
+    const run = await repo.writeOffRun(mailboxId, version, this.perCycleCap, HOLD_EXEMPT_CODES, this.newestStored);
+    if (run.newestStored !== undefined) this.newestStored = run.newestStored;
+    this.hydrateRun(run);
+  }
+
+  /** A message was stored: the run starts again, a hold is lifted, the newest stored is read again. */
+  noteStored(): void {
+    this.newestStored = undefined;
+    this.runBefore = 0;
+    this.runThisCycle = 0;
+    this.heldSince = null;
+    this.storeFaultFirst = null;
+  }
+
+  /** Called once at the top of every sync cycle, so the per-cycle cap is per cycle. */
+  beginCycle(): void { this.thisCycle = 0; this.writtenThisCycle.clear(); this.progressIn.clear(); }
+
+  /**
+   * This cycle stored a new message into `folder`, re-learned one it held there under the folder's
+   * live epoch, or wrote one off from it durably.
+   */
+  noteProgressIn(folder: string): void { this.progressIn.add(folder); }
+
+  /** Did THIS cycle store into, re-learn in, or write off from `folder`? See {@link breachSetAside}. */
+  progressedThisCycleIn(folder: string): boolean { return this.progressIn.has(folder); }
+
+  /** Did THIS cycle write this message off? See {@link breachSetAside}. */
+  wroteOffThisCycle(folder: string, uidValidity: string, uid: number): boolean {
+    return this.writtenThisCycle.has(keyOf(folder, uidValidity, uid));
+  }
+
+  /**
+   * Load the DURABLE rows for this mailbox into the ledger — the join between the two halves, called
+   * once at the top of every cycle from `runSyncCycle`. Every hydrated row is `terminal: true` (a row
+   * exists only for a UID a cursor was already allowed to cross), which puts it in {@link knownFor} and
+   * keeps its body out of the main batch. It NEVER lowers an attempt count — a row held in memory keeps
+   * the higher (`max`), because the in-memory count can legitimately be ahead and taking the database's
+   * number would reset a spent budget, earning a poison message unlimited attempts one restart at a
+   * time. Called for its side effect on the known-set, not a return: `buildCursor` reads the ledger
+   * afterwards, so `runSyncCycle` lets a hydration THROW rather than publish a watermark on the
+   * assumption that nothing is owed. */
+  hydrate(rows: ReadonlyArray<{
+    folder: string; uidValidity: string; uid: number; code: string; attempts: number;
+  }>): void {
+    for (const r of rows) {
+      const key = keyOf(r.folder, r.uidValidity, r.uid);
+      const prev = this.items.get(key);
+      const now = new Date();
+      this.items.set(key, {
+        folder: r.folder,
+        uidValidity: r.uidValidity,
+        uid: r.uid,
+        code: isMessageFailureCode(r.code) ? r.code : "unclassified",
+        attempts: Math.max(r.attempts, prev?.attempts ?? 0),
+        firstFailedAt: prev?.firstFailedAt ?? now,
+        lastFailedAt: prev?.lastFailedAt ?? now,
+        terminal: true,
+      });
+    }
+  }
+
+  /**
+   * THE STORE'S WHOLE SET, at the top of a cycle: {@link hydrate}, and a terminal key the store no longer
+   * holds is dropped. A folder rename moves the row under a new name and a retry closes it, so the store's
+   * unresolved rows ARE the set; a key kept past them counted one message twice ({@link skipped}).
+   * Only the full read may call this; a claimed subset goes through {@link hydrate}.
+   */
+  reconcile(rows: ReadonlyArray<{
+    folder: string; uidValidity: string; uid: number; code: string; attempts: number;
+  }>): void {
+    const held = new Set(rows.map((r) => keyOf(r.folder, r.uidValidity, r.uid)));
+    for (const [key, it] of this.items) if (it.terminal && !held.has(key)) this.items.delete(key);
+    this.hydrate(rows);
+  }
+
+  /**
+   * TAKE BACK a terminal decision, because the durable record of it could not be written. The one
+   * caller is `sync.ts`, on a failed `recordMessageFailure`. Without this the ledger would hold
+   * `terminal: true` for a UID no table knows about, the folder cursor would be allowed to cross it, and
+   * the loss this durable record exists to close would be back — reachable through a database hiccup
+   * instead of a restart. The per-cycle cap slot is returned with it: a decision that did not stick did
+   * not spend one, and charging for it would make a run of write failures silently lower how many
+   * genuine write-offs a cycle can make.
+   */
+  revoke(locator: NativeLocator): void {
+    const { uidValidity, uid } = parseRef(locator.ref);
+    const key = keyOf(locator.folder, uidValidity, uid);
+    const item = this.items.get(key);
+    if (!item?.terminal) return;
+    item.terminal = false;
+    this.writtenThisCycle.delete(key);
+    if (this.thisCycle > 0) this.thisCycle--;
+    // An exempt write-off never joined the run, so its revoke leaves the run alone.
+    if (holdExemptCode(item.code)) return;
+    if (this.runThisCycle > 0) this.runThisCycle--;
+  }
+
+  /** Close an item out: it was ingested, or the server no longer has it, or its epoch is void. */
+  forget(folder: string, uidValidity: string, uid: number): void {
+    this.items.delete(keyOf(folder, uidValidity, uid));
+  }
+
+  /**
+   * Record one failed change. Returns `"skip"` when the item is now CONSUMED — the batch may
+   * continue past it and the folder cursor may cross it — or `"retry"` when it is not, in which
+   * case the caller must hold that folder's cursor and fail the cycle.
+   */
+  record(
+    locator: NativeLocator, fault: { code: MessageFailureCode; deterministic: boolean },
+  ): "skip" | "retry" {
+    const { uidValidity, uid } = parseRef(locator.ref);
+    const key = keyOf(locator.folder, uidValidity, uid);
+    const now = new Date();
+    const prev = this.items.get(key);
+    const item: MessageFailure = prev
+      ? { ...prev, code: fault.code, attempts: prev.attempts + 1, lastFailedAt: now }
+      : {
+        folder: locator.folder, uidValidity, uid: Number.isFinite(uid) ? uid : 0,
+        code: fault.code, attempts: 1, firstFailedAt: now, lastFailedAt: now, terminal: false,
+      };
+    this.items.set(key, item);
+
+    if (item.terminal) return "skip";                       // already written off; do not re-count
+    const exhausted = fault.deterministic || item.attempts >= this.maxAttempts;
+    if (!exhausted) return "retry";
+    /* A HOLD-EXEMPT CODE ({@link HOLD_EXEMPT_CODES}) is a bound we applied to the server's bytes:
+       a standing hold does not refuse it and the run does not count it, here or in the store's
+       `writeOffRun`, which takes the same list. The per-cycle cap applies to every code. */
+    const exempt = holdExemptCode(fault.code);
+    if (!exempt && this.heldSince !== null) return "retry"; // the local backstop holds
+    if (this.thisCycle >= this.perCycleCap) return "retry";  // the safety valve, above
+    this.thisCycle++;
+    item.terminal = true;
+    this.writtenThisCycle.add(key);
+    if (exempt) return "skip";
+    if (this.holdsAtCap) {
+      this.runThisCycle++;
+      if (this.runBefore + this.runThisCycle >= this.perCycleCap) this.heldSince ??= now;
+    }
+    return "skip";
+  }
+
+  /** Is this UID already written off? */
+  has(folder: string, uidValidity: string, uid: number): boolean {
+    return this.items.get(keyOf(folder, uidValidity, uid))?.terminal === true;
+  }
+
+  /**
+   * The terminally-skipped UIDs of one folder AT ONE EPOCH, shaped for the adapter's known-set.
+   *
+   * Epoch-filtered for the same reason `buildCursor` filters real locators (finding 2): a UID
+   * number written off under one UID epoch must not silence a different message that reuses that
+   * number under a later epoch.
+   *
+   * `messageId: null` deliberately — we never parsed the message, so we have no Message-ID, and
+   * inventing one would let `correlateMoves` pair a skipped UID with an unrelated create.
+   */
+  knownFor(folder: string, uidValidity: string): Array<{ uid: number; messageId: string | null }> {
+    const out: Array<{ uid: number; messageId: string | null }> = [];
+    for (const it of this.items.values()) {
+      if (it.terminal && it.folder === folder && sameEpoch(epochOf(it.uidValidity), epochOf(uidValidity))) {
+        out.push({ uid: it.uid, messageId: null });
+      }
+    }
+    return out;
+  }
+
+  /** How many messages this mailbox has written off. Evidence for `/health` and the logs. */
+  get skipped(): number {
+    let n = 0;
+    for (const it of this.items.values()) if (it.terminal) n++;
+    return n;
+  }
+
+  /**
+   * How many of them have now failed {@link ESCALATE_AFTER_ATTEMPTS} times — the number an operator
+   * needs, and the one `/health` publishes as `escalatedMessages`.
+   *
+   * Derived from `attempts` rather than stored as a flag, so it cannot disagree with the counter it
+   * is about. It is a count of the CURRENT mailbox's attachment: the health endpoint sums it across
+   * `runtimes`, which is also why this reads memory and issues no query — `startHealthServer`
+   * touches no database by design, so a probe can never add load or block on Postgres.
+   */
+  get escalated(): number {
+    let n = 0;
+    for (const it of this.items.values()) {
+      if (it.terminal && it.attempts >= ESCALATE_AFTER_ATTEMPTS) n++;
+    }
+    return n;
+  }
+
+  entries(): MessageFailure[] { return [...this.items.values()]; }
+}
+
+/** Is `code` a member of the closed set? A stored value outside it reads as `unclassified`. */
+function isMessageFailureCode(code: string): code is MessageFailureCode {
+  return code === "mime_too_large" || code === "mime_unparseable" || code === "data_exception"
+    || code === "data_too_large" || code === "constraint_violation" || code === "unclassified";
+}

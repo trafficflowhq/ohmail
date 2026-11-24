@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { folderState, idempotencyKeys, changeLog, mailboxes } from "@trafficflow/db";
+import { folderState, idempotencyKeys, changeLog, mailboxes, mailboxFolders, folderOps } from "@trafficflow/db";
 import { and, eq } from "drizzle-orm";
 import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, req, FIXED_NOW } from "./helpers.js";
 
@@ -255,13 +255,98 @@ describe("POST /messages/:id/move (defer + idempotency)", () => {
     expect((await pressed.json()).error.code).toBe("not_in_trash");
   });
 
-  it("invalid folder → 400; cross-account → 404", async () => {
+  it("a folder the mailbox does not list → 422 no_such_folder; a name that is no name → 400; cross-account → 404", async () => {
     const { db, deps } = await makeDeps();
     const owner = await seedSession(db, { now: FIXED_NOW, token: "owner-tok" });
     const other = await seedSession(db, { now: FIXED_NOW, token: "other-tok" });
     const m = await seedMessage(db, { accountId: owner.accountId, folder: "INBOX" });
 
-    expect((await H(req("POST", `/messages/${m.id}/move`, { bearer: owner.token, body: JSON.stringify({ folder: "Nope" }) }), deps)).status).toBe(400);
+    const nope = await H(req("POST", `/messages/${m.id}/move`, { bearer: owner.token, body: JSON.stringify({ folder: "Nope" }) }), deps);
+    expect([nope.status, (await nope.json()).error.code]).toEqual([422, "no_such_folder"]);
+    for (const folder of [7, "", "a\u0000b"]) {
+      expect((await H(req("POST", `/messages/${m.id}/move`, { bearer: owner.token, body: JSON.stringify({ folder }) }), deps)).status).toBe(400);
+    }
     expect((await H(req("POST", `/messages/${m.id}/move`, { bearer: other.token, body: JSON.stringify({ folder: "ohmail/News" }) }), deps)).status).toBe(404);
+  });
+});
+
+/**
+ * A MOVE INTO ONE OF THE PERSON'S OWN FOLDERS, on the install that organizes the mailbox. The API
+ * writes desired state and opens no mailbox; the folder is taken only when this mailbox lists it
+ * and it is the person's own, and never while a folder command overlaps it.
+ */
+describe("POST /messages/:id/move into a person's own folder", () => {
+  async function world() {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, {
+      accountId: s.accountId, folders: ["Clients", "Clients/Acme", "Sent", "Trash", "INBOX"].map((folder) => ({ folder })),
+    });
+    await db.update(mailboxes).set({ sentFolder: "Sent", trashFolder: "Trash" }).where(eq(mailboxes.id, mailboxId));
+    const m = await seedMessage(db, { accountId: s.accountId, mailboxId, folder: "INBOX", observedFolder: "INBOX" });
+    const move = (body: unknown, key?: string, token = s.token) => H(req("POST", `/messages/${m.id}/move`, {
+      bearer: token, body: JSON.stringify(body), ...(key ? { headers: { "idempotency-key": key } } : {}),
+    }), deps);
+    const placed = async () => (await db.select().from(folderState).where(eq(folderState.messageId, m.id)))[0];
+    return { db, deps, s, mailboxId, m, move, placed };
+  }
+
+  it("a folder this mailbox lists: 200, the row answers it, desired written, observed kept, one move change", async () => {
+    const w = await world();
+    const res = await w.move({ folder: "Clients/Acme" });
+    expect(res.status).toBe(200);
+    expect((await res.json()).folder).toBe("Clients/Acme");
+    expect(res.headers.get("x-sync-seq")).toBeTruthy();
+    expect(await w.placed()).toMatchObject({ desiredFolder: "Clients/Acme", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending" });
+    const mv = (await syncBuckets(w.deps, w.s.token)).moves.find((x) => x.id === w.m.id);
+    expect(mv?.move).toEqual({ from: "INBOX", to: "Clients/Acme" });
+  });
+
+  it("replayed under one key: the stored answer and one move change; and back out to a place as today", async () => {
+    const w = await world();
+    const first = await w.move({ folder: "Clients" }, "mv-folder");
+    const replay = await w.move({ folder: "Clients" }, "mv-folder");
+    expect([first.status, replay.status]).toEqual([200, 200]);
+    expect(await replay.json()).toEqual(await first.json());
+    const moves = await w.db.select().from(changeLog)
+      .where(and(eq(changeLog.accountId, w.s.accountId), eq(changeLog.entityId, w.m.id), eq(changeLog.op, "move")));
+    expect(moves).toHaveLength(1);
+    expect((await w.move({ folder: "INBOX" })).status).toBe(200);
+    expect((await w.placed())!.desiredFolder).toBe("INBOX");
+  });
+
+  it("refused before anything is written: not listed or not the person's own 422, busy 409, a rule's press or an odd from 400", async () => {
+    const w = await world();
+    const [clients] = await w.db.select().from(mailboxFolders).where(and(eq(mailboxFolders.mailboxId, w.mailboxId), eq(mailboxFolders.folder, "Clients")));
+    await w.db.insert(folderOps).values({ accountId: w.s.accountId, mailboxId: w.mailboxId, folderId: clients!.id, op: "delete", toFolder: null });
+    const cases: Array<[unknown, number, string]> = [
+      [{ folder: "Clients/Gone" }, 422, "no_such_folder"],
+      [{ folder: "clients/acme" }, 422, "no_such_folder"],
+      [{ folder: "Sent" }, 422, "no_such_folder"],
+      [{ folder: "Trash" }, 422, "no_such_folder"],
+      [{ folder: "inbox" }, 422, "no_such_folder"],
+      [{ folder: "ohmail/_meta" }, 422, "no_such_folder"],
+      [{ folder: "Clients/Acme" }, 409, "conflict"],
+      [{ folder: "Clients/Acme", pressRule: true }, 400, "validation_failed"],
+      [{ folder: "Clients/Acme", from: "Clients" }, 400, "validation_failed"],
+      [{ folder: "Clients\r\nX" }, 400, "validation_failed"],
+    ];
+    for (const [body, status, code] of cases) {
+      const res = await w.move(body);
+      const json = await res.json();
+      expect([JSON.stringify(body), res.status, json.error?.code]).toEqual([JSON.stringify(body), status, code]);
+      // The sentence never repeats the name it was handed.
+      expect(String(json.error?.message)).not.toContain("Clients");
+    }
+    expect(await w.placed()).toMatchObject({ desiredFolder: "INBOX", observedFolder: "INBOX" });
+  });
+
+  it("another account's folder answers exactly as a folder nobody has", async () => {
+    const w = await world();
+    const stranger = await seedSession(w.db, { now: FIXED_NOW, token: "stranger-tok" });
+    await seedMailbox(w.db, { accountId: stranger.accountId, folders: [{ folder: "Theirs" }] });
+    const theirs = await w.move({ folder: "Theirs" });
+    const nobody = await w.move({ folder: "Nobody/Has/This" });
+    expect([theirs.status, (await theirs.json()).error.code]).toEqual([nobody.status, (await nobody.json()).error.code]);
   });
 });

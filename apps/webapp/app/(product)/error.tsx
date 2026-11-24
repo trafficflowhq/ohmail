@@ -5,8 +5,8 @@ import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 import { buildId } from "../build-id";
 import { reportRenderError } from "../error-report";
-import { readOwner } from "../shell/owner-cookie";
-import { signOut } from "../sign-out";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
+import { signOutAndSettle } from "../sign-out";
 import { signOutTrouble } from "../sign-out-trouble";
 
 /**
@@ -31,14 +31,13 @@ export default function ProductError({ error }: { error: Error & { digest?: stri
      while rendering would paint a control on the client that the server's HTML did not have. */
   useEffect(() => { setSignedIn(readOwner() !== null); }, []);
 
-  /* The outcomes and their order are `signOutTrouble`'s. A finished sign-out leaves for the sign-in
-     page; a server half that went unconfirmed leaves for `/`, which sends it to the sign-in page,
-     which finishes it; a wipe that did not land stays and says so. Pressing again is safe. */
+  // The sign-in surface carries the cleanup notice and can retry the departed session.
   const doSignOut = useCallback(async () => {
     setSigningOut(true);
     setTrouble(null);
-    const said = signOutTrouble(await signOut(readOwner() ?? undefined));
-    if (said !== null && said.key !== "signOutServerRefused") {
+    const result = await signOutAndSettle(readOwner() ?? undefined);
+    const said = signOutTrouble(result);
+    if (said !== null && said.key !== "signOutServerRefused" && readOwner() !== null && !result.replaced) {
       setTrouble(ta(said.key));
       setSigningOut(false);
       return;

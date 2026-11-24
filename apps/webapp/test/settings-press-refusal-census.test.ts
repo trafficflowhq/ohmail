@@ -7,12 +7,13 @@ import * as scan from "../../../scripts/lib/source-scan.mjs";
  * EVERY MUTATING PRESS ON THE SETTINGS PAGES SAYS SOMETHING WHEN IT IS REFUSED. A census over the
  * Rules, Tags, Mailboxes and Screener-settings sources, and the Screener's own decision: each write
  * door's call must reach a speaking arm — a `.then` that reads the verdict, a `catch` that sets a
- * sentence, or the shell's reporting seam. The Tags pane's verbs return nothing by type, so their sentence is the seam's
- * (`shell-verbs.ts`). A planted silent press is the control; a door that matches nothing refuses.
+ * sentence, or the shell's reporting seam. The Tags writes use the press seam. The Screener
+ * settings delegate some writes to a shared control whose refusal handler is also censused.
+ * A planted silent press is the control; a door that matches nothing refuses.
  */
 
 const ROOT = join(__dirname, "..");
-const SPEAKS = /\b(?:report|pressVerdict|tallyVerdicts|toast|refuse\w*|setRefusal|setError|setFailed|setNotice|setNote|set\w*(?:Error|Failed|Notice|Refusal))\s*\(/;
+const SPEAKS = /\b(?:report|pressVerdict|tallyVerdicts|toast|refuse\w*|setRefusal|setError|setFailed|setNotice|setNote|setSaid|set\w*(?:Error|Failed|Notice|Refusal))\s*\(/;
 const SEAMS = new Set(["mutateAndReport", "mutateSetAndReport"]);
 
 type Verdict = "then" | "catch" | "seam" | `delegated:${string}` | "silent";
@@ -69,9 +70,10 @@ function classify(src: string, at: number, open: number | null, props: Record<st
     const e = enclosing(lit, from);
     if (!e) break;
     const before = lit.slice(0, e.at);
-    const callee = /([A-Za-z_$][\w$]*)\s*$/.exec(before)?.[1];
-    if (e.ch === "(" && callee && SEAMS.has(callee)) return "seam";
-    const prop = /\b(on[A-Z]\w*)=\s*$/.exec(before)?.[1];
+    const callee = /((?:[A-Za-z_$][\w$]*\.)?[A-Za-z_$][\w$]*)\s*$/.exec(before)?.[1];
+    if (e.ch === "(" && callee && SEAMS.has(callee.split(".").at(-1)!)) return "seam";
+    if (e.ch === "(" && callee && callee in props) return `delegated:${callee}`;
+    const prop = /\b(on[A-Z]\w*|set)=\s*$/.exec(before)?.[1];
     if (e.ch === "{" && prop) return prop in props ? `delegated:${prop}` : "silent";
     from = e.at;
   }
@@ -81,21 +83,31 @@ function classify(src: string, at: number, open: number | null, props: Record<st
 interface Pane { file: string; doors: RegExp; props?: Record<string, string> }
 
 /** The write doors, per file. A read (`mailboxApi.list`, the organizer peek) is not a press. */
+const SCREENER_SETTINGS = "../../packages/app/src/settings/screener/";
+const WRITTEN = `${SCREENER_SETTINGS}written.tsx`;
 const PANES: Pane[] = [
-  { file: "app/views/RulesView.tsx", doors: /\b(onRevoke|onRetarget)\(/g },
-  { file: "app/shell/shell-verbs.ts", doors: /kind: "tag_(?:create|rename|recolor|delete)"/g },
+  { file: "../../packages/app-logic/src/press/rule-management.ts", doors: /\b(onRevoke|onRetarget)\(/g },
+  { file: "../../packages/app/src/settings/browser/TagsSettings.tsx", doors: /kind: "tag_(?:create|recolor)"/g },
+  { file: "../../packages/app-logic/src/press/tag-verbs.ts", doors: /kind: "tag_(?:rename|delete)"/g },
   {
     file: "app/(product)/mailbox/MailboxSection.tsx",
     doors: /\bmailboxApi\.(?:release|organize|resync|dismissInboundQuiet|create|update|erase|remove|oauthStart|deviceOAuthStart)\(/g,
   },
-  // The Ohbox bar's write is handed to `OhboxWords`, whose `onSave` call is censused below.
-  { file: "app/shell/ScreeningSection.tsx", doors: /\bscreeningSettings\.set\(/g, props: { onSave: "app/shell/OhboxWords.tsx" } },
-  { file: "app/shell/OhboxWords.tsx", doors: /\bonSave\(/g },
-  { file: "app/shell/DormancyRow.tsx", doors: /\bsetDormancyDays\(/g },
-  { file: "app/shell/AutoSuggestRow.tsx", doors: /\bsetAutoSuggest\(/g },
-  { file: "app/shell/AutoUnsubscribeRow.tsx", doors: /\bsetBlockAutoUnsubscribe\(/g },
+  { file: `${SCREENER_SETTINGS}OhboxSheet.tsx`, doors: /\bohbox\.(?:change|saveBar)\(/g },
+  {
+    file: `${SCREENER_SETTINGS}WindowSheet.tsx`, doors: /\bdial\.set\(/g,
+    props: { "write.run": WRITTEN },
+  },
+  {
+    file: `${SCREENER_SETTINGS}SuggestSheet.tsx`, doors: /\b(?:suggest\.set|unsubscribe\.setBlocked)\(/g,
+    props: { "write.run": WRITTEN, set: WRITTEN },
+  },
+  {
+    file: WRITTEN, doors: /\b(?:await\s+write|props\.set)\(/g,
+    props: { "write.run": WRITTEN },
+  },
   // The Screener's decision, at the gate and past it: each refusal names its reason.
-  { file: "app/shell/screener-state.ts", doors: /kind: "screener_decide"|\bdispatchScreeningChange\(/g },
+  { file: "../../packages/app-logic/src/screener/screener-state.ts", doors: /kind: "screener_decide"|\bdispatchScreeningChange\(/g },
 ];
 
 /** Every door call in a source, with its verdict. Doors are matched in comment-free code. */
@@ -147,6 +159,8 @@ describe("controls: the classifier refuses a silent press and admits a speaking 
     expect(verdictOf(`void mutateAndReport({ kind: "tag_delete", tagId }, t("x"));`, /kind: "tag_delete"/g)).toEqual(["seam"]);
     expect(verdictOf(`void engine.mutate({ kind: "screener_decide", id }).then((res) => refuse(d, res.error));`, /kind: "screener_decide"/g))
       .toEqual(["then"]);
+    expect(censusOf(`write.run(() => dial.set(next));`, /\bdial\.set\(/g, { "write.run": WRITTEN })
+      .map((r) => r.verdict)).toEqual(["delegated:write.run"]);
     expect(verdictOf(`void engine.mutate({ kind: "screener_decide", id });`, /kind: "screener_decide"/g)).toEqual(["silent"]);
   });
 });

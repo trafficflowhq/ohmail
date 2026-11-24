@@ -9,28 +9,19 @@
  * Mutations: `queuedReason` answering the reach sentence for everything → cases 1, 2, 4 and 6 red;
  * the server's own sentence dropped → case 2 red.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import type { EngineMutation, QueuedChange } from "@ohmail/client-engine";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import { TextProvider } from "@ohmail/app/text";
+import type { QueuedChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { UnsavedChangesList } from "../app/shell/UnsavedChanges";
-import type { MailboxFacts } from "../app/shell/mail-state";
-
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+import { UnsavedListOf, unsavedTitle } from "../../../packages/app/src/mail/ground/UnsavedList.js";
+import { copyRefused, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { createTranslator } from "next-intl";
 
 const S = messages.sync;
-let root: Root | null = null;
-let host: HTMLElement | null = null;
-
-afterEach(() => {
-  act(() => { root?.unmount(); });
-  root = null;
-  host?.remove();
-  host = null;
-});
+const words = createTranslator({ locale: "en", messages });
+afterEach(cleanup);
 
 const queued = (
   id: string, kind: string, error: { code: string | null; message: string; status: number | null } | null,
@@ -38,35 +29,32 @@ const queued = (
 
 /** The panel, opened: one `[label, reason]` per listed row. */
 function rowsOf(changes: readonly QueuedChange[], mailboxes: MailboxFacts[] | null = null): Array<[string, string]> {
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  act(() => {
-    root!.render(
-      <NextIntlClientProvider locale="en" messages={messages}>
-        <UnsavedChangesList
-          abandoned={[]}
-          queued={changes}
-          mailboxes={mailboxes}
-          onRetry={async (id) => ({ id, key: id, status: "confirmed" as const, seq: 1 })}
-          onDiscard={async () => {}}
-          onRetryQueued={async () => null}
-          onDiscardQueued={async () => {}}
-        />
-      </NextIntlClientProvider>,
-    );
+  render(
+    <TextProvider locale="en" messages={messages} timeZone="UTC">
+      <UnsavedListOf
+        open
+        onClose={() => {}}
+        title={unsavedTitle(words, 0, changes.length) ?? ""}
+        abandoned={[]}
+        queued={changes}
+        held={copyRefused(mailboxes) ? messages.mailboxes.desktopStateStoreRefused : undefined}
+        onRetry={async (id) => ({ id, key: id, status: "confirmed", seq: 1 })}
+        onDiscard={async () => {}}
+        onRetryQueued={async () => null}
+        onDiscardQueued={async () => {}}
+      />
+    </TextProvider>,
+  );
+  return within(screen.getByRole("dialog")).getAllByRole("listitem").map((row) => {
+    const line = row.querySelector("p")!;
+    return [line.children[0]?.textContent ?? "", line.children[1]?.textContent ?? ""];
   });
-  act(() => { host!.querySelector<HTMLButtonElement>(".unsaved-toggle")?.click(); });
-  return [...host.querySelectorAll(".unsaved-row")].map((row) => [
-    row.querySelector(".unsaved-what b")?.textContent ?? "",
-    row.querySelector(".unsaved-why")?.textContent ?? "",
-  ]);
 }
 
 describe("the Unsaved changes panel over the queue", () => {
   it("1 — a Screener decision waiting behind another change is listed, and says it has not been sent", () => {
     expect(rowsOf([queued("a", "screener_decide", null)])).toEqual([[S.unsavedKindScreener, S.unsavedQueuedWaiting]]);
-    expect(host!.textContent).toContain("1 change has not gone through yet");
+    expect(screen.getByRole("dialog").textContent).toContain("1 change has not gone through yet");
   });
 
   it("2 — a rule refused with a 503 says the server's own sentence, and an opaque refusal says so plainly", () => {
@@ -106,7 +94,7 @@ describe("the Unsaved changes panel over the queue", () => {
     expect(rows.map(([label]) => label)).toEqual([
       S.unsavedKindScreener, S.unsavedKindRule, S.unsavedKindDraftDiscard, S.unsavedKindMove,
     ]);
-    expect(host!.textContent).toContain("4 changes have not gone through yet");
+    expect(screen.getByRole("dialog").textContent).toContain("4 changes have not gone through yet");
   });
 
   it("6 — while this computer's copy refuses its own pull, a change the door held offline says so, not the reach sentence", () => {

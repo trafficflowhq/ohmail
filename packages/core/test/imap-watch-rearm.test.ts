@@ -29,8 +29,16 @@ type Listener = (data?: { path?: string }) => void;
 function fakeClient() {
   const calls: string[] = [];
   const listeners = new Map<string, Set<Listener>>();
+  // The listeners `connect()` attaches for the connection itself (errors, close, the expunge count)
+  // are on before its LIST; the fake records what is attached after that LIST, the watch's own.
+  let listed = false;
   const client = {
+    async list(): Promise<never[]> {
+      listed = true;
+      return [];
+    },
     on(event: string, fn: Listener): void {
+      if (!listed) return;
       const set = listeners.get(event) ?? new Set<Listener>();
       set.add(fn);
       listeners.set(event, set);
@@ -57,19 +65,19 @@ function fakeClient() {
 /** One timer turn: the adapter asks for IDLE a turn after it is due (see the busy-guard cases). */
 const aTurn = (): Promise<void> => new Promise((r) => setTimeout(r, 1));
 
-function adapterWith(client: unknown): ImapAdapter {
+/** Connected over the fake: its LIST names no folder, so `connect()` learns the flat server's `/`. */
+async function adapterWith(client: unknown): Promise<ImapAdapter> {
   const adapter = new ImapAdapter({
     host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" },
-  });
-  (adapter as unknown as { delimiter: string }).delimiter = "/"; // what connect() learns on a flat server
-  (adapter as unknown as { client: unknown }).client = client;
+  }, { client });
+  await adapter.connect();
   return adapter;
 }
 
 describe("watch — exists-on-INBOX, and nothing else", () => {
   it("selects INBOX under the lock and starts IDLE without waiting for auto-idle", async () => {
     const { client, calls } = fakeClient();
-    const adapter = adapterWith(client);
+    const adapter = await adapterWith(client);
     await adapter.watch(() => undefined);
     await aTurn();
     expect(calls).toEqual(["lock:INBOX", "release", "idle"]);
@@ -77,7 +85,7 @@ describe("watch — exists-on-INBOX, and nothing else", () => {
 
   it("fires for exists on INBOX and for NOTHING else", async () => {
     const { client, emit, listenerCount } = fakeClient();
-    const adapter = adapterWith(client);
+    const adapter = await adapterWith(client);
     let wakes = 0;
     await adapter.watch(() => { wakes += 1; });
 
@@ -101,7 +109,7 @@ describe("watch — exists-on-INBOX, and nothing else", () => {
 
   it("unwatch removes the listener and future exists events are silent", async () => {
     const { client, emit } = fakeClient();
-    const adapter = adapterWith(client);
+    const adapter = await adapterWith(client);
     let wakes = 0;
     const unwatch = await adapter.watch(() => { wakes += 1; });
     emit("exists", { path: "INBOX" });
@@ -115,7 +123,7 @@ describe("watch — exists-on-INBOX, and nothing else", () => {
 describe("rearmWatch — put the connection back where watch left it", () => {
   it("re-selects INBOX and restarts IDLE after the visit moved the selection", async () => {
     const { client, calls } = fakeClient();
-    const adapter = adapterWith(client);
+    const adapter = await adapterWith(client);
     await adapter.watch(() => undefined);
     await aTurn();
     calls.length = 0;
@@ -126,14 +134,14 @@ describe("rearmWatch — put the connection back where watch left it", () => {
 
   it("is a no-op before watch() — nothing is listening, so nothing is selected", async () => {
     const { client, calls } = fakeClient();
-    const adapter = adapterWith(client);
+    const adapter = await adapterWith(client);
     await adapter.rearmWatch();
     expect(calls).toEqual([]);
   });
 
   it("is a no-op after unwatch — a detached listener earns no SELECTs", async () => {
     const { client, calls } = fakeClient();
-    const adapter = adapterWith(client);
+    const adapter = await adapterWith(client);
     const unwatch = await adapter.watch(() => undefined);
     await unwatch();
     calls.length = 0;
@@ -152,7 +160,7 @@ describe("rearmWatch — IDLE only on a connection nobody is using", () => {
   it("declines IDLE while another caller's command sequence is in flight", async () => {
     const { client, calls } = fakeClient();
     let busy = false;
-    const adapter = adapterWith({ ...client, connectionBusy: () => busy });
+    const adapter = await adapterWith({ ...client, connectionBusy: () => busy });
     await adapter.watch(() => undefined);
     await aTurn();
     calls.length = 0;
@@ -164,7 +172,7 @@ describe("rearmWatch — IDLE only on a connection nobody is using", () => {
 
   it("starts IDLE a turn later on a free connection (the positive control)", async () => {
     const { client, calls } = fakeClient();
-    const adapter = adapterWith({ ...client, connectionBusy: () => false });
+    const adapter = await adapterWith({ ...client, connectionBusy: () => false });
     await adapter.watch(() => undefined);
     await aTurn();
     expect(calls).toEqual(["lock:INBOX", "release", "idle"]);
@@ -189,7 +197,7 @@ describe("rearmWatch — the blind-window catch-up", () => {
 
   it("rings the wake when the re-arm SELECT shows INBOX grew past the last scan", async () => {
     const { client } = fakeClient();
-    const adapter = adapterWith(client);
+    const adapter = await adapterWith(client);
     let wakes = 0;
     await adapter.watch(() => { wakes += 1; });
     seed(adapter, "7", 41);
@@ -203,7 +211,7 @@ describe("rearmWatch — the blind-window catch-up", () => {
 
   it("stays silent when nothing grew, and when UIDVALIDITY changed under the number", async () => {
     const { client } = fakeClient();
-    const adapter = adapterWith(client);
+    const adapter = await adapterWith(client);
     let wakes = 0;
     await adapter.watch(() => { wakes += 1; });
 
@@ -221,7 +229,7 @@ describe("rearmWatch — the blind-window catch-up", () => {
 
   it("stays silent before the first scan — there is no baseline to have grown from", async () => {
     const { client } = fakeClient();
-    const adapter = adapterWith(client);
+    const adapter = await adapterWith(client);
     let wakes = 0;
     await adapter.watch(() => { wakes += 1; });
     mailbox(client, 7n, 500);
@@ -249,7 +257,7 @@ describe("noop — the heartbeat puts IDLE back at once", () => {
 
   it("after watch(), a NOOP is followed by IDLE a turn later", async () => {
     const { client, calls } = withNoop();
-    const adapter = adapterWith(client);
+    const adapter = await adapterWith(client);
     await adapter.watch(() => undefined);
     await aTurn();
     calls.length = 0;
@@ -261,12 +269,12 @@ describe("noop — the heartbeat puts IDLE back at once", () => {
 
   it("asks no IDLE before watch(), after unwatch, when busy, or when INBOX is not selected", async () => {
     const before = withNoop();
-    await adapterWith(before.client).noop();
+    await (await adapterWith(before.client)).noop();
     await aTurn();
     expect(before.calls).toEqual(["noop"]);
 
     const after = withNoop();
-    const a = adapterWith(after.client);
+    const a = await adapterWith(after.client);
     const unwatch = await a.watch(() => undefined);
     await unwatch();
     await aTurn();
@@ -277,7 +285,7 @@ describe("noop — the heartbeat puts IDLE back at once", () => {
 
     let busy = false;
     const loaded = withNoop({ connectionBusy: () => busy });
-    const b = adapterWith(loaded.client);
+    const b = await adapterWith(loaded.client);
     await b.watch(() => undefined);
     await aTurn();
     loaded.calls.length = 0;
@@ -287,7 +295,7 @@ describe("noop — the heartbeat puts IDLE back at once", () => {
     expect(loaded.calls).toEqual(["noop"]);
 
     const elsewhere = withNoop();
-    const c = adapterWith(elsewhere.client);
+    const c = await adapterWith(elsewhere.client);
     await c.watch(() => undefined);
     await aTurn();
     elsewhere.client.mailbox = { path: "ohmail/_meta" };
@@ -299,7 +307,7 @@ describe("noop — the heartbeat puts IDLE back at once", () => {
 
   it("a vanished expunge event is not a wake", async () => {
     const { client, emit } = withNoop();
-    const adapter = adapterWith(client);
+    const adapter = await adapterWith(client);
     let wakes = 0;
     await adapter.watch(() => { wakes += 1; });
     emit("expunge", { path: "INBOX", vanished: true } as { path: string });

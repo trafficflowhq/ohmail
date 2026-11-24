@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
@@ -7,7 +8,8 @@ import {
   senderPatternFromAddress,
   upsertDesiredSeen, upsertDesiredSeenMany, ringFilingDoorbell,
   decisionInstant, placementDecidedAfter, readDecidedAfter, goneEverywhereWhere,
-  type ChangeInput, type LedgerTx, type OrganizedBy, type Tx,
+  folderMoveNameError, validateFolderMovePayload, resolveFolderDestination, carryBinding,
+  type ChangeInput, type InventoryFolder, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
@@ -17,7 +19,7 @@ import {
 } from "@trafficflow/core/mail";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { asServiceRefusal } from "./erasure-fence.js";
-import { foldersEnabled, userFolderById } from "./folders.js";
+import { foldersEnabled, userFolderById, userFolderExclusion } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { instantRefusal, readInstant } from "./instant.js";
 import { zonedMonth, zonedMonthOf, type ZonedMonth } from "./reader-clock.js";
@@ -35,8 +37,19 @@ import {
   moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
 } from "./reader-request.js";
 import type {
-  Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, TrashRowDTO, TriageState, WithheldMarker,
-} from "./dto/types.js";
+  Folder,
+  MessageBodyBatchItem,
+  MessageBodyDTO,
+  MessageDTO,
+  MessagePatchBody,
+  MoveBody,
+  Page,
+  TrashRowDTO,
+  TriageState,
+  UntrustedBody,
+  MarkSeenBody as WireMarkSeenBody,
+  WithheldMarker,
+} from "@ohmail/wire";
 
 /**
  * Where a best-effort filing doorbell reports a throw. Module scope and not injected: it is a
@@ -192,39 +205,10 @@ interface TimelineMonth {
 /** The History page ceiling: a page is one screen, and the index walk is priced per page. */
 const HISTORY_PAGE_MAX = 50;
 
-export interface MessagePatchBody {
-  unread?: boolean;
-  folder?: string;
-  /**
-   * `"glance"` marks the surface's own involuntary read — the dwell commit, the stream sweep —
-   * as opposed to a deliberate act. A glance-read LANDS (a resurfaced message keeps its genuine
-   * read state, and reading it sticks — owner ruling 2026-08-26) but does NOT spend the
-   * resurface pin: placement in Resurface is the attention signal, answered by dealing with the
-   * row, and nobody pressed anything to get here. Absent ⇒ deliberate ⇒ spends.
-   */
-  via?: string;
-}
+/** The bodies of a letter's patch and move: declared with the wire's vocabulary. */
 
-/** `PATCH /messages` — one read-state decision applied to up to {@link MARK_SEEN_MAX_IDS} messages. */
-export interface MarkSeenBody {
-  ids?: unknown;
-  unread?: unknown;
-  /** See {@link MessagePatchBody.via} — the batch form carries the same label. */
-  via?: unknown;
-  /**
-   * AN OPEN READ — set by the engine alone (`Engine.enrich`), on a read whose every id is in the
-   * conversation the reader has open. Stamps `open_read_at` on the rows that were unread, when all
-   * ids are one conversation; over several it stamps nothing and the read still lands. Absent ⇒
-   * arrival. `true` beside `unread: true` is refused: nothing an unread does may place a row.
-   */
-  openRead?: unknown;
-  /**
-   * AN UNDO OF A MARK UNREAD: `{ [id]: ISO }`, each row's open read before the press, `{}` for none.
-   * A read only, never beside `openRead`. Restored on a live id that is read, holds no open read and
-   * is in no pile, never later than now; a key outside `ids` is ignored. Its read spends no pin.
-   */
-  restoreOpenReadAt?: unknown;
-}
+/** `PATCH /messages` as it arrives: the wire's body, every field still to be judged here. */
+export type MarkSeenBody = UntrustedBody<WireMarkSeenBody>;
 
 /**
  * The batch cap, and why there is one. The route runs ONE transaction that allocates one
@@ -246,13 +230,6 @@ export interface MarkSeenResult {
 /** Postgres would raise 22P02 on a malformed uuid, which is a 500 for what is plainly a 400. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export interface MoveBody {
-  folder: string;
-  /** Applied only while the letter is still here; otherwise refused `stale_press` (a card's move). */
-  from?: string;
-  /** The move of a press that also writes the sender's rule: not an override of the route it rewrites, nor a place decided on its own. */
-  pressRule?: boolean;
-}
 
 /** Idempotency handle the route threads in when an `Idempotency-Key` is present. */
 export interface MoveIdempotency {
@@ -798,18 +775,21 @@ export class MessageService {
   ): Promise<{ total: number; months: TimelineMonth[]; undated: number }> {
     const d = dialect(ctx.db);
     const zone = opts.zone ?? "UTC";
-    // scoped-by: the statement pins m.account_id = ctx.accountId
+    const instant = datedKey(d, "m");
+    const where = ownedMessages(ctx.accountId, "m");
+    // scoped-by: ownedMessages pins the account and excludes deleted rows.
+    const lockedGroups = await d.lockedMonths(ctx.db, instant, where, zone);
     // The newest row of each month by ONE probe of the History index per month (a month's rows
     // at its newest instant, highest id first) — a second pass over the account doubled the read.
-    const groups = await d.exec(ctx.db, sql`
+    const groups = lockedGroups ?? await d.exec(ctx.db, sql`
       select g.c, g.d,
         (select n.id from messages n
           where ${ownedMessages(ctx.accountId, "n")} and ${keyOf(d, "n")} = g.d and not ${undatedIn("n")}
           order by n.id desc limit 1) as id
       from (
-        select ${d.monthBucket(datedKey(d, "m"))} as bucket, ${d.castInt(sql`count(*)`)} as c, max(${datedKey(d, "m")}) as d
+        select ${d.monthBucket(instant)} as bucket, ${d.castInt(sql`count(*)`)} as c, max(${instant}) as d
         from messages m
-        where ${ownedMessages(ctx.accountId, "m")}
+        where ${where}
         group by 1
       ) g`);
     let undated = 0;
@@ -817,9 +797,12 @@ export class MessageService {
     for (const r of groups) {
       if (r[1] === null || r[1] === undefined) { undated = Number(r[0] ?? 0); continue; }
       const date = instantText(r[1]);
-      months.push({ month: date.slice(0, 7), count: Number(r[0] ?? 0), first: { date, id: String(r[2]) } });
+      months.push({ month: r[3] === undefined ? date.slice(0, 7) : String(r[3]),
+        count: Number(r[0] ?? 0), first: { date, id: String(r[2]) } });
     }
-    if (zone !== "UTC" && months.length > 0) months.splice(0, months.length, ...await this.zonedMonths(ctx, months, zone));
+    if (lockedGroups === null && zone !== "UTC" && months.length > 0) {
+      months.splice(0, months.length, ...await this.zonedMonths(ctx, months, zone));
+    }
     months.sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
     return { total: months.reduce((n, m) => n + m.count, 0) + undated, months, undated };
   }
@@ -1394,9 +1377,14 @@ export class MessageService {
   async move(
     ctx: ServiceContext, id: string, body: MoveBody,
     /** `putBackAutoFiling` — the Screener's automatic filing undone (mail 0138), in this transaction. */
-    opts: { idempotency?: MoveIdempotency | null; putBackAutoFiling?: boolean } = {},
+    opts: {
+      idempotency?: MoveIdempotency | null;
+      putBackAutoFiling?: boolean;
+      /** A caller composing this move in a larger transaction rings these after its commit. */
+      wakeAfter?: Set<string>;
+    } = {},
   ): Promise<MoveResult | MoveRequestResult> {
-    const folder = this.validFolder(body.folder);
+    const target = this.moveTarget(body);
     const from = body.from === undefined ? null : this.validFolder(body.from);
 
     /* WHICH MAILBOX NOW OWES A MOVE — captured inside the transaction and rung AFTER it commits.
@@ -1438,13 +1426,18 @@ export class MessageService {
        * promotion inherits no queue of moves. The skip stops a reader EXECUTING an intent; this
        * stops one being RECORDED.
        */
+      /* A person's own folder travels as a kind of its own, so the holder is asked for the word that
+         kind needs (`folder_moves`): a holder without it refuses at this door, and nothing is queued. */
       const route = await routeMailboxWrite(
-        bridgeTx(tx), ctx.accountId, msg.mailboxId, "message.move",
+        bridgeTx(tx), ctx.accountId, msg.mailboxId, "place" in target ? "message.move" : "message.file",
       );
       if (route.route === "request") {
         return this.requestMove(tx, ctx, {
-          messageId: id, mailboxId: msg.mailboxId, dedupKey: msg.dedupKey,
-          destination: moveDestinationWord(folder), holder: route.holder,
+          messageId: id, mailboxId: msg.mailboxId, dedupKey: msg.dedupKey, holder: route.holder,
+          destination: "place" in target
+            ? { word: moveDestinationWord(target.place) }
+            // Checked against THIS store's list first; the organizer checks its own again.
+            : { folder: await this.folderDestination(tx, ctx, msg.mailboxId, target.name) },
         }, opts);
       }
       /* THE LOCKED RE-CHECK, AND IT IS NOT REDUNDANT WITH THE BRANCH ABOVE.
@@ -1455,6 +1448,10 @@ export class MessageService {
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
       // THE STALE PRESS, before any write: a placement decided after this press stands.
       if (aged && await placementDecidedAfter(bridgeTx(tx), id, floor!)) return this.stalePress(tx, ctx, id);
+      /* A person's own folder, found under the share lock a folder command's enqueue takes FOR
+         UPDATE: no command on it can commit between this answer and the write below. */
+      const folder: string = "place" in target
+        ? target.place : await this.folderDestination(tx, ctx, msg.mailboxId, target.name);
 
       // Write DESIRED state only. observedFolder is the worker's truth — read
       // and PRESERVE it (never overwrite on conflict); the worker flips it when the
@@ -1530,7 +1527,10 @@ export class MessageService {
     /* THE DOORBELL, AFTER THE COMMIT. See {@link MessageService.ringFiledMailbox}: inside the
        transaction this deadlocked against every other writer of the mailbox row — measured on
        real Postgres as `40P01`, with a 500 to one of two concurrent decisions. */
-    if (filed !== null) await this.ringFiledMailbox(ctx, filed);
+    if (filed !== null) {
+      if (opts.wakeAfter) opts.wakeAfter.add(filed);
+      else await this.ringFiledMailbox(ctx, filed);
+    }
 
     return answer;
   }
@@ -1587,7 +1587,7 @@ export class MessageService {
       if (route.route === "request") {
         return this.requestMove(tx, ctx, {
           messageId: id, mailboxId: msg.mailboxId, dedupKey: msg.dedupKey,
-          destination: "trash", holder: route.holder,
+          destination: { word: "trash" }, holder: route.holder,
         }, opts);
       }
       // The locked re-check — see `move`'s note on why the plain read above does not replace it.
@@ -1769,7 +1769,10 @@ export class MessageService {
         throw new ServiceError("not_in_trash", 409, "this message is not in Trash");
       }
 
-      const target = (await this.restoreTargets(ctx, [{ mailboxId: msg.mailboxId, trashedFrom: fs.trashedFrom }]))(
+      // Read through this transaction: on a one-connection store a read on `ctx.db` waits for it.
+      // NO-CREDENTIAL-REPORT: a context derived onto the transaction's handle, with the binding
+      // `ctx.db` carries; `restoreTargets` reads folder rows and never reaches `noteCredentialAccount`.
+      const target = (await this.restoreTargets({ ...ctx, db: carryBinding(ctx.db, tx) }, [{ mailboxId: msg.mailboxId, trashedFrom: fs.trashedFrom }]))(
         msg.mailboxId, fs.trashedFrom,
       );
       const now = ctx.now();
@@ -1904,7 +1907,7 @@ export class MessageService {
 
     // scoped-by: every caller passes an id it loaded by (id, accountId) in this transaction
     await tx.insert(folderState).values({
-      messageId: id, desiredFolder: folder, observedFolder: observed,
+      messageId: id, accountId: accountOfMessage(id), desiredFolder: folder, observedFolder: observed,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom, ...decided,
     }).onConflictDoUpdate({
       target: folderState.messageId,
@@ -1956,7 +1959,7 @@ export class MessageService {
    * ring costs ONE ROTATION, and a throw is swallowed — a committed decision must not be reported
    * as failed by the thing that was only trying to make it faster.
    */
-  private async ringFiledMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
+  async ringFiledMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
     try {
       await ringFilingDoorbell(bridgeTx(ctx.db), mailboxId, ctx.now());
     } catch (err) {
@@ -1994,6 +1997,44 @@ export class MessageService {
     return canon as Folder;
   }
 
+  /**
+   * WHERE A MOVE GOES: one of the six places, exactly as {@link validFolder} reads them, or one of the
+   * person's own folders by its exact name. Here the name is checked for its shape alone (a fixed
+   * sentence, never the name); whether it is a destination is the mailbox's own list's answer
+   * ({@link folderDestination}). A press that also writes the sender's rule files to a place only.
+   */
+  private moveTarget(body: MoveBody): { place: Folder } | { name: string } {
+    const v: unknown = body.folder;
+    const canon = typeof v === "string" ? canonicalDestination(v) : v;
+    if (typeof canon === "string" && FOLDER_SET.has(canon)) return { place: canon as Folder };
+    if (folderMoveNameError(v) !== null) {
+      throw new ServiceError("validation_failed", 400, "folder is not a canonical folder");
+    }
+    if (body.pressRule === true) {
+      throw new ServiceError("validation_failed", 400, "a press that writes the sender's rule files to one of ohmail's places");
+    }
+    return { name: v as string };
+  }
+
+  /**
+   * One of the person's own folders of this mailbox, as THIS store lists it, or the refusal: 422
+   * `no_such_folder` for a folder the mailbox does not list or that is not the person's own (the
+   * Imbox, a pile, Sent, Trash, Junk), 409 `conflict` while a folder command overlaps it. In the
+   * caller's transaction; the organizer's arm asks it under `assertOrganizerRole`'s share lock.
+   */
+  private async folderDestination(tx: Tx, ctx: ServiceContext, mailboxId: string, name: string): Promise<InventoryFolder> {
+    const found = await resolveFolderDestination(bridgeTx(tx), { accountId: ctx.accountId, mailboxId }, name, userFolderExclusion);
+    if (found.ok) return found.folder;
+    if (found.refusal === "busy") {
+      throw new ServiceError(
+        "conflict", 409,
+        "another change to that folder is still being made on your mail server — it settles in seconds",
+      );
+    }
+    if (found.refusal === "unusable") throw new ServiceError("validation_failed", 400, "folder is not a canonical folder");
+    throw new ServiceError("no_such_folder", 422, "that folder is not one of this mailbox's own folders");
+  }
+
 
   /**
    * Write the move request and answer `pending`. No local write of any kind happens here. Shared
@@ -2007,24 +2048,32 @@ export class MessageService {
   private async requestMove(
     tx: Tx, ctx: ServiceContext,
     r: {
-      messageId: string; mailboxId: string; dedupKey: string; destination: string;
+      messageId: string; mailboxId: string; dedupKey: string;
+      /** A place by its word (`message.move`), or a person's own folder this store lists (`message.file`). */
+      destination: { word: string } | { folder: InventoryFolder };
       holder: OrganizedBy;
     },
     opts: { idempotency?: MoveIdempotency | null },
   ): Promise<MoveRequestResult> {
     const requestId = randomUUID();
+    // The press instant rides in the payload; the record keeps its creation instant, which the
+    // request windows age by. The organizer compares it only when it is aged.
+    const pressedAt = ctx.pressFloor ? { pressedAt: ctx.pressFloor.toISOString() } : {};
+    const d = r.destination;
+    // EXACTLY what `validateMovePayload` (or `validateFolderMovePayload`) re-checks on the other
+    // side, and nothing else. The payload crosses an install boundary through a header another
+    // machine wrote, so the organizer validates it again independently — this is the door's half.
+    const travel = "word" in d
+      ? { kind: "message.move" as const, payload: { dedupKey: r.dedupKey, destination: d.word, ...pressedAt } }
+      : { kind: "message.file" as const, payload: { dedupKey: r.dedupKey, folder: d.folder, ...pressedAt } };
+    // A folder move the organizer's own validator would refuse is never queued.
+    if (travel.kind === "message.file" && validateFolderMovePayload(travel.payload) === null) {
+      throw new ServiceError("validation_failed", 400, "this move cannot travel to the install that organizes this mailbox");
+    }
     const pending = await writeReaderRequest(tx, ctx, {
       mailboxId: r.mailboxId,
-      kind: "message.move",
-      // EXACTLY what `validateMovePayload` re-checks on the other side, and nothing else. The
-      // payload crosses an install boundary through a header another machine wrote, so the
-      // organizer validates it again independently — this is the door's half of that pair.
-      // The press instant rides in the payload; the record keeps its creation instant, which the
-      // request windows age by. The organizer compares it only when it is aged.
-      payload: {
-        dedupKey: r.dedupKey, destination: r.destination,
-        ...(ctx.pressFloor ? { pressedAt: ctx.pressFloor.toISOString() } : {}),
-      },
+      kind: travel.kind,
+      payload: travel.payload,
       holder: r.holder,
       requestId,
     });

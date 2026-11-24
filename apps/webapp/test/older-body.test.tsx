@@ -1,9 +1,18 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
+import { createElement } from "react";
 import {
   ISO, act, answerConsentWith, answerStoreWith, answerSyncWith, installShellEnv, mailbox, mountShell,
   teardownShellEnv, textOf, tick,
+  liveAccountFetch,
 } from "./fixtures/live-walk-shell";
+import { bindApiOwner } from "../app/api-client";
+import { MailFrame, useBrowserMail } from "../app/shell/browser-mail";
+import { EngineProvider, useEngine } from "../app/shell/engine";
+import { WEB_MAIL_PARTS } from "../app/(product)/mailbox/mail-parts";
+import { useCloudMailHost as useWebHost } from "../app/(product)/mailbox/CloudShell";
+import { webRecover, type WebWords } from "../app/(product)/mailbox/web-supplies";
 import en from "../messages/en.json";
 
 /**
@@ -17,8 +26,8 @@ import en from "../messages/en.json";
  * bootstrap window.
  *
  * The fix is the session body door (`shell/older-body.ts`, the junk window's pattern pointed
- * at `GET /messages/:id/body`), spliced in at the one seam every pane reads
- * (`AppShell`'s `bodyOf`/`hydrateBody`). What is proven here, against the SHIPPED shell:
+ * at `GET /messages/:id/body`), registered for the Folder reader. What is proven here,
+ * against the mounted shell:
  *
  *  1. opening a reach-past row fetches its stored body and renders it in full;
  *  2. a body the server withholds by policy renders the honest withheld sentence, with no
@@ -84,7 +93,7 @@ let bodyAnswer: () => Response = () => json({ messageId: PAST_ID, text: BODY_TEX
  */
 function interposeReachPast(): void {
   const base = globalThis.fetch;
-  globalThis.fetch = (async (input: unknown, init?: unknown) => {
+  globalThis.fetch = liveAccountFetch(async (input: unknown, init?: unknown) => {
     const url = String(input);
     if (url.includes("/messages?")) {
       asked.push(url);
@@ -95,7 +104,7 @@ function interposeReachPast(): void {
       return bodyAnswer();
     }
     return (base as (i: unknown, o?: unknown) => Promise<Response>)(input, init);
-  }) as typeof globalThis.fetch;
+  });
 }
 
 const goHash = async (hash: string): Promise<void> => {
@@ -107,16 +116,45 @@ const goHash = async (hash: string): Promise<void> => {
   await tick(0);
 };
 
+function FolderFrame({ words }: { words: WebWords }) {
+  const engine = useEngine();
+  const frame = useBrowserMail(webRecover, WEB_MAIL_PARTS);
+  return createElement(MailFrame, { host: useWebHost(engine, words, frame) });
+}
+
 /** Mount folders-on over an empty-in-mirror folder and open it — every walk's first move. */
 async function openFolder(facts = [mailbox()]): Promise<HTMLElement> {
   answerConsentWith({ foldersEnabledAt: ISO });
   answerSyncWith(world);
   // The store holds the row its list route answers, so its timeline says the mirror lacks mail.
   answerStoreWith([{ id: listId, date: OLD }]);
-  const el = await mountShell(facts);
+  bindApiOwner("acct_live_1");
+  document.cookie = "tf_owner=acct_live_1; Path=/";
+  const resolve = async () => ({ kind: "owner", accountId: "acct_live_1" }) as const;
+  const words: WebWords = {
+    server: { pairing: false, remoteImages: false, searchPeople: false },
+    invites: false,
+    subscriptionPage: false,
+    withdrawManage: () => {},
+    storageBlock: false,
+    account: "acct_live_1",
+    firstRun: undefined,
+    mailboxFacts: async () => facts,
+    resolve,
+    confirmed: bindApiOwner,
+  };
+  const el = await mountShell(facts, {
+    wrap: () => createElement(EngineProvider, {
+      demo: false,
+      resolveOwner: resolve,
+      children: createElement(FolderFrame, { words }),
+    }),
+  });
   await tick(30_000);
   await goHash(`#/folder/${FOLDER_ID}`);
   await tick(1_000);
+  const row = within(el).getByRole("option", { name: /an old receipt/i });
+  await act(async () => { row.click(); });
   return el;
 }
 
@@ -134,6 +172,7 @@ afterEach(async () => {
   // tail of its own test, and a `tf_owner` left behind makes every later case in the file sign
   // itself out — a leak that reads as four unrelated regressions.
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  bindApiOwner(null);
   await teardownShellEnv();
 });
 
@@ -149,7 +188,7 @@ describe("the door's dispatch is single-flight, decided outside the state update
    * structure — no wire call inside any updater — which review owns rather than this file.
    */
   it("one open under a StrictMode mount issues exactly one wire request, and a re-open none", async () => {
-    const { useOlderBody } = await import("../app/shell/older-body");
+    const { useOlderBodyDoor } = await import("@ohmail/app-logic/reader");
     const React = (await import("react")) as typeof import("react");
     const { createRoot } = await import("react-dom/client");
     const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -164,9 +203,9 @@ describe("the door's dispatch is single-flight, decided outside the state update
         };
       },
     };
-    let door: ReturnType<typeof useOlderBody> | null = null;
+    let door: ReturnType<typeof useOlderBodyDoor> | null = null;
     function Probe(): null {
-      door = useOlderBody(true, wire);
+      door = useOlderBodyDoor(wire);
       return null;
     }
     const host = document.createElement("div");
@@ -206,7 +245,7 @@ describe("the door's dispatch is single-flight, decided outside the state update
    * than into a row that sits on its snippet with nothing to press.
    */
   it("asks the caller's predicate before every request, and fails the row when it says no", async () => {
-    const { useOlderBody } = await import("../app/shell/older-body");
+    const { useOlderBodyDoor } = await import("@ohmail/app-logic/reader");
     const React = (await import("react")) as typeof import("react");
     const { createRoot } = await import("react-dom/client");
     const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -225,9 +264,9 @@ describe("the door's dispatch is single-flight, decided outside the state update
     // Read at CALL time, not at render time: the cookie this stands for is rewritten by a
     // sign-in in another tab, which re-renders nothing here.
     let mayRead = true;
-    let door: ReturnType<typeof useOlderBody> | null = null;
+    let door: ReturnType<typeof useOlderBodyDoor> | null = null;
     function Probe(): null {
-      door = useOlderBody(true, wire, () => mayRead);
+      door = useOlderBodyDoor(wire, () => mayRead);
       return null;
     }
     const host = document.createElement("div");
@@ -267,13 +306,11 @@ describe("the reach-past body door, through the shipped shell", () => {
     // The row is on screen, from beyond the device's window…
     expect(textOf(el)).toContain("an old receipt");
 
-    // …and its body arrived through the door: the FULL text, not the snippet, not the stall
-    // face. The pane auto-selects the only row, so no click is needed — the same path a person
-    // takes.
+    // Opening the row asks for its full body through the registered reader.
     await tick(2_000);
     expect(textOf(el)).toContain(BODY_TEXT);
     expect(asked.some((u) => u.includes(`/messages/${PAST_ID}/body`))).toBe(true);
-    expect(textOf(el)).not.toContain("Couldn't load the full message");
+    expect(textOf(el)).not.toContain(en.body.kept.failed);
   });
 
   /**
@@ -297,9 +334,8 @@ describe("the reach-past body door, through the shipped shell", () => {
     bodyAnswer = () => { throw new TypeError("network down"); };
     const el = await openFolder();
     await tick(2_000);
-    const pane = el.querySelector(".view-folder") as HTMLElement;
-    expect(pane.textContent ?? "", "the row never reached the failed face, so the Retry proves nothing")
-      .toContain("Couldn't load the full message");
+    expect(textOf(el), "the row never reached the failed face, so the Retry proves nothing")
+      .toContain(en.body.kept.failed);
     const before = asked.filter((u) => u.includes("/body")).length;
     expect(before, "the door never asked at all").toBeGreaterThan(0);
 
@@ -308,7 +344,7 @@ describe("the reach-past body door, through the shipped shell", () => {
     document.cookie = "tf_owner=acct_someone_else; Path=/";
     bodyAnswer = () => json({ messageId: PAST_ID, text: FOREIGN_TEXT, html: null, loadedRemoteContent: false });
 
-    const retry = [...pane.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Retry");
+    const retry = within(el).getByRole("button", { name: en.body.kept.tryAgain });
     expect(retry, "the failed face offered no Retry").toBeTruthy();
     await act(async () => { (retry as HTMLButtonElement).click(); await Promise.resolve(); });
     await tick(2_000);
@@ -324,14 +360,11 @@ describe("the reach-past body door, through the shipped shell", () => {
     const el = await openFolder();
     await tick(2_000);
 
-    // The storage-cap sentence, verbatim from the catalogue — a terminal state.
-    expect(textOf(el)).toContain(en.body.withheld);
-    // It says why and where the letter is.
-    expect(textOf(el)).toContain("isn't kept on Cloud because your storage is full");
-    expect(textOf(el)).toContain("complete on your mail server");
+    // The notice says why the text is withheld and where the letter is.
+    expect(textOf(el)).toContain(en.body.kept.emptiedLine);
+    expect(textOf(el)).toContain(en.body.kept.emptiedTitle);
     // And no body-retry control anywhere in the reading column: a retry cannot change a policy.
-    const pane = el.querySelector(".view-folder") as HTMLElement;
-    const retries = [...pane.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Retry");
+    const retries = within(el).queryAllByRole("button", { name: en.body.kept.tryAgain });
     expect(retries).toHaveLength(0);
   });
 
@@ -343,8 +376,8 @@ describe("the reach-past body door, through the shipped shell", () => {
       mailbox({ id: "mb_1" }), mailbox({ id: "mb_gone", address: "gone@example.invalid", status: "disabled" }),
     ]);
     await tick(2_000);
-    expect(textOf(el)).toContain("ohmail no longer reads this mailbox, so it does not come back here.");
-    expect(textOf(el)).toContain("complete on your mail server");
+    expect(textOf(el)).toContain(en.body.kept.removedLine);
+    expect(textOf(el)).toContain(en.body.kept.emptiedTitle);
   });
 
   it("a row the account no longer holds renders the expunged sentence, with no Retry", async () => {
@@ -352,9 +385,10 @@ describe("the reach-past body door, through the shipped shell", () => {
     const el = await openFolder();
     await tick(2_000);
 
-    expect(textOf(el)).toContain(en.body.withheldExpunged);
-    const pane = el.querySelector(".view-folder") as HTMLElement;
-    const retries = [...pane.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Retry");
+    expect(textOf(el)).toContain(en.body.kept.expungedTitle);
+    expect(textOf(el)).toContain(en.body.kept.expungedLine);
+    expect(textOf(el)).toContain(en.body.kept.expungedFine);
+    const retries = within(el).queryAllByRole("button", { name: en.body.kept.tryAgain });
     expect(retries).toHaveLength(0);
   });
 
@@ -368,19 +402,20 @@ describe("the reach-past body door, through the shipped shell", () => {
     await tick(2_000);
 
     // The honest failed face — and this time there IS a request behind it that failed.
-    expect(textOf(el)).toContain("Couldn't load the full message");
+    expect(textOf(el)).toContain(en.body.kept.failed);
     expect(failures).toBeGreaterThan(0);
+    const before = asked.filter((u) => u.includes("/body")).length;
 
     // The press dispatches a REAL second ask; the server has recovered; the body renders.
     bodyAnswer = () => json({ messageId: PAST_ID, text: BODY_TEXT, html: null, loadedRemoteContent: false });
-    const pane = el.querySelector(".view-folder") as HTMLElement;
-    const retry = [...pane.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Retry");
+    const retry = within(el).getByRole("button", { name: en.body.kept.tryAgain });
     expect(retry, "the failed face lost its Retry").toBeTruthy();
     await act(async () => {
       (retry as HTMLButtonElement).click();
       await Promise.resolve();
     });
     await tick(2_000);
+    expect(asked.filter((u) => u.includes("/body"))).toHaveLength(before + 1);
     expect(textOf(el)).toContain(BODY_TEXT);
   });
 });

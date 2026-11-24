@@ -1,0 +1,46 @@
+/* The doors' stage: a door fills the window, before the app and over nothing of it. Ohmarchy's page is a window of
+   its own measure (the kit's Page sets it); the stage holds it in the middle. Own classes: `way-`. */
+.way-stage {
+  /* A tag on the stage stands on its soft ground (a sheet gives its own). */
+  --oh-tag-ground: var(--soft);
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+/* Said to a screen reader, drawn for nobody: a page's name where its sentence names nothing. */
+.way-unseen {
+  position: absolute;
+  width: var(--oh-hair);
+  height: var(--oh-hair);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The small "oh." of a page opened cold, in the display face where a way back would stand. */
+.way-mark {
+  font-family: var(--f-display);
+  font-size: var(--t-head);
+  font-weight: var(--w-display);
+}
+
+/* A live wait's wrapper: it says the page is busy and lays out nothing of its own. */
+.way-live {
+  display: contents;
+}
+
+/* A tag over a page's sentence: what the page is, before what it asks. */
+.way-pre {
+  display: flex;
+  margin: 0 0 var(--s3);
+}
+
+/* A code a person carries, in the sentence's own weight, its figures set apart. */
+.way-code {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}

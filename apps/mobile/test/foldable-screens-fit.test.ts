@@ -9,7 +9,7 @@
  * the layout props in the source — beside the one line a device run reads for the posture.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
@@ -35,7 +35,8 @@ describe("the New mail sheet keeps Send on screen", () => {
   const sheet = body.slice(body.indexOf("export function ComposeSheet("));
   const modal = sheet.slice(sheet.indexOf("onRequestClose={closeComposer}"));
   const open = modal.indexOf("<ScrollView");
-  const close = modal.lastIndexOf("</ScrollView>", modal.indexOf("<Button label={Copy.replyCancel}"));
+  const footer = modal.indexOf("{discardAsked ? <>");
+  const close = modal.lastIndexOf("</ScrollView>", footer);
 
   it("the fields scroll inside the panel", () => {
     expect(open, "the composer's panel has no scroller").toBeGreaterThan(-1);
@@ -53,12 +54,12 @@ describe("the New mail sheet keeps Send on screen", () => {
   });
 
   it("Send and Cancel stand after the scroller and are the only thing always pinned", () => {
-    for (const needle of ["<Button label={Copy.replyCancel}", "Copy.replySend"]) {
-      const at = modal.indexOf(needle);
-      expect(at, `${needle} moved; this reads nothing`).toBeGreaterThan(-1);
-      expect(at, `${needle} scrolls away with the fields`).toBeGreaterThan(close);
-    }
-    const between = modal.slice(close, modal.indexOf("<Button label={Copy.replyCancel}"));
+    expect(sheet).toMatch(/const closeButton = [\s\S]*?<Button label=\{Copy\.replyCancel\}[^>]*onPress=\{closeComposer\}/);
+    expect(sheet).toMatch(/const sendButton = [\s\S]*?Copy\.replySending : run \? Copy\.replyRunSendNext : doneOnSend \? Copy\.sendAndDone : Copy\.replySend/);
+    expect(modal.slice(footer)).toContain("<>{sendButton}{doneButton}{inline ? null : laterButton}{closeButton}");
+    expect(modal.slice(footer)).toContain("<>{closeButton}{laterButton}{doneButton}{sendButton}</>");
+    expect(footer, "the close and send buttons must stand together past the scroller").toBeGreaterThan(close);
+    const between = modal.slice(close, footer);
     expect(between, "a sentence pinned outside the bounded block").not.toMatch(/<Txt\b/);
     expect(between).toContain("{pinNotes ? notesBlock : null}");
     expect(modal.slice(open, close)).toContain("{pinNotes ? null : notesBlock}");
@@ -141,7 +142,8 @@ describe("a page with its own heading renders no app-bar title", () => {
     }
     return twice;
   };
-  const files = routes(fileURLToPath(new URL("../app", import.meta.url)));
+  const app = fileURLToPath(new URL("../app", import.meta.url));
+  const files = routes(app);
   it("the census reads a literal and a variable title alike (planted routes)", () => {
     const literal = `<Screen>\n<DetailBar title={Copy.settings} />\n<Txt variant="h1">{Copy.settings}</Txt>\n</Screen>`;
     const variable = `<Screen>\n<DetailBar title={tag.name} />\n<Txt variant="h1" numberOfLines={1}>\n  {tag.name}\n</Txt>\n</Screen>`;
@@ -151,14 +153,27 @@ describe("a page with its own heading renders no app-bar title", () => {
   });
   it("no route titles its bar with the heading its page draws below it (DUPLICATE_TITLE)", () => {
     expect(files.length, "the route walk read nothing").toBeGreaterThan(20);
-    let bars = 0;
+    const bars: string[] = [];
     const twice: string[] = [];
     for (const f of files) {
       const src = readFileSync(f, "utf8");
-      bars += (withoutComments(src).match(/<DetailBar title=/g) ?? []).length;
+      const route = relative(app, f).split("\\").join("/");
+      for (const bar of withoutComments(src).matchAll(/<DetailBar\s+title=(\{[^}]+\}|"[^"]*"|'[^']*')?/g)) {
+        bars.push(`${route}: ${bar[1] ?? "unreadable title"}`);
+      }
       for (const t of duplicateTitles(src)) twice.push(`${f}: ${t}`);
     }
-    expect(bars, "no titled bar left; this census reads nothing").toBeGreaterThan(5);
+    // The onboarding redesign removed the Scan and standalone setup bar titles. See Studio's
+    // “Scan a code” (?screen=onboarding&step=scan&device=phone) and “On this phone: what it means”
+    // (?screen=phonedoor&state=terms&device=phone). The three composer states, Search and Trash
+    // still own these five titles.
+    expect(bars).toEqual([
+      "compose.tsx: {Copy.composeNew}",
+      "compose.tsx: {Copy.draftsTitle}",
+      "compose.tsx: {Copy.draftsTitle}",
+      "search.tsx: {Copy.search}",
+      "trash/index.tsx: {Copy.trashTitle}",
+    ]);
     expect(twice).toEqual([]);
   });
 });

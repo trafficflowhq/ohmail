@@ -1,4 +1,5 @@
 import { ServiceError } from "@trafficflow/services/mail";
+import type { ServiceErrorCode } from "@ohmail/wire";
 import { isRefusedCommand } from "@trafficflow/core/adapters/imap";
 import { verdictFor } from "./imap-probe.js";
 
@@ -44,7 +45,7 @@ export function mailServerRefusal(err: unknown): ServiceError | null {
   }
 }
 
-function refused(code: string, message: string, retryable: boolean, cause: unknown): ServiceError {
+function refused(code: ServiceErrorCode, message: string, retryable: boolean, cause: unknown): ServiceError {
   const e = new ServiceError(code, 424, message, undefined, retryable);
   (e as { cause?: unknown }).cause = cause;
   return e;

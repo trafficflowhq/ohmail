@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { within } from "@testing-library/react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
@@ -179,6 +180,96 @@ describe("where the person reads it", () => {
       );
     });
   }
+  async function removeAcrossDoor(keyKind: string, hold: "delete" | "logout"): Promise<void> {
+    const first: EngineStatus = { ...MANAGED, mode: "local", flavor: "standalone", localDoorVersion: 1, mailboxId: "scope-first", cloudUrl: null } as EngineStatus;
+    const second: EngineStatus = keyKind === "same local"
+      ? { ...first, localDoorVersion: 2 }
+      : { ...MANAGED, mailboxId: keyKind === "same" ? first.mailboxId : "scope-second" };
+    let current = first;
+    let requestedAt: EngineStatus | null = null;
+    let polls = 0;
+    let replacementRosters = 0;
+    const logoutTargets: string[] = [];
+    const sourceRow = { id: "row-first", address: MANAGED.address, displayName: "First fixture mailbox", status: "connected", lastSyncAt: null };
+    const nextRow = { ...sourceRow, id: "row-second", address: SELF_HOSTED.address, displayName: "Replacement fixture mailbox" };
+    let release!: () => void;
+    const pending = new Promise<void>((done) => { release = done; });
+    fakeShell(first);
+    const base = host.__TAURI_INTERNALS__!.invoke;
+    host.__TAURI_INTERNALS__!.invoke = async (command, payload) => {
+      if (command === "engine_status") {
+        polls++;
+        return current;
+      }
+      if (command === "engine_logout") {
+        logoutTargets.push(current === first ? "first" : current === second ? "second" : "other");
+        expect(payload).toEqual({ expectedLocalDoor: 1 });
+        if (hold === "logout") await pending;
+        if (hold === "delete" || current === first) current = SIGNED_OUT;
+        return SIGNED_OUT;
+      }
+      if (command === "engine_request") {
+        const method = String(payload?.method ?? "GET");
+        const url = String(payload?.url ?? "");
+        if (method === "DELETE" && url === "/local/mailboxes/row-first") {
+          requestedAt = current;
+          if (hold === "delete") await pending;
+          return encode(200, "{}");
+        }
+        if (method === "GET" && ["/mailboxes", "/mailboxes?counts=1"].includes(url)) {
+          if (current === second) replacementRosters++;
+          return encode(200, JSON.stringify({items: [current === first ? sourceRow : nextRow]}));
+        }
+        if (url === "/consent") return encode(200, JSON.stringify({dormancyDays: 60}));
+      }
+      return base(command, payload);
+    };
+    await mount("en", "#/settings/mailboxes");
+    await until("first native roster", () => buttons("Remove").length === 1);
+    await press("Remove");
+    const confirm = within(el!).getByRole("alertdialog", {
+      name: en.mailboxes.removeTitle.replace("{address}", sourceRow.address),
+    });
+    await act(async () => within(confirm).getByRole("button", { name: "Remove mailbox" }).click());
+    expect(requestedAt).toBe(first);
+    if (hold === "logout") await until("original door submitted its logout", () => logoutTargets.length === 1);
+    if (keyKind === "unchanged") {
+      const observed = polls;
+      await until("the original installation reports the same status again", () => polls > observed);
+      await act(async () => { release(); });
+      await until("normal single-mailbox logout returned to chooser", () => text().includes("Which mailbox is this?"));
+      expect(logoutTargets).toEqual(["first"]);
+      return;
+    }
+    current = second;
+    await until("replacement native door drawn", () => keyKind === "same local"
+      ? !!nextRow.address && text().includes(nextRow.address) && buttons("Remove").length === 1
+      : buttons("Remove").length === 0 && text().includes("Mailboxes are managed in ohmail on the web"));
+    if (keyKind === "same local") {
+      expect(replacementRosters).toBeGreaterThan(0);
+      expect(text()).not.toContain(sourceRow.address);
+    }
+    const before = { drawer: !!el!.querySelector('[role="region"][aria-label="Mailboxes"]'), chooser: text().includes("Which mailbox is this?") };
+    expect(before).toEqual({drawer: true, chooser: false});
+    await act(async () => { release(); });
+    await new Promise((done) => setTimeout(done, 250));
+    await act(async () => {});
+    const after = { drawer: !!el!.querySelector('[role="region"][aria-label="Mailboxes"]'), chooser: text().includes("Which mailbox is this?") };
+    expect({logoutTargets, after}, JSON.stringify({keyKind, logoutTargets, before, after, route: window.location.hash})).toEqual({logoutTargets: hold === "delete" ? [] : ["first"], after: before});
+  }
+
+  it.each(["unchanged", "distinct", "same"])("a late previous removal preserves the mounted replacement (%s storage key)", { timeout: 25000 }, async (kind) => {
+    await removeAcrossDoor(kind, "delete");
+  });
+
+  it.each(["unchanged", "distinct", "same"])("a late logout answer only updates its original door (%s storage key)", { timeout: 25000 }, async (kind) => {
+    await removeAcrossDoor(kind, "logout");
+  });
+
+  it.each(["delete", "logout"] as const)("a reinstalled standalone mailbox keeps its own session after the old %s answer", { timeout: 25000 }, async (hold) => {
+    await removeAcrossDoor("same local", hold);
+  });
+
   /** Settings → Desktop → Sign out and its confirmation, then the doors the press lands on. */
   async function signOut(locale: "en" | "de"): Promise<void> {
     await mount(locale, "#/settings/desktop");

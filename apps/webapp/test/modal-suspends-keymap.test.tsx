@@ -5,7 +5,7 @@
  * The session dialogs say `role="alertdialog"` with `aria-modal="true"` and render over a
  * scrimmed layer, which is a claim that the mailbox behind them cannot be used. The first
  * attempt at making that claim true set `inert` on `.app-root`, and `inert` is exactly right
- * for the subtree it is on and irrelevant here: `KeymapProvider` binds ONE listener to
+ * for the subtree it is on and irrelevant here: the key registry binds ONE listener to
  * `document`, and the dialog's own buttons are SIBLINGS of the mailbox rather than
  * descendants of it. An event that starts on the Try again button was never travelling into
  * the inert subtree, so the listener ran, the mailbox bindings were still registered, and:
@@ -35,8 +35,13 @@ const act = (React as unknown as {
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as unknown as { React: unknown }).React = React;
 
-const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap");
-const { resetModalGateForTests, useModalGate } = await import("../app/shell/modal-gate");
+const { KeymapContext, useKeyBindings, useKeymapStore } = await import("@ohmail/app-logic/keys/keymap");
+
+/** The frame's own registry: one store under its context, as `OwnKeys` of the frame mounts it. */
+function Registry({ children }: { children: React.ReactNode }): React.ReactElement {
+  return h(KeymapContext.Provider, { value: useKeymapStore() }, children);
+}
+const { resetModalGateForTests, useModalGate } = await import("@ohmail/app-logic/session/modal-gate");
 
 /** What the keys did. `park`/`delete` stand for the two acts the defect actually reached. */
 let ran: string[] = [];
@@ -63,7 +68,7 @@ async function mount(open: boolean): Promise<void> {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(KeymapProvider, { children: [h(Mailbox, { key: "m" }), h(Dialog, { key: "d", open })] }));
+    root!.render(h(Registry, { children: [h(Mailbox, { key: "m" }), h(Dialog, { key: "d", open })] }));
   });
 }
 
@@ -116,7 +121,7 @@ describe("with a blocking dialog open the mailbox keys are suspended", () => {
     await press("e");
     expect(ran).toEqual([]);
     await act(async () => {
-      root!.render(h(KeymapProvider, {
+      root!.render(h(Registry, {
         children: [h(Mailbox, { key: "m" }), h(Dialog, { key: "d", open: false })],
       }));
     });
@@ -152,7 +157,7 @@ describe("the gate is taken IN the commit, not one frame after it", () => {
    * of the commit that paints a dialog, the mailbox keys are already suspended.
    */
   it("a key pressed inside the dialog's own commit does nothing", async () => {
-    const { modalIsOpen } = await import("../app/shell/modal-gate");
+    const { modalIsOpen } = await import("@ohmail/app-logic/session/modal-gate");
     let heldAtCommit: boolean | null = null;
 
     /** Presses `d` `d` from inside the commit that paints the dialog. */
@@ -170,7 +175,7 @@ describe("the gate is taken IN the commit, not one frame after it", () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    const tree = (open: boolean) => h(KeymapProvider, {
+    const tree = (open: boolean) => h(Registry, {
       children: [
         h(Mailbox, { key: "m" }),
         h(Dialog, { key: "d", open }),

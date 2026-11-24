@@ -1,7 +1,6 @@
+import type { EngineDraft, EngineMessage, MutationOutcome, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   OhmailEngine,
   MutationRejectedError,
   FOLDER_OF_VIEW,
@@ -15,14 +14,11 @@ import {
   readsPartition,
   type EngineAdapter,
   type EntityReader,
-  type EngineDraft,
-  type EngineMessage,
-  type MutationOutcome,
-  type RuleDTO,
   type SyncChange,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** Optimistic mutations against the FixturesAdapter (the ?demo backend). */
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { discardDecision, type Hold } from "../app/shell/send-lock";
+import { discardDecision, type Hold } from "@ohmail/app-logic/writing/send-lock";
 
 /**
  * WHAT THE DRAFTS LIST'S DISCARD DOES WITH EACH HOLD — the truth table behind `discardDraft`.

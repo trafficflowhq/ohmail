@@ -1,15 +1,14 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
-import { brandDialect, dialect } from "@trafficflow/db/dialect";
-import { schema } from "@trafficflow/db/cloud";
+import { dialect } from "@trafficflow/db/dialect";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   accounts, mailboxes, drafts, rules, organizerRequests, users, graduations,
-  AccountErasedError, MailboxErasedError, type LedgerTx, type OrganizedBy, type Tx,
+  AccountErasedError, MailboxErasedError, bindDb, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 // `auth_events` is a HOSTED table — the local install has no sign-in trail to keep.
 import { authEvents, connectAttempts, recordConnectAttempt } from "@trafficflow/db/cloud";
@@ -56,25 +55,26 @@ const PG_UP = await realPgAvailable();
 
 const NOW = new Date("2026-09-14T12:00:00.000Z");
 
-let client: ReturnType<typeof postgres>;
-let sweepClient: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
-let sweepDb: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let sweepOwned: OwnedDb;
+let db: OwnedDb["db"];
+let sweepDb: OwnedDb["db"];
 
 beforeAll(async () => {
   if (!PG_UP) return;
   await runMigrations(PG_TEST_URL);
-  client = postgres(PG_TEST_URL, { max: 6, onnotice: () => {} });
+  owned = makeOwnedDb(PG_TEST_URL);
   // Its own connection, as in production: an erasure is a request on another host.
-  sweepClient = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-  db = brandDialect(drizzle(client, { schema }), "pg");
-  sweepDb = brandDialect(drizzle(sweepClient, { schema }), "pg");
+  sweepOwned = makeOwnedDb(PG_TEST_URL);
+  db = owned.db;
+  sweepDb = sweepOwned.db;
 });
 
 afterAll(async () => {
-  await client?.end({ timeout: 5 });
-  await sweepClient?.end({ timeout: 5 });
+  await owned?.close();
+  await sweepOwned?.close();
 });
+afterEach(() => { putBack?.(); });
 
 async function seed(): Promise<{ accountId: string; mailboxId: string }> {
   const accountId = randomUUID();
@@ -97,21 +97,27 @@ async function eraseMailbox(accountId: string, mailboxId: string, now = NOW): Pr
  * makes before it opens its transaction runs against a LIVE subject, and the erasure commits
  * between that and the fence. A timer would make the window approximate; this makes it exact.
  */
-function raceDb(erase: () => Promise<void>): ServiceContext["db"] {
-  let fired = false;
-  const inner = db as unknown as {
-    transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R>;
-  };
-  const wrapper = Object.create(db as object) as Record<string, unknown>;
-  wrapper["transaction"] = async <R,>(f: (t: unknown) => Promise<R>): Promise<R> => {
-    if (!fired) { fired = true; await erase(); }
-    return inner.transaction(f);
-  };
-  return wrapper as unknown as ServiceContext["db"];
+let putBack: (() => void) | null = null;
+
+function raceDb(erase: () => Promise<void>): OwnedDb["db"] {
+  // On the pool's own handle, the one the binder knows: a handle bound over it opens its
+  // transactions through it. Once fired the pool's own method is put back; `afterEach` puts it back
+  // where none fired.
+  const transaction = db.transaction;
+  putBack = () => { Object.defineProperty(db, "transaction", { value: transaction, configurable: true, writable: true }); putBack = null; };
+  Object.defineProperty(db, "transaction", {
+    configurable: true, writable: true,
+    value: async function (this: unknown, f: Parameters<typeof transaction>[0], config?: Parameters<typeof transaction>[1]) {
+      putBack?.();
+      await erase();
+      return transaction.call(this as typeof db, f, config);
+    },
+  });
+  return db;
 }
 
-function ctxOn(handle: ServiceContext["db"], accountId: string): ServiceContext {
-  return { db: handle, accountId, userId: null, now: () => NOW, requestId: randomUUID() };
+function ctxOn(handle: OwnedDb["db"], accountId: string): ServiceContext {
+  return { db: dbFor(handle, accountId), accountId, userId: null, now: () => NOW, requestId: randomUUID() };
 }
 
 /** The account `register` created, read from the row rather than from a union with two arms. */
@@ -125,7 +131,7 @@ async function accountOf(email: string): Promise<string> {
 /** A sign-in request names no account: the credential decides which one, not the session. */
 function authCtx(): ServiceContext {
   return {
-    db: db as unknown as ServiceContext["db"], accountId: "", userId: null,
+    db: bindDb(db, { account: null }), accountId: "", userId: null,
     now: () => new Date(), requestId: randomUUID(),
     ip: `10.0.0.${Math.floor(Math.random() * 250) + 1}`,
   };
@@ -185,7 +191,7 @@ describe.skipIf(!PG_UP)("the reader's request — the granularity arm", () => {
        mailbox's correspondent and decision into `organizer_requests`. */
     const { accountId, mailboxId } = await seed();
     await eraseMailbox(accountId, mailboxId);
-    const ctx = ctxOn(db as unknown as ServiceContext["db"], accountId);
+    const ctx = ctxOn(db, accountId);
     await expect((db as unknown as Tx).transaction(async (tx) => writeReaderRequest(tx, ctx, {
       mailboxId, kind: "screener.decide",
       payload: { address: "a correspondent of theirs" }, holder: { kind: "cloud", name: null, since: null } as OrganizedBy,
@@ -197,7 +203,7 @@ describe.skipIf(!PG_UP)("the reader's request — the granularity arm", () => {
 
   it("is written for a live mailbox — the positive", async () => {
     const { accountId, mailboxId } = await seed();
-    const ctx = ctxOn(db as unknown as ServiceContext["db"], accountId);
+    const ctx = ctxOn(db, accountId);
     const out = await (db as unknown as Tx).transaction(async (tx) =>
       writeReaderRequest(tx, ctx, {
         mailboxId, kind: "screener.decide", payload: {}, holder: { kind: "cloud", name: null, since: null } as OrganizedBy,
@@ -221,7 +227,7 @@ describe.skipIf(!PG_UP)("compose, against a mailbox erased while it validated on
 
   it("writes an ordinary draft on a live mailbox — the positive", async () => {
     const { accountId, mailboxId } = await seed();
-    const ctx = ctxOn(db as unknown as ServiceContext["db"], accountId);
+    const ctx = ctxOn(db, accountId);
     const out = await new DraftsService().create(ctx, {
       mailboxId, subject: "ordinary", body: "ordinary", to: [{ address: "someone@example.test" }],
     } as never);
@@ -308,14 +314,14 @@ describe.skipIf(!PG_UP)("the connect record (cloud 0054)", () => {
     const raced = raceDb(async () => {
       await sweepDb.update(accounts).set({ erasedAt: NOW }).where(eq(accounts.id, accountId));
     });
-    await expect(recordConnectAttempt(raced as unknown as Tx, row(accountId), NOW)).rejects.toBeInstanceOf(AccountErasedError);
+    await expect(recordConnectAttempt(dbFor(raced, accountId) as unknown as Tx, row(accountId), NOW)).rejects.toBeInstanceOf(AccountErasedError);
     expect(await db.select().from(connectAttempts).where(eq(connectAttempts.accountId, accountId)),
       "a connect record was written under an erased account").toHaveLength(0);
   });
 
   it("still records on a LIVE account — the positive", async () => {
     const { accountId } = await seed();
-    expect(await recordConnectAttempt(db as unknown as Tx, row(accountId), NOW)).toBe("recorded");
+    expect(await recordConnectAttempt(dbFor(db, accountId) as unknown as Tx, row(accountId), NOW)).toBe("recorded");
     expect(await db.select().from(connectAttempts).where(eq(connectAttempts.accountId, accountId))).toHaveLength(1);
   });
 });

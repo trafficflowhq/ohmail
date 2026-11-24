@@ -34,8 +34,8 @@ beforeAll(async () => {
       timestamptz '2026-07-20T09:00:00Z' - make_interval(hours => g), false, false,
       jsonb_build_object('folder', case when g % 5 = 0 then 'Archive' else 'INBOX' end, 'ref', '1:' || g), '[]'::jsonb, '[]'::jsonb
     from generate_series(1, 600) g`);
-  await made.db.execute(sql`insert into message_bodies (message_id, text)
-    select m.id, (select ${body} from (select substring(m.dedup_key from 7)::int as g) x) from messages m where m.account_id = ${made.accountId}::uuid`);
+  await made.db.execute(sql`insert into message_bodies (message_id, account_id, text)
+    select m.id, m.account_id, (select ${body} from (select substring(m.dedup_key from 7)::int as g) x) from messages m where m.account_id = ${made.accountId}::uuid`);
   const built = await searchIndexBackfillPass({ db: made.db as never, accountId: made.accountId });
   expect(built.marked).toBe(true);
   const rows = await made.db.execute(sql`select id, substring(dedup_key from 7)::int as g from messages where account_id = ${made.accountId}::uuid`);

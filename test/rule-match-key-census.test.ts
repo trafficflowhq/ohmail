@@ -63,10 +63,11 @@ const SQL_OTHER_KEY = [
   /\b(?:lower|trim)\s*\(\s*(?:\$\{\s*)?[\w$.]*\bmatch\s*\}?\s*\)/g,
   /\b(?:lower|trim)\s*\(\s*\$\{[^}]*["'`]match["'`][^}]*\}\s*\)/g,
 ];
-// `health-markers.ts` holds the two rules indexes' `/health` needles: what Postgres prints for the
-// builder's key in `pg_indexes.indexdef` (mail 0136, mail 0144), probes of the indexes, never a query.
+// `health-markers.ts` holds the rules index's `/health` needle: what Postgres prints for the
+// builder's key in `pg_indexes.indexdef` (mail 0144), a probe of the index, never a query. (Mail
+// 0136's index repeated it for enabled rules alone and left with mail 0202, and its needle with it.)
 const SQL_KEY_OWNERS: Readonly<Record<string, number>> = {
-  "packages/db/src/rule-match-sql.ts": 1, "packages/api/src/routes/health-markers.ts": 2,
+  "packages/db/src/rule-match-sql.ts": 1, "packages/api/src/routes/health-markers.ts": 1,
 };
 
 /**
@@ -121,7 +122,7 @@ export function sqlCensus(files: ReadonlyMap<string, string>): string[] {
 /** The SQL readers the builder replaced a spelling in — each in the walk, each asking it. */
 const SQL_READERS = [
   "apps/worker/src/gate-release.ts",
-  "apps/worker/src/screener-correspondent-retro.ts", "packages/db/src/screener-apply.ts",
+  "packages/organizer/src/screener-correspondent-retro.ts", "packages/db/src/screener-apply.ts",
   "packages/db/src/screener-cutline.ts", "packages/db/src/own-mail.ts",
   "packages/services/src/sensitive-rescreen.ts", "packages/services/src/consent-seed.ts",
   "packages/services/src/consent-cutline.ts", "packages/services/src/screener-service.ts",
@@ -158,8 +159,8 @@ function tree(): Map<string, string> {
 const READERS = [
   "packages/client-engine/src/press-forecast.ts", "packages/client-engine/src/rule-twins.ts",
   "packages/client-engine/src/address-rank.ts", "packages/client-engine/src/selectors.ts",
-  "packages/services/src/consent-seed.ts", "apps/worker/src/rule-retro.ts",
-  "apps/worker/src/screener-correspondent-retro.ts", "apps/webapp/app/shell/sender-audit.ts",
+  "packages/services/src/consent-seed.ts", "packages/organizer/src/rule-retro.ts",
+  "packages/organizer/src/screener-correspondent-retro.ts", "packages/app-logic/src/press/sender-audit.ts",
   "apps/mobile/src/state/live.ts",
 ];
 

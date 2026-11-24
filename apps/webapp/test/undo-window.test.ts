@@ -1,20 +1,19 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import {
   OhmailEngine,
   MemoryMirrorStore,
   mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import { COMMIT_MS, UNDO_MS } from "../app/shell/screener-state";
+import { COMMIT_MS, UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * THE UNDO THAT OUTLIVED THE THING IT UNDID.
@@ -138,7 +137,7 @@ let host: HTMLDivElement | null = null;
  * would have received it.
  */
 async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   let latest: StateLike | null = null;
 
   function Probe(): null {
@@ -146,10 +145,10 @@ async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike 
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     latest = useScreenerState(
       engine,
-      v,
+      null, v,
       ((message: string, options?: Omit<ToastCall, "message">) => {
         toasts.push({ message, ...(options ?? {}) });
-      }) as never,
+      }) as never, useScreenerWords(),
     ) as unknown as StateLike;
     return null;
   }
@@ -159,8 +158,8 @@ async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike 
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe),
+      h(TextProvider, {
+        locale: "en", messages, timeZone: "UTC", children: h(Probe),
       }),
     );
   });

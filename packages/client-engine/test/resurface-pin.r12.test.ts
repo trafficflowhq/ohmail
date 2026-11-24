@@ -1,19 +1,17 @@
+import type { EngineMessage, EngineMutation, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   HttpAdapter,
   OhmailEngine,
+  inverseMutations,
   isResurfaced,
   ohboxView,
   readsPartition,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type MutationOutcome,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * A RESURFACED ROW STAYS PINNED UNTIL IT IS ANSWERED OR DELIBERATELY MARKED READ.
@@ -279,6 +277,32 @@ describe("the Ohbox dwell is a glance too", () => {
     expect(engine.read().get<EngineMessage>("message", "ben")!.unread).toBe(false);
     expect(engine.read().get<EngineMessage>("message", "petra")!.unread).toBe(false);
   });
+
+  it.each([["ben"], ["ben", "petra"]].map((ids) => [ids] as const))(
+    "undoes a pin-preserving read by restoring only unread flags for %j",
+    async (ids) => {
+      const { engine, mutations } = spyEngine();
+      await engine.start();
+      for (const id of ids) await engine.mutate({ kind: "triage_set", messageId: id, state: "resurfaced" });
+      const pins = pinnedIn(engine);
+      const read = { kind: "mark_seen", messageIds: ids, unread: false, via: "glance" } as const;
+      const previous = ids.map((id) => engine.read().get<EngineMessage>("message", id)!.triage);
+      const undo = inverseMutations(engine.read(), read);
+      mutations.length = 0;
+      expect((await engine.mutate(read)).status).toBe("confirmed");
+      expect(pinnedIn(engine)).toEqual(pins);
+      for (const id of ids) expect(engine.read().get<EngineMessage>("message", id)!.unread).toBe(false);
+      expect(undo).toEqual([{ kind: "mark_seen", messageIds: ids, unread: true }]);
+      for (const mutation of undo) expect((await engine.mutate(mutation)).status).toBe("confirmed");
+      expect(pinnedIn(engine)).toEqual(pins);
+      for (const [index, id] of ids.entries()) {
+        const message = engine.read().get<EngineMessage>("message", id)!;
+        expect(message.unread).toBe(true);
+        expect(message.triage).toEqual(previous[index]);
+      }
+      expect(mutations.map((m) => m.kind)).toEqual(["mark_seen", "mark_seen"]);
+    },
+  );
 
   /**
    * THE DEFAULT IS DELIBERATE, and this is the assertion that keeps the fix from swallowing the

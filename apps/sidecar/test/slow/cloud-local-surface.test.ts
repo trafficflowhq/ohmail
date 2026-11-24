@@ -1,12 +1,19 @@
+import type {
+  Folder,
+  MailboxDTO,
+  MessageBodyBatchItem,
+  MessageDTO,
+  Page,
+  RuleDTO,
+  SyncChange,
+  SyncResponse,
+  ThreadDTO,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type {
-  Folder, MailboxDTO, MessageBodyBatchItem, MessageDTO, Page, RuleDTO, SyncChange, SyncResponse,
-  ThreadDTO,
-} from "@trafficflow/services/mail";
 import { createCloudSidecar, type CloudSidecar } from "../../src/cloud-engine.js";
 import { hostedMailbox, mailboxList } from "../fixtures/hosted-mailbox.js";
 import { freshDataDir } from "../_datadir.js";

@@ -1,8 +1,15 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  act, answerConsentWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  act, answerConsentWith, installShellEnv, ISO, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
+import { NONE, type HostContract } from "@ohmail/app/host";
+import { screeningSettings } from "../app/api-client";
+import { WEB_MAIL_PARTS } from "../app/(product)/mailbox/mail-parts";
+import { MailFrame, useBrowserMail } from "../app/shell/browser-mail";
+import { EngineProvider, useEngine } from "../app/shell/engine";
+import { hostFromTodaysInputs } from "./_mail-shell";
 import en from "../messages/en.json";
 
 /**
@@ -10,7 +17,7 @@ import en from "../messages/en.json";
  * The dial offered 60 only while 60 was stored: once somebody tried 90 the rungs
  * read 90 / 180 / 365 / All time and the product default could not be chosen again from any
  * screen. Now the default rung is always on the dial and says it is the default, and a stored
- * window off the ladder still joins it. Mutation: drop the default from `DormancyRow`'s rungs and
+ * window off the ladder still joins it. Mutation: drop the default from the mounted window's rungs and
  * the first case goes red.
  */
 
@@ -34,31 +41,59 @@ function scriptAccount(): void {
     }
     // The pane's other section, answered in the shape the route sends rather than the harness's `{}`.
     if (String(input).includes("/account/screening")) {
-      return json({ ohboxPolicy: null, ohboxBar: null, defaultBar: en.settings.screening.defaultBar, screenerAutoApply: false });
+      return json({ ohboxPolicy: null, ohboxBar: null, defaultBar: en.settings.screening.defaultBar });
     }
     return inner(input as RequestInfo, init);
   }) as typeof globalThis.fetch;
 }
 
 const DEFAULT_LABEL = en.settings.dormancy.dayLabelDefault.replace("{days}", "60");
+const dial = (host: HTMLElement) =>
+  within(within(host).getByRole("group", { name: en.settings.dormancy.ariaLabel }));
 const rungs = (host: HTMLElement): string[] =>
-  [...host.querySelectorAll(".dormancy-seg button")].map((n) => (n.textContent ?? "").trim());
+  dial(host).getAllByRole("button").map((n) => (n.textContent ?? "").trim());
 const chosen = (host: HTMLElement): string[] =>
-  [...host.querySelectorAll(".dormancy-seg button[aria-pressed='true']")].map((n) => (n.textContent ?? "").trim());
+  dial(host).queryAllByRole("button", { pressed: true }).map((n) => (n.textContent ?? "").trim());
 async function press(host: HTMLElement, label: string): Promise<void> {
-  const b = [...host.querySelectorAll<HTMLButtonElement>(".dormancy-seg button")]
-    .find((n) => (n.textContent ?? "").trim() === label);
-  expect(b, `no rung "${label}" — the dial read ${rungs(host).join(" / ")}`).toBeTruthy();
-  await act(async () => { b!.click(); });
+  const button = dial(host).getByRole("button", { name: label });
+  await act(async () => { button.click(); });
   for (let i = 0; i < 6; i++) await tick(20);
+}
+
+const ACCOUNT = "acct_live_1";
+const facts = [mailbox({ lastSyncAt: ISO })];
+const screening: HostContract["wires"]["screening"] = {
+  read: () => screeningSettings.get(),
+  change: (change) => screeningSettings.set(change),
+};
+
+function ScreenerSettingsFrame() {
+  const engine = useEngine();
+  const frame = useBrowserMail(NONE, WEB_MAIL_PARTS);
+  const host = hostFromTodaysInputs({
+    mailboxFacts: async () => facts,
+    scope: ACCOUNT,
+    screeningSection: null,
+  }, engine, frame, NONE);
+  return <MailFrame host={{
+    ...host,
+    session: { ...host.session, account: ACCOUNT },
+    wires: { ...host.wires, screening },
+  }} />;
 }
 
 async function screenerPane(days: number): Promise<HTMLElement> {
   storedDays = days === 60 ? null : days;
   answerConsentWith({ dormancyDays: days, screeningScope: "window" });
   scriptAccount();
-  const host = await mountShell([mailbox()]);
-  await goTo("settings/screener");
+  window.location.hash = "#/settings/screener";
+  const host = await mountShell(facts, {
+    wrap: () => (
+      <EngineProvider demo={false} resolveOwner={async () => ({ kind: "owner", accountId: ACCOUNT })}>
+        <ScreenerSettingsFrame />
+      </EngineProvider>
+    ),
+  });
   for (let i = 0; i < 6; i++) await tick(20);
   return host;
 }

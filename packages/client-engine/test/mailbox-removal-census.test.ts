@@ -55,6 +55,13 @@ const CENSUS: Record<KnownMirrorEntityType, Seat> = {
     seat: "shared", notInStore: true,
     why: "History's pages, in the engine's memory; every visit re-reads the store, and a row the mirror records gone renders nothing",
   },
+  calendar_connection: {
+    seat: "shared",
+    why: "a connection only names the mailbox whose sign-in it rides (`grantMailboxId`); it leaves by its own tombstone",
+  },
+  calendar: { seat: "shared", why: "a calendar hangs on its connection, never on a mailbox" },
+  calendar_event: { seat: "shared", why: "an event hangs on its calendar, never on a mailbox" },
+  calendar_suggestion: { seat: "exclusive", key: "mailboxId", why: "an event one letter of this mailbox seems to propose" },
 };
 
 const GONE = "mb-gone";
@@ -100,6 +107,12 @@ const SHAPE: Record<KnownMirrorEntityType, (mb: string) => { id: string; entity:
   }),
   outbox_abandoned: (mb) => ({ id: `oa-${mb}`, entity: { id: `oa-${mb}`, mutation: { kind: "archive", messageId: `m-${mb}` } }, local: true }),
   store_page: () => null,
+  calendar_connection: (mb) => ({ id: `cc-${mb}`, entity: { id: `cc-${mb}`, provider: "google", grantMailboxId: mb, updatedAt: at } }),
+  calendar: (mb) => ({ id: `cal-${mb}`, entity: { id: `cal-${mb}`, connectionId: `cc-${mb}`, updatedAt: at } }),
+  calendar_event: (mb) => ({ id: `ev-${mb}`, entity: { id: `ev-${mb}`, calendarId: `cal-${mb}`, startsAt: at, updatedAt: at } }),
+  calendar_suggestion: (mb) => ({
+    id: `cs-${mb}`, entity: { id: `cs-${mb}`, messageId: `m-${mb}`, mailboxId: mb, createdAt: at, updatedAt: at },
+  }),
 };
 
 /** A mirror holding both mailboxes and, for each, one row of every type in its real shape. */

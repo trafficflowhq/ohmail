@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq, isNull, sql } from "drizzle-orm";
@@ -10,8 +11,8 @@ import { agreeSweepRun, makeDrizzleRepo } from "@trafficflow/core/adapters/drizz
 import {
   accounts, auditAction, auditLog, changeLog, folderState, mailboxes, messageBodies, messageFailures, messages, threads,
 } from "@trafficflow/db";
-import { screenUnscreened, type ServiceContext } from "@trafficflow/services/mail";
-import { classifyIngestFault, markStoreStatement, StoreStatementFaultError } from "@trafficflow/worker/dead-letter";
+import { dbFor, screenUnscreened, type Db, type ServiceContext } from "@trafficflow/services/mail";
+import { classifyIngestFault, markStoreStatement, StoreStatementFaultError } from "@ohmail/organizer/dead-letter";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import {
   oneTransactionAtATime, openPhoneStore, STORE_TURN_WAIT, type PhoneSqlExecutor, type PhoneSqlRows,
@@ -506,9 +507,9 @@ async function organizerOhbox(db: unknown, count: number, senders: number) {
         unread: false, messageIdHeader: `m${i}@batch.example`, nativeLocator: { folder: "INBOX", ref: `1:${i + 1}` },
       }).returning();
       ids.push(m!.id);
-      await tx.insert(messageBodies).values({ messageId: m!.id, text: "body", html: null, headers: {} }).returning();
+      await tx.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "body", html: null, headers: {} }).returning();
       await tx.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external",
+        messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external",
         reconcileStatus: "reconciled", conflict: false,
       }).returning();
     }
@@ -517,8 +518,9 @@ async function organizerOhbox(db: unknown, count: number, senders: number) {
 }
 
 type TxHandle = { transaction: (fn: (tx: { run: (q: unknown) => Promise<unknown> }) => Promise<unknown>) => Promise<unknown> };
+// The press runs for the store's one account, on the app's door bound to it.
 const pressCtx = (db: unknown, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => new Date(), requestId: "screen-batch" }) as unknown as ServiceContext;
+  ({ db: dbFor(db as Db, accountId), accountId, userId: null, now: () => new Date(), requestId: "screen-batch" });
 
 describe.runIf(ON_DEVICE_STORE)("a thousand-letter Screen press on a device-slow store", () => {
   it("a drain's transaction during the press is served, and the press holds its turn for a few statements", async () => {

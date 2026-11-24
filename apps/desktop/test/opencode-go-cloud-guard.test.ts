@@ -19,6 +19,8 @@ import { describe, expect, it } from "vitest";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const CLOUD = ["apps/server", "apps/worker", "apps/api-vercel", "packages", "apps/webapp/app", "apps/webapp/i18n"];
 const SKIP = new Set(["node_modules", "dist", ".next", ".turbo", "coverage"]);
+/** The catalogue's place files: the sources `apps/webapp/messages/*.json` is assembled from, the same words as data, left out as it is. */
+const DATA = ["packages/app/messages/"];
 /** The transports' directory in core and the tests beside it — the only home the transport has. */
 const HOME = ["packages/core/src/ai/transports/", "packages/core/test/ai/transports/"];
 const atHome = (f: string): boolean => HOME.some((h) => f.startsWith(h));
@@ -34,13 +36,15 @@ function sources(dir: string): string[] {
   return out;
 }
 
-const files = CLOUD.flatMap((d) => sources(join(ROOT, d)));
 const rel = (p: string) => relative(ROOT, p);
+const files = CLOUD.flatMap((d) => sources(join(ROOT, d))).filter((f) => !DATA.some((d) => rel(f).startsWith(d)));
 
 describe("OpenCode Go stays out of the Cloud", () => {
   it("scans the Cloud trees at all", () => {
     expect(files.length).toBeGreaterThan(500);
-    expect(files.some((f) => rel(f) === "apps/webapp/app/shell/AppShell.tsx")).toBe(true);
+    /* The shell every Cloud host mounts, re-pointed by path from today's `AppShell.tsx` (RULING-NEW-SHELL-FIRST D (3)):
+       the new shell's mail ground, which each host hands above every pane. */
+    expect(files.some((f) => rel(f) === "packages/app/src/mail/MailGround.tsx")).toBe(true);
   });
 
   it("no Cloud source names OpenCode, outside the transports' own directory", () => {

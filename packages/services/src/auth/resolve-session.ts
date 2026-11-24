@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { sessions, users } from "@trafficflow/db";
+import { assertBinding, bindDb, sessions, users } from "@trafficflow/db";
 import { hashToken } from "./crypto.js";
-import type { Db } from "../context.js";
+import type { ContextDb, UnboundDb } from "../context.js";
 
 /**
  * A session's privilege scope. `'full'` is a completed
@@ -23,19 +23,9 @@ export interface ResolvedSessionCore {
   accountId: string;
   userId: string;
   sessionId: string;
+  familyId?: string;
   lastTwofaAt: Date | null;
   scope: SessionScope;
-  /**
-   * When this user's address was proven (`users.email_verified_at`, migration 0023), or
-   * `null` for an unproven one. Read by `withVerifiedEmail` in `packages/api`.
-   *
-   * It rides on the SESSION resolution rather than being fetched by the middleware that needs
-   * it, for the same reason `scope` does: a privilege decision that costs an extra round trip
-   * is a privilege decision somebody will eventually be tempted to skip on the hot path. The
-   * JOIN below is on `users.id` — the primary key, against a query already limited to one row —
-   * so this costs nothing measurable and no additional query.
-   */
-  emailVerifiedAt: Date | null;
   /**
    * When this session's `/sync` last reached the horizon (`sessions.last_synced_at`, mail 0070),
    * read from the same row. Bookkeeping only: `GET /sync` skips a stamp that is not due yet. Never
@@ -47,43 +37,54 @@ export interface ResolvedSessionCore {
 /**
  * Resolve an opaque session/bearer access token to its live session row, or `null`. Usable iff
  * `accessTokenHash` equals `hashToken(token)` (tokens are only stored hashed), not revoked, and
- * the access window has not elapsed; one lookup shared by cookie and bearer auth so
- * `packages/api` never duplicates the query. The `users` JOIN is INNER, and that is a decision: a
- * session row whose user has been erased resolves to `null` rather than to an identity with no
- * user behind it, so an erased account's live session stops authenticating on the next request.
- * `sessions.user_id` is a FK, so the join can only fail for a row that is genuinely gone.
+ * the access window has not elapsed. Cookie and bearer auth share this lookup.
+ * The digest keys the binder's single statement before the account is known. The foreign key
+ * from `sessions.user_id` guarantees the session's user exists.
  */
-export async function resolveSession(db: Db, token: string, now: Date): Promise<ResolvedSessionCore | null> {
-  const rows = await db
+export async function resolveSession(db: UnboundDb, token: string, now: Date): Promise<ResolvedSessionCore | null> {
+  const digest = hashToken(token);
+  const [row] = await bindDb(db, { account: null, key: digest })
     .select({
       id: sessions.id,
+      familyId: sessions.familyId,
       accountId: sessions.accountId,
       userId: sessions.userId,
       lastTwofaAt: sessions.lastTwofaAt,
       scope: sessions.scope,
-      emailVerifiedAt: users.emailVerifiedAt,
       lastSyncedAt: sessions.lastSyncedAt,
     })
     .from(sessions)
-    .innerJoin(users, eq(users.id, sessions.userId))
     .where(and(
-      eq(sessions.accessTokenHash, hashToken(token)),
+      eq(sessions.accessTokenHash, digest),
       isNull(sessions.revokedAt),
       gt(sessions.accessExpiresAt, now),
     ))
     .limit(1);
-
-  const row = rows[0];
   if (!row) return null;
   return {
     accountId: row.accountId,
     userId: row.userId,
     sessionId: row.id,
+    familyId: row.familyId,
     lastTwofaAt: row.lastTwofaAt,
-    // The column is CHECK-constrained to ('full','enrollment') by migration 0017, so
-    // this narrowing is exhaustive rather than a silent fallback.
     scope: row.scope === "enrollment" ? "enrollment" : "full",
-    emailVerifiedAt: row.emailVerifiedAt,
     lastSyncedAt: row.lastSyncedAt,
   };
+}
+
+/**
+ * When the session's user proved the address (`users.email_verified_at`), or null. Read on the
+ * request's handle, which must name the session's account: the account lock shows a user's row
+ * only to its own account, and the look-up above learns the account only from its answer. Asked
+ * by the spend gate, only on the routes an unverified account may not reach.
+ */
+export async function sessionEmailVerifiedAt(
+  db: ContextDb, session: Pick<ResolvedSessionCore, "accountId" | "userId">,
+): Promise<Date | null> {
+  assertBinding(db, session.accountId);
+  const [user] = await db.select({ emailVerifiedAt: users.emailVerifiedAt })
+    .from(users)
+    .where(and(eq(users.id, session.userId), eq(users.accountId, session.accountId)))
+    .limit(1);
+  return user?.emailVerifiedAt ?? null;
 }

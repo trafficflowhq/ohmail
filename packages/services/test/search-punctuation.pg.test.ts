@@ -1,15 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
+import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
-import { SearchService } from "@trafficflow/services";
+import { SearchService, dbFor } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
-import { brandDialect } from "@trafficflow/db/dialect";
 
 /**
  * THE ARCHIVE HALF OF THE `D-U-N-S` MISS — measured against real Postgres, because the whole
@@ -54,8 +52,9 @@ import { brandDialect } from "@trafficflow/db/dialect";
  * and then reaches the shared box anyway.
  */
 const URL = pgTestUrl(import.meta.url);
-const client = postgres(URL, { max: 5 });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(URL);
+const db = owned.db;
 const svc = new SearchService();
 
 const NOW = new Date("2026-09-08T12:00:00.000Z");
@@ -70,7 +69,7 @@ const ids: Record<string, string> = {};
 const DUNS_SUBJECT = "Your D-U-N-S Number is enclosed.";
 
 function ctx(): ServiceContext {
-  return { db, accountId: A, userId: null, now: () => NOW, requestId: "search-punct-test" };
+  return { db: dbFor(db, A), accountId: A, userId: null, now: () => NOW, requestId: "search-punct-test" };
 }
 
 async function seed(o: { key: string; mailboxId: string; subject: string; body: string; date?: Date }): Promise<void> {
@@ -80,9 +79,14 @@ async function seed(o: { key: string; mailboxId: string; subject: string; body: 
     date: o.date ?? SENT, unread: false, hasAttachments: false,
     nativeLocator: { folder: "INBOX", ref: "1:1" },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: o.body });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: o.body });
+  // As every writer of a body does: the letter's search document with it.
+  await upsertMessageSearch(db as never, m!.id, {
+    accountId: A, subject: o.subject, from: { name: null, address: "registry@dnb.example" }, to: [], cc: [],
+    attachmentNames: [], bodyText: o.body, source: "text",
+  });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
   ids[o.key] = m!.id;
 }
@@ -117,7 +121,7 @@ describe("archive search over punctuation (real Postgres)", () => {
     });
   }, MIGRATED_DB_SETUP_BUDGET_MS);
 
-  afterAll(async () => { await client.end({ timeout: 5 }); });
+  afterAll(async () => { await owned.close(); });
 
   it("(a) the hyphenated subject IS in the archive's lexical reach — the miss was not here", async () => {
     // The predicate, alone, before the service: this is the measurement the whole slice turned on.
@@ -141,8 +145,8 @@ describe("archive search over punctuation (real Postgres)", () => {
       select count(*)::int as n
       from messages m left join message_bodies b on b.message_id = m.id
       where m.account_id = ${A} and m.id = ${ids.verbatim}
-        and (m.subject_tsv @@ websearch_to_tsquery('english', 'pha/Bet')
-             or b.body_tsv @@ websearch_to_tsquery('english', 'pha/Bet'))`)) as unknown as Array<{ n: number }>;
+        and (to_tsvector('english', coalesce(m.subject, '') || ' ' || coalesce(m.from_address, '')) @@ websearch_to_tsquery('english', 'pha/Bet')
+             or to_tsvector('english', left(coalesce(b.text, ''), 65536)) @@ websearch_to_tsquery('english', 'pha/Bet'))`)) as unknown as Array<{ n: number }>;
     expect(n).toBe(0);
 
     const r = await svc.search(ctx(), { q: "pha/Bet" });
@@ -195,8 +199,8 @@ describe("archive search over punctuation (real Postgres)", () => {
      * verbatim-only one), which holds regardless of what `ts_rank` returns or of any bound on it.
      */
     const rows = (await db.execute<{ loud: number; lex: number }>(sql`
-      select ts_rank(m.subject_tsv, websearch_to_tsquery('english','D-U-N-S')) as loud,
-             (select ts_rank(x.subject_tsv, websearch_to_tsquery('english','D-U-N-S'))
+      select ts_rank(to_tsvector('english', coalesce(m.subject, '') || ' ' || coalesce(m.from_address, '')), websearch_to_tsquery('english','D-U-N-S')) as loud,
+             (select ts_rank(to_tsvector('english', coalesce(x.subject, '') || ' ' || coalesce(x.from_address, '')), websearch_to_tsquery('english','D-U-N-S'))
                 from messages x where x.id = ${ids.duns}) as lex
         from messages m where m.id = ${ids.loud}`)) as unknown as Array<{ loud: number; lex: number }>;
     // The premise, measured in the same run rather than remembered from a probe.

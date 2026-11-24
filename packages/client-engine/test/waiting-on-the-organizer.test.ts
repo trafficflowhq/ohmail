@@ -247,6 +247,90 @@ describe("which refusals the waiting list says", () => {
   });
 });
 
+/**
+ * A MOVE INTO A PERSON'S OWN FOLDER ON AN INSTALL THAT ONLY READS THE MAILBOX. The route records it for
+ * the install that organizes the mailbox and answers 202 with the letter unmoved; it travels as a kind
+ * of its own (`message.file`), so the session's own row says so until the server lists it. The
+ * organizer's filing into exactly that folder settles it; a filing anywhere else does not.
+ */
+describe("a move into a person's own folder, asked of the organizer", () => {
+  const AT = NOW.toISOString();
+  const LETTER = {
+    id: "m1", accountId: "a", mailboxId: "mb1", threadId: null, messageIdHeader: null, subject: "Offer",
+    from: { name: null, address: "sales@acme.example" }, to: [], cc: [], date: AT, arrivedAt: AT, folder: "INBOX",
+    snippet: "", unread: false, hasAttachments: false, attachmentCount: 0,
+    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+    triage: null, labels: [], remoteContent: "none", updatedAt: AT,
+  };
+  const ACME = { id: "f1", name: "Clients/Acme", mailboxId: "mb1", mailbox: "me@example.invalid", updatedAt: AT };
+
+  function moveWorld() {
+    let seq = 30;
+    const pages: Array<Array<Record<string, unknown>>> = [];
+    const posted: Array<{ path: string; body: string | null }> = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      const method = init?.method ?? "GET";
+      let status = 200;
+      let body: unknown = {};
+      if (href.includes("/sync?")) {
+        const page = pages.shift() ?? (href.includes("since=0") ? [
+          { type: "message", op: "create", id: "m1", seq, updatedAt: AT, entity: LETTER },
+          { type: "folder", op: "create", id: "f1", seq, updatedAt: AT, entity: ACME },
+        ] : []);
+        body = {
+          changes: {
+            creates: page.filter((c) => c.op === "create"), updates: page.filter((c) => c.op === "update"),
+            moves: page.filter((c) => c.op === "move"), deletes: page.filter((c) => c.op === "delete"),
+          },
+          cursor: String(seq), hasMore: false, serverTime: AT,
+        };
+      } else if (href.endsWith("/organizer-requests")) {
+        body = { items: [] };
+      } else if (href.endsWith("/messages/m1/move") && method === "POST") {
+        posted.push({ path: new URL(href).pathname, body: typeof init?.body === "string" ? init.body : null });
+        status = 202;
+        body = { pending: true, requestId: "req-7", holder: { kind: "local", name: "Laptop", since: AT }, dto: LETTER };
+      }
+      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof globalThis.fetch;
+    const engine = new OhmailEngine({ adapter: new HttpAdapter({ baseUrl: "https://api.test", fetch: fetchImpl }), now: () => NOW });
+    const files = (to: string) => {
+      seq += 1;
+      pages.push([{ type: "message", op: "move", id: "m1", seq, updatedAt: AT, entity: { ...LETTER, folder: to }, move: { from: "INBOX", to } }]);
+    };
+    return { engine, posted, files };
+  }
+
+  it("the paint goes back, it waits as `message.file`, and only the filing into that folder settles it", async () => {
+    const w = moveWorld();
+    await w.engine.start();
+    const res = await w.engine.mutate({ kind: "move", messageId: "m1", folder: "Clients/Acme" });
+    expect(res.status).toBe("awaiting_organizer");
+    expect(w.posted).toEqual([{ path: "/messages/m1/move", body: JSON.stringify({ folder: "Clients/Acme" }) }]);
+    expect(w.engine.read().get<{ folder: string }>("message", "m1")?.folder, "the letter shows where nobody put it").toBe("INBOX");
+    expect(w.engine.waitingOnOrganizer()).toEqual([
+      expect.objectContaining({ kind: "message.file", messageId: "m1", state: "pending", holder: { name: "Laptop" } }),
+    ]);
+
+    w.files("ohmail/News");
+    await w.engine.syncOnce();
+    expect(w.engine.organizerRequests(), "a filing elsewhere settled the request").toHaveLength(1);
+
+    w.files("Clients/Acme");
+    await w.engine.syncOnce();
+    expect(w.engine.organizerRequests()).toHaveLength(0);
+    expect(w.engine.read().get<{ folder: string }>("message", "m1")?.folder).toBe("Clients/Acme");
+  });
+
+  it("CONTROL: a move to one of the six waits as `message.move`", async () => {
+    const w = moveWorld();
+    await w.engine.start();
+    await w.engine.mutate({ kind: "move", messageId: "m1", folder: "ohmail/News" });
+    expect(w.engine.waitingOnOrganizer().map((x) => x.kind)).toEqual(["message.move"]);
+  });
+});
+
 describe("the rule requests the organizer applied", () => {
   it("lists the applied rule rows of the last read, and nothing in flight or of another kind", async () => {
     const w = world();

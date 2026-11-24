@@ -181,7 +181,7 @@ describe("one boolean, two readers — the label and the dispatch cannot drift a
     // …the switch's own label and checked state read it…
     expect(SHEET).toContain("accessibilityState={{ checked: applyRetro }}");
     // …and the press that files the mail carries the SAME value to the world.
-    expect(SHEET).toContain("w.actions.screenSender(m.id, dest, scope, applyRetro)");
+    expect(SHEET).toContain("w.actions.screenSender(m.id, dest, scope, applyRetro, undefined, ids)");
   });
 
   it("the deck's two sentences are the two answers, and the ON one names what the pass leaves alone", () => {

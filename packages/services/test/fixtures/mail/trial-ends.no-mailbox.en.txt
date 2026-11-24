@@ -1,0 +1,17 @@
+Subject: Your ohmail trial ends in two days
+
+ohmail.
+
+Your trial ends in two days.
+
+Your trial ends on 16 September 2026, 00:00 UTC, and your ohmail account has no mailbox connected yet. So ohmail has not organized any mail for you.
+
+Connecting takes a few minutes. The button below opens the mailbox step, through sign-in if needed. If your mail is in a Microsoft 365 work or school account, connect it in Settings › Mailboxes with Connect Outlook instead: you sign in with Microsoft and need no app password.
+
+If you are stuck, or not sure ohmail fits, reply to this mail and a person answers.
+
+Connect your mailbox:
+https://app.ohmail.app/login?next=join
+
+--
+TrafficFlow GmbH, Zürich, Switzerland

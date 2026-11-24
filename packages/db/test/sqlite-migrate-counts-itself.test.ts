@@ -76,3 +76,66 @@ describe("the device store's upgrade counts itself", () => {
     expect(ledger).toEqual([]);
   });
 });
+
+/**
+ * EVERYTHING A STORE OWES IS ONE TRANSACTION. 2.0's entries take columns a 1.0 engine reads, so a
+ * store stopped between two of them opens on neither release: the owed entries are in the ledger
+ * together or not at all, and `beforeApply` is where an open may be refused with the store untouched.
+ */
+describe("the device store takes everything it owes in one transaction", () => {
+  const entry = (name: string, statements: string[]): SqliteJournalEntry => ({ ...SQLITE_JOURNAL[0]!, name, statements });
+  const THREE = [
+    entry("9001_first", ["CREATE TABLE planted_first (id INTEGER PRIMARY KEY)", "INSERT INTO planted_first VALUES (1)"]),
+    entry("9002_second", ["CREATE TABLE planted_second (id INTEGER PRIMARY KEY)"]),
+    entry("9003_third", ["SELECT nope FROM nowhere"]),
+  ];
+  const tables = (db: Store): string[] =>
+    (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'planted_%' ORDER BY 1").all() as { name: string }[]).map((r) => r.name);
+  const recorded = (db: Store): string[] =>
+    (db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE} WHERE name LIKE '9%' ORDER BY 1`).all() as { name: string }[]).map((r) => r.name);
+  const foreignKeys = (db: Store): unknown => (db.prepare("PRAGMA foreign_keys").all() as { foreign_keys: number }[])[0]!.foreign_keys;
+
+  it("three owed entries of which the third fails leave no table of the first and no row in the ledger", async () => {
+    const db = new DatabaseSync(":memory:");
+    await migrateSqlite(targetFor(db), SQLITE_JOURNAL);
+    const h = listen();
+    await expect(migrateSqlite(targetFor(db), [...SQLITE_JOURNAL, ...THREE], h.hooks))
+      .rejects.toThrow("the SQLite journal stopped at 9003_third and none of the 3 entries this open owed was applied");
+    expect(tables(db)).toEqual([]);
+    expect(recorded(db)).toEqual([]);
+    expect(h.applied, "an entry of a rolled-back upgrade was reported as applied").toEqual([]);
+    expect(foreignKeys(db), "a failed upgrade left the keys off").toBe(1);
+    // Without the fault the same three land together, and each is told once, after the commit.
+    const ok = listen();
+    expect(await migrateSqlite(targetFor(db), [...SQLITE_JOURNAL, ...THREE.slice(0, 2)], ok.hooks)).toEqual(["9001_first", "9002_second"]);
+    expect([tables(db), recorded(db), ok.applied]).toEqual([["planted_first", "planted_second"], ["9001_first", "9002_second"], ["9001_first", "9002_second"]]);
+  });
+
+  it("is told what it owes before anything is written, and a refusal there leaves the store as it was", async () => {
+    const db = new DatabaseSync(":memory:");
+    await migrateSqlite(targetFor(db), SQLITE_JOURNAL);
+    const before = db.prepare("SELECT count(*) AS n FROM sqlite_master").all();
+    const asked: unknown[] = [];
+    await expect(migrateSqlite(targetFor(db), [...SQLITE_JOURNAL, ...THREE.slice(0, 2)], {
+      beforeApply: async (o) => { asked.push(o); throw new Error("no room for the upgrade"); },
+    })).rejects.toThrow("no room for the upgrade");
+    expect(asked).toEqual([{ owed: ["9001_first", "9002_second"], fresh: false }]);
+    expect([tables(db), recorded(db)]).toEqual([[], []]);
+    expect(db.prepare("SELECT count(*) AS n FROM sqlite_master").all()).toEqual(before);
+    expect(foreignKeys(db)).toBe(1);
+    // A store that owes nothing is asked nothing; a new one is asked once, and is said to be fresh.
+    let calls = 0;
+    await migrateSqlite(targetFor(db), SQLITE_JOURNAL, { beforeApply: async () => { calls += 1; } });
+    expect(calls).toBe(0);
+    const fresh = new DatabaseSync(":memory:");
+    const heard: { fresh: boolean; owed: number }[] = [];
+    await migrateSqlite(targetFor(fresh), SQLITE_JOURNAL, { beforeApply: async (o) => { heard.push({ fresh: o.fresh, owed: o.owed.length }); } });
+    expect(heard).toEqual([{ fresh: true, owed: SQLITE_JOURNAL.length }]);
+  });
+
+  it("a new store refused before its first entry holds nothing, not even the ledger", async () => {
+    const db = new DatabaseSync(":memory:");
+    await expect(migrateSqlite(targetFor(db), SQLITE_JOURNAL, { beforeApply: async () => { throw new Error("refused"); } })).rejects.toThrow("refused");
+    expect(db.prepare("SELECT count(*) AS n FROM sqlite_master").all()).toEqual([{ n: 0 }]);
+  });
+});

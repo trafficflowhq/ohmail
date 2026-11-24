@@ -1,0 +1,13 @@
+/* A part of a sentence and the dot after it never part at a line's end. */
+.way-nb {
+  white-space: nowrap;
+}
+
+.way-said-trail {
+  max-inline-size: 100%;
+  font-family: var(--f-display);
+  font-weight: var(--w-display);
+  font-size: var(--t-ui);
+  font-variation-settings: var(--opsz);
+  letter-spacing: var(--track);
+}

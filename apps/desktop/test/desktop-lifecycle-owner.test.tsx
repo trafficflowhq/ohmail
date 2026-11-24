@@ -171,7 +171,7 @@ describe("the gate owns the engine lifecycle past serving", () => {
   it("an engine that DIES after serving reaches the screen within one cadence", async () => {
     const shell = fakeShell(LOCAL_SERVING);
     await render();
-    expect(mounted(), "the mail app never mounted, so nothing here measures a death").toBe(true);
+    await vi.waitFor(() => expect(mounted(), "the mail app never mounted, so nothing here measures a death").toBe(true));
 
     /* The engine died. Rust knows; nothing has told the window. */
     shell.set({ ...LOCAL_SERVING, state: "failed", reason: "the engine stopped and did not come back" });
@@ -187,6 +187,7 @@ describe("the gate owns the engine lifecycle past serving", () => {
        case above and be a worse product than the defect. */
     fakeShell(LOCAL_SERVING);
     await render();
+    await vi.waitFor(() => expect(mounted(), "the mail app never mounted while the engine was serving").toBe(true));
     const before = text();
     await advance(LIFECYCLE_POLL_MS * 3);
     expect(mounted()).toBe(true);

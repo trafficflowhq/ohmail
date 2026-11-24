@@ -166,7 +166,7 @@ describe("the desktop window hands the file to the operating system", () => {
     mod.enableDesktopAttachments();
     const { deliverFile } = await freshSeam();
 
-    void deliverFile(fakeEngine, {
+    void deliverFile(fakeEngine, mod.desktopFileShell(), {
       messageId: "m1", attachmentId: ID1, filename: "Quarterly report.pdf", url: "blob:tauri://localhost/abc",
     }, document);
     await settled();
@@ -194,7 +194,7 @@ describe("the desktop window hands the file to the operating system", () => {
     mod.enableDesktopAttachments();
     const { deliverFile } = await freshSeam();
 
-    void deliverFile(fakeEngine, { messageId: "m1", attachmentId: ID1, filename: "../../.ssh/authorized_keys" }, document);
+    void deliverFile(fakeEngine, mod.desktopFileShell(), { messageId: "m1", attachmentId: ID1, filename: "../../.ssh/authorized_keys" }, document);
     await settled();
 
     const payload = invoked[0]!.payload!;
@@ -233,7 +233,7 @@ describe("the desktop window hands the file to the operating system", () => {
     mod.enableDesktopAttachments();
     const { deliverAll } = await freshSeam();
 
-    const saved = await deliverAll(fakeEngine, [
+    const saved = await deliverAll(fakeEngine, mod.desktopFileShell(), [
       { messageId: "m1", attachmentId: ID1, filename: "Invoice.pdf" },
       { messageId: "m1", attachmentId: ID2, filename: "Photo.jpg" },
       { messageId: "m1", attachmentId: ID3, filename: "Notes.txt" },
@@ -261,7 +261,7 @@ describe("the web app is not touched", () => {
     expect(mod.desktopAttachmentsEnabled()).toBe(false);
     const { deliverFile } = await freshSeam();
 
-    void deliverFile(fakeEngine, { messageId: "m1", attachmentId: ID1, filename: "report.pdf", url: "blob:http://localhost/abc" }, document);
+    void deliverFile(fakeEngine, mod.desktopFileShell(), { messageId: "m1", attachmentId: ID1, filename: "report.pdf", url: "blob:http://localhost/abc" }, document);
     await settled();
 
     expect(invoked, "the web app called a desktop shell command").toEqual([]);
@@ -276,7 +276,7 @@ describe("the web app is not touched", () => {
     expect(mod.desktopAttachmentsEnabled()).toBe(false);
     const { deliverAll } = await freshSeam();
 
-    const saved = await deliverAll(fakeEngine, [
+    const saved = await deliverAll(fakeEngine, mod.desktopFileShell(), [
       { messageId: "m1", attachmentId: ID1, filename: "Invoice.pdf", url: "blob:http://localhost/1" },
       { messageId: "m1", attachmentId: ID2, filename: "Photo.jpg", url: "blob:http://localhost/2" },
     ], document);
@@ -413,7 +413,7 @@ describe("the window entry arms it", () => {
 describe("the reading pane offers the in-app viewer on the types the web previews", () => {
   const shared = (() => {
     try {
-      readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/MessageFiles.tsx"));
+      readFileSync(resolve(process.cwd(), "apps/webapp/app/components/AttachmentPreview.tsx"));
       return resolve(process.cwd(), "apps/webapp/app");
     } catch {
       return resolve(process.cwd(), "../webapp/app");
@@ -421,10 +421,16 @@ describe("the reading pane offers the in-app viewer on the types the web preview
   })();
 
   it("MessageFiles' canPreview is exactly isPreviewable(item.mimeType)", () => {
-    // The strip is `MessageFiles`, which every reading pane renders; the pane is held to it.
-    expect(readFileSync(resolve(shared, "shell/MessagePane.tsx"), "utf8")).toMatch(/<MessageFiles messageId=\{message\.id\} \/>/);
-    const pane = readFileSync(resolve(shared, "shell/MessageFiles.tsx"), "utf8");
-    expect(pane.match(/canPreview=\{[^\n]*\}/g)).toEqual(["canPreview={(item) => isPreviewable(item.mimeType)}"]);
+    // The strip is the reader's `LetterFiles`, which every letter of the reading column
+    // draws; the letter is held to it. A tile offers the look by its declared type alone (`fileLookOf`, the set
+    // `isPreviewable` names) beside the look the host hands: no host's exception.
+    const app = resolve(shared, "../../../packages/app/src/reader");
+    expect(readFileSync(resolve(app, "Letter.tsx"), "utf8")).toMatch(
+      /<LetterFiles\s+messageId=\{message\.id\}\s+selection=\{previewSelection\}\s+parts=\{parts\}\s[^>]*\/>/,
+    );
+    const pane = readFileSync(resolve(app, "files/Files.tsx"), "utf8");
+    expect(pane).toMatch(/const look = fileLookOf\(item\.mimeType\) !== "other" \? preview : null;/);
+    expect(pane).toMatch(/const preview =\s*look === NONE \? null :/);
   });
 
   it("no shared source keeps a desktop exception to the preview", () => {
@@ -437,6 +443,9 @@ describe("the reading pane offers the in-app viewer on the types the web preview
       }
     };
     walk(shared);
+    walk(resolve(shared, "../../../packages/app/src"));
+    walk(resolve(shared, "../../../packages/app-logic/src"));
+    walk(resolve(shared, "../../../packages/letter-body/src"));
     expect(named, "a shared source still hands a type the web previews to the system viewer").toEqual([]);
   });
 });
@@ -455,7 +464,7 @@ describe("files dropped from another program reach the window by token, in chunk
   const body = Uint8Array.from({ length: 5000 }, (_, i) => (i * 7) % 251);
   const b64 = (bytes: Uint8Array): string => btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
   async function freshDrops() {
-    return import("../../webapp/app/shell/dropped-files.js");
+    return import("@ohmail/app-logic/write/dropped-files");
   }
   /** A shell that answers one held file in `size`-byte chunks of `body`, or the given take. */
   function shellServing(chunkSize: number, take: unknown = { drop: TOKEN, files: [{ name: "photo.jpg", size: body.length, type: "image/jpeg", state: "ok" }] }): void {
@@ -502,6 +511,19 @@ describe("files dropped from another program reach the window by token, in chunk
     await expect((await mod.takeDroppedFiles())![0]!.read()).rejects.toThrow(/short of its size/);
     shellServing(2048, { drop: TOKEN, files: [{ name: "long.bin", size: body.length - 1, type: "", state: "ok" }] });
     await expect((await mod.takeDroppedFiles())![0]!.read()).rejects.toThrow(/past its size/);
+  });
+
+  it("stops asking for file chunks as soon as the receiving letter changes", async () => {
+    const mod = await freshDrops();
+    mod.enableDesktopDroppedFiles();
+    shellServing(2048);
+    const sources = await mod.takeDroppedFiles();
+    let sameLetter = true;
+    const reading = sources![0]!.read(undefined, () => sameLetter);
+    expect(invoked.map(({ command }) => command)).toEqual(["dropped_files_take", "dropped_file_chunk"]);
+    sameLetter = false;
+    await expect(reading).rejects.toMatchObject({ name: "AbortError" });
+    expect(invoked.map(({ command }) => command)).toEqual(["dropped_files_take", "dropped_file_chunk"]);
   });
 
   it("asks nothing for a file the shell refused, and nothing at all unarmed", async () => {

@@ -1,13 +1,11 @@
+import type { EngineMessage, Folder, TagEntity as TagDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   messagesByDateDesc,
   messagesIn,
   tagsCrossView,
-  type EngineMessage,
-  type Folder,
   type SyncChange,
-  type TagDTO,
 } from "@ohmail/client-engine";
 
 /**

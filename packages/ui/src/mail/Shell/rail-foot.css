@@ -1,0 +1,97 @@
+/* The rail's foot. It stays on screen while the places scroll above it. */
+@layer oh {
+  .oh-railfoot {
+    --oh-railfoot-gap: 10px;
+    --oh-railfoot-between: 2px;
+    --oh-railfoot-lh: 1.25;
+    --oh-railfoot-in: var(--s1) var(--s3);
+    --oh-under: var(--ground);
+
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s1);
+  }
+
+  .oh-railfoot-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+  }
+
+  .oh-railfoot-line {
+    display: flex;
+    align-items: center;
+    gap: var(--oh-railfoot-between);
+    min-width: 0;
+  }
+
+  .oh-railfoot-account {
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    gap: var(--oh-railfoot-gap);
+    min-width: 0;
+    min-height: var(--h-l);
+    padding: var(--oh-railfoot-in);
+    border-radius: var(--r-row);
+    line-height: var(--oh-railfoot-lh);
+    text-align: left;
+  }
+
+  .oh-railfoot-account:hover {
+    background: var(--oh-hover, var(--hover-ground));
+  }
+
+  .oh-railfoot-account[aria-current="page"],
+  .oh-railfoot-account[aria-current="page"]:hover {
+    background: var(--nav-on);
+    color: var(--on-nav-on);
+  }
+
+  .oh-railfoot-who {
+    flex: 0 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .oh-railfoot-name,
+  .oh-railfoot-note {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .oh-railfoot-name {
+    font-weight: var(--w-bold);
+  }
+
+  .oh-railfoot-note {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+
+  .oh-railfoot-account[aria-current="page"] .oh-railfoot-note {
+    color: inherit;
+  }
+
+  .oh-railfoot-end {
+    flex: none;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    color: var(--ink2);
+  }
+
+  :root[data-face="ohmarchy"] .oh-railfoot {
+    --oh-railfoot-gap: var(--s2);
+    --oh-railfoot-between: 0;
+    --oh-railfoot-in: var(--s1) var(--s1) var(--s1) var(--s3);
+    --oh-railfoot-rule: 0 -1px 0 var(--line-soft);
+    --oh-under: var(--sheet);
+
+    padding-top: var(--s2);
+    box-shadow: var(--oh-railfoot-rule);
+  }
+}

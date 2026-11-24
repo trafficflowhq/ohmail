@@ -13,7 +13,8 @@ import {
   MICROSOFT_PROVIDER,
 } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
-import { ServiceError, withAccountTx } from "@trafficflow/services/mail";
+import { holdLiveSession } from "@trafficflow/services/auth";
+import { DeviceGrantExpired, ServiceError, withAccountTx } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import type { ApiDeps } from "../deps.js";
 import { makeImapProbe } from "../imap-probe.js";
@@ -123,6 +124,7 @@ const ceremonyUnknown = (): ServiceError => new ServiceError(
   "That Microsoft sign-in is no longer in progress. Start again from Settings.",
   { reason: "state_invalid" },
 );
+const ceremonyExpired = (): Response => jsonResponse({ status: "expired" }, { status: 200 });
 
 export const mailboxDeviceOAuthRoutes: Route[] = [
   {
@@ -147,6 +149,8 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
       const cfg = client!;
 
       const ctx = serviceContext(deps, req);
+      const sessionId = ctx.sessionId;
+      if (!sessionId) throw new ServiceError("unauthorized", 401, "no active session");
 
       let grant;
       try {
@@ -176,7 +180,10 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
        * in whatever access log the operator's reverse proxy keeps.
        */
       const state = oauthState(randomBytes);
-      const sealed = await deps.keyProvider.encrypt(grant.deviceCode);
+      const sealed = await deps.keyProvider.encrypt(JSON.stringify({
+        sessionId,
+        deviceCode: grant.deviceCode,
+      }));
 
       /*
        * THROUGH THE FENCED DOOR. The ceremony row is account-owned and the Art. 17 sweep deletes
@@ -192,6 +199,7 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
         await createDeviceCeremony(tx as unknown as Tx, {
           state,
           accountId: ctx.accountId,
+          sessionId,
           provider: MICROSOFT_PROVIDER,
           deviceCodeEnc: sealed.ciphertext,
           deviceCodeKeyVersion: sealed.keyVersion,
@@ -201,6 +209,7 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
           grantExpiresAt: new Date(grant.expiresAtMs),
           now: deps.now(),
         });
+        await holdLiveSession(tx, ctx);
       });
 
       /* OPPORTUNISTIC PRUNE, failure swallowed: a ceremonies table that grew by one row is not a
@@ -251,25 +260,24 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
         throw new ServiceError("validation_failed", 400, "state is required", { reason: "state_invalid" });
       }
 
-      // ── (1) THE NON-CONSUMING READ. Writes nothing. This is what makes polling possible. ────
-      const found = await readDeviceCeremony(deps.db, { state, now: deps.now() });
+      // (1) Read only within the authenticated account and session.
+      const sessionId = ctx.sessionId;
+      if (!sessionId) throw ceremonyUnknown();
+      const scope = { state, accountId: ctx.accountId, sessionId };
+      const found = await readDeviceCeremony(deps.db, { ...scope, now: deps.now() });
       if (found.outcome === "unknown") throw ceremonyUnknown();
 
-      // (2) The account match, before any decision and before any spend. The ceremony row is the
-      // only thing that knows which account began the flow; the session is the only thing that
-      // knows who is polling. A mailbox may only be attached to the account that asked. Note what
-      // is NOT done: a cross-account poll does not claim the ceremony. The redirect flow burns a
-      // stolen `state` because there the consume already happened and the value rides a URL
-      // through a third party; this value never leaves this origin, and a claim on mismatch would
-      // hand any authenticated account a way to kill another account's live ceremony by guessing
-      // — one poll, no Microsoft round trip. The answer is a refusal, and the account's own ceremony
-      // survives it.
-      if (found.row.accountId !== ctx.accountId) {
-        throw new ServiceError(
-          "forbidden", 403,
-          "That Microsoft sign-in was started by a different account.",
-          { reason: "account_mismatch" },
-        );
+      // (2) Verify the session inside the sealed grant before using its provider credential.
+      const row = found.row;
+      const sealedGrant = await deps.keyProvider.decrypt(row.deviceCodeEnc, row.deviceCodeKeyVersion);
+      let grant: { sessionId?: unknown; deviceCode?: unknown } | null;
+      try {
+        grant = JSON.parse(sealedGrant);
+      } catch {
+        throw ceremonyUnknown();
+      }
+      if (grant?.sessionId !== sessionId || typeof grant.deviceCode !== "string") {
+        throw ceremonyUnknown();
       }
 
       // ── (3) EXPIRY IS TERMINAL, SO IT CLAIMS. ───────────────────────────────────────────────
@@ -278,18 +286,17 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
       // absolute at mint time — so this answer costs no request. Claiming makes the aged-out state
       // dead for good rather than dead until a clock is nudged.
       if (found.outcome === "expired") {
-        await claimDeviceCeremony(deps.db, { state, now: deps.now() });
-        return jsonResponse({ status: "expired" }, { status: 200 });
+        await claimDeviceCeremony(deps.db, { ...scope, now: deps.now() });
+        return ceremonyExpired();
       }
-      const row = found.row;
-
       // ── (4) THE POLL SLOT. Atomic, and it is the shared client id's protection. ─────────────
       //
       // Denied means either too soon or a concurrent poll took the slot; both are "wait". The
       // client is told how long, and no request reaches Microsoft. A `retryAfterMs` derived from
       // the ROW's interval rather than from anything the caller sent is what makes a client that
       // ignores the cadence unable to do anything about it.
-      const lease = await leaseDeviceCeremonyPoll(deps.db, { state, now: deps.now() });
+      const lease = await leaseDeviceCeremonyPoll(deps.db, { ...scope, now: deps.now() });
+      await withAccountTx(ctx, (tx) => holdLiveSession(tx, ctx));
       if (lease.outcome === "denied") {
         return jsonResponse({
           status: "pending",
@@ -300,15 +307,13 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
         }, { status: 200 });
       }
 
-      // ── (5) ONE POLL. The device code is opened for this call only and never leaves it. ─────
-      const deviceCode = await deps.keyProvider.decrypt(row.deviceCodeEnc, row.deviceCodeKeyVersion);
-
+      // ── (5) ONE POLL. The provider receives only the code from the bound grant. ─────────────
       let verdict;
       try {
         verdict = await pollDeviceCodeOnce({
           tenant: cfg.tenant,
           clientId: cfg.clientId,
-          deviceCode,
+          deviceCode: grant.deviceCode,
           intervalMs: row.pollIntervalMs,
           fetch: tokenFetch(deps),
         }, () => deps.now().getTime());
@@ -324,6 +329,7 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
         throw devicePollFailure(err, deps);
       }
 
+      await withAccountTx(ctx, (tx) => holdLiveSession(tx, ctx));
       switch (verdict.status) {
         case "pending":
           return jsonResponse({
@@ -346,8 +352,9 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
            * comes back is what the row now holds.
            */
           const widened = await noteDeviceCeremonySlowDown(deps.db, {
-            state, stepMs: SLOW_DOWN_STEP_MS, ceilingMs: MAX_POLL_INTERVAL_MS,
+            ...scope, stepMs: SLOW_DOWN_STEP_MS, ceilingMs: MAX_POLL_INTERVAL_MS,
           });
+          await withAccountTx(ctx, (tx) => holdLiveSession(tx, ctx));
           return jsonResponse({
             status: "pending",
             retryAfterMs: widened?.pollIntervalMs ?? verdict.nextIntervalMs,
@@ -362,13 +369,11 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
           // Both terminal, both "start again", and neither is a fault. Claimed so the state cannot
           // be polled further, and answered as 200 rather than as an error: the person declined or
           // ran out of time, and nothing about this request failed.
-          await claimDeviceCeremony(deps.db, { state, now: deps.now() });
+          await claimDeviceCeremony(deps.db, { ...scope, now: deps.now() });
           return jsonResponse({ status: verdict.status }, { status: 200 });
         }
 
         case "granted": {
-          const tokens = verdict.tokens;
-
           /**
            * The claim, before the mailbox is written and after the tokens are in hand.
            * `claimDeviceCeremony` is the single-use UPDATE, so exactly one caller proceeds past
@@ -378,9 +383,12 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
            * that narrow race for a worse failure: a claim followed by a failed exchange leaves
            * somebody with a burnt ceremony and a Microsoft screen that said yes.
            */
-          const claimed = await claimDeviceCeremony(deps.db, { state, now: deps.now() });
+          const claimed = await claimDeviceCeremony(deps.db, { ...scope, now: deps.now() });
           if (claimed.outcome === "unknown") throw ceremonyUnknown();
+          const expiresAt = claimed.row.grantExpiresAt;
+          if (deps.now().getTime() >= expiresAt.getTime()) return ceremonyExpired();
 
+          const tokens = verdict.tokens;
           if (!tokens.refreshToken) {
             // No `offline_access` in the GRANTED scopes. The tokens are valid and useless: an
             // access token lasts an hour and there would be nothing to renew it with. Named as the
@@ -425,7 +433,11 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
               imap: MS_MAILBOX_PRESET.imap,
               smtp: MS_MAILBOX_PRESET.smtp,
             },
-          }, { probe: makeImapProbe(deps) });
+          }, { probe: makeImapProbe(deps), deviceGrantExpiresAt: expiresAt }).catch((err: unknown) => {
+            if (err instanceof DeviceGrantExpired) return null;
+            throw err;
+          });
+          if (result === null) return ceremonyExpired();
 
           return jsonResponse(
             { status: "granted", mailbox: result.mailbox, created: result.created },

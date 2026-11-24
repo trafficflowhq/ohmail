@@ -1,0 +1,54 @@
+{
+  "event": {
+    "movePending": "Moving event",
+    "undoDelete": "Undo",
+    "deleteUndone": "Event restored",
+    "undoLate": "Too late to undo",
+    "waiting": {
+      "device": "Waiting",
+      "provider": "Waiting"
+    },
+    "notSaved": "Not saved",
+    "fault": {
+      "moveCopyLeft": "The event is still in both calendars",
+      "moveUnresolved": "The move could not be confirmed. Check both calendars",
+      "moveDestinationUnavailable": "The other calendar is no longer available",
+      "signIn": "The calendar's sign-in needs renewing.",
+      "notAllowed": "The calendar does not let this change be written.",
+      "gone": "The event is no longer in that calendar.",
+      "unreachable": "The calendar could not be reached.",
+      "notKept": "The calendar would not keep this change as written.",
+      "stale": "Changed elsewhere",
+      "versionUnknown": "The calendar's copy could not be read, so nothing was sent.",
+      "earlier": "An earlier change to this event was not saved, so this one was not sent.",
+      "chained": "Press again once the change before it is done.",
+      "expired": "This change waited too long and was not sent.",
+      "unknown": "The change was not saved."
+    },
+    "refusal": {
+      "changed": "The event has changed. Open it again to see the latest version.",
+      "off": "The calendar is off for this account.",
+      "readOnly": "This calendar can be looked at, not changed.",
+      "full": "Too many changes are waiting. Try again in a moment.",
+      "left": "It is being sent now. It can be let go once the calendar has answered.",
+      "connection": "This calendar's connection is waiting for you in Settings.",
+      "invalid": "This change could not be read as written.",
+      "gone": "This event is no longer here.",
+      "tooLarge": "This change is too large to send.",
+      "replay": "This press was already sent with other contents.",
+      "unknown": "The change was not saved."
+    },
+    "taken": {
+      "deleteAudience": "Cancellation sent to {guests}",
+      "create": "Event added",
+      "update": "Changed",
+      "delete": "Deleted",
+      "move": "Event moved",
+      "answer": "Answer saved",
+      "retry": "Sending again",
+      "dismiss": "Change let go",
+      "updateAudience": "Update sent to {guests}",
+      "invitationAudience": "Invitation sent to {guests}"
+    }
+  }
+}

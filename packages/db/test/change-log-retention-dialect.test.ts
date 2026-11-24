@@ -15,7 +15,7 @@ import {
 /**
  * THE MAIL HALF OF RETENTION ON BOTH STORES — the local engine runs it on a desktop's PGlite and
  * a phone's SQLite, so the same cases the server's file pins (`retention-prune.pg.test.ts`) run
- * here through `makeTestDb`, in the default project and in `vitest.sqlite.config.ts`. The server
+ * here through `makeTestDb`, in the default project and in `test/vitest.sqlite.config.ts`. The server
  * spelling (`::timestamptz`, `greatest`, `bool_or`, `->>`, a raw `execute`) is what the device store
  * refused; each went behind the dialect seam or a builder both stores run.
  */

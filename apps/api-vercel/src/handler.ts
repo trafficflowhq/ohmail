@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
-import {
-  createApp, apiRoutes, BodyOverCeilingError, isDbBusy, dbBusyResponse, MalformedPathError,
-} from "@trafficflow/api";
+import { refusalBeforeRouter, json } from "@ohmail/server/program";
 import { hostState } from "./config.js";
-import { buildDeps } from "./deps.js";
+import { programFor } from "./deps.js";
 import { normalizeRequest } from "./normalize.js";
 import { withQuietHold } from "./quiet-hold.js";
 
@@ -11,16 +9,12 @@ export { QUIET_HOLD_MS } from "./quiet-hold.js";
 
 /**
  * The dispatch point. `app/[[...path]]/route.ts` is a thin shim over this so behaviour is
- * testable without a Next runtime. The order is fixed: mint a request id; resolve host state
- * (once per cold instance — a config fault becomes a clean 503); normalize the request URL
- * exactly once, before anything reads the path (`prefix.ts`); build `ApiDeps`; `app.handle`
- * (HEAD dispatched as GET); `Cache-Control: no-store` on anything that did not set its own.
- * Normalization precedes `buildDeps` on purpose: the cookie decision reads the Host and the
- * idempotency hash reads the path, and both must see the same canonical request the router
- * does. Nothing downstream re-normalizes (see {@link misconfigured}).
+ * testable without a Next runtime. Two things are this door's own: the quiet hold around every
+ * answer, and the answer of a host whose configuration did not load (once per cold instance — a
+ * config fault becomes a clean 503). Everything else is the one program's pipeline
+ * (`@ohmail/server/program`): the request id, normalizing the URL exactly once, the deps, the
+ * router, HEAD as GET, `Cache-Control: no-store`.
  */
-
-const app = createApp(apiRoutes);
 
 /** `res`, with `end` called when its body is read to its end, cancelled or fails; at once with no body. */
 function heldUntilSent(res: Response, end: () => void): Response {
@@ -62,118 +56,28 @@ export function handleApiRequest(req: Request): Promise<Response> {
   });
 }
 
-async function answer(req: Request): Promise<Response> {
-  // One id per request, minted HERE rather than by `withRequestId`, because the failures this
-  // function handles happen before any middleware runs and were previously untraceable.
-  const requestId = randomUUID();
+function answer(req: Request): Promise<Response> {
   const state = hostState();
-
-  let normalized: Request;
-  try {
-    normalized = await normalizeRequest(req);
-  } catch (err) {
-    if (err instanceof MalformedPathError) {
-      // Malformed percent-encoding is a CLIENT error. It used to reach `matchRoute`, whose
-      // `decodeURIComponent` throws `URIError` from above the error envelope, so `/messages/%ZZ`
-      // was a logged 500 rather than the 400 it plainly is.
-      return json(400, { error: { code: "malformed_path", message: "malformed percent-encoding in path" } }, requestId);
-    }
-    // The route's own body ceiling, refused at the door before the bytes are in the heap.
-    // Distinct from the platform's own 4.5 MB cap, which fires above this function.
-    if (err instanceof BodyOverCeilingError) {
-      return json(413, {
-        error: {
-          code: "payload_too_large",
-          message: `request body exceeds this route's limit of ${err.maxBytes} bytes`,
-        },
-      }, requestId);
-    }
-    return internal(requestId, req, err);
-  }
-
-  // Already canonical — every consumer below uses THIS value.
-  const pathname = new URL(normalized.url).pathname;
-  if (!state.ok) return misconfigured(pathname, state.error, state.version, requestId);
-
-  // HEAD is dispatched as GET. Next maps an unexported HEAD onto the exported GET function, but
-  // the inner router only sees `req.method`, so `HEAD /health` matched the path with the wrong
-  // method and answered 405 — a broken liveness probe for every monitor that HEADs. The router
-  // stays strict (a route table that silently accepts a method it does not declare is worse);
-  // the HOST does the RFC 9110 mapping, and strips the body on the way out.
-  const isHead = normalized.method.toUpperCase() === "HEAD";
-  const forRouter = isHead
-    ? new Request(normalized.url, { method: "GET", headers: normalized.headers })
-    : normalized;
-
-  try {
-    const deps = buildDeps(forRouter, state.cfg);
-    deps.requestId = requestId;
-    const res = noStore(await app.handle(forRouter, deps), requestId);
-    if (!isHead) return res;
-    // HEAD: same status and headers, no body — and the produced body is discarded explicitly
-    // so a streaming route cannot leak its reader.
-    await res.body?.cancel().catch(() => { /* nothing to release */ });
-    return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
-  } catch (err) {
-    /**
-     * The busy-connection answer, as a backstop for pipelines with no envelope.
-     * `withErrorEnvelope` maps this to 503 `db_busy`, but it is installed in `FULL_PIPELINE`
-     * only: `RAW_PIPELINE` and `ANONYMOUS_PIPELINE` (`packages/api/src/app.ts`) carry no
-     * envelope, so a busy session lookup on `/events`, `/oauth/authorize` or an attachment
-     * byte route lands here — and `internal()` would call it a 500, reporting a route fault
-     * for connection contention. The same function the envelope uses, imported rather than
-     * reimplemented, so the two halves cannot drift.
-     */
-    if (isDbBusy(err)) {
-      console.warn(JSON.stringify({
-        level: "warn", event: "request_db_busy", requestId,
-        method: forRouter.method, path: safePath(forRouter.url), status: 503, code: "db_busy",
-      }));
-      // THROUGH `noStore`, like every other answer this function returns. Returning the response
-      // straight from `dbBusyResponse` skips the host's own contract — no `Cache-Control:
-      // no-store`, no `X-Request-Id` — so the one response a client is most likely to be handed
-      // repeatedly under load would be the one an intermediary may cache and the one an operator
-      // cannot correlate to a log line. Caught by the guard below rather than by review.
-      const res = noStore(dbBusyResponse(forRouter, {}, err), requestId);
-      if (!isHead) return res;
-      await res.body?.cancel().catch(() => { /* nothing to release */ });
-      return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
-    }
-    return internal(requestId, forRouter, err);
-  }
+  return state.ok ? programFor(state.cfg).dispatch(req) : unconfigured(req, state.error, state.version);
 }
 
 /**
- * The last line before the platform's own HTML error page, which an API client cannot parse.
- * `withErrorEnvelope` already maps everything a handler throws, so reaching here means the
- * failure was outside the pipeline (a middleware, or a raw route with no envelope above it).
- * The log line is structured and sanitized: a driver error's `message` routinely contains
- * `host=…&user=…` and a `postgres` error carries the failing query, and the log drain keeps
- * all of it. What an operator needs is which request, where, and what class of failure —
- * the error's class name and `code`, plus the route. Message and stack are deliberately
- * omitted: if class + code + route cannot reproduce it, the fix is a test.
+ * The answer of a host whose configuration did not load. The path is canonicalized exactly as the
+ * program would (`normalize.ts`), so a malformed path is still a 400 and `/api/health` is still
+ * `/health`; then {@link misconfigured}.
  */
-function internal(requestId: string, req: Request, err: unknown): Response {
-  const e = err as { name?: unknown; code?: unknown; constructor?: { name?: string } } | null;
-  console.error(JSON.stringify({
-    level: "error",
-    event: "unhandled",
-    requestId,
-    method: req.method,
-    path: safePath(req.url),
-    errorClass: typeof e?.name === "string" ? e.name : e?.constructor?.name ?? "unknown",
-    errorCode: typeof e?.code === "string" ? e.code : null,
-  }));
-  return json(500, { error: { code: "internal", message: "internal error" } }, requestId);
-}
-
-/** The path only — a query string can carry a token, and no log line needs one. */
-function safePath(url: string): string {
+async function unconfigured(req: Request, error: string, version: string): Promise<Response> {
+  const requestId = randomUUID();
+  let pathname: string;
   try {
-    return new URL(url).pathname;
-  } catch {
-    return "?";
+    pathname = new URL((await normalizeRequest(req)).url).pathname;
+  } catch (err) {
+    const refused = refusalBeforeRouter(err, requestId);
+    if (refused) return refused;
+    console.error(JSON.stringify({ level: "error", event: "unhandled", requestId, method: req.method }));
+    return json(500, { error: { code: "internal", message: "internal error" } }, requestId);
   }
+  return misconfigured(pathname, error, version, requestId);
 }
 
 /**
@@ -190,31 +94,4 @@ function misconfigured(pathname: string, error: string, version: string, request
     return json(503, { ok: false, version, error: "config_invalid", detail: error }, requestId);
   }
   return json(503, { error: { code: "service_misconfigured", message: "service is misconfigured" } }, requestId);
-}
-
-function json(status: number, body: unknown, requestId: string): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-      "X-Request-Id": requestId,
-    },
-  });
-}
-
-/**
- * `Cache-Control: no-store` unless the route already declared its own (SSE sets `no-cache`,
- * `/health` sets `no-store`), plus the request id on every response so a client can quote it in
- * a bug report. Nothing on this API is cacheable — it is all per-account mutable state behind a
- * session — and a shared cache holding one account's `/sync` response is the worst bug this
- * codebase could ship. A NEW Response is built rather than mutating headers, because a
- * Response's header guard may forbid that; the body is passed through untouched, so a stream
- * stays a stream.
- */
-function noStore(res: Response, requestId: string): Response {
-  const headers = new Headers(res.headers);
-  if (!headers.has("cache-control")) headers.set("Cache-Control", "no-store");
-  headers.set("X-Request-Id", requestId);
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }

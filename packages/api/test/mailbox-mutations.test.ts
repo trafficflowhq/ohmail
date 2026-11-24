@@ -53,6 +53,12 @@ describe("mailbox mutations (create / update / delete)", () => {
     expect(imap.meta).toEqual({ host: "imap.example", port: 993, secure: true, user: "mila" });
     const smtp = rows.find((r) => r.transport === "smtp")!;
     expect(await KP.decrypt(smtp.secretEnc, smtp.keyVersion)).toBe("mailbox-smtp-password");
+
+    // Connecting is not agreeing to be organized: the new mailbox reads, with no consent on record.
+    const [row] = await db.select().from(mailboxes).where(eq(mailboxes.id, dto.id));
+    expect(row!.organizerRole).toBe("reader");
+    expect(row!.organizeConsentedAt).toBeNull();
+    expect(row!.takeoverAuthorizedAt).toBeNull();
   });
 
   it("POST /mailboxes without an smtp block creates only the imap credential row", async () => {
@@ -280,7 +286,7 @@ describe("the waiting filings of a mailbox — read, Try again now, Leave them w
       accountId: s.accountId, mailboxId: id, dedupKey: "mid:<waits@example.test>", bodyHash: "waits",
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Receipts", observedFolder: "ohmail/Reads", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Receipts", observedFolder: "ohmail/Reads", lastSetBy: "us",
       updatedAt: new Date(FIXED_NOW.getTime() - 3_600_000), attempts: 1, lastErrorClass: "refused",
     });
     return { db, deps, s, id, messageId: m!.id };

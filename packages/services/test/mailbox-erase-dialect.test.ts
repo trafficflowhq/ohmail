@@ -12,7 +12,7 @@ import { StaticKeyProvider } from "@trafficflow/core";
 import {
   ProfileUnavailableError, signatureReceipt, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
-import { effectiveMailboxSignatures, makeMailboxService, profileImportService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, effectiveMailboxSignatures, makeMailboxService, profileImportService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * ERASING ONE MAILBOX HAS TO RUN ON THE STORE A STANDALONE PHONE CARRIES.
@@ -37,7 +37,7 @@ const svc = makeMailboxService({ keyProvider: KP });
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "erase-dialect" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "erase-dialect" });
 
 /** Every row of every table the store declares, as text: where a receipt would have to hide. */
 async function everyRow(db: Db): Promise<string[]> {
@@ -63,16 +63,16 @@ async function seed(db: Db): Promise<{
   }).returning();
   const mailboxId = mb!.id;
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: "enc:xxxx", keyVersion: 1,
+    mailboxId, accountId, transport: "imap", secretEnc: "enc:xxxx", keyVersion: 1,
   });
-  await db.insert(mailboxFolders).values({ mailboxId, folder: "INBOX" });
+  await db.insert(mailboxFolders).values({ mailboxId, accountId, folder: "INBOX" });
   const [thread] = await db.insert(threads).values({ accountId }).returning();
   const key = `mid:${accountId.slice(0, 8)}`;
   const [msg] = await db.insert(messages).values({
     accountId, mailboxId, threadId: thread!.id, messageIdHeader: key,
     bodyHash: key, dedupKey: key, subject: "one message", fromAddress: "giulia@example.test",
   }).returning();
-  await db.insert(messageBodies).values({ messageId: msg!.id, text: "the body" });
+  await db.insert(messageBodies).values({ messageId: msg!.id, accountId: msg!.accountId, text: "the body" });
   const [draft] = await db.insert(drafts).values({
     accountId, mailboxId, subject: "unsent", body: "unsent",
   }).returning();
@@ -130,7 +130,7 @@ describe("removing one mailbox WITH erase, on either store", () => {
     const [row] = await db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
     expect(row!.signature, "the erased mailbox kept its signature").toBeNull();
     expect(row!.signatureHtml).toBeNull();
-    const maps = await effectiveMailboxSignatures(db, accountId);
+    const maps = await effectiveMailboxSignatures(dbFor(db, accountId), accountId);
     expect(maps.signatures[mailboxId]).toBeUndefined();
     expect(maps.signaturesHtml[mailboxId]).toBeUndefined();
   });
@@ -249,7 +249,7 @@ describe("removing one mailbox WITH erase, on either store", () => {
     expect(await read(mailboxId)).toMatchObject({ signature: null, signatureHtml: null });
     expect(await read(removed!.id), "a plain removal stays reversible with its signature").toMatchObject(sig);
     expect(await read(live!.id)).toMatchObject(sig);
-    const maps = await effectiveMailboxSignatures(db, accountId);
+    const maps = await effectiveMailboxSignatures(dbFor(db, accountId), accountId);
     expect(maps.signatures[mailboxId]).toBeUndefined();
     expect(maps.signaturesHtml[mailboxId]).toBeUndefined();
     expect(await clearErasedSignatures(db), "a second run finds nothing").toBe(0);
@@ -305,7 +305,7 @@ describe("the storage counter across an erase, on either store", () => {
         }).returning();
         await db.transaction(async (tx) => {
           await reserveBodyBytes(tx as unknown as Tx, d, accountId, BODY.length, null);
-          await tx.insert(messageBodies).values({ messageId: m!.id, text: BODY });
+          await tx.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: BODY });
         });
       }
     };

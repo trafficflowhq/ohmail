@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -183,15 +183,13 @@ describe("latest moves last, and only over a version tag that is whole", () => {
  */
 describe("a candidate run builds rc-<sha> and promotes nothing", () => {
   const TAGS = join(ROOT, publicRel("github/scripts/ghcr-image-tags.sh"));
-  const decide = (env: Record<string, string>): { out: string; rc: number } => {
-    try {
-      const out = execFileSync("bash", [TAGS],
-        { env: { PATH: process.env.PATH ?? "", ...env }, encoding: "utf8" });
-      return { out, rc: 0 };
-    } catch (e) {
-      const err = e as { status?: number; stdout?: string; stderr?: string };
-      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, rc: err.status ?? 1 };
-    }
+  const decide = (env: Record<string, string>) => {
+    const { status, stdout, stderr, error } = spawnSync("bash", [TAGS], {
+      env: { PATH: process.env.PATH ?? "", ...env },
+      encoding: "utf8",
+    });
+    if (error) throw error;
+    return { out: stdout + stderr, rc: status, stdout, stderr };
   };
   const SHA = "0123456789abcdef0123456789abcdef01234567";
   const blocks = runBlocks();
@@ -208,11 +206,28 @@ describe("a candidate run builds rc-<sha> and promotes nothing", () => {
   });
 
   it("a candidate yields rc-<sha> and promote_public=no", () => {
-    const { out, rc } = decide({ EVENT_NAME: "workflow_dispatch", DISPATCH_CANDIDATE: SHA, TREE_VERSION: "0.17.0" });
+    const { out, rc } = decide({
+      EVENT_NAME: "workflow_dispatch",
+      DISPATCH_CANDIDATE: SHA,
+      GITHUB_SHA: SHA,
+      TREE_VERSION: "0.17.0",
+    });
     expect(rc).toBe(0);
     expect(out).toContain(`image_tag=rc-${SHA}`);
     expect(out).toContain("promote_public=no");
     expect(out).toContain(`candidate=${SHA}`);
+  });
+
+  it.each(["different", "missing"])("refuses a candidate when the workflow commit is %s", (kind) => {
+    const { stdout, stderr, rc } = decide({
+      EVENT_NAME: "workflow_dispatch",
+      DISPATCH_CANDIDATE: SHA,
+      ...(kind === "different" ? { GITHUB_SHA: `f${SHA.slice(1)}` } : {}),
+      TREE_VERSION: "0.17.0",
+    });
+    expect(rc).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toBe("refusing candidate: the requested commit must match GITHUB_SHA\n");
   });
 
   it("a release run is unchanged: the version tag, and promote_public=yes", () => {

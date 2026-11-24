@@ -22,6 +22,7 @@ const ROOT = new URL("../", import.meta.url).pathname;
 // The roots whose modules Node executes unbundled. A browser graph is NOT one of them.
 const NODE_ROOTS = [
   "apps/worker/src",
+  "packages/organizer/src",
   "apps/server/src",
   "apps/sidecar/src",
   "packages/db/src",
@@ -129,7 +130,7 @@ describe("no workspace leaf resolves, under Node, to a source file Node cannot f
      *
      * `types` ahead of `node` is a ruling rather than a mechanism: the type layer reads SOURCE, so a
      * `dist/` nobody rebuilt can never be believed by a typecheck. Measured both ways — with `types`
-     * on dist a mutated `dist/types.d.ts` reddens `apps/webapp/app/shell/FoldersRailGroup.tsx`; with
+     * on dist a mutated `dist/types.d.ts` causes a web type error; with
      * it on src the same mutation is invisible.
      *
      * `ohmail-source` ahead of `node` is what keeps a node-platform bundle (the two host images, the
@@ -218,6 +219,6 @@ describe("no workspace leaf resolves, under Node, to a source file Node cannot f
       expect(tsFiles(`${ROOT}${root}`).length, `${root} yielded no TypeScript files`).toBeGreaterThan(0);
     }
     expect(workspaceManifests().map((m) => m.name)).toEqual(expect.arrayContaining(
-      ["@trafficflow/core", "@trafficflow/db", "@trafficflow/worker", "@ohmail/db-mail"]));
+      ["@trafficflow/core", "@trafficflow/db", "@ohmail/organizer", "@ohmail/db-mail"]));
   });
 });

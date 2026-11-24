@@ -1,0 +1,43 @@
+{
+  "component": "CodeText",
+  "state": "rest",
+  "look": "ohmarchy-light-phone",
+  "place": "cell",
+  "target": [25, 27.2031, 75.6094, 19.5938],
+  "clip": [25, 27, 76, 20],
+  "studioCommit": null,
+  "kitCommit": "fb49d823f4631edece85985237308d4a814e0e44",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "ui-monospace, \"JetBrains Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [],
+  "nodes": [],
+  "loose": { "text": [{ "said": "ABCD EFGH", "type": 0 }], "surfaces": [] }
+}

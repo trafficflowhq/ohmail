@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { mailboxes, messages, clientIdempotencyKey } from "@trafficflow/db";
+import { accounts, mailboxes, messages, clientIdempotencyKey, UNMETERED_ACCESS } from "@trafficflow/db";
 import type { RefundObligation, RefundObligationPort } from "@trafficflow/db";
-import { DraftingService } from "../src/index.js";
+import { DraftingService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
-import { makeSonnetDrafter, type AnthropicLike, type DraftPort } from "@trafficflow/core";
+import { ModelDeclinedError, makeSonnetDrafter, type AnthropicLike, type DraftPort } from "@trafficflow/core";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 
 /**
@@ -55,7 +56,7 @@ async function setup() {
     accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `obl:${randomUUID()}`,
     subject: "Seed subject", fromAddress: "sender@example.com", snippet: "seed", date: NOW,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   return { db, accountId, messageId: m!.id, ctx };
 }
 
@@ -147,6 +148,20 @@ describe("DraftingService — a spend that bought nothing", () => {
     // refund is owed is discovering it one charge too late.
     expect(credits.spends).toEqual([]);
   });
+
+  it("a letter in a DISCONNECTED mailbox is refused before a credit moves: no draft could be stored there", async () => {
+    const { db, ctx, messageId } = await setup();
+    const [m] = await db.select({ mailboxId: messages.mailboxId }).from(messages).where(eq(messages.id, messageId));
+    await db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, m!.mailboxId));
+    const credits = fakeSpendPort();
+    const drafter = { draft: vi.fn(throwingDrafter.draft) };
+
+    await expect(svc.draftFromMessage(ctx, messageId, {
+      drafter, credits, obligations: fakeObligations(), attemptKey,
+    })).rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
+    expect(credits.spends).toEqual([]);
+    expect(drafter.draft).not.toHaveBeenCalled();
+  });
 });
 
 /**
@@ -163,6 +178,30 @@ describe("DraftingService — the model declined the draft", () => {
     usage: { input_tokens: 900, output_tokens: 0 },
   }) } } as AnthropicLike;
   const decliningDrafter: DraftPort = makeSonnetDrafter(refusing);
+
+  it("keeps the charge when the model runs out of tokens after showing draft words", async () => {
+    const { ctx, messageId } = await setup();
+    const credits = fakeSpendPort();
+    credits.exclusive();
+    const obligations = fakeObligations();
+    const delivered: string[] = [];
+    const drafter: DraftPort = {
+      async draft(_input, call) {
+        call?.onPreview?.("Here are the first words.");
+        throw new ModelDeclinedError("max_tokens", null);
+      },
+    };
+
+    const err = await svc.draftFromMessage(ctx, messageId, {
+      drafter, credits, obligations, attemptKey, onPreview: (text) => delivered.push(text),
+    }).catch((e: unknown) => e);
+    expect(delivered).toEqual(["Here are the first words."]);
+    expect(credits.releases.map((release) => release.refund)).toEqual([false]);
+    expect(obligations.owed).toEqual([]);
+    expect(err).toMatchObject({
+      code: "ai_draft_declined", httpStatus: 422, retryable: false, details: { credits: "used" },
+    });
+  });
 
   it("the refund LANDS: 422 `ai_draft_declined`, credits returned, not retryable", async () => {
     const { ctx, accountId, messageId } = await setup();
@@ -334,4 +373,26 @@ describe("DraftingService — the refund survives a failed debt write", () => {
     expect(named).toHaveLength(1);
     expect(named[0]).toMatchObject({ accountId, attempt: charged(credits) });
   });
+});
+
+it("withholds a paid press when the account turns AI off before the model dispatch", async () => {
+  const { db, ctx, accountId, messageId } = await setup();
+  await db.insert(accounts).values({ id: accountId, name: "draft account", aiEnabled: true });
+  const credits = fakeSpendPort();
+  const spend = credits.spend.bind(credits);
+  credits.spend = async (...args) => {
+    const outcome = await spend(...args);
+    await db.update(accounts).set({ aiEnabled: false }).where(eq(accounts.id, accountId));
+    return outcome;
+  };
+  const draft = vi.fn(async () => ({ subject: "Reply", body: "A draft", rationale: "" }));
+  await svc.draftFromMessage(ctx, messageId, {
+    drafter: { draft }, credits, obligations: fakeObligations(), attemptKey,
+    access: {
+      access: async () => ({ ...UNMETERED_ACCESS }),
+      accessOrFault: async () => ({ ...UNMETERED_ACCESS }),
+    },
+  }).catch(() => undefined);
+  expect(draft).toHaveBeenCalledTimes(0);
+  expect(credits.releases).toEqual([expect.objectContaining({ refund: true })]);
 });

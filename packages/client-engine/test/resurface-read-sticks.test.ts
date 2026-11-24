@@ -1,18 +1,15 @@
+import type { EngineMessage, EngineMutation, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   HttpAdapter,
   OhmailEngine,
   isResurfaced,
   ohboxView,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type MutationOutcome,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * A RESURFACED MESSAGE KEEPS ITS GENUINE READ STATE, AND READING IT STICKS.

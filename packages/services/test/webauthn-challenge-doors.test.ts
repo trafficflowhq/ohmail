@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import { sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { sessions } from "@trafficflow/db";
+import { bindDb, sessions } from "@trafficflow/db";
 import { webauthnChallenges, WEBAUTHN_CHALLENGE_RETENTION_MS } from "@trafficflow/db/cloud";
 import {
-  AuthService, makeTestAuthDeps,
+  AuthService, dbFor, makeTestAuthDeps,
   type ServiceContext, type SessionUser,
 } from "../src/index.js";
 import { SoftwareAuthenticator } from "./webauthn-authenticator.js";
@@ -37,8 +37,10 @@ async function harness(): Promise<Harness> {
   const now = (): Date => START;
   return {
     db, svc,
+    // A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
     ctxFor: (over = {}) => ({
-      db, accountId: "", userId: null, now, requestId: "r", ip: "1.2.3.4", ...over,
+      db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+      accountId: "", userId: null, now, requestId: "r", ip: "1.2.3.4", ...over,
     }),
   };
 }
@@ -143,7 +145,7 @@ describe("the three ceremony START doors", () => {
     // A row is DUE, or the prune returns before it ever reaches the delete and this arm measures
     // nothing — which is exactly how its first version passed its own mutant.
     const stale = await seedStaleChallenge(h);
-    const broken = new Proxy(h.db as unknown as object, {
+    const broken = new Proxy(dbFor(h.db, ctx.accountId) as unknown as object, {
       get(t, k) {
         if (k === "delete") return () => { throw new Error("prune refused"); };
         const v = Reflect.get(t, k, t) as unknown;

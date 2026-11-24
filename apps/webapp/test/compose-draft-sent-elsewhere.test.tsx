@@ -6,17 +6,23 @@
  * "Saved to your drafts after a moment" while saving nothing, Send did nothing in silence, and Cancel
  * said the letter stays in Drafts. Every word typed after the send was lost on reload.
  */
+import { fireEvent, isInaccessible, within } from "@testing-library/react";
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EngineDraft, EngineMutation, SyncChange } from "@ohmail/client-engine";
+import type { SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { draftsList } from "@ohmail/client-engine";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import {
-  act, DraftServer, message, mountShell, NOW, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
+  act, DraftServer, message, mountShell, NOW, press, replyText, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
 
+/** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
+const OWNER = "acc-sent-elsewhere";
 const compose = messages.compose as unknown as Record<string, string>;
 const D = "d-elsewhere";
 
@@ -36,37 +42,55 @@ const sentElsewhere = (): SyncChange => ({
 } as unknown as SyncChange);
 
 let shell: DraftShell;
-const q = <T extends Element>(sel: string): T | null => shell.el.querySelector<T>(sel);
+const composer = () => within(shell.el).queryByRole("region", { name: messages.write.letter });
+const composeField = (name: "To" | "Subject") => {
+  const sheet = composer();
+  return sheet === null ? null : within(sheet).queryByRole<HTMLInputElement | HTMLTextAreaElement>(
+    name === "To" ? "combobox" : "textbox", { name },
+  );
+};
 const text = (): string => shell.el.textContent ?? "";
-const button = (label: string): HTMLButtonElement | null =>
-  Array.from(shell.el.querySelectorAll<HTMLButtonElement>(".view-compose button"))
-    .find((b) => (b.textContent ?? "").trim().startsWith(label) && !/later/i.test(b.textContent ?? "")) ?? null;
+const button = (name: string): HTMLButtonElement | null => {
+  const sheet = composer();
+  return sheet === null ? null : within(sheet).queryByRole("button", { name });
+};
+const status = (name: string) => within(shell.el).queryByRole("status", { name });
+const optionIn = (list: string, name: string) => {
+  const rows = within(shell.el).queryByRole("listbox", { name: list });
+  return rows && within(rows).queryByRole("option", { name });
+};
 const saves = (): EngineMutation[] => shell.sent.filter((m) => m.kind === "draft_save");
 const sends = (): EngineMutation[] => shell.sent.filter((m) => m.kind === "mail_send");
 
-async function typeSubject(value: string): Promise<void> {
-  const input = q<HTMLInputElement>("#compose-subject")!;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+async function setField(name: "To" | "Subject", value: string): Promise<void> {
+  const input = composeField(name);
+  expect(input, `the ${name} field`).not.toBeNull();
+  await act(async () => { fireEvent.change(input!, { target: { value } }); });
 }
+const typeSubject = (value: string) => setField("Subject", value);
 const pause = async (ms: number): Promise<void> => { await act(async () => { await new Promise((r) => setTimeout(r, ms)); }); };
+
+async function openFridayDraft(): Promise<void> {
+  const draft = letter();
+  const draftRow = () => optionIn(messages.drafts.title, `${draft.to[0]!.address}: ${draft.subject}`);
+  await waitFor(() => draftRow() !== null, "the letter in Drafts");
+  const row = draftRow();
+  expect(row?.dataset.id).toBe(draft.id);
+  await press(row, "open the letter");
+  await waitFor(() => composeField("Subject")?.value === draft.subject, "the editor on the letter");
+}
 
 /** Open the letter from Drafts, as the tester did, and let the other device's send arrive. */
 async function openThenSentElsewhere(): Promise<void> {
   shell = await mountShell("#/drafts", [], [letter()]);
-  await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-  await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-  await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+  await openFridayDraft();
   shell.remote.push(sentElsewhere());
   await act(async () => { await shell.engine.syncOnce().catch(() => undefined); });
   await waitFor(() => (shell.engine.read().get<{ status?: string }>("draft", D)?.status) === "sent", "the delta applied");
 }
 
-beforeEach(() => { window.localStorage.clear(); window.sessionStorage.clear(); stubDom(); });
-afterEach(async () => { await unmountAll(); });
+beforeEach(() => { window.localStorage.clear(); window.sessionStorage.clear(); setStorageOwner(OWNER); stubDom(); });
+afterEach(async () => { await unmountAll(); resetStorageOwnerForTest(); });
 
 describe("a draft sent from another device while it is open here", () => {
   it("says so at once, and stops promising to save", async () => {
@@ -114,24 +138,25 @@ describe("a draft sent from another device while it is open here", () => {
 
   it("Cancel states the true state: the letter was sent, nothing stays in Drafts", async () => {
     await openThenSentElsewhere();
-    await press(q<HTMLButtonElement>(".compose-foot .compose-cancel, .compose-cancel"), "Cancel");
-    const what = q<HTMLElement>("#compose-cancel-what")?.textContent ?? "";
-    expect(what, "Cancel said the sent letter stays in Drafts").toBe(compose.cancelWhatSentElsewhere);
+    expect(isInaccessible(within(composer()!).getByText(compose.cancelWhatSentElsewhere!))).toBe(false);
+    const discard = button(`Discard. ${compose.cancelWhatSentElsewhere}`);
+    expect(discard, "Discard did not say the letter was already sent").not.toBeNull();
+    await press(discard, "Discard");
+    expect(shell.sent.filter((m) => m.kind === "draft_discard")).toEqual([]);
+    expect(draftsList(shell.engine.read(), NOW)).toEqual([]);
   }, 30_000);
 
   it("a reload brings nothing back as a draft: the unchanged sent letter leaves this browser's buffer", async () => {
     await openThenSentElsewhere();
-    const { readComposeDraft, readComposeRow } = await import("../app/shell/compose.js");
+    const { readComposeDraft, readComposeRow } = await import("@ohmail/app-logic/writing/compose");
     await waitFor(() => text().includes(compose.sentElsewhere!), "the sentence");
-    expect({ subject: readComposeDraft().subject, row: readComposeRow() }, "a reload would restore the sent letter and save it as a draft")
+    expect({ subject: readComposeDraft(storageOwner()).subject, row: readComposeRow(storageOwner()) }, "a reload would restore the sent letter and save it as a draft")
       .toEqual({ subject: "", row: null });
   }, 30_000);
 
   it("words typed before the send's word arrived, and never saved, are kept as the new draft", async () => {
     shell = await mountShell("#/drafts", [], [letter()]);
-    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+    await openFridayDraft();
     await typeSubject("Plans for Friday, typed in the pause");
     shell.remote.push(sentElsewhere());
     await act(async () => { await shell.engine.syncOnce().catch(() => undefined); });
@@ -150,11 +175,10 @@ describe("a draft sent from another device while it is open here", () => {
     await waitFor(() => saves().length > 0, "the new draft");
     const fresh = (shell.sent.find((m) => m.kind === "draft_save") as { draftId?: string | null }).draftId ?? null;
     expect(fresh, "premise: the new draft is a create").toBeNull();
-    await press(q<HTMLButtonElement>(".compose-cancel"), "Cancel");
-    expect(q<HTMLElement>("#compose-cancel-what")?.textContent).toBe(compose.cancelWhatSentElsewhereTyped);
-    const confirm = Array.from(shell.el.querySelectorAll<HTMLButtonElement>(".compose-confirm button"))
-      .find((b) => (b.textContent ?? "").trim() === compose.cancelConfirm) ?? null;
-    await press(confirm, "Discard message");
+    expect(isInaccessible(within(composer()!).getByText(compose.cancelWhatSentElsewhereTyped!))).toBe(false);
+    const discard = button(`Discard. ${compose.cancelWhatSentElsewhereTyped}`);
+    expect(discard, "Discard did not say it would delete only the words typed here").not.toBeNull();
+    await press(discard, "Discard the new draft");
     await waitFor(() => shell.sent.some((m) => m.kind === "draft_discard"), "the delete");
     const gone = shell.sent.filter((m) => m.kind === "draft_discard").map((m) => (m as { draftId?: string }).draftId);
     expect(gone.length === 1 && gone[0] !== D, `the delete named ${String(gone)}`).toBe(true);
@@ -164,9 +188,7 @@ describe("a draft sent from another device while it is open here", () => {
 describe("CONTROLS — nothing here is called sent elsewhere", () => {
   it("editing offline: the save waits on the outbox, the ordinary sentence stands, nothing is called sent", async () => {
     shell = await mountShell("#/drafts", [], [letter()]);
-    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+    await openFridayDraft();
     shell.offline.on = true;
     await typeSubject("Plans for Friday, written offline");
     await pause(AUTOSAVE_DELAY_MS + 400);
@@ -178,9 +200,7 @@ describe("CONTROLS — nothing here is called sent elsewhere", () => {
 
   it("an ordinary open letter autosaves to its own row and says the ordinary sentence", async () => {
     shell = await mountShell("#/drafts", [], [letter()]);
-    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+    await openFridayDraft();
     await act(async () => { await shell.engine.syncOnce().catch(() => undefined); });
     await typeSubject("Plans for Friday, edited");
     await pause(AUTOSAVE_DELAY_MS + 400);
@@ -192,9 +212,7 @@ describe("CONTROLS — nothing here is called sent elsewhere", () => {
 
   it("this tab's own send is not 'sent from another device'", async () => {
     shell = await mountShell("#/drafts", [], [letter()]);
-    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+    await openFridayDraft();
     await press(button("Send"), "Send");
     await waitFor(() => sends().length === 1, "the send");
     await pause(300);
@@ -204,9 +222,7 @@ describe("CONTROLS — nothing here is called sent elsewhere", () => {
 
   it("this tab's own send, the server's sent row arriving on /sync before the send's answer", async () => {
     shell = await mountShell("#/drafts", [], [letter()]);
-    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+    await openFridayDraft();
     let answer: () => void = () => {};
     shell.sendGate.wait = new Promise<void>((r) => { answer = r; });
     await press(button("Send"), "Send");
@@ -223,14 +239,10 @@ describe("CONTROLS — nothing here is called sent elsewhere", () => {
 
   it("Discard of a live draft still deletes it, and says so", async () => {
     shell = await mountShell("#/drafts", [], [letter()]);
-    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
-    await press(q<HTMLButtonElement>(".compose-cancel"), "Cancel");
-    expect(q<HTMLElement>("#compose-cancel-what")?.textContent).toBe(compose.cancelWhat);
-    const confirm = Array.from(shell.el.querySelectorAll<HTMLButtonElement>(".compose-confirm button"))
-      .find((b) => (b.textContent ?? "").trim() === compose.cancelConfirm) ?? null;
-    await press(confirm, "Discard message");
+    await openFridayDraft();
+    await press(button("Discard"), "Discard");
+    await waitFor(() => status(messages.compose.toastDiscard) !== null, "the discard status");
+    expect(within(status(messages.compose.toastDiscard)!).queryByRole("button", { name: "Undo" })).not.toBeNull();
     await waitFor(() => shell.sent.some((m) => m.kind === "draft_discard"), "the delete");
     expect(shell.sent.filter((m) => m.kind === "draft_discard").map((m) => (m as { draftId?: string }).draftId)).toEqual([D]);
   }, 30_000);
@@ -244,29 +256,34 @@ describe("CONTROLS — nothing here is called sent elsewhere", () => {
 describe("Compose after the letter went from another device", () => {
   type Send = { draftId?: string | null; to?: Array<{ address: string }>; subject?: string; body?: string };
   let server: DraftServer;
-  const reply = (): string => replySurface(shell.el)?.textContent ?? "";
+  const reply = (): string => replyText(shell.el)?.textContent ?? "";
   const listed = (): string[] => draftsList(shell.engine.read(), NOW).map((d) => d.subject);
-  const toasts = (): string => [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
-  const go = async (hash: string): Promise<void> => { await act(async () => { window.location.hash = hash; }); await pause(200); };
+  const recoveryToast = () => status(messages.compose.sentElsewhereMovedToDrafts) !== null;
+  const go = async (hash: string): Promise<void> => {
+    await act(async () => {
+      window.location.hash = hash;
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await pause(200);
+  };
   const drain = async (): Promise<void> => { await act(async () => { await shell.engine.syncOnce().catch(() => undefined); }); await pause(300); };
-  const field = (id: string): string => q<HTMLInputElement>(`#${id}`)?.value ?? "";
-  const surface = (): HTMLElement | null => q<HTMLElement>(".view-compose .rte-surface");
-  async function setField(id: string, value: string): Promise<void> {
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => { setter.call(q<HTMLInputElement>(`#${id}`)!, value); q(`#${id}`)!.dispatchEvent(new Event("input", { bubbles: true })); });
-  }
+  const field = (name: "To" | "Subject"): string => composeField(name)?.value ?? "";
+  const surface = (): HTMLElement | null => {
+    const sheet = composer();
+    return sheet === null ? null : within(sheet).queryByRole("textbox", { name: messages.write.text });
+  };
   async function write(to: string, subject: string, body: string): Promise<void> {
     await go("#/compose");
     await waitFor(() => surface() !== null, "the composer");
-    await setField("compose-to", `${to}, `);
-    await setField("compose-subject", subject);
+    await setField("To", `${to}, `);
+    await setField("Subject", subject);
     await act(async () => { typeInto(surface()! as never, body); });
     await settleEditor();
   }
   /** A writes a letter and its pause saves it to the server; the row is returned. */
   async function started(): Promise<EngineDraft> {
     server = new DraftServer();
-    shell = await mountShell("#/ohbox", [message("m1")], [], { server });
+    shell = await mountShell("#/history", [message("m1")], [], { server });
     await write("lena@example.invalid", "Plans for Friday", "Shall we meet at noon?");
     await pause(AUTOSAVE_DELAY_MS + 400);
     await waitFor(() => server.rows.size === 1, "the letter saved to the server");
@@ -285,13 +302,15 @@ describe("Compose after the letter went from another device", () => {
 
   it("closed on A, sent on B: Compose on A is blank, and a new letter carries only its own audience and words", async () => {
     const row = await started();
-    await go("#/ohbox");
+    await go("#/history");
     await sentOnB(row);
     await drain();
     await go("#/compose");
     await waitFor(() => surface() !== null, "the composer");
-    expect({ to: field("compose-to"), subject: field("compose-subject"), body: surface()?.textContent ?? "", note: text().includes(compose.sentElsewhere!) },
+    expect({ to: field("To"), subject: field("Subject"), body: surface()?.textContent ?? "", note: text().includes(compose.sentElsewhere!) },
       "Compose reopened the letter B sent").toEqual({ to: "", subject: "", body: "", note: false });
+    const toLine = within(composer()!).getByRole("group", { name: "To" });
+    expect(within(toLine).queryAllByRole("button", { name: /^Remove / })).toHaveLength(0);
     await write("bo@example.invalid", "Lunch", "Lunch on Monday?");
     await press(button("Send"), "Send");
     await waitFor(() => sends().length === 1, "A's send");
@@ -305,21 +324,21 @@ describe("Compose after the letter went from another device", () => {
     await sentOnB(row);
     await drain();
     await waitFor(() => text().includes(compose.sentElsewhere!), "the note");
-    await go("#/ohbox");
+    await go("#/history");
     await go("#/compose");
     await waitFor(() => surface() !== null, "the composer");
-    expect({ subject: field("compose-subject"), note: text().includes(compose.sentElsewhere!), drafts: listed() })
+    expect({ subject: field("Subject"), note: text().includes(compose.sentElsewhere!), drafts: listed() })
       .toEqual({ subject: "", note: false, drafts: [] });
   }, 60_000);
 
   const movedSaid = (): Promise<boolean> =>
-    waitFor(() => toasts().includes(compose.sentElsewhereMovedToDrafts!), "the toast").then(() => true, () => false);
+    waitFor(recoveryToast, "the toast").then(() => true, () => false);
   /** Compose on A after the close: blank, no note, the typed words in Drafts once, and said. */
   async function composeAfterClose(toast: boolean): Promise<unknown> {
     await drain();
     await go("#/compose");
     await waitFor(() => surface() !== null, "the composer");
-    return { subject: field("compose-subject"), note: text().includes(compose.sentElsewhere!), drafts: listed(), toast };
+    return { subject: field("Subject"), note: text().includes(compose.sentElsewhere!), drafts: listed(), toast };
   }
 
   it("open on A when B sends, words typed after the note and closed inside the pause: Compose is blank, Drafts holds them", async () => {
@@ -327,8 +346,8 @@ describe("Compose after the letter went from another device", () => {
     await sentOnB(row);
     await drain();
     await waitFor(() => text().includes(compose.sentElsewhere!), "the note");
-    await setField("compose-subject", "A new plan for Monday");
-    await go("#/ohbox");
+    await setField("Subject", "A new plan for Monday");
+    await go("#/history");
     const said = await movedSaid();
     await pause(AUTOSAVE_DELAY_MS);
     expect(await composeAfterClose(said)).toEqual({ subject: "", note: false, drafts: ["A new plan for Monday"], toast: true });
@@ -337,11 +356,11 @@ describe("Compose after the letter went from another device", () => {
   it("the close's save held on the wire while the drain bringing B's send lands: Compose is blank, Drafts holds the words", async () => {
     const row = await started();
     await sentOnB(row);
-    await setField("compose-subject", "Plans for Friday and Saturday");
+    await setField("Subject", "Plans for Friday and Saturday");
     let release: () => void = () => {};
     shell.saveGate.wait = new Promise<void>((r) => { release = r; });
     const before = saves().length;
-    await go("#/ohbox");
+    await go("#/history");
     await waitFor(() => saves().length > before, "the close's save on the wire");
     await drain();
     shell.saveGate.wait = null;
@@ -352,13 +371,11 @@ describe("Compose after the letter went from another device", () => {
   it("Send as a new letter, handed off: no toast says the words are in Drafts, and the composer stays bound until it settles", async () => {
     server = new DraftServer([letter()]);
     shell = await mountShell("#/drafts", [message("m1")], [], { server, handOff: true });
-    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-    await waitFor(() => field("compose-subject") === "Plans for Friday", "the editor on the letter");
+    await openFridayDraft();
     await sentOnB(letter());
     await drain();
     await waitFor(() => text().includes(compose.sentElsewhere!), "the note");
-    await setField("compose-subject", "Plans for Friday, and Saturday");
+    await setField("Subject", "Plans for Friday, and Saturday");
     await pause(AUTOSAVE_DELAY_MS + 500);
     await waitFor(() => [...server.rows.values()].some((d) => d.status === "draft"), "the words kept as a new draft");
     const kept = [...server.rows.values()].find((d) => d.status === "draft")!.id;
@@ -367,24 +384,24 @@ describe("Compose after the letter went from another device", () => {
     let release: () => void = () => {};
     shell.sendGate.wait = new Promise<void>((r) => { release = r; });
     await press(button(compose.sendAsNew!), "Send as a new letter");
-    await waitFor(() => q(".view-compose") === null, "handed off");
+    await waitFor(() => composer() === null, "handed off");
     await pause(400);
-    const { readComposeRow } = await import("../app/shell/compose.js");
-    const whileSending = { toast: toasts().includes(compose.sentElsewhereMovedToDrafts!), bound: readComposeRow() === kept };
+    const { readComposeRow } = await import("@ohmail/app-logic/writing/compose");
+    const whileSending = { toast: recoveryToast(), bound: readComposeRow(storageOwner()) === kept };
     shell.sendGate.wait = null;
     await act(async () => { release(); });
     await pause(1500);
-    expect({ whileSending, toast: toasts().includes(compose.sentElsewhereMovedToDrafts!), rows: [...server.rows.values()].map((d) => d.status) })
+    expect({ whileSending, toast: recoveryToast(), rows: [...server.rows.values()].map((d) => d.status) })
       .toEqual({ whileSending: { toast: false, bound: true }, toast: false, rows: ["sent", "sent"] });
   }, 60_000);
 
   it("A's words saved offline are refused on reconnect: Compose is blank, Drafts holds them once, the sent row never", async () => {
     const row = await started();
     shell.offline.on = true;
-    await setField("compose-subject", "Plans for Friday and Saturday");
+    await setField("Subject", "Plans for Friday and Saturday");
     await pause(AUTOSAVE_DELAY_MS + 400);
     await waitFor(() => shell.engine.pendingMutations().some((p) => p.mutation.kind === "draft_save"), "A's save waiting");
-    await go("#/ohbox");
+    await go("#/history");
     await sentOnB(row);
     shell.offline.on = false;
     const seen: string[][] = [];
@@ -401,31 +418,35 @@ describe("Compose after the letter went from another device", () => {
     await waitFor(() => surface() !== null, "the composer");
     const sentRow = [...server.rows.values()].filter((d) => d.status === "sent").map((d) => d.id);
     expect({
-      subject: field("compose-subject"), drafts: listed(), sentRow, sentListed: seen.some((l) => l.includes("Plans for Friday")),
-      toast: toasts().includes(compose.sentElsewhereMovedToDrafts ?? "\u0000"),
+      subject: field("Subject"), drafts: listed(), sentRow, sentListed: seen.some((l) => l.includes("Plans for Friday")),
+      toast: recoveryToast(),
     }).toEqual({ subject: "", drafts: ["Plans for Friday and Saturday"], sentRow: [row.id], sentListed: false, toast: true });
   }, 60_000);
 
   it("control: an ordinary unfinished letter is still resumed by Compose", async () => {
     await started();
-    await go("#/ohbox");
+    await go("#/history");
     await drain();
     await go("#/compose");
     await waitFor(() => surface() !== null, "the composer");
-    expect({ subject: field("compose-subject"), body: surface()?.textContent ?? "" })
+    expect({ subject: field("Subject"), body: surface()?.textContent ?? "" })
       .toEqual({ subject: "Plans for Friday", body: "Shall we meet at noon?" });
   }, 60_000);
 
   /** A reply written on A and closed; its row saved to the server. */
   async function replied(words: string): Promise<EngineDraft> {
     server = new DraftServer();
-    shell = await mountShell("#/ohbox", [message("m1")], [], { server });
-    await waitFor(() => q(".view-ohbox .row[data-id='m1']") != null, "the row");
-    await press(q(".view-ohbox .row[data-id='m1']"), "the row");
+    const original = message("m1");
+    shell = await mountShell("#/history", [original], [], { server });
+    const historyRow = () => optionIn(messages.history.title, `${original.from.name}: ${original.subject}`);
+    await waitFor(() => historyRow() !== null, "the row");
+    const row = historyRow();
+    expect(row?.dataset.id).toBe(original.id);
+    await press(row, "the row");
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true })); });
     await settleEditor();
-    await waitFor(() => replySurface(shell.el) != null, "the reply editor");
-    await act(async () => { typeInto(replySurface(shell.el)!, words); });
+    await waitFor(() => replyText(shell.el) != null, "the reply editor");
+    await act(async () => { typeInto(replyText(shell.el)!, words); });
     await pause(AUTOSAVE_DELAY_MS + 400);
     await waitFor(() => server.rows.size === 1, "the reply saved to the server");
     return [...server.rows.values()][0]!;
@@ -433,13 +454,13 @@ describe("Compose after the letter went from another device", () => {
   const replyAgain = async (): Promise<void> => {
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true })); });
     await settleEditor();
-    await waitFor(() => replySurface(shell.el) != null, "the reply editor again");
+    await waitFor(() => replyText(shell.el) != null, "the reply editor again");
     await pause(300);
   };
   const closeReply = async (): Promise<void> => {
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
     await settleEditor();
-    await waitFor(() => replySurface(shell.el) == null, "the reply closed");
+    await waitFor(() => replyText(shell.el) == null, "the reply closed");
   };
 
   it("the reply door — written on A, closed, sent on B: Reply on A opens an empty reply", async () => {
@@ -455,11 +476,11 @@ describe("Compose after the letter went from another device", () => {
     const row = await replied("Thursday works for me");
     await closeReply();
     // A tab that died inside the pause leaves its words in the scratch only.
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Thursday works for me, at ten");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Thursday works for me, at ten");
     await sentOnB(row);
     await drain();
     await replyAgain();
-    expect({ reply: reply(), said: toasts().includes(messages.reply.sentElsewhereKept ?? "\u0000") })
+    expect({ reply: reply(), said: status(messages.reply.sentElsewhereKept) !== null })
       .toEqual({ reply: "Thursday works for me, at ten", said: true });
   }, 60_000);
 });

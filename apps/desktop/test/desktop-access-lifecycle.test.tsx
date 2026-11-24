@@ -3,11 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider } from "@ohmail/ui";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import type { EngineStatus } from "../src/bridge-fetch.js";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
-import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
+/* One declaration from the session's door: the links' two functions, and the access window's reading of a lift. */
+import { enableExternalLinks, interceptLinkClicks, liftedAt } from "@ohmail/app-logic/session";
+/* The lock as this file's own module graph builds it (the ordinary app), for the case that reads the lift it
+   records: the other cases build theirs anew per distribution. */
+import { DesktopAccessLock as LockAsLoaded } from "../src/DesktopAccessLock.js";
 
 /**
  * ═══ THE WINDOW'S LOCK, IN ITS TWO DISTRIBUTIONS ═══ out of the shared `accessLock` catalogue, so
@@ -68,7 +73,7 @@ async function paint(
       locale,
       messages: locale === "en" ? en : de,
       children: h(ThemeProvider, {
-        children: h(DesktopAccessLock, { facts: facts as never, onSignedOut: () => {} }),
+        children: h(DesktopAccessLock, { facts: facts as never, scope: null, onSignedOut: () => {} }),
       }),
     }));
   });
@@ -77,7 +82,7 @@ async function paint(
 const text = (): string => host.textContent ?? "";
 const links = (): HTMLAnchorElement[] => [...host.querySelectorAll("a")];
 const buttons = (): HTMLButtonElement[] => [...host.querySelectorAll("button")];
-const primary = (): HTMLButtonElement | undefined => buttons().find((b) => b.classList.contains("primary"));
+const primary = (): HTMLButtonElement | undefined => buttons().find((b) => b.dataset.kind === "ink");
 
 /** The window's bridge, answering the mint; every request it carried is recorded. */
 type Carried = { method: string; url: string; body: string };
@@ -310,6 +315,8 @@ describe("the window's lift and first paint", () => {
   let accessBody: unknown = REFUSED;
   let accessStatus = 200;
   let accessReads = 0;
+  let engineStatus: EngineStatus | null;
+  const delivered: EngineStatus["state"][] = [];
   const settle = async (): Promise<void> => {
     for (let i = 0; i < 12; i += 1) await act(async () => { await Promise.resolve(); });
   };
@@ -317,6 +324,8 @@ describe("the window's lift and first paint", () => {
     accessBody = REFUSED;
     accessStatus = 200;
     accessReads = 0;
+    engineStatus = null;
+    delivered.length = 0;
     localStorage.clear();
     sessionStorage.clear();
     const encode = (status: number, body: string): Uint8Array => {
@@ -331,8 +340,21 @@ describe("the window's lift and first paint", () => {
     (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
       transformCallback: () => 1,
       invoke: async (command: string, payload?: { url?: string }) => {
+        if (command === "engine_status" && engineStatus !== null) {
+          delivered.push(engineStatus.state);
+          return engineStatus;
+        }
         if (command !== "engine_request") return null;
-        if (payload?.url === "/account/access") { accessReads += 1; return encode(accessStatus, JSON.stringify(accessBody)); }
+        if (payload?.url === "/health") return encode(200, JSON.stringify({ signedIn: true }));
+        if (payload?.url === "/account/access") {
+          accessReads += 1;
+          if (accessBody === null) return new Promise<Uint8Array>(() => {});
+          return encode(accessStatus, JSON.stringify(accessBody));
+        }
+        if (payload?.url?.startsWith("/sync")) return encode(200, JSON.stringify({
+          changes: { creates: [], updates: [], moves: [], deletes: [] },
+          cursor: "1", hasMore: false, serverTime: "2026-01-01T00:00:00.000Z",
+        }));
         return encode(200, "{}");
       },
     };
@@ -350,11 +372,29 @@ describe("the window's lift and first paint", () => {
       root.render(h(NextIntlClientProvider, {
         locale: "en", messages: en,
         children: h(ThemeProvider, {
-          children: h(DesktopAccessLock, { facts: CLOSED as never, onSignedOut: () => {}, onLifted }),
+          children: h(DesktopAccessLock, { facts: CLOSED as never, scope: null, onSignedOut: () => {}, onLifted }),
         }),
       }));
     });
   }
+
+  it("keeps the account facts above the visible checking indicator and leaves sign-out available", async () => {
+    vi.useFakeTimers();
+    const { rememberHandoff } = await import("@ohmail/app-logic/doors/wall-lift");
+    rememberHandoff(null);
+    await lock(() => {});
+    const status = host.querySelector('[role="status"][aria-busy="true"]');
+    expect(status?.textContent).toBe(LOCK.checking);
+    expect(status?.querySelector(".oh-activity-line")).not.toBeNull();
+    expect(text().indexOf(LOCK.mailboxUntouched!)).toBeLessThan(text().indexOf(LOCK.checking!));
+    expect(buttons().some((b) => b.textContent === LOCK.signOut && !b.disabled)).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(host.querySelector("[aria-busy=true]")).toBeNull();
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(LOCK.pending);
+    expect(text().indexOf(LOCK.mailboxUntouched!)).toBeLessThan(text().indexOf(LOCK.pending!));
+    expect(buttons().some((b) => b.textContent === LOCK.checkAgain && !b.disabled)).toBe(true);
+
+  });
 
   it("a focus read answering open lifts the lock; refused and an older API's silence do not", async () => {
     // The return debounce reads the clock, so only `Date` is faked: past it by moving the clock,
@@ -377,6 +417,30 @@ describe("the window's lift and first paint", () => {
     await settle();
     expect(accessReads).toBe(3);
     expect(lifted).toBe(1);
+  });
+
+  it("the lift is recorded for the mounted mailbox the gate handed in, and for no other owner", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    accessBody = OPEN;
+    let lifted = 0;
+    // The gate names the mailbox; this window's storage owner names nobody here, so the two differ.
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, {
+        locale: "en", messages: en,
+        children: h(ThemeProvider, {
+          children: h(LockAsLoaded, {
+            facts: CLOSED as never, scope: "mbx_walled", onSignedOut: () => {}, onLifted: () => { lifted += 1; },
+          }),
+        }),
+      }));
+    });
+    expect(liftedAt("mbx_walled")).toBeNull();
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await settle();
+    expect(lifted).toBe(1);
+    expect(liftedAt("mbx_walled"), "the lift was not recorded for the mailbox the gate named").toBe(Date.now());
+    expect(liftedAt(null), "the lift was recorded for the window's storage owner").toBeNull();
+    expect(liftedAt("mbx_other")).toBeNull();
   });
 
   it("the first paint waits for a mailbox with no stored open, and a refused answer is the lock's facts", async () => {
@@ -403,6 +467,43 @@ describe("the window's lift and first paint", () => {
     seen.length = 0;
     await act(async () => { root.render(h(Probe, { k: null })); });
     expect(seen[0]).toBe("open");
+  });
+
+  it("keeps a refused account locked across an engine restart while access is unanswered", async () => {
+    const { DesktopGate, LIFECYCLE_POLL_MS } = await import("../src/DesktopGate.js");
+    const { bridgeFetch } = await import("../src/bridge-fetch.js");
+    const { FIRST_PAINT_VERDICT_MS } = await import("@ohmail/app-logic/doors/wall-lift");
+    vi.useFakeTimers();
+    const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    const serving: EngineStatus = { state: "serving", mode: "cloud", mailboxId: "mbx-restart", credentialState: "ready" };
+    engineStatus = serving;
+    accessBody = { metered: true };
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, {
+        locale: "en", messages: en, timeZone: "UTC",
+        children: h(ThemeProvider, { children: h(ToastHost, null, h(DesktopGate, null)) }),
+      }));
+    });
+    await advance(1_000);
+    expect(accessReads, "the account door did not open").toBeGreaterThan(0);
+    accessStatus = 402;
+    accessBody = { error: { code: "subscription_required", details: { reason: "suspended" } } };
+    await act(async () => { expect((await bridgeFetch("/account/access")).status).toBe(402); });
+    expect(host.querySelector("main.oh-page h1")?.textContent).toBe(LOCK.suspendedTitle);
+
+    accessBody = null;
+    const readsBeforeRestart = accessReads;
+    engineStatus = { ...serving, state: "restarting" };
+    await advance(LIFECYCLE_POLL_MS);
+    expect(delivered.at(-1)).toBe("restarting");
+    engineStatus = serving;
+    await advance(1_000);
+    expect(delivered.at(-1)).toBe("serving");
+    await advance(FIRST_PAINT_VERDICT_MS + 1);
+
+    expect(accessReads, "the new engine did not ask for access").toBeGreaterThan(readsBeforeRestart);
+    expect(host.querySelector("main.oh-page h1")?.textContent).toBe(LOCK.suspendedTitle);
+    expect(host.querySelector(".fr-frame")).toBeNull();
   });
 
   it("before a mailbox is named the account is asked at once and on the clock: refused is the lock's facts, offline is unreachable", async () => {

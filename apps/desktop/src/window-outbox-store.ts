@@ -1,7 +1,7 @@
 /**
  * THE WINDOW'S MIRROR, WITH ITS QUEUED CHANGES KEPT ON THIS MACHINE. The mirror stays in memory,
  * rebuilt at every launch from the engine on this computer; the outbox is the one part nothing
- * rebuilds, and in memory it died with the window. The two outbox types go to the engine's
+ * rebuilds, and in memory it died with the window. Pending mail and calendar changes go to the engine's
  * `/local/window/outbox` door before the engine publishes them (write-then-publish) and come back
  * at the next launch, where the engine's restore replays them under their original keys. Every
  * other row costs no request. Each request names the mailbox this window serves and the door
@@ -13,6 +13,7 @@ import {
   BaseMirrorStore, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, SENT_FOLDERS_META, recordKey, retryAfterMsOf,
   type MirrorRecord,
 } from "@ohmail/client-engine";
+import { CALENDAR_OUTBOX_TYPE } from "@ohmail/client-engine/calendar-writes";
 
 export const WINDOW_OUTBOX_PATH = "/local/window/outbox";
 
@@ -25,7 +26,8 @@ const WRITE_WAIT_CAP_MS = 1_000;
 /** Pages one read may follow; a door that never ends is a fault, not a large outbox. */
 const MAX_PAGES = 1_000;
 
-const isCarriedType = (type: string): boolean => type === OUTBOX_TYPE || type === OUTBOX_ABANDONED_TYPE;
+const isCarriedType = (type: string): boolean =>
+  type === OUTBOX_TYPE || type === OUTBOX_ABANDONED_TYPE || type === CALENDAR_OUTBOX_TYPE;
 
 /** Where a window keeps what outlives it besides the outbox: the webview's `localStorage` in the app. */
 export type WindowKeep = Pick<Storage, "getItem" | "setItem" | "removeItem">;

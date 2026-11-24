@@ -3,9 +3,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { HttpAdapter, OhmailEngine, threadOf } from "@ohmail/client-engine";
-import { AttachmentStrip } from "../app/components/AttachmentStrip.js";
-import { MessageBody } from "../app/components/MessageBody.js";
-import { useMessageAttachments } from "../app/shell/attachments.js";
+import { ReaderFilesFixture } from "./fixtures/reader-files";
+import { MessageBody } from "../../../packages/letter-body/src/MessageBody.js";
+import { useMessageAttachments } from "@ohmail/app-logic/reader/attachments";
 
 /**
  * ═══ EVERY PART OF A MESSAGE IS DOWNLOADABLE, WHICHEVER WAY THE BODY DRAWS ═════════════════
@@ -23,7 +23,7 @@ import { useMessageAttachments } from "../app/shell/attachments.js";
  *
  * ── WHY THIS MOUNTS BOTH COMPONENTS ─────────────────────────────────────────────────────
  *
- * The harness below is `MessagePane`'s own wiring — the strip fed by the shell hook's `itemsOf`
+ * The harness below is the shared Reader's own wiring — the strip fed by the shell hook's `itemsOf`
  * with `{ includeInlineParts: true }`, beside the body that renders the same message — so the
  * assertions are about what a reader gets, not about the engine's filter in isolation.
  */
@@ -43,26 +43,19 @@ afterEach(async () => {
   host = null;
 });
 
-/** `MessagePane`'s wiring of the two components, copied verbatim. */
+/** The shared Reader's wiring of the two components, copied verbatim. */
 function Harness({ engine, messageId, text, html }: {
   engine: OhmailEngine;
   messageId: string;
   text: string;
   html: string | null;
 }): React.ReactElement {
-  const attachments = useMessageAttachments(engine, messageId, { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  const attachments = useMessageAttachments(engine, null, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   return h(
     React.Fragment,
     null,
-    h(MessageBody, { messageId, text, html }),
-    attachments
-      ? h(AttachmentStrip, {
-          items: attachments.itemsOf(messageId, { includeInlineParts: true }),
-          onOpen: () => {},
-          onDownloadAll: () => {},
-          downloadingAll: false,
-        })
-      : null,
+    h(MessageBody, { owner: null, messageId, text, html }),
+    attachments ? h(ReaderFilesFixture, { files: attachments, messageId }) : null,
   );
 }
 
@@ -77,19 +70,19 @@ async function render(props: Parameters<typeof Harness>[0]): Promise<void> {
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
 }
 
-/** Everything the strip drew, as one string — filenames live in `.att-name`. */
+/** Everything the strip drew, as one string — filenames live in `.oh-file-title`. */
 const stripText = (): string =>
-  [...host!.querySelectorAll(".att-strip")].map((n) => n.textContent ?? "").join(" ");
+  [...host!.querySelectorAll(".oh-files")].map((n) => n.textContent ?? "").join(" ");
 
-const tiles = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".att-tile")];
+const tiles = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".oh-file")];
 
 /** The filenames in tile order — what the partition promise is about. */
 const tileNames = (): string[] =>
-  tiles().map((t) => t.querySelector(".att-name")?.textContent ?? "");
+  tiles().map((t) => t.querySelector(".oh-file-title")?.textContent ?? "");
 
 /** The tiles wearing the "embedded" tag. */
 const marked = (): HTMLElement[] =>
-  tiles().filter((t) => t.querySelector(".att-inline") !== null);
+  tiles().filter((t) => t.querySelector(".oh-file-size")?.textContent?.includes("embedded"));
 
 /** The "Show original" / "Show as text" flip — a quiet control after the body, which only a
     prose message renders (`.mb-flip`, no longer a button inside the bar). */
@@ -147,7 +140,7 @@ describe("every part of a message is reachable from the strip", () => {
     expect(tileNames()[0], "the real file leads the list").toContain("invoice.pdf");
     expect(tileNames()[1]).toContain("signature-logo.png");
     expect(marked(), "exactly the embedded picture wears the tag").toHaveLength(1);
-    expect(marked()[0]!.querySelector(".att-name")?.textContent).toContain("signature-logo.png");
+    expect(marked()[0]!.querySelector(".oh-file-title")?.textContent).toContain("signature-logo.png");
   });
 
   it("the framed rendering lists the picture too — downloadable even where the frame paints it", async () => {

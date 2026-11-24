@@ -11,7 +11,7 @@
 
 export {
   SessionLifecycle, makeSessionLifecycle, PAIRED_DEVICE_KINDS,
-  assertWebSessionAge, classifyRefreshFailure,
+  assertWebSessionAge, classifyRefreshFailure, holdLiveSession,
   REVOKE_WEB_SESSIONS_MIN_AGE_DAYS, REVOKE_WEB_SESSIONS_MAX_AGE_DAYS,
   type SessionLifecycleDeps, type PairedDeviceKind, type RefreshFailure,
 } from "./auth/session-lifecycle.js";
@@ -21,6 +21,8 @@ export {
   PAIRING_TTL_BOUNDS, PAIRING_LABEL_MAX, PAIRING_LIVE_TOKENS_MAX,
   type PairingGrant, type PairingTokenMinted, type PairingTokenListed, type PairingTokenStatus,
   type PairingConsumed, type PairedDeviceSessionMinter, type PairLinkState,
+  mintAppHandoff, redeemAppHandoff, APP_HANDOFF_GRANT, APP_HANDOFF_TTL_MS, APP_HANDOFF_PER_HOUR, APP_HANDOFF_LIVE_MAX,
+  type AppHandoffAuditor, type AppHandoffTarget, type HandoffConsumed,
 } from "./pairing.js";
 // The leaves the lifecycle is built from, so a consumer of this entry never needs the barrel
 // for them: the crypto primitives, the config constructor, and session resolution — the same

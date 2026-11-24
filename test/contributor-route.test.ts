@@ -47,7 +47,7 @@ const ALONE_GREP = /git grep -l '@postpush: alone' -- (.+?)\)/;
 type Step = Record<string, unknown> & { name?: unknown; uses?: unknown; run?: unknown; with?: unknown };
 type Workflow = Record<string, unknown> & { on?: unknown; env?: Record<string, unknown>; jobs?: Record<string, Record<string, unknown>> };
 export type Block = { doc: string; id: string; label: string; dir: string | null; line: number; text: string; commands: string[] };
-export type Inputs = { contributor: string; docs: Record<string, string>; build: string; ci: string; claude: string };
+export type Inputs = { contributor: string; docs: Record<string, string>; build: string; ci: string; assistantGuide: string };
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const indentOf = (l: string) => /^ */.exec(l)![0].length;
@@ -240,7 +240,7 @@ export function routeFindings(inputs: Inputs): string[] {
     if (!mine || mine !== ci) out.push(`suite-services greps the alone files in ${mine ?? "nothing"}, ci.yml's plan in ${ci ?? "nothing"}`);
   }
   const install = byLabel.get("CONTRIBUTING.md · install");
-  if (install && !same(blockUnder(inputs.claude, "## Setting it up"), install.commands)) out.push("CLAUDE.md's setup block is not CONTRIBUTING.md's install block");
+  if (install && !same(blockUnder(inputs.assistantGuide, "## Setting it up"), install.commands)) out.push("AGENTS.md's setup block is not CONTRIBUTING.md's install block");
   return out;
 }
 
@@ -258,7 +258,7 @@ function real(): Inputs {
     docs: Object.fromEntries(DOCS.map((d) => [d, read(d)])),
     build: readFileSync(publicPath("github/workflows/build.yml"), "utf8"),
     ci: readFileSync(publicPath("github/workflows/ci.yml"), "utf8"),
-    claude: read("CLAUDE.md"),
+    assistantGuide: read("AGENTS.md"),
   };
 }
 

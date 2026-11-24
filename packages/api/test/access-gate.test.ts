@@ -142,9 +142,10 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
         ok: true, limits: { mailboxes: 2, storageBytes: null, canAddMailbox: true, aiEnabled: true },
         manageUrl: "https://manage.example/manage?token=live",
         lifecycle: {
-          state: "trialing", closedReason: null, trialEndsAt: "2026-09-30T20:00:00.000Z", graceUntil: null,
+          state: "trialing", closedReason: null, trialEndsAt: "2026-08-06T12:00:00.000Z", graceUntil: null,
           closedAt: null, erasureAt: null, erasedAt: null, formerlyPaid: false,
         },
+        trial: { startedAt: "2026-07-23T12:00:00.000Z" },
       } as unknown as AccessVerdict),
     }));
     const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
@@ -152,6 +153,7 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
     const body = await (await r.handler(req("GET", "/account/access", { bearer: s.token }), deps, {})).json();
     expect(body.access).toBe("open");
     expect(body.lifecycle?.state).toBe("trialing");
+    expect(body.trialProgress).toEqual({ day: 6, total: 14 });
     expect(Object.keys(body)).not.toContain("manageUrl");
   });
 
@@ -182,6 +184,36 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
     const r = await accessHandler();
     const res = await r.handler(req("GET", "/account/access", { bearer: s.token }), deps, {});
     expect((await res.json()).aiEnabled).toBe(false);
+  });
+
+  it("passes the current account's stated credit balance and allowance to Settings", async () => {
+    const read = vi.fn(async (_owner: string): Promise<AccessVerdict> => ({
+      ok: true,
+      limits: { mailboxes: 5, storageBytes: null, canAddMailbox: true, aiEnabled: false },
+      aiCredits: { remaining: 0, total: 2000 },
+      prices: { classify_ingest: 1, screener: 1, draft: 17, propose: 20, workflow: 15 },
+    }));
+    const { db, deps } = await depsWith(stubPort({ access: read }));
+    const session = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const res = await H(req("GET", "/account/access", { bearer: session.token }), deps);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.aiCredits).toEqual({ remaining: 0, total: 2000, draftCost: 17 });
+    expect(read.mock.calls.some(([id]) => id === session.accountId)).toBe(true);
+  });
+
+  it("answers with just the balance when the billing program provides no allowance", async () => {
+    const { db, deps } = await depsWith(stubPort({
+      access: async () => ({
+        ok: true,
+        limits: { mailboxes: 5, storageBytes: null, canAddMailbox: true, aiEnabled: true },
+        aiCredits: { remaining: 460 },
+      }),
+    }));
+    const session = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const res = await H(req("GET", "/account/access", { bearer: session.token }), deps);
+    expect(res.status).toBe(200);
+    expect((await res.json()).aiCredits).toEqual({ remaining: 460 });
   });
 
   it("a METERED account with a cap reads its storage: bytes, cap and the letters emptied for space", async () => {
@@ -481,7 +513,7 @@ describe("GET /account/access tells what the mail needs and what the plan keeps"
   ): Promise<string> {
     const id = randomUUID();
     await db.insert(mailboxes).values({ id, accountId, provider: "imap", address: `mb-${id.slice(0, 8)}@example.com` });
-    for (const [folder, n] of o.folders) await db.insert(mailboxFolders).values({ mailboxId: id, folder, serverExists: n });
+    for (const [folder, n] of o.folders) await db.insert(mailboxFolders).values({ mailboxId: id, accountId, folder, serverExists: n });
     if (o.stats) {
       await db.insert(mailboxStorageStats).values({
         accountId, mailboxId: id, ...o.stats, emptied: 0, serverLetters: null, counted: true, imported: false, at: FIXED_NOW,
@@ -520,7 +552,7 @@ describe("GET /account/access tells what the mail needs and what the plan keeps"
       { id: b, usedBytes: 0.7 * GB, letters: 28_000, expectedLetters: 100_000, expectedBytes: 2.5 * GB, importing: true },
     ]));
     // A folder no cycle has counted yet: the estimate says it is not complete.
-    await db.insert(mailboxFolders).values({ mailboxId: a, folder: "Projects", serverExists: null });
+    await db.insert(mailboxFolders).values({ mailboxId: a, accountId: s.accountId, folder: "Projects", serverExists: null });
     const later = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
     expect(later.storage.estimate.complete).toBe(false);
   });
@@ -791,6 +823,34 @@ describe("a refused account meets 402 at a product door", () => {
     // failure this screen exists to prevent.
     expect(body.error.message).toMatch(/kept/);
     expect(body.error.message).toMatch(/nothing has been deleted/i);
+  });
+
+  it("asks accounts without a plan to choose one at AI and mail doors", async () => {
+    const client = makeEntitlementsClient({
+      baseUrl: "https://plane.invalid", secret: "x".repeat(24), onCallFault: "unrecorded",
+      fetchImpl: async () => ({
+        status: 200,
+        json: async () => ({
+          entitlements: { reason: "no_subscription", syncEnabled: false, canAddMailbox: false, aiEnabled: false },
+          lifecycle: {
+            state: "closed", closedReason: null, trialEndsAt: null, graceUntil: null,
+            closedAt: null, erasureAt: null, erasedAt: null, formerlyPaid: false,
+          },
+        }),
+      }),
+    });
+    const { db, deps } = await depsWith(client);
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    for (const [path, message] of [
+      ["/account/ai", "Choose a plan to use AI."],
+      ["/mailboxes", "Choose a plan to use ohmail."],
+    ] as const) {
+      const res = await H(req("GET", path, { bearer: s.token }), deps);
+      expect(res.status).toBe(402);
+      expect(await res.json()).toMatchObject({ error: {
+        code: "subscription_required", message, details: { reason: "payment_required" },
+      } });
+    }
   });
 
   it("passes the manage URL through when the port supplies one, and omits the key when not", async () => {

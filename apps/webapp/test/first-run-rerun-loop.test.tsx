@@ -1,13 +1,12 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
-import type { FirstRunHost, FirstRunOrganizeOutcome } from "../app/shell/first-run-host";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+import { act, cleanup } from "@testing-library/react";
+import type { FirstRunOrganizeOutcome } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { RUNGS } from "../../../packages/app/src/mailboxes/first-run/words.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * ═══ "AGREE AND START ORGANIZING" MUST NOT RETURN TO THE SCREEN THAT ASKED ═══════════════════
@@ -45,13 +44,15 @@ import type { OnboardingFacts } from "../app/shell/onboarding";
  *  · the cursor cleared on a re-run          → cases 1, 2 and 3 (all land on the consent heading);
  *  · `organize` answering void               → case 4 (a mailbox that is gone advances anyway);
  *  · the write's own result not applied       → case 5 (the lagging read re-derives to consent).
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`_first-run-stage.tsx`), a re-run at `#/first-run/again` naming its mailbox; the facts are the
+ * ground's (the mailbox its row, the stored window its `screening`, the account its `account`), and the write's
+ * re-read is the ground's refresh, which reads the rows again (or, held still, reads nothing new); a rung is the
+ * window's radio by its name (`words.ts` RUNGS); the words the stage's catalogue. Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-const t = messages.onboarding;
+const t = O;
 
 const CONNECTED = {
   organizerRole: "organizer" as const,
@@ -84,18 +85,17 @@ const fresh = (): OnboardingFacts => ({
 });
 
 interface Harness {
-  root: Root;
   el: HTMLElement;
   organized: Array<{ dormancyDays?: number; scope?: "window" | "all_time" }>;
   /** Every heading the stage has shown, in order — the whole point of these cases. */
   heading: () => string;
   press: (label: string) => Promise<void>;
+  pick: (label: string) => Promise<void>;
   text: () => string;
 }
 
-const roots: Root[] = [];
 afterEach(() => {
-  for (const r of roots.splice(0)) r.unmount();
+  cleanup();
   document.body.innerHTML = "";
 });
 
@@ -108,62 +108,35 @@ async function mount(o: {
 }): Promise<Harness> {
   const organized: Harness["organized"] = [];
   let facts = o.facts;
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
+  const rowOf = (): FirstRunRow => ({ id: id("mb-1"), address: "me@example.invalid", ...facts.mailbox! }) as FirstRunRow;
 
-  const host: FirstRunHost = {
+  const st = await mountStage({
+    rows: [rowOf()],
     door: "cloud",
-    ai: o.facts.ai,
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async (_id, body) => {
-      if (body.screening) organized.push(body.screening);
-      /* THE WRITE LANDED ON THE SERVER. Whether the CLIENT can see it is the other half of
-         what these cases are about, and `refresh` is the dial for it. */
-      if (o.refresh !== false && (o.outcome ?? "stored") === "stored") {
-        facts = {
-          ...facts,
-          mailbox: { ...facts.mailbox!, organizeConsentedAt: "2026-09-02T09:00:00.000Z" },
-        };
-      }
-      return o.outcome ?? "stored";
+    ...(o.rerun ? { at: "#/first-run/again?mailbox=mb-1" } : {}),
+    account: o.facts.account,
+    screening: { dormancyDays: 365, scope: "window" as const },
+    /* The write's re-read: the rows as the client can see them now. */
+    ...(o.refresh === false ? {} : { live: () => [rowOf()] }),
+    verbs: {
+      ai: o.facts.ai,
+      organize: async (_id, body) => {
+        if (body.screening) organized.push(body.screening as Harness["organized"][number]);
+        /* THE WRITE LANDED ON THE SERVER. Whether the CLIENT can see it is the other half of
+           what these cases are about, and `refresh` is the dial for it. */
+        if (o.refresh !== false && (o.outcome ?? "stored") === "stored") {
+          facts = {
+            ...facts,
+            mailbox: { ...facts.mailbox!, organizeConsentedAt: "2026-09-02T09:00:00.000Z" },
+          };
+        }
+        return o.outcome ?? "stored";
+      },
+      complete: async () => { /* leaves */ },
+      setAiEnabled: async () => { /* answered */ },
     },
-    complete: async () => { /* leaves */ },
-    setAiEnabled: async () => { /* answered */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-
-  /**
-   * A WRAPPER THAT RE-RENDERS ON `onRefresh`, rather than a second `root.render` inside the
-   * write's own `act`. Re-rendering from there nests `act` inside `act`, which React refuses
-   * ("overlapping act() calls") and which silently emptied every case after the second one.
-   * A state bump is what the real caller does anyway — `AppShell` re-reads and re-renders.
-   */
-  const Stage = () => {
-    const [, bump] = React.useState(0);
-    return h(FirstRun, {
-      host,
-      facts,
-      onRefresh: () => bump((n) => n + 1),
-      onLeave: () => { /* the caller returns the route to the app */ },
-      pull: { screened: 0, history: 0, pulled: 0 },
-      decide: null,
-      mailboxId: "mb-1",
-      ...(o.rerun ? { rerun: true } : {}),
-      screening: { dormancyDays: 365, scope: "window" as const },
-    });
-  };
-  await act(async () => {
-    /* `children` in the props object rather than as a third argument: this app typechecks its
-       tests, and both providers declare `children` as a required prop. */
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Stage, null) }),
-    }));
   });
+  const el = st.el;
 
   const press = async (label: string) => {
     /* `startsWith`, not equality: the foot's buttons carry their keycap inside the label
@@ -174,9 +147,7 @@ async function mount(o: {
       throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `
         + [...el.querySelectorAll("button")].map((b) => JSON.stringify(b.textContent)).join(", "));
     }
-    /* ONE act, and the microtasks drained INSIDE it. The write resolves on a microtask and its
-       `finally` calls `onRefresh`, so a second act would be updating state React had already
-       been told the test was done with. */
+    /* ONE act, and the microtasks drained INSIDE it. */
     await act(async () => {
       button.click();
       for (let i = 0; i < 12; i++) await Promise.resolve();
@@ -184,9 +155,10 @@ async function mount(o: {
   };
 
   return {
-    root, el, organized,
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
+    el, organized,
+    heading: st.heading,
     press,
+    pick: st.pick,
     text: () => el.textContent ?? "",
   };
 }
@@ -194,48 +166,44 @@ async function mount(o: {
 describe("a re-run of setup, driven through the rendered stage", () => {
   it("opens on the consent statement — the behaviour the loop was hiding behind", async () => {
     const s = await mount({ facts: finished(), rerun: true });
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
   });
 
   it("AGREE MOVES ON. It returned to the consent statement, every press, for ever", async () => {
     const s = await mount({ facts: finished(), rerun: true });
-    await s.press(t.continue);
-    expect(s.heading(), "the window screen").toBe(t.windowTitle);
+    expect(s.heading(), "the window screen").toContain(t.organizeLast.split("<window>")[0]!.trim());
 
     await s.press(t.agree);
-    expect(s.heading(), "the press walked back to the screen it came from").not.toBe(t.consentTitle);
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading(), "the press walked back to the screen it came from").not.toContain(t.organizeLast.split("<window>")[0]!.trim());
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
   });
 
   it("…and the window it carried is the one that was chosen, not the default", async () => {
     const s = await mount({ facts: finished(), rerun: true });
-    await s.press(t.continue);
     // "All time" — the answer somebody opens setup again to give.
-    const all = [...s.el.querySelectorAll("input[type=radio]")]
-      .find((i) => (i as HTMLInputElement).value === "all") as HTMLInputElement | undefined;
-    expect(all, "the window screen offers no all-time rung").toBeDefined();
-    await act(async () => { all!.click(); });
+    const rung = RUNGS.find((r) => r.value === "all")!;
+    const all = t[rung.label.slice("onboarding.".length) as keyof typeof t] as string;
+    await s.pick(all);
+    expect(s.heading()).toContain(t.organizeAll.split("<window>")[0]!.trim());
     await s.press(t.agree);
     expect(s.organized).toEqual([{ scope: "all_time" }]);
   });
 
   it("and the AI answer ends the re-run rather than returning to consent", async () => {
     const s = await mount({ facts: finished(), rerun: true });
-    await s.press(t.continue);
     await s.press(t.agree);
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
     await s.press(t.continue);
-    expect(s.heading(), "the second write looped as well").not.toBe(t.consentTitle);
-    expect(s.heading()).toBe(t.doneTitle);
+    expect(s.heading(), "the second write looped as well").not.toContain(t.organizeLast.split("<window>")[0]!.trim());
+    expect(s.heading()).toBe(t.noOneWaits.replace(/\.$/, ""));
   });
 
   it("A PRESS THAT STORED NOTHING SAYS SO, and does not advance", async () => {
     // Every reply to this call is a 200, the ones that write nothing included. Advancing on one
     // is a control reporting that it acted when it did not.
     const s = await mount({ facts: finished(), rerun: true, outcome: "gone" });
-    await s.press(t.continue);
     await s.press(t.agree);
-    expect(s.heading(), "it walked on as though the window had been stored").toBe(t.windowTitle);
+    expect(s.heading(), "it walked on as though the window had been stored").toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.text()).toContain(t.windowGone);
   });
 });
@@ -247,22 +215,20 @@ describe("a FIRST run whose read has not caught up yet", () => {
     // return "consent"`) puts the person back in front of the question they just answered, and
     // there is nothing in the loop to end it.
     const s = await mount({ facts: fresh(), refresh: false });
-    expect(s.heading()).toBe(t.consentTitle);
-    await s.press(t.continue);
-    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
 
     await s.press(t.agree);
     expect(s.heading(), "the stale read sent the run back to the consent statement")
-      .not.toBe(t.consentTitle);
+      .not.toContain(t.organizeLast.split("<window>")[0]!.trim());
     // Row 5: the AI question is the first thing left unanswered once consent is recorded.
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
   });
 
   it("CONTROL: with the read caught up it lands on the same screen", async () => {
     // Which is what says the case above is about the LAG and not about the cursor.
     const s = await mount({ facts: fresh() });
-    await s.press(t.continue);
     await s.press(t.agree);
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
   });
 });

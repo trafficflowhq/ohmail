@@ -8,11 +8,11 @@ import {
 import {
   LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit, assertNoLiveTwin, writeDoorOf,
   type LeasePermit,
-} from "../src/lease.js";
+} from "@ohmail/organizer/lease";
 import {
   CONDSTORE_HOST, CONDSTORE_PORT, greenmailConfig, probeCondstore,
 } from "../../../packages/core/test/adapters/_imapenv.js";
-import { LivePermitClock } from "./_permit-clock.js";
+import { LivePermitClock } from "../../../packages/organizer/test/_permit-clock.js";
 
 /**
  * TWO INSTALLS, ONE MAILBOX, ONE INSTALL'S WALL CLOCK STEPPED — at most one organizer at every read

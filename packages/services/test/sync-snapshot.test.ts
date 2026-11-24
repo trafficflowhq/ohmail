@@ -1,3 +1,4 @@
+import type { SnapshotResponse, SyncChange } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -7,8 +8,8 @@ import {
   routingDecisions, rules, tags, threads,
 } from "@trafficflow/db";
 import {
-  assertSnapshotWindow, SNAPSHOT_DRAFT_PAGE, SNAPSHOT_WINDOW, SyncService,
-  type ServiceContext, type SnapshotResponse, type SyncChange,
+  assertSnapshotWindow, SNAPSHOT_DRAFT_PAGE, SNAPSHOT_WINDOW, SyncService, dbFor,
+  type ServiceContext,
 } from "../src/index.js";
 import { SNAPSHOT_CURSOR_MAX_CHARS, SNAPSHOT_CURSOR_VERSION } from "../src/sync-service.js";
 import { ClientMirror } from "./_apply-harness.js";
@@ -54,7 +55,7 @@ async function setup() {
     accountId, provider: "imap", address: `a-${accountId}@x.example`,
   }).returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null, now: () => NOW, requestId: "snap",
+    db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "snap",
   };
   return { db, accountId, mailboxId: mb!.id, ctx };
 }
@@ -75,7 +76,7 @@ async function addMessage(
     ...(opts.date ? { date: opts.date } : {}),
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
   return m!.id;
 }
@@ -308,7 +309,7 @@ describe("account scoping (#9), on every type", () => {
 
     // …and the other account's own snapshot is the mirror image, so the scoping is a filter
     // rather than an empty read.
-    const theirCtx: ServiceContext = { ...ctx, accountId: other };
+    const theirCtx: ServiceContext = { ...ctx, accountId: other, db: dbFor(db, other) };
     const theirs1 = await svc.getSnapshot(theirCtx, {});
     expect(idsOf(theirs1, "message")).toEqual([theirs]);
     expect(theirs1.changes.map((c) => c.id)).not.toContain(mine);
@@ -459,7 +460,7 @@ describe("a snapshot page costs a constant number of queries", () => {
         .where(eq(messages.id, id));
     }
     const counted = counting(db);
-    const res = await svc.getSnapshot({ ...ctx, db: counted.db }, { limit: 500 });
+    const res = await svc.getSnapshot({ ...ctx, db: dbFor(counted.db, accountId) }, { limit: 500 });
     // A query-count assertion over an EMPTY page would pass for the very outage it prevents.
     expect(idsOf(res, "message")).toHaveLength(messageCount);
     expect(idsOf(res, "thread")).toHaveLength(threadCount);
@@ -473,12 +474,13 @@ describe("a snapshot page costs a constant number of queries", () => {
     // …and the constant is small, and ITEMISED so a future N+1 has to move a number somebody can
     // check: 1 seq high-water + 5 page-1 reads (rules, the read mailboxes' documents, drafts,
     // tags, and the message-less approvals that have no page to ride with) + 1 folders-flag probe
-    // + 2 settings-doorbell reads + 1 keyset page + 1 message read (the row, its folder and triage
+    // + 2 settings-doorbell reads + 3 device-number selects the doorbell carries (the account's
+    // users as a subquery, the devices counted, the live sessions counted) + 1 keyset page + 1 message read (the row, its folder and triage
     // state, tags, away answer and three flags, joined) + 3 batched thread reads + 3 batched CHILD
     // reads (message_states, pending routing_decisions, approvals, each keyed on the page's
-    // message ids) = 17. Every batched read is once per PAGE and never once per row, which is the
+    // message ids) = 20. Every batched read is once per PAGE and never once per row, which is the
     // property this test defends: forty messages in twenty threads cost what one in one costs.
-    expect(one).toBe(17);
+    expect(one).toBe(20);
   }, 120_000);
 
   /** The bytes a limit-1 page reads when its one message sits in a 60-letter conversation. */
@@ -493,7 +495,7 @@ describe("a snapshot page costs a constant number of queries", () => {
       });
     }
     const counted = counting(db);
-    const res = await svc.getSnapshot({ ...ctx, db: counted.db }, { limit: 1 });
+    const res = await svc.getSnapshot({ ...ctx, db: dbFor(counted.db, accountId) }, { limit: 1 });
     expect(idsOf(res, "message")).toHaveLength(1);
     const thread = res.changes.find((c) => c.type === "thread")?.entity as { messageIds: string[] };
     expect(thread.messageIds).toHaveLength(60);

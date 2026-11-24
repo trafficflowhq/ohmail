@@ -20,7 +20,7 @@
 import net from "node:net";
 import postgres from "postgres";
 import { createLogger } from "@trafficflow/core";
-import { installCrashHandlers } from "../src/entry.js";
+import { installCrashHandlers } from "../../../packages/organizer/src/entry.js";
 import { driverWriteRaceReason } from "../src/driver-write-race.js";
 import { withPgSocket } from "../../../packages/db/src/pg-socket.js";
 

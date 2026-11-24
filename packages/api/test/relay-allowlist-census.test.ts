@@ -7,6 +7,8 @@ import { localRoutes } from "../src/local.js";
 import { selfHostRoutes } from "../src/routes/self-host.js";
 import { desktopHostRoutes } from "../src/routes/desktop-host.js";
 import { mailboxDeviceOAuthRoutes } from "../src/routes/mailbox-oauth-device.js";
+import { calendarRoutes } from "../src/calendar/index.js";
+import { calendarNoticeRoutes } from "../src/routes/calendar-notices.js";
 import type { Route } from "../src/router.js";
 import { RELAY_ALLOWLIST, mayRelay } from "../src/relay-allowlist.js";
 import { normalizePathname } from "../src/canonical-path.js";
@@ -27,6 +29,8 @@ const TABLES: ReadonlyArray<readonly [string, readonly Route[]]> = [
   ["selfHostRoutes", selfHostRoutes],
   ["desktopHostRoutes", desktopHostRoutes],
   ["mailboxDeviceOAuthRoutes", mailboxDeviceOAuthRoutes],
+  ["calendarRoutes", calendarRoutes],
+  ["calendarNoticeRoutes", calendarNoticeRoutes],
 ];
 
 const key = (r: { method: string; pattern: string }) => `${r.method.toUpperCase()} ${r.pattern}`;
@@ -115,7 +119,26 @@ describe("the projection the sidecar reads matches the table", () => {
     // 193 -> 196 with the storage program: Load it now, read from the server that empties letters for
     // space; the storage choices, kept where `GET /account/access` is read; and the change door,
     // relayed like the manage link beside it.
-    expect(RELAY_ALLOWLIST.length).toBe(196);
+    // 196 -> 198 with the calendar's switch, read and written on the account's server like the
+    // consent settings beside it: a Cloud-mode install keeps only a copy of the switch.
+    // 198 -> 199 with `POST /drafts/from-text`, relayed like Draft reply beside it.
+    // 199 -> 200 with an invitation's answer by mail: a send, relayed like `POST /drafts/:id/send`.
+    // 200 -> 203 with the calendar's three write routes (record, send again, let go): a Cloud-mode
+    // install drains nothing of its own, so a write it is asked for is the account's server's.
+    // 203 -> 204 with the place field's question: the account's server holds the geocoder, and a
+    // Cloud-mode install asks it there, as the window would itself.
+    // 204 -> 210 with the calendar's connect door, all six: a phone and a desktop on a hosted account
+    // connect a calendar in the app, as `POST /mailboxes` adds a mailbox with its password. Each is a
+    // signed-in session's route that reads every id with its account; none signs in, pairs or ends
+    // a session; a typed sign-in rides in a body alone, as a mailbox's password does.
+    // 210 -> 211 with conditional Discard, the same draft write with a required precondition.
+    // 211 -> 212 with a receipt's calendar suggestion, dismissed and restored on the account's
+    // server like the calendar's other writes.
+    // 212 -> 213 with calendar proposals. Sending the proposal and its invitation reply belongs
+    // to the signed-in account's server, like the calendar's other invitation responses.
+    expect(everyRoute().get("POST /calendar/proposals")?.route.relay).toBe(true);
+    expect(mayRelay("POST", "/calendar/proposals")).toBe(true);
+    expect(RELAY_ALLOWLIST.length).toBe(213);
   });
 
   it("every pattern in the projection is a real route", () => {

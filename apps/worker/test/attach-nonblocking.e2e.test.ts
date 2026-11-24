@@ -7,8 +7,8 @@ import { StaticKeyProvider } from "@trafficflow/core";
 import { startWorker, type RunningWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
-import { FakeAdapterFleet, type FakeEvent } from "./_fakeadapter.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet, type FakeEvent } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -64,7 +64,7 @@ async function seedMailbox(db: Db): Promise<{ accountId: string; mailboxId: stri
     .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test`, ...ORGANIZER_CONSENT }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };
@@ -185,7 +185,7 @@ describe("attach registers, the cycle drains", () => {
 
     // ── CLAIM 5: the ATTACH lease seam, still before the first write ─────────────────────
     // `ensureFolders` CREATES the `ohmail/*` tree in somebody's mailbox. Exactly one active
-    // organizer per mailbox (CLAUDE.md) requires the gate to have answered organize first, and
+    // organizer per mailbox (AGENTS.md) requires the gate to have answered organize first, and
     // this slice moved code either side of it.
     for (const [id, name] of names) {
       expect.soft(fleet.nth(id, "lease_organize", 1),

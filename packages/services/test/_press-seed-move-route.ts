@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { dbFor } from "../src/context.js";
 import { expect } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { accounts, mailboxes, rules } from "@trafficflow/db";
@@ -33,7 +34,7 @@ export async function world(given?: Db): Promise<World> {
     accountId, provider: "imap", address: `box-${accountId.slice(0, 8)}@ex.test`,
     organizerRole: "organizer", organizeConsentedAt: NOW,
   }).returning();
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: "seedmove" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "seedmove" };
   return { db, accountId, mailboxId: mb!.id, ctx };
 }
 

@@ -30,7 +30,7 @@ const EASE = Easing.bezier(0.22, 0.61, 0.36, 1);
 /** `scale`: a tapered square at a window's edge (`useSquaresWindow`), its corner and outline with it. */
 export function MarkSquare({ kind, scale = 1 }: { kind: MarkKind; scale?: number }) {
   const t = useTheme();
-  const target = kind === "unread" ? 1 : kind === "mine" ? t.c.markMine : t.c.markRead;
+  const target = kind === "unread" || t.mail ? 1 : kind === "mine" ? t.c.markMine : t.c.markRead;
   const v = useRef(new Animated.Value(target)).current;
   const was = useRef(target);
   useEffect(() => {
@@ -50,9 +50,9 @@ export function MarkSquare({ kind, scale = 1 }: { kind: MarkKind; scale?: number
         width: 10 * scale,
         height: 10 * scale,
         opacity: v,
-        backgroundColor: kind === "mine" ? "transparent" : t.c.accent,
+        backgroundColor: kind === "mine" ? "transparent" : kind === "read" && t.mail ? t.c.ink3 : t.c.accent,
         borderWidth: kind === "mine" ? 2 * scale : 0,
-        borderColor: t.c.accent,
+        borderColor: t.mail ? t.c.ink3 : t.c.accent,
         borderRadius: squareRadius(t.radius.focus) * scale,
       }}
     />

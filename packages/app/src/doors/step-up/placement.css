@@ -1,0 +1,4 @@
+/* The step-up dialog's own: its code's form lays out nothing (the other ways stand under the answers, the kit's). */
+.way-step-up-form {
+  display: contents;
+}

@@ -97,6 +97,7 @@ function installUnsubscribedBrowser(): void {
    ON path decodes it before it may subscribe. */
 vi.mock("../app/api-client", () => ({
   apiConfigured: () => true,
+  boundApiFamily: () => "family-old",
   push: {
     vapidKey: () => Promise.resolve({ publicKey: "BFAKEa-b_c0123456789" }),
     subscribe: (endpoint: string) => {
@@ -127,7 +128,7 @@ function installStillSubscribedBrowser(): void {
   });
 }
 
-const CHANNELS_KEY = "ohmail.notifications.channels";
+const CHANNELS_KEY = "ohmail.notifications.channels.account-current";
 const ID_KEY = "ohmail.notifications.subscriptionId";
 
 /** Every switch a returning reader left ON, exactly as sign-out preserved them. */
@@ -138,6 +139,8 @@ const ALL_ON = JSON.stringify({
 
 describe("reconcileWakeRegistration", () => {
   beforeEach(() => {
+    document.cookie = "tf_family=family-old; Path=/";
+    document.cookie = "tf_owner=account-current; Path=/";
     cachePuts.length = 0;
     subscribed.length = 0;
     unsubscribed.length = 0;
@@ -146,8 +149,17 @@ describe("reconcileWakeRegistration", () => {
     window.localStorage.clear();
     installFakeCaches();
     installPermission("granted");
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request: async (_name: string, write: () => Promise<void>) => write() },
+    });
   });
-  afterEach(() => { vi.resetModules(); });
+  afterEach(() => {
+    document.cookie = "tf_family=; Path=/; Max-Age=0";
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    Reflect.deleteProperty(navigator, "locks");
+    vi.resetModules();
+  });
 
   it("a returning reader gets the row back AND the worker's permission to draw", async () => {
     /*
@@ -155,7 +167,7 @@ describe("reconcileWakeRegistration", () => {
      * still ON, permission still granted, no local subscription, no stored id — and a worker
      * that was last told `enabled: false`.
      */
-    const { reconcileWakeRegistration, NOTIFY_STATE_URL } =
+    const { reconcileWakeRegistration, NOTIFY_STATE_URL, wakeProofHolds } =
       await import("../app/shell/notification-settings");
     installUnsubscribedBrowser();
     window.localStorage.setItem(CHANNELS_KEY, ALL_ON);
@@ -173,6 +185,13 @@ describe("reconcileWakeRegistration", () => {
     const state = cachePuts.find((p) => p.url === NOTIFY_STATE_URL);
     expect(state, "the worker was left under its sign-out orders").toBeTruthy();
     expect(JSON.parse(state!.body).enabled).toBe(true);
+
+    const { proof } = JSON.parse(cachePuts.at(-1)!.body).registration;
+    await expect(wakeProofHolds(proof, "account-current", "family-old")).resolves.toBe(true);
+    await expect(wakeProofHolds("another-proof", "account-current", "family-old")).resolves.toBe(false);
+    await expect(wakeProofHolds(proof, "account-current", undefined)).resolves.toBe(false);
+    document.cookie = "tf_family=family-replaced; Path=/";
+    await expect(wakeProofHolds(proof, "account-current", "family-replaced")).resolves.toBe(false);
   });
 
   it("reconciles to what the switches SAY — a reader who turned it off stays off", async () => {
@@ -191,6 +210,61 @@ describe("reconcileWakeRegistration", () => {
     expect(subscribed, "a boot minted a subscription the reader had switched off").toEqual([]);
     const state = cachePuts.find((p) => p.url === NOTIFY_STATE_URL);
     expect(JSON.parse(state!.body).enabled).toBe(false);
+  });
+
+  it("the registration stands only while the master and new mail are both on: either off takes it down at the server and in the browser, both on makes it again", async () => {
+    const { reconcileWakeRegistration, NOTIFY_STATE_URL } =
+      await import("../app/shell/notification-settings");
+    // A browser that holds its subscription as a browser does: made by a subscribe, gone after an unsubscribe.
+    let held: { endpoint: string } | null = null;
+    const pushManager = {
+      getSubscription: () => Promise.resolve(held),
+      subscribe: () => Promise.resolve(held = {
+        endpoint: "https://push.example/ep/new",
+        getKey: (n: string) => new Uint8Array(n === "auth" ? 16 : 65).fill(3).buffer,
+        unsubscribe: () => { held = null; return Promise.resolve(true); },
+      } as { endpoint: string }),
+    };
+    const registration = { pushManager };
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        register: () => Promise.resolve(registration),
+        getRegistration: () => Promise.resolve(registration),
+      },
+    });
+    const switches = (over: object): void =>
+      window.localStorage.setItem(CHANNELS_KEY, JSON.stringify({ ...JSON.parse(ALL_ON), ...over }));
+    const armed = (): boolean => JSON.parse([...cachePuts].reverse().find((p) => p.url === NOTIFY_STATE_URL)!.body).enabled;
+
+    switches({});
+    expect(await reconcileWakeRegistration("New mail.")).toBe("subscribed");
+    expect(held, "no subscription in the browser").not.toBeNull();
+    expect(subscribed).toHaveLength(1);
+
+    let made = 1;
+    for (const off of [{ ohbox: false }, { master: false }]) {
+      switches(off);
+      expect(await reconcileWakeRegistration("New mail."), JSON.stringify(off)).toBe("unsubscribed");
+      expect(held, `${JSON.stringify(off)}: the browser still holds its subscription`).toBeNull();
+      expect(unsubscribed.at(-1), `${JSON.stringify(off)}: the server's row was left standing`).toBe("row-new");
+      expect(window.localStorage.getItem(ID_KEY)).toBeNull();
+      expect(armed(), "the worker may still draw").toBe(false);
+
+      switches({});
+      expect(await reconcileWakeRegistration("New mail.")).toBe("subscribed");
+      expect(held).not.toBeNull();
+      expect(subscribed).toHaveLength(made += 1);
+      expect(armed()).toBe(true);
+    }
+
+    // The three other switches are no part of it: a closed browser is started for new mail alone.
+    const removed = unsubscribed.length;
+    switches({ screener: false, scheduled: false, pairing: false });
+    await reconcileWakeRegistration("New mail.");
+    expect(held, "a switch that is not new mail took the registration down").not.toBeNull();
+    expect(unsubscribed).toHaveLength(removed);
+    expect(armed()).toBe(true);
   });
 
   it("a DENIED permission is not talked round by a boot", async () => {

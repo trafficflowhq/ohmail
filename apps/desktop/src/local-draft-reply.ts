@@ -8,7 +8,7 @@
  */
 
 import { bridgeAvailable, bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
-import type { DraftReplyWire } from "../../webapp/app/shell/draft-reply.js";
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { isDesktopHost } from "./doors.js";
 import { draftReplyVia } from "./draft-reply-wire.js";
 

@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mailboxes, messageBodies } from "@trafficflow/db";
+import { searchIndexBackfillPass } from "@trafficflow/core/mail";
 import { SearchService, SEARCH_SORTS, isSearchSort } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
+
+/** The search documents of what was seeded, as ingest writes them with each letter. */
+const indexed = (db: Awaited<ReturnType<typeof makeCtx>>["db"], accountId: string) =>
+  searchIndexBackfillPass({ db: db as never, accountId });
 
 /**
  * SEARCH RESULTS IN THE ORDER THE READER ASKED FOR.
@@ -54,7 +59,7 @@ describe("search sorts over the match set, never over the relevance window", () 
   /**
    * Builds the corpus once per test: `DECOYS` strong old matches, one weak newest match.
    *
-   * Strong = the term is in the SUBJECT (so `subject_tsv` ranks it high) and repeated in a short
+   * Strong = the term is in the SUBJECT (so the document's head ranks it high) and repeated in a short
    * body, and the subject match is also what puts the row in the ILIKE fuzzy arm. Weak = the term
    * appears once, in the middle of a long body, and the subject and sender never mention it.
    */
@@ -73,7 +78,7 @@ describe("search sorts over the match set, never over the relevance window", () 
         date: new Date(OLD.getTime() + i * 60_000),
       });
       await db.insert(messageBodies).values({
-        messageId: id,
+        messageId: id, accountId,
         text: `a ${TERM} again today. ${TERM}, ${TERM}. report ${i}.`,
       });
     }
@@ -84,9 +89,10 @@ describe("search sorts over the match set, never over the relevance window", () 
       date: NEWEST,
     });
     await db.insert(messageBodies).values({
-      messageId: newest,
+      messageId: newest, accountId,
       text: `${FILLER} item nine, a ${TERM} was noted at the weir. ${FILLER}`,
     });
+    await indexed(db, accountId);
     return { db, ctx, accountId, mailboxId, newest };
   };
 
@@ -155,6 +161,7 @@ describe("search sorts over the match set, never over the relevance window", () 
     const gNew = await seedMessage(db, accountId, first, { subject: `${TERM} two`, date: t("2026-07-20T09:00:00Z") });
     const aOld = await seedMessage(db, accountId, second!.id, { subject: `${TERM} three`, date: t("2026-07-02T09:00:00Z") });
     const aNew = await seedMessage(db, accountId, second!.id, { subject: `${TERM} four`, date: t("2026-07-21T09:00:00Z") });
+    await indexed(db, accountId);
 
     const r = await new SearchService().search(ctx, { q: TERM, sort: "mailbox" });
 
@@ -174,6 +181,7 @@ describe("search sorts over the match set, never over the relevance window", () 
     const zNew = await seedMessage(db, accountId, mailboxId, { subject: `${TERM} b`, from: "zoe@late.example", date: t("2026-07-19T09:00:00Z") });
     const aOld = await seedMessage(db, accountId, mailboxId, { subject: `${TERM} c`, from: "anna@early.example", date: t("2026-07-04T09:00:00Z") });
     const aNew = await seedMessage(db, accountId, mailboxId, { subject: `${TERM} d`, from: "anna@early.example", date: t("2026-07-18T09:00:00Z") });
+    await indexed(db, accountId);
 
     const r = await new SearchService().search(ctx, { q: TERM, sort: "sender" });
 
@@ -185,6 +193,7 @@ describe("search sorts over the match set, never over the relevance window", () 
     for (let i = 0; i < 6; i++) {
       await seedMessage(db, accountId, mailboxId, { subject: `${TERM} ${i}`, date: new Date(OLD.getTime() + i * 1000) });
     }
+    await indexed(db, accountId);
     const svc = new SearchService();
 
     // The invariant behind the `left join` on the mailbox arm: an ordering clause must never be

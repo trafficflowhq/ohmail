@@ -1,4 +1,4 @@
-import type { MailboxDTO } from "@trafficflow/services/mail";
+import type { MailboxDTO } from "@ohmail/wire";
 
 /**
  * A HOSTED `GET /mailboxes` ANSWER, for every fake Cloud API in this suite.

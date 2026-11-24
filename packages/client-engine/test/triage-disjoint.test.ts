@@ -1,7 +1,6 @@
+import type { EngineMessage, MessageStateDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   OhmailEngine,
   isResurfaced,
   ohboxView,
@@ -9,10 +8,9 @@ import {
   pileOfState,
   triagePiles,
   winningStates,
-  type EngineMessage,
   type EntityReader,
-  type MessageStateDTO,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * A MAIL IS IN EXACTLY ONE PILE — asserted over the DERIVATION, not over one fixture.

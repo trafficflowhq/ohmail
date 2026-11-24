@@ -14,15 +14,18 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { ConsentTransport, useConsentState as UseConsentState } from "../app/shell/consent-state";
+import type { ConsentTransport, useConsentState as UseConsentState } from "@ohmail/app-logic/consent/consent-state";
 import type { ConsentStateWire } from "../app/api-client";
 
 /* The API base is read when `api-client` LOADS, and static imports are hoisted above any
    assignment here — so the hook is imported after the browser build's base is set. */
 let useConsentState: typeof UseConsentState;
+/** The browser's own wire, as the web's host hands it. */
+let CLOUD_CONSENT: ConsentTransport;
 beforeAll(async () => {
   process.env.NEXT_PUBLIC_API_BASE = "/api";
-  ({ useConsentState } = await import("../app/shell/consent-state"));
+  ({ useConsentState } = await import("@ohmail/app-logic/consent/consent-state"));
+  ({ CLOUD_CONSENT } = await import("../app/(product)/mailbox/consent-over-api"));
 });
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -50,8 +53,8 @@ const stub = (wire: ConsentStateWire, declared = true): ConsentTransport => ({
 });
 
 let seen: { known: boolean; foldersStorable: boolean } | null = null;
-function Probe(props: { transport?: ConsentTransport }) {
-  const consent = useConsentState(true, props.transport);
+function Probe(props: { transport: ConsentTransport }) {
+  const consent = useConsentState(true, null, props.transport);
   seen = { known: consent.known, foldersStorable: consent.foldersStorable };
   return null;
 }
@@ -61,7 +64,7 @@ let host: HTMLElement | null = null;
 const flush = async () => {
   await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
 };
-async function mount(transport?: ConsentTransport) {
+async function mount(transport: ConsentTransport) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -109,13 +112,13 @@ describe("the folders capability is the consent read's own key", () => {
 
     it("the self-hosted answer (no axis) withholds the pane", async () => {
       answer = { ...WITHOUT_AXIS };
-      await mount();
+      await mount(CLOUD_CONSENT);
       expect(seen).toEqual({ known: true, foldersStorable: false });
     });
 
     it("the managed answer (axis present, off) draws it — the control", async () => {
       answer = { ...WITH_AXIS };
-      await mount();
+      await mount(CLOUD_CONSENT);
       expect(seen).toEqual({ known: true, foldersStorable: true });
     });
   });

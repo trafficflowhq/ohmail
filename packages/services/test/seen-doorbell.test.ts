@@ -8,7 +8,7 @@ vi.mock("@trafficflow/db", async (importOriginal) => {
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes, messages, ringFilingDoorbell } from "@trafficflow/db";
-import { MessageService, type ServiceContext } from "../src/index.js";
+import { MessageService, dbFor, type ServiceContext } from "../src/index.js";
 
 /**
  * A READ RINGS THE WORKER'S DOORBELL, ONCE PER MAILBOX.
@@ -27,7 +27,7 @@ afterEach(() => { ring.mockClear(); });
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 const t0 = new Date("2026-10-09T13:00:00.000Z");
 const ctxAt = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => t0, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => t0, requestId: "r" });
 
 async function world(perMailbox: number[]): Promise<{ db: Db; accountId: string; boxes: Array<{ id: string; msgs: string[] }> }> {
   const db = await makeTestDb();

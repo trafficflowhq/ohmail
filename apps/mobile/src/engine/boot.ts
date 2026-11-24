@@ -11,8 +11,8 @@
 import {
   HttpAdapter,
   MutationRejectedError,
+  NAMED_FEED_KINDS,
   OhmailEngine,
-  SYNC_ENTITY_TYPES,
   SqlMirrorStore,
   flattenResponse,
   mirrorDbName,
@@ -30,6 +30,7 @@ import { StoreFault } from "../state/servers";
 import type { NetworkState } from "../net/network-door";
 import { sendWaitsForNetwork } from "./send-waits";
 import { logWithdrawUnsupported } from "./engine-log";
+import type { HelloAnswer, Untrusted } from "@ohmail/wire";
 
 /** What the platform must provide — expo modules in the app, node modules in tests. */
 export interface MobileEngineDeps {
@@ -112,6 +113,8 @@ export interface ConnectConfig {
   accountId: string;
   /** Override the identity probe's deadline (tests). Absent, {@link IDENTITY_PROBE_DEADLINE_MS}. */
   identityDeadlineMs?: number;
+  /** Override the engine's live mutation and replay deadlines in tests. */
+  outboxReplayDeadlineMs?: number;
   /**
    * The standalone arm: the engine in this app, instead of a server on the network. Present ⇒
    * this install organizes its own mailbox and the transport is a call into
@@ -213,7 +216,7 @@ export function localEngineTransport(door: LocalEngineDoor): {
  * does, before the engine: the outbox keeps it under its key, the adapter keeps the draft it just
  * wrote bound to that key, and the flush after the return sends that draft (`send-waits.ts`).
  */
-function heldWhileOffline(
+export function heldWhileOffline(
   fetch: (url: string, init?: unknown) => Promise<Response>,
   network: (() => NetworkState) | undefined,
 ): (url: string, init?: unknown) => Promise<Response> {
@@ -272,10 +275,7 @@ export async function helloFeatures(
     }
     if (!res.ok) return null;
     try {
-      const body = (await res.json()) as {
-        product?: unknown;
-        features?: { forwardParts?: unknown; staging?: unknown; scheduleFiles?: unknown; scheduleFilesDays?: unknown };
-      } | null;
+      const body = (await res.json()) as Untrusted<HelloAnswer> | null;
       if (body?.product !== "ohmail") return null;
       const days = body.features?.scheduleFilesDays;
       const horizon = typeof days === "number" && Number.isInteger(days) && days > 0 ? days : null;
@@ -441,9 +441,11 @@ export const MOBILE_WINDOW: StorePolicy = { mode: "windowed", days: 90, minRows:
  * emits — a mailbox removed on the paired desktop kept its mail on the phone, and a reconnect
  * added it again. The engine could always sweep it (`store.ts#cascadeMailboxRemoval`); nothing
  * told it to. The bound the copy existed for is now structural: a server that grows a new type
- * has to join the declaration first, which is where the store's own handling is written.
+ * has to join the declaration first, which is where the store's own handling is written. The list
+ * every engine names (`NAMED_FEED_KINDS`), with the settings record: a server sends the calendar
+ * only to a device that hears its switch.
  */
-export const MOBILE_SYNC_TYPES: string[] = [...SYNC_ENTITY_TYPES];
+export const MOBILE_SYNC_TYPES: string[] = [...NAMED_FEED_KINDS];
 
 /**
  * Ask the server whose bearer this is, where the composition has a route to ask. The typed
@@ -460,17 +462,48 @@ async function verifyAccountId(
   origin: string,
   authHeaders: () => Record<string, string>,
   accountId: string,
+  accountWithoutSession?: () => Promise<string | null>,
 ): Promise<{ kind: "verified" | "unverified" } | { kind: "mismatch"; serverSays: string }> {
   try {
     const res = await fetchImpl(`${origin}/auth/session`, { headers: authHeaders() });
-    if (!res.ok) return { kind: "unverified" };
-    const body = (await res.json()) as { user?: { accountId?: unknown } };
-    const serverSays = body.user?.accountId;
+    let serverSays: unknown;
+    if (res.ok) {
+      const named = res.headers.get("x-ohmail-account");
+      if (named !== null && named !== accountId) return { kind: "mismatch", serverSays: named };
+      const body = (await res.json()) as { user?: { accountId?: unknown } };
+      serverSays = body.user?.accountId;
+    } else if (res.status === 404 && accountWithoutSession !== undefined) {
+      serverSays = await accountWithoutSession();
+    }
     if (typeof serverSays !== "string" || serverSays === "") return { kind: "unverified" };
     return serverSays === accountId ? { kind: "verified" } : { kind: "mismatch", serverSays };
   } catch {
     return { kind: "unverified" };
   }
+}
+
+/**
+ * {@link verifyAccountId}, bounded: the probe {@link EngineBoot.verifyIdentity} runs, and the one a
+ * session without the Hermes engine (the shell's) runs natively before its drain routes open.
+ */
+export async function identityProbe(
+  fetchImpl: (url: string, init?: RequestInit) => Promise<Response>,
+  origin: string,
+  authHeaders: () => Record<string, string>,
+  accountId: string,
+  deadline: number,
+  accountWithoutSession?: () => Promise<string | null>,
+): Promise<{ kind: "verified" | "unverified" } | { kind: "mismatch"; serverSays: string }> {
+  // BOUNDED — see {@link IDENTITY_PROBE_DEADLINE_MS}: a probe the server accepts and never
+  // answers times out into `unverified` (the timer is cleared when the probe wins).
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<{ kind: "unverified" }>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: "unverified" }), deadline);
+  });
+  return Promise.race([
+    verifyAccountId(fetchImpl, origin, authHeaders, accountId, accountWithoutSession).finally(() => clearTimeout(timer)),
+    timedOut,
+  ]);
 }
 
 /**
@@ -483,7 +516,8 @@ async function verifyAccountId(
  * forwarded by hand — an absent forward would silently strip it on the live path only.
  */
 type GuardedMobileAdapter = EngineAdapter
-  & Pick<HttpAdapter, "snapshot" | "listMessages" | "listTrash" | "restoreFromTrash" | "timeline">;
+  & Pick<HttpAdapter, "snapshot" | "listMessages" | "listTrash" | "restoreFromTrash" | "timeline">
+  & Partial<Pick<HttpAdapter, "calendarSettings" | "writeCalendar" | "retryCalendarWrite" | "dismissCalendarWrite" | "setSuggestionDismissed">>;
 
 function accountGuarded(
   adapter: HttpAdapter,
@@ -501,6 +535,7 @@ function accountGuarded(
   cleared: () => boolean,
   /** `GET /hello` read right before a forward that names its parts — see {@link helloForwardParts}. */
   forwardPartsSaid: () => Promise<boolean | null>,
+  paired: boolean,
 ): GuardedMobileAdapter {
   const HELD = `this mirror's sync is held until the account identity check settles — run verifyIdentity() first`;
   const check = (changes: SyncChange[]): void => {
@@ -514,7 +549,18 @@ function accountGuarded(
       }
     }
   };
+  const calendar = async <T>(ask: () => Promise<T>): Promise<T> => {
+    if (!cleared()) throw new StoreFault("sync_held_pre_identity", HELD);
+    return ask();
+  };
   return {
+    ...(paired ? {
+      calendarSettings: () => calendar(() => adapter.calendarSettings()),
+      writeCalendar: (...args: Parameters<HttpAdapter["writeCalendar"]>) => calendar(() => adapter.writeCalendar(...args)),
+      retryCalendarWrite: (...args: Parameters<HttpAdapter["retryCalendarWrite"]>) => calendar(() => adapter.retryCalendarWrite(...args)),
+      dismissCalendarWrite: (...args: Parameters<HttpAdapter["dismissCalendarWrite"]>) => calendar(() => adapter.dismissCalendarWrite(...args)),
+      setSuggestionDismissed: (...args: Parameters<HttpAdapter["setSuggestionDismissed"]>) => calendar(() => adapter.setSuggestionDismissed(...args)),
+    } : {}),
     sync: async (params) => {
       if (!cleared()) throw new StoreFault("sync_held_pre_identity", HELD);
       const resp = await adapter.sync(params);
@@ -695,17 +741,8 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   let identityCleared = local !== undefined;
   const verifyIdentity = async (): Promise<IdentityVerdict> => {
     if (local !== undefined) return { kind: "unverified" };
-    // BOUNDED — see {@link IDENTITY_PROBE_DEADLINE_MS}: a probe the server accepts and never
-    // answers times out into `unverified` (the timer is cleared when the probe wins).
     const deadline = config.identityDeadlineMs ?? IDENTITY_PROBE_DEADLINE_MS;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timedOut = new Promise<{ kind: "unverified" }>((resolve) => {
-      timer = setTimeout(() => resolve({ kind: "unverified" }), deadline);
-    });
-    const identity = await Promise.race([
-      verifyAccountId(fetchImpl, origin, authHeaders, accountId).finally(() => clearTimeout(timer)),
-      timedOut,
-    ]);
+    const identity = await identityProbe(fetchImpl, origin, authHeaders, accountId, deadline);
     if (identity.kind === "mismatch") {
       return {
         kind: "mismatch",
@@ -762,12 +799,14 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
       // The phone's own engine is this same build.
       () => (local !== undefined ? Promise.resolve(true)
         : helloForwardParts(fetchImpl, origin, config.forwardPartsDeadlineMs ?? FORWARD_PARTS_HELLO_MS)),
+      local === undefined,
     ),
     store,
     storePolicy: MOBILE_WINDOW,
     // Every drain carries the client's complete type vocabulary — the cellular rule above.
     types: MOBILE_SYNC_TYPES,
     uuid: deps.uuid,
+    outboxReplayDeadlineMs: config.outboxReplayDeadlineMs,
     // No wake signal attached: this build polls /sync, on the connection layer's cadence
     // (`net/drain-cadence.ts`). `attachWakeSignal` stays the seam a push wake would feed later.
     //

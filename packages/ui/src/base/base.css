@@ -1,0 +1,231 @@
+@layer oh;
+
+/* The kit's one cascade layer. The app's own styles are unlayered and win over it.
+   A part never stamps a root attribute: the page's root says the face, the scheme and the device. */
+@layer oh {
+  [data-rm="1"] :is(.oh-row, .oh-railentry, .oh-menu-item, .oh-readsquares-slot) {
+    transition-property: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .oh-root :is(.oh-row, .oh-railentry, .oh-menu-item, .oh-readsquares-slot) {
+      transition-property: none;
+    }
+  }
+
+  /* Measures the parts share that no token carries. Each is written here once. */
+  :root {
+    --oh-hair: 1px;
+    --oh-focus: 2px;
+    --oh-lh: 1.4;
+    --oh-lh-tight: 1;
+    --oh-ring-btn: inset 0 0 0 var(--oh-hair) var(--btn-ring);
+    --oh-ring-ctl: inset 0 0 0 var(--oh-hair) var(--ctl-ring);
+    --oh-ring-pick: inset 0 0 0 var(--oh-hair) var(--pick-ring);
+    --oh-ring-line: inset 0 0 0 var(--oh-hair) var(--line);
+    --oh-ring-focus: inset 0 0 0 var(--oh-focus) var(--focus);
+    /* What a system draws over at a glass's foot, and how high a keyboard stands. A host that knows the glass
+       says both on the root: `--sys-b` (0 while a keyboard is up, which covers it) and `--kb`. Without a host,
+       what the system itself reports. What is fixed at the foot keeps the larger of its own margin and the
+       inset, never the two added; a sheet from the foot stands on the keys. */
+    --oh-inset-foot: var(--sys-b, env(safe-area-inset-bottom, 0px));
+    --oh-inset-keys: var(--kb, 0px);
+    /* The face of what is set in columns or as code: a letter's plain text, a block of code. */
+    --oh-face-mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    --oh-ring-ink: inset 0 0 0 var(--oh-focus) var(--ink);
+    --oh-touch: 0;
+    --oh-layer-recessed: -1;
+    --oh-layer-raised: 1;
+    --oh-layer-jump: 5;
+    --oh-layer-over: 40;
+    --oh-layer-top: 60;
+    /* How far a ring leaves what rang. */
+    --oh-ringout-far: -14px;
+  }
+
+  :root[data-touch="1"] {
+    --oh-touch: 1;
+  }
+
+  /* The ground every part stands on: the app's root carries it, or the document's. */
+  .oh-root {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-text);
+    font-size: var(--t-ui);
+    font-weight: var(--w-text);
+    line-height: var(--oh-lh);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .oh-root,
+  .oh-root *,
+  .oh-root *::before,
+  .oh-root *::after {
+    box-sizing: border-box;
+  }
+
+  .oh-root ::selection {
+    background: var(--hot);
+    color: var(--on-hot);
+  }
+
+  /* A control starts from nothing: the part's own class draws it. */
+  .oh-control {
+    appearance: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-align: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .oh-control:focus {
+    outline: none;
+  }
+  .oh-control:focus-visible {
+    outline: var(--oh-focus) solid var(--focus);
+    outline-offset: var(--oh-focus);
+    border-radius: var(--r-row);
+  }
+  :root[data-face="ohmarchy"] .oh-control:focus-visible {
+    outline-offset: 0;
+  }
+  @media (forced-colors: active) {
+    :root :is(.oh-row, .oh-menu-item, .oh-railentry, .oh-readsquares-slot):focus-visible {
+      outline: var(--key-focus-w) solid var(--focus);
+      outline-offset: calc(-1 * var(--key-focus-w));
+    }
+  }
+  .oh-control:disabled,
+  .oh-control[aria-disabled="true"] {
+    cursor: default;
+  }
+
+  /* An icon keeps its size beside whatever it stands with. */
+  .oh-icon {
+    display: block;
+    flex: none;
+  }
+
+  /* A line of text starts from nothing too: no margin, the size and weight of what it stands in. */
+  .oh-text {
+    margin: 0;
+    padding: 0;
+    font-size: inherit;
+    font-weight: inherit;
+  }
+
+  /* Said to a screen reader, drawn for nobody. */
+  .oh-vh {
+    position: absolute;
+    width: var(--oh-hair);
+    height: var(--oh-hair);
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  /* The display face: a title, a sentence, a letter in a circle. */
+  .oh-display {
+    font-family: var(--f-display);
+    font-weight: var(--w-display);
+    letter-spacing: var(--track);
+    font-variation-settings: var(--opsz);
+  }
+
+  .oh-muted {
+    color: var(--ink2);
+  }
+
+  .oh-nowrap {
+    white-space: nowrap;
+  }
+
+  /* A ring: what rings knocks, and a ring leaves it once. Written here once; a part that rings plays both by name. */
+  @keyframes oh-knock {
+    0% {
+      transform: scale(1);
+    }
+
+    18% {
+      transform: scale(0.92);
+    }
+
+    45% {
+      transform: scale(1.06);
+    }
+
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  @keyframes oh-ringout {
+    0% {
+      inset: 0;
+      opacity: 0.9;
+    }
+
+    100% {
+      inset: var(--oh-ringout-far);
+      opacity: 0;
+    }
+  }
+}
+
+/* Older controls mounted in the current kit use its surface and type tokens. */
+:root .oh-root .oh-datepicker,
+:root .oh-root .oh-gloss-pop {
+  background: var(--sheet);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--float);
+  font-family: var(--f-text);
+  font-size: var(--t-ui);
+  font-weight: var(--w-text);
+}
+
+:root .oh-root .oh-gloss-pop {
+  z-index: var(--oh-layer-top);
+}
+
+:root:has(.oh-root) .oh-toast {
+  background: var(--solid);
+  box-shadow: var(--lift);
+  color: var(--on-solid);
+  font-family: var(--f-text);
+  font-size: var(--t-ui);
+  font-weight: var(--w-bold);
+}
+
+:root:has(.oh-root) .oh-toast .oh-toast-act {
+  color: var(--on-solid);
+  font-size: var(--t-ui);
+  font-weight: var(--w-bold);
+}
+
+:root .oh-root .oh-datepicker-month {
+  font-size: var(--t-ui);
+  font-weight: var(--w-bold);
+}
+
+:root .oh-root .oh-datepicker-weekday {
+  font-size: var(--t-meta);
+  font-weight: var(--w-bold);
+}
+
+:root .oh-root .oh-datepicker-day {
+  font-size: var(--t-ui);
+  font-weight: var(--w-mid);
+}
+
+:root[data-face="ohmarchy"] .oh-toast {
+  box-shadow: none;
+}

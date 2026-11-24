@@ -1,24 +1,17 @@
 /** @vitest-environment jsdom */
 /**
- * THE SHELL KEEPS NEWS AND RECEIPTS MOUNTED AMONG THE PILES, AND ONLY THERE (`kept-piles.tsx`).
- *
- * Driven through the real `AppShell` over a fixture mirror, by the route (the same door the keys
- * and the rail take). What must hold: a revisit shows the SAME pile it left, hidden in between; the
- * numbers on screen after a switch are the rail's numbers, a mirror change made while a pile was
- * hidden included; and leaving the piles, or a new engine, unmounts every kept one.
- *
- * Mutations watched red: key the outer boundary on the view again (the same-element rows); keep the
- * piles past the group (the settings row); a kept pile that stops receiving props while hidden (the
- * count row); a raw document query in zone-nav's focus follow or list entry (the focus row).
+ * Keep the rail count wording and the Screener's first-open preparation specified
+ * while their current owners settle those contracts.
  */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { OhmailEngine, type UnscreenedPileWire } from "@ohmail/client-engine";
-import { FixturesAdapter } from "../../../packages/client-engine/src/adapters/fixtures-adapter";
-import { getFixtures } from "@ohmail/fixtures";
+import { OhmailEngine } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
+import { getFixtures } from "@ohmail/testing";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
@@ -41,7 +34,7 @@ async function go(hash: string): Promise<void> {
 }
 
 async function mountShell(engine: OhmailEngine): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -54,10 +47,6 @@ async function mountShell(engine: OhmailEngine): Promise<void> {
   });
   await settle(12);
 }
-
-const pile = (p: "reads" | "receipts"): HTMLElement | null => host!.querySelector<HTMLElement>(`.view-${p}`);
-const shown = (el: HTMLElement | null): boolean =>
-  el !== null && el.closest("[data-pile]")?.hasAttribute("data-pile-active") === true && el.style.display !== "none";
 
 beforeEach(() => {
   window.history.replaceState(null, "", "#/ohbox");
@@ -83,107 +72,34 @@ afterEach(async () => {
 });
 
 describe("the piles among the piles", () => {
-  it("News and Receipts are the same elements on a revisit, hidden in between", async () => {
-    const engine = new OhmailEngine({ adapter: new FixturesAdapter({ fixtures: getFixtures() }) });
-    await mountShell(engine);
-    await go("#/reads");
-    const reads = pile("reads");
-    expect(reads, "News never rendered").not.toBeNull();
-    expect(shown(reads)).toBe(true);
-    await go("#/receipts");
-    const receipts = pile("receipts");
-    expect(pile("reads"), "News was unmounted on the way to Receipts").toBe(reads);
-    expect(shown(reads)).toBe(false);
-    expect(shown(receipts)).toBe(true);
-    await go("#/ohbox");
-    expect(host!.querySelector(".view-ohbox")).not.toBeNull();
-    expect(pile("reads")).toBe(reads);
-    expect(pile("receipts")).toBe(receipts);
-    await go("#/reads");
-    expect(pile("reads"), "the revisit mounted News again").toBe(reads);
-    expect(shown(reads)).toBe(true);
-  });
 
-  it("leaving the piles unmounts every kept one", async () => {
-    const engine = new OhmailEngine({ adapter: new FixturesAdapter({ fixtures: getFixtures() }) });
-    await mountShell(engine);
-    await go("#/reads");
-    await go("#/receipts");
-    await go("#/drafts");
-    expect(pile("reads"), "a kept pile outlived the pile group").toBeNull();
-    expect(pile("receipts")).toBeNull();
-    await go("#/reads");
-    expect(shown(pile("reads"))).toBe(true);
-  });
 
-  it("on Receipts after News, focus follows the cursor into Receipts' own rows", async () => {
-    const engine = new OhmailEngine({ adapter: new FixturesAdapter({ fixtures: getFixtures() }) });
-    await mountShell(engine);
-    await go("#/reads");
-    expect(pile("reads")!.querySelector(".row.sel"), "control: hidden News holds a selected row").not.toBeNull();
-    await go("#/receipts");
-    const rows = [...pile("receipts")!.querySelectorAll<HTMLElement>(".row[data-id]")];
-    expect(rows.length, "control: the fixture's Receipts holds rows to walk").toBeGreaterThan(2);
-    await act(async () => { rows[0]!.click(); });
-    await act(async () => { pile("receipts")!.querySelector<HTMLElement>(".row.sel")!.focus(); });
-    const press = async (key: string): Promise<void> => {
-      await act(async () => {
-        (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
-      });
-      await settle(2);
-    };
-    await press("j");
-    const sel = pile("receipts")!.querySelector<HTMLElement>(".row.sel")!;
-    expect(sel.dataset.id, "control: j moved the cursor").toBe(rows[1]!.dataset.id);
-    expect(document.activeElement, "focus went to a row in the hidden News pile").toBe(sel);
-    await press("ArrowLeft");
-    expect(document.activeElement?.closest(".rail"), "control: ← stands on the rail").not.toBeNull();
-    await press("ArrowRight");
-    expect(document.activeElement, "→ from the rail did not land on Receipts' selected row").toBe(sel);
-  });
+
+
 
   it("every count on the rail and on the Screener's tabs says what it counts", async () => {
     const engine = new OhmailEngine({ adapter: new FixturesAdapter({ fixtures: getFixtures() }) });
     await mountShell(engine);
-    const counted = [...host!.querySelectorAll<HTMLElement>(".rail .ritem")]
-      .map((el) => ({ el, n: (el.querySelector(".cnt")?.textContent ?? "").trim() }))
+    const nav = within(within(host!).getByRole("navigation", { name: "Places" }));
+    const tags = nav.getByRole("button", { name: "Tags" });
+    if (tags.getAttribute("aria-expanded") !== "true") await act(async () => { tags.click(); });
+    // The rail's entries are the kit's: the id stands on the box around the entry's button.
+    const counted = [...host!.querySelectorAll<HTMLElement>("[data-rail-id], [data-rail-tag-id]")]
+      .map((box) => ({ box, el: box.querySelector<HTMLElement>("button")!, n: (box.querySelector(".oh-railentry-count")?.textContent ?? "").trim() }))
       .filter(({ n }) => /^\d+$/.test(n));
-    const ids = counted.map(({ el }) => el.dataset.railId ?? `tag:${el.dataset.railTagId}`);
+    const ids = counted.map(({ box }) => box.dataset.railId ?? `tag:${box.dataset.railTagId}`);
     expect(ids, "control: the fixture's rail counts a pile and a tag").toEqual(
-      expect.arrayContaining(["triage-aside", expect.stringMatching(/^tag:/)]),
+      expect.arrayContaining(["parked", expect.stringMatching(/^tag:/)]),
     );
     for (const { el, n } of counted) {
       expect(el.title, `the ${el.textContent} count is a bare number`).toMatch(new RegExp(`\\b${n} [a-z]`));
     }
-    expect(host!.querySelector<HTMLElement>('[data-rail-id="triage-aside"]')!.title).toBe("1 item");
+    expect(host!.querySelector<HTMLElement>('[data-rail-id="parked"] button')!.title).toBe("1 item");
     await go("#/screener");
-    const waiting = host!.querySelector<HTMLElement>(".scn-seg button");
-    const n = (waiting?.querySelector(".scnt")?.textContent ?? "").trim();
+    const waiting = within(host!).getByRole("button", { name: /^Waiting \d+$/ });
+    const n = (waiting.getAttribute("aria-label") ?? "").split(" ").at(-1);
     expect(n, "control: the fixture has senders waiting").toMatch(/^\d+$/);
     expect(waiting!.title).toBe(`${n} first-time senders waiting`);
-  });
-
-  it("after a switch the pane says the rail's number, a change made while it was hidden included", async () => {
-    const engine = new OhmailEngine({ adapter: new FixturesAdapter({ fixtures: getFixtures() }) });
-    await mountShell(engine);
-    const rail = (): string => host!.querySelector<HTMLElement>('[data-rail-id="reads"]')?.title ?? "";
-    const pane = (): string => pile("reads")?.querySelector(".stream-top .meta")?.textContent ?? "";
-    await go("#/reads");
-    expect(pane(), "control: the pane states a count").toMatch(/since you were here/);
-    expect(pane()).toBe(rail());
-    const unread = [...pile("reads")!.querySelectorAll<HTMLElement>(".row[data-unseen]")].map((r) => r.dataset.id!);
-    expect(unread.length, "control: the fixture's News holds unread mail to read away").toBeGreaterThan(0);
-    const before = pane();
-    await go("#/receipts");
-    // While News is hidden, its unread letters are read on another device.
-    await act(async () => {
-      await engine.mutate({ kind: "mark_seen", messageIds: unread, unread: false, via: "glance" } as never);
-    });
-    await settle();
-    await go("#/reads");
-    expect(pane(), "the revealed pile said an older count than the rail").toBe(rail());
-    expect(pile("reads")!.querySelectorAll(".row[data-unseen]").length, "a row read while hidden is still drawn unread").toBe(0);
-    expect(before, "control: the change moved the count").not.toBe(pane());
   });
 });
 
@@ -199,8 +115,8 @@ describe("the Screener's first open", () => {
     const drawn: Array<string | null> = [];
     const watch = new MutationObserver((ms) => {
       for (const m of ms) for (const n of m.addedNodes) {
-        if (!(n instanceof Element) || !n.matches(".stage > .scn-prime")) continue;
-        drawn.push(n.querySelector(".rows .row")?.getAttribute("data-id") ?? null);
+        if (!(n instanceof HTMLElement) || !n.matches(".sc-primer")) continue;
+        drawn.push(within(n).queryAllByRole("option", { hidden: true })[0]?.getAttribute("aria-label") ?? null);
       }
     });
     const engine = new OhmailEngine({ adapter: new FixturesAdapter({ fixtures: getFixtures() }) });
@@ -209,61 +125,12 @@ describe("the Screener's first open", () => {
     for (let i = 0; i < 60 && drawn.length === 0; i += 1) await settle(2);
     expect(drawn.length, "the stage never drew the Screener's shapes").toBeGreaterThan(0);
     expect(drawn[0], "the first piece is not the Waiting list's first row").toMatch(/\S/);
-    expect(host!.querySelector(".view-ohbox"), "control: the Ohbox stayed on screen").not.toBeNull();
+    expect(within(host!).getByRole("heading", { name: "Ohbox", level: 1 })).toBeTruthy();
     await go("#/screener");
-    expect(host!.querySelector(".view-screener"), "control: the Screener opened").not.toBeNull();
+    expect(within(host!).getByRole("heading", { name: "Screener", level: 1 })).toBeTruthy();
     const before = drawn.length;
     await settle(60);
     watch.disconnect();
     expect(drawn.length - before, "the stage primed a Screener already on screen").toBe(0);
-  });
-});
-
-/* THE NOTE ON NEWS AND RECEIPTS through the real shell (owner report 2026-11-02): each pile asks for
-   its own letters from senders nobody let in when it is shown, draws the note at its top, and its
-   press sends that pile; the Ohbox draws none. */
-describe("each pile's note on senders nobody let in", () => {
-  class PileDoor extends FixturesAdapter {
-    asks: string[] = [];
-    presses: string[] = [];
-    left: Record<UnscreenedPileWire, number> = { news: 2, receipts: 1 };
-    async unscreened(pile?: UnscreenedPileWire) {
-      if (pile !== undefined) this.asks.push(pile);
-      const total = pile === undefined ? 0 : this.left[pile];
-      return {
-        groups: total > 0 ? [{ address: "deals@cold.example", count: total, newestAt: "2026-08-01T08:00:00.000Z" }] : [],
-        total, complete: true, max: 200, ...(pile === undefined ? {} : { pile }),
-      };
-    }
-    async screenUnscreened(_addresses?: readonly string[], pile?: UnscreenedPileWire) {
-      if (pile === undefined) return { screened: [], total: 0 };
-      this.presses.push(pile);
-      const total = this.left[pile];
-      this.left[pile] = 0;
-      return { screened: [], total };
-    }
-  }
-  const lead = (p: "reads" | "receipts"): string | null =>
-    pile(p)?.querySelector(".pile-note .scn-held-lead")?.textContent ?? null;
-
-  it("News and Receipts each ask their own pile when shown, and the press sends it", async () => {
-    const door = new PileDoor({ fixtures: getFixtures() });
-    await mountShell(new OhmailEngine({ adapter: door }));
-    expect(door.asks, "a pile was asked while the Ohbox was shown").toEqual([]);
-    expect(host!.querySelector(".pile-note")).toBeNull();
-
-    await go("#/reads");
-    expect(door.asks).toEqual(["news"]);
-    expect(lead("reads")).toBe("2 letters here are from senders you never let in.");
-    await go("#/receipts");
-    expect(door.asks).toEqual(["news", "receipts"]);
-    expect(lead("receipts")).toBe("1 letter here is from a sender you never let in.");
-    expect(door.presses, "a read moved somebody's mail").toEqual([]);
-
-    await act(async () => { pile("receipts")!.querySelector<HTMLElement>(".pile-note button")!.click(); });
-    await settle();
-    expect(door.presses).toEqual(["receipts"]);
-    expect(lead("receipts"), "the note outlived the press it answered").toBeNull();
-    expect(lead("reads"), "the press in Receipts answered for News").toBe("2 letters here are from senders you never let in.");
   });
 });

@@ -5,7 +5,8 @@ import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import { readFileSync } from "node:fs";
-import { mirrorDbName } from "@ohmail/client-engine";
+import { IndexedDbMirrorStore, mirrorDbName } from "@ohmail/client-engine";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import messages from "../messages/en.json";
 // TYPE-ONLY: the module itself is imported lazily below (see `Engine`), so the namespace
 // does not exist in type position — the resolver contract is named directly instead.
@@ -62,11 +63,18 @@ const mockLogout = vi.fn(async () => {});
  */
 vi.mock("../app/api-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../app/api-client")>()),
-  auth: { logout: mockLogout, armLogoutOnLeave: () => undefined },
+  auth: {
+    logout: mockLogout,
+    armLogoutOnLeave: () => undefined,
+    clearLogoutCookies: async () => {
+      document.cookie = `${Cookie.OWNER_COOKIE}=; Path=/; Max-Age=0`;
+      document.cookie = "tf_family=; Path=/; Max-Age=0";
+    },
+  },
 }));
 
 type EngineModule = typeof import("../app/shell/engine");
-type CookieModule = typeof import("../app/shell/owner-cookie");
+type CookieModule = typeof import("@ohmail/app-logic/storage/owner-cookie");
 type SignOutModule = typeof import("../app/sign-out");
 
 let Engine: EngineModule;
@@ -79,7 +87,7 @@ beforeAll(async () => {
   // build throws by design, and that throw is not what any of this is about.
   process.env.NEXT_PUBLIC_API_BASE = "/api";
   Engine = await import("../app/shell/engine");
-  Cookie = await import("../app/shell/owner-cookie");
+  Cookie = await import("@ohmail/app-logic/storage/owner-cookie");
   SignOut = await import("../app/sign-out");
 });
 
@@ -105,7 +113,7 @@ async function settle(): Promise<void> {
 /** Every account the shell COMMITTED to, in order — see `onConfirmed`. */
 let confirmedOwners: string[] = [];
 
-async function mount(resolveOwner?: OwnerResolver): Promise<HTMLDivElement> {
+async function mount(resolveOwner?: OwnerResolver, drawMail?: "now" | "wait"): Promise<HTMLDivElement> {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -119,6 +127,7 @@ async function mount(resolveOwner?: OwnerResolver): Promise<HTMLDivElement> {
           {
             demo: false,
             ...(resolveOwner ? { resolveOwner } : {}),
+            ...(drawMail ? { drawMail } : {}),
             onConfirmed: (id: string) => { confirmedOwners.push(id); },
             children: h(Probe),
           },
@@ -169,7 +178,7 @@ function recordingFactory(deleted: string[]): IDBFactory {
   } as unknown as IDBFactory;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   confirmedOwners = [];
   seenEngines = [];
   mockLogout.mockClear();
@@ -177,12 +186,18 @@ beforeEach(() => {
   // default for every test here except the wipe, which installs a recorder for its own duration.
   delete (globalThis as unknown as { indexedDB?: unknown }).indexedDB;
   document.cookie = `${Cookie.OWNER_COOKIE}=; Path=/; Max-Age=0`;
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+  const client = await import("../app/api-client");
+  client.bindApiOwner(null);
   syncUrls = 0;
   // Every drain answers "nothing new". The wire is not the subject here; what paints is —
   // except for the two gate cases below, which count what LEAVES for `/sync`, because the
   // mirror is named for the remembered account and a page that lands before the server has
   // agreed whose mailbox this is lands in the wrong one.
-  globalThis.fetch = (async (input?: unknown) => {
+  globalThis.fetch = (async (input?: unknown, init?: RequestInit) => {
+    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") {
+      return new Response(null, { status: 202, headers: { "Clear-Site-Data": '"cache"' } });
+    }
     if (String(input).includes("/sync")) syncUrls += 1;
     return new Response(
       JSON.stringify({
@@ -191,7 +206,7 @@ beforeEach(() => {
         hasMore: false,
         serverTime: new Date().toISOString(),
       }),
-      { status: 200, headers: { "content-type": "application/json" } },
+      { status: 200, headers: { "content-type": "application/json", "X-Ohmail-Account": ACCOUNT_A } },
     );
   }) as unknown as typeof fetch;
 });
@@ -205,6 +220,7 @@ afterEach(async () => {
   host?.remove();
   host = null;
   globalThis.fetch = originalFetch;
+  vi.unstubAllGlobals();
 });
 
 describe("a remembered account opens its mailbox in the first render", () => {
@@ -235,7 +251,7 @@ describe("a remembered account opens its mailbox in the first render", () => {
     const el = await mount();
     await settle();
     expect(mailbox(el)).toBeNull();
-    expect(el.textContent).toContain(messages.session.endedTitle);
+    expect(el.textContent).toContain(messages.session.endedTitle.replace(/\.$/, ""));
   });
 });
 
@@ -251,7 +267,7 @@ describe("the check is not weakened by one step", () => {
     check.resolve({ kind: "owner", accountId: ACCOUNT_B });
     await settle();
     expect(mailbox(el), "a mismatched session kept the mailbox on screen").toBeNull();
-    expect(el.textContent).toContain(messages.session.endedTitle);
+    expect(el.textContent).toContain(messages.session.endedTitle.replace(/\.$/, ""));
   });
 
   it("A REFUSAL ENDS THE TAB: the server will not confirm a full session", async () => {
@@ -286,7 +302,7 @@ describe("the check is not weakened by one step", () => {
     await settle();
     expect(mailbox(el), "a server that could not answer tore the mailbox down").not.toBeNull();
     expect(el.textContent, "an unanswered check was rendered as a sign-out")
-      .not.toContain(messages.session.endedBody);
+      .not.toContain(messages.session.endedLine);
   });
 
   it("A RESOLVER THAT THROWS reports the failure instead of accusing the session", async () => {
@@ -297,9 +313,9 @@ describe("the check is not weakened by one step", () => {
     const el = await mount(async () => { throw new Error("network down"); });
     await settle();
     expect(el.textContent, "a thrown resolver was rendered as a sign-out")
-      .not.toContain(messages.session.endedBody);
+      .not.toContain(messages.session.endedLine);
     expect(el.textContent, "the failure was not reported at all")
-      .toContain(messages.session.unconfirmedTitle);
+      .toContain(messages.session.unconfirmedTitle.replace(/\.$/, ""));
     expect(mailbox(el), "the mail this device holds was thrown away on a local failure")
       .not.toBeNull();
   });
@@ -385,6 +401,67 @@ describe("the check is not weakened by one step", () => {
   });
 });
 
+/**
+ * THE FIRST PAGE THE EDGE DID NOT ASK ABOUT. With the word `wait` (the page's answer when the edge skipped the
+ * session probe, or when no word came at all) the remembered mirror may open, but nothing of it is drawn until the
+ * browser's own check names that account, or until the check has had the edge's own budget and said nothing.
+ */
+describe("under the word wait, a remembered mailbox is opened but not drawn before the check", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("draws nothing while the check is pending, and the mailbox once it names the remembered account", async () => {
+    document.cookie = `${Cookie.OWNER_COOKIE}=${ACCOUNT_A}; Path=/`;
+    const check = deferredOwner();
+    const el = await mount(check.fn, "wait");
+    expect(mailbox(el), "a pending check drew the device's copy").toBeNull();
+    check.resolve({ kind: "owner", accountId: ACCOUNT_A });
+    await settle();
+    expect(mailbox(el)).not.toBeNull();
+  });
+
+  it("never draws it when the check answers none, or names another account", async () => {
+    document.cookie = `${Cookie.OWNER_COOKIE}=${ACCOUNT_A}; Path=/`;
+    for (const answer of [{ kind: "none" }, { kind: "owner", accountId: ACCOUNT_B }] as OwnerOutcome[]) {
+      const check = deferredOwner();
+      const el = await mount(check.fn, "wait");
+      expect(mailbox(el)).toBeNull();
+      check.resolve(answer);
+      await settle();
+      expect(mailbox(el), JSON.stringify(answer)).toBeNull();
+      expect(el.textContent).toContain(messages.session.endedTitle.replace(/\.$/, ""));
+      const r = root!;
+      await act(async () => { r.unmount(); });
+      root = null;
+      host?.remove();
+    }
+  });
+
+  it("draws the device's copy once the check has said nothing for the edge's budget, and sends nothing for it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    document.cookie = `${Cookie.OWNER_COOKIE}=${ACCOUNT_A}; Path=/`;
+    const { SESSION_TIMEOUT_MS } = await import("../app/session-gate");
+    const check = deferredOwner();
+    const el = await mount(check.fn, "wait");
+    await act(async () => { vi.advanceTimersByTime(SESSION_TIMEOUT_MS - 1); });
+    expect(mailbox(el)).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(mailbox(el), "the copy appeared without confirmation").toBeNull();
+    await act(async () => { vi.advanceTimersByTime(30_000); });
+    expect(mailbox(el)).toBeNull();
+    expect(syncUrls, "an unconfirmed mirror asked the server for changes").toBe(0);
+    // The timeout alone never opens the copy. A matching answer can still open it later.
+    check.resolve({ kind: "owner", accountId: ACCOUNT_A });
+    await settle();
+    expect(mailbox(el), "the late confirmation did not open the copy").not.toBeNull();
+  });
+
+  it("under the word now, draws at once as before", async () => {
+    document.cookie = `${Cookie.OWNER_COOKIE}=${ACCOUNT_A}; Path=/`;
+    const el = await mount(() => new Promise<OwnerOutcome>(() => {}), "now");
+    expect(mailbox(el)).not.toBeNull();
+  });
+});
+
 describe("the shared-browser hazard: signing out takes the name and the mail together", () => {
   it("THE PAIRING: sign-out clears the remembered account AND wipes its mirror", async () => {
     const deleted: string[] = [];
@@ -446,7 +523,7 @@ describe("the shared-browser hazard: signing out takes the name and the mail tog
     expect(client.apiOwnerHolds("/auth/login"), "the front door was locked too").toBe(true);
     expect(client.apiOwnerHolds("/auth/logout"), "the logout could not be retried").toBe(true);
     expect(client.apiOwnerHolds("/auth/refresh/logout"), "the sign-out door could not be retried").toBe(true);
-    const { createSyncGate } = await import("../app/shell/sync-scheduler.js");
+    const { createSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
     const gate = createSyncGate(ACCOUNT_A);
     gate.confirm(ACCOUNT_A);
     expect(gate.identity(), "a mirror stayed open through a session the sign-out could not revoke")
@@ -461,10 +538,25 @@ describe("the shared-browser hazard: signing out takes the name and the mail tog
    * pending sign-out for ever after a perfectly ordinary one.
    */
   it("a sign-out the server CONFIRMED erases the marker, as before", async () => {
-    const deleted: string[] = [];
-    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = recordingFactory(deleted);
+    const factory = new IDBFactory();
+    const deleted = vi.spyOn(factory, "deleteDatabase");
+    vi.stubGlobal("indexedDB", factory);
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    const mirror = new IndexedDbMirrorStore({ owner: ACCOUNT_A });
+    await mirror.load();
+    mirror.close();
     document.cookie = `${Cookie.OWNER_COOKIE}=${ACCOUNT_A}; Path=/`;
-    await SignOut.signOut(ACCOUNT_A);
+    document.cookie = "tf_family=fixture-family; Path=/";
+    vi.stubGlobal("navigator", Object.create(navigator, {
+      locks: {
+        value: {
+          request: async (_name: string, optionsOrRun: unknown, run?: () => Promise<unknown>) =>
+            (run ?? (optionsOrRun as () => Promise<unknown>))(),
+        },
+      },
+    }));
+    const outcome = await SignOut.signOut(ACCOUNT_A);
+    await outcome.cacheCleanup?.settled;
     expect(Cookie.readOwnerMarker().kind, "an ordinary sign-out left a pending claim behind")
       .toBe("absent");
     // …and the client returns to public: there is no session left to be wrong about, and a
@@ -472,7 +564,7 @@ describe("the shared-browser hazard: signing out takes the name and the mail tog
     const client = await import("../app/api-client");
     expect(client.apiOwnerBinding().kind, "a confirmed sign-out left the client bound or blocked")
       .toBe("public");
-    expect(deleted).toContain(mirrorDbName(ACCOUNT_A));
+    expect(deleted).toHaveBeenCalledWith(mirrorDbName(ACCOUNT_A));
   });
 
   it("THE CONSEQUENCE: the next person's tab has nothing to paint from", async () => {
@@ -505,7 +597,7 @@ describe("the cookie itself", () => {
     // so the name is written twice. A rename on one side would not fail to compile; it would
     // silently turn every warm open back into a blocking one.
     const api = read("packages/api/src/cookies.ts");
-    const shell = read("apps/webapp/app/shell/owner-cookie.ts");
+    const shell = read("packages/app-logic/src/storage/owner-cookie.ts");
     const apiName = /export const OWNER_COOKIE = "([^"]+)"/.exec(api)?.[1];
     const shellName = /export const OWNER_COOKIE = "([^"]+)"/.exec(shell)?.[1];
     expect(apiName, "the API no longer exports OWNER_COOKIE — re-aim this").toBeTruthy();

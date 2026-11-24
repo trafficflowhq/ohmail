@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { mayHandOff, type HandOffInputs } from "../app/shell/send-handoff";
-import type { MailboxFacts } from "../app/shell/mail-state";
-import type { SendLineItem } from "../app/shell/mail-send";
-import { lineRows } from "../app/shell/SendingLine";
+import { mayHandOff, type HandOffInputs } from "@ohmail/app-logic/writing/send-handoff";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import type { SendLineItem } from "@ohmail/app-logic/writing/mail-send";
+import { lineRows } from "@ohmail/app-logic/writing/send-line";
 
 /**
  * THE HAND-OFF GATE'S TRUTH TABLE. A send leaves its editor at once only when the connection is

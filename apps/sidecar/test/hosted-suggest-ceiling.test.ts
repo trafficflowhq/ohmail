@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { accounts, mailboxes } from "@trafficflow/db";
+import { accounts, accountSettings, mailboxes } from "@trafficflow/db";
 import type { ClassifierInput, ClassifierPort, ClassifierResult } from "@trafficflow/core";
-import { ScreenerService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, ScreenerService, type ServiceContext } from "@trafficflow/services";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
-import { cloudSuggestWire } from "../../desktop/src/cloud-suggest.js";
+import { cloudSuggestWire } from "../../../test/support/desktop-bridge-fixtures.js";
+import { consentOverBridge } from "../../../test/support/desktop-bridge-fixtures.js";
 import { FakeAdapter, seedMessage } from "../../../packages/services/test/helpers.js";
 import { fakeSpendPort } from "../../../packages/services/test/helpers/spend-port-fake.js";
 import { PLANE_PRICES, PLANE_PRICING } from "../../../packages/services/test/helpers/plane-pricing.js";
@@ -48,7 +49,7 @@ class Yes implements ClassifierPort {
 }
 
 /** What reached the account: the purchase body as the engine forwarded it, and its key. */
-interface Reached { body: { senders?: unknown; maxCredits?: unknown }; key: string | null }
+interface Reached { body: { senders?: unknown; maxCredits?: unknown; quoteGrant?: unknown }; key: string | null }
 
 /**
  * The hosted account's HTTP edge: what the engine's mirror reads to come online, and the purchase
@@ -58,6 +59,7 @@ function account(mailboxId: string, svc: ScreenerService, ctx: ServiceContext, r
   const none = { creates: [], updates: [], moves: [], deletes: [] };
   return (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (url.pathname === "/consent") return send({ dormancyDays: 90, autoSuggestAt: CONSENT_AT.toISOString() });
     if (url.pathname === "/mailboxes") return send(mailboxList([hostedMailbox(mailboxId, OWN)]));
     if (url.pathname === "/sync/snapshot") return send({ asOfSeq: 0, changes: [], nextCursor: null, window: { days: 90, minRows: 5000 } });
     if (url.pathname === "/sync") return send({ changes: none, cursor: "end", hasMore: false, serverTime: new Date().toISOString() });
@@ -101,10 +103,13 @@ function shellAround(sidecar: CloudSidecar): void {
  * An account holding four waiting senders, behind a signed-in hosted door that is online. Metered
  * by default; `metered: false` is a server that charges nothing, which quotes 0.
  */
+const CONSENT_AT = new Date("2026-07-01T00:00:00Z");
+
 async function hostedDoor({ metered = true }: { metered?: boolean } = {}) {
   const db = await makeTestDb();
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: "hosted-ceiling" });
+  await db.insert(accountSettings).values({ accountId, autoSuggestAt: CONSENT_AT });
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: OWN }).returning();
   for (const from of SENDERS) await seedMessage(db, accountId, mb!.id, { from });
   const model = new Yes();
@@ -112,7 +117,7 @@ async function hostedDoor({ metered = true }: { metered?: boolean } = {}) {
   const svc = new ScreenerService(metered
     ? { adapter: new FakeAdapter(), classifier: model, credits: gate, pricing: PLANE_PRICING }
     : { adapter: new FakeAdapter(), classifier: model });
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => new Date("2026-07-28T12:00:00Z"), requestId: "hc" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date("2026-07-28T12:00:00Z"), requestId: "hc" };
   const reached: Reached[] = [];
   const dir = await freshDataDir("ohmail-hosted-ceiling-");
   dirs.push(dir);
@@ -125,14 +130,15 @@ async function hostedDoor({ metered = true }: { metered?: boolean } = {}) {
   for (let i = 0; i < 200 && !sidecar.online(); i++) await new Promise((r) => setTimeout(r, 25));
   expect(sidecar.online(), "the hosted door never came online, so no purchase could be relayed").toBe(true);
   shellAround(sidecar);
-  return { model, gate, reached };
+  const { relaySuggestionGrant: relayGrant } = await consentOverBridge.state();
+  return { model, gate, reached, relayGrant: relayGrant ?? null };
 }
 
 describe("a confirmed purchase on the hosted door, end to end", () => {
   it("THE CONTROL: a confirm carrying no figure buys the whole set", { timeout: 30_000 }, async () => {
     // Every refusal below is evidence only beside a run this chain DOES admit.
-    const { model, gate, reached } = await hostedDoor();
-    const res = await cloudSuggestWire.suggest(SENDERS, { idempotencyKey: "k-0" });
+    const { model, gate, reached, relayGrant } = await hostedDoor();
+    const res = await cloudSuggestWire.suggest(SENDERS, { relayGrant, idempotencyKey: "k-0" });
     expect(res.charged).toBe(SENDERS.length * PRICE);
     expect(res.suggestions).toHaveLength(SENDERS.length);
     expect(model.calls).toBe(SENDERS.length);
@@ -141,9 +147,9 @@ describe("a confirmed purchase on the hosted door, end to end", () => {
   });
 
   it("over the quote: the sender past the figure is refused, and nothing past it is charged", { timeout: 30_000 }, async () => {
-    const { model, gate, reached } = await hostedDoor();
+    const { model, gate, reached, relayGrant } = await hostedDoor();
     const shown = (SENDERS.length - 1) * PRICE;
-    const res = await cloudSuggestWire.suggest(SENDERS, { idempotencyKey: "k-1", maxCredits: shown });
+    const res = await cloudSuggestWire.suggest(SENDERS, { relayGrant, idempotencyKey: "k-1", maxCredits: shown });
     expect(reached.map((r) => r.body.maxCredits), "the account was never told the figure").toEqual([shown]);
     expect(res.charged, "the run cost more than the figure on the button").toBe(shown);
     expect(res.stopped).toBe("over_quote");
@@ -154,8 +160,8 @@ describe("a confirmed purchase on the hosted door, end to end", () => {
 
   it("a figure the set no longer fits at all: refused whole, nothing charged", { timeout: 30_000 }, async () => {
     // Zero is a real ceiling — a quote of nothing, confirmed — and never "no figure".
-    const { model, gate } = await hostedDoor();
-    const res = await cloudSuggestWire.suggest(SENDERS, { idempotencyKey: "k-2", maxCredits: 0 });
+    const { model, gate, relayGrant } = await hostedDoor();
+    const res = await cloudSuggestWire.suggest(SENDERS, { relayGrant, idempotencyKey: "k-2", maxCredits: 0 });
     expect(res.charged).toBe(0);
     expect(res.stopped).toBe("over_quote");
     expect(res.skipped.map((s) => s.reason)).toEqual(SENDERS.map(() => "over_quote"));
@@ -167,11 +173,12 @@ describe("a confirmed purchase on the hosted door, end to end", () => {
   it("a server that charges nothing quotes 0, and that confirmed 0 still buys the whole set", { timeout: 30_000 }, async () => {
     // The door now sends the figure to every server it reaches; where nothing is metered the
     // figure is the server's own 0, and it must bound nothing.
-    const { model, reached } = await hostedDoor({ metered: false });
-    const quote = await cloudSuggestWire.suggest(SENDERS, { dryRun: true });
+    const { model, reached, relayGrant } = await hostedDoor({ metered: false });
+    const quote = await cloudSuggestWire.suggest(SENDERS, { relayGrant, dryRun: true });
     expect(quote.quotedCredits).toBe(0);
-    const res = await cloudSuggestWire.suggest(SENDERS, { idempotencyKey: "k-3", maxCredits: quote.quotedCredits });
+    const res = await cloudSuggestWire.suggest(SENDERS, { relayGrant, idempotencyKey: "k-3", maxCredits: quote.quotedCredits, quoteGrant: quote.quoteGrant?.proof });
     expect(reached.map((r) => r.body.maxCredits)).toEqual([undefined, 0]);
+    expect(reached[1]?.body.quoteGrant === quote.quoteGrant?.proof && quote.quoteGrant !== undefined).toBe(true);
     expect(res.suggestions).toHaveLength(SENDERS.length);
     expect(res.stopped).toBeUndefined();
     expect(res.skipped).toEqual([]);

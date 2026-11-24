@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import type { MailboxDTO } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * THE MANAGED WEB SAYS WHAT THE DESKTOP AND PHONE SAY ABOUT A SET-ASIDE MESSAGE. A message the
@@ -43,7 +43,7 @@ vi.mock("../app/api-client", () => ({
   },
   mailboxes: { list: async () => ({ items: listed }), create: async () => listed[0]!, resync: async () => undefined },
 }));
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
 
 const dto = (over: Partial<MailboxDTO>): MailboxDTO => ({
   id: "mb1", provider: "icloud", address: "person@example.test",

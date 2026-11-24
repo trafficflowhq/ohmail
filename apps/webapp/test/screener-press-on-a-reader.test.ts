@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
+import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import { ISO, act, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick, liveAccountResponse } from "./fixtures/live-walk-shell";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import en from "../messages/en.json";
 
 /**
@@ -36,7 +37,7 @@ function world(folder: string): void {
     },
   }];
   posts = [];
-  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+  const respond = async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url.includes("/sync")) {
@@ -58,16 +59,25 @@ function world(folder: string): void {
       return NOBODY_409();
     }
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+  };
+  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+    liveAccountResponse(await respond(input, init)));
 }
 
-/** File the row through its own quick-adjust menu, as `screener-decision-holds` does. */
-async function fileToOhbox(c: HTMLElement): Promise<void> {
-  const slot = c.querySelector(`.row[data-id="m1"]`)?.closest(".row-slot");
-  if (!slot) throw new Error("the stranger is not waiting in the Screener");
-  slot.querySelector<HTMLButtonElement>(".scn-act-more")!.click();
+/** Open the mounted row, then try the same decision from the panel or its keyboard shortcut. */
+async function fileToOhbox(c: HTMLElement, keyboard = false): Promise<void> {
+  const list = within(c).getByRole("listbox", { name: "Screener" });
+  const row = within(list).getByRole("option", { name: /subject of m1/ });
+  await act(async () => { row.click(); });
   await tick(0);
-  slot.querySelectorAll<HTMLButtonElement>(".scn-act-dest")[0]!.click();
+  const preview = within(c).getByRole("region", { name: "Reading" });
+  if (keyboard) {
+    await act(async () => { fireEvent.keyDown(row, { key: "o" }); });
+  } else {
+    const panel = within(preview).getByRole("toolbar", { name: "Actions" });
+    const decision = within(panel).getByRole("button", { name: "Ohbox" });
+    await act(async () => { decision.click(); });
+  }
   await tick(0);
 }
 
@@ -76,7 +86,7 @@ const unconsented = (): MailboxFacts[] => [mailbox({
   id: "mb_1", lastSyncAt: ISO, organizerRole: "reader", organizedBy: null, organizerState: null,
   organizeConsentedAt: null,
 } as Partial<MailboxFacts>)];
-const behind = (): MailboxFacts[] => [mailbox({ id: "mb_1", lastSyncAt: ISO, organizerRole: "organizer" } as Partial<MailboxFacts>)];
+const behind = (): MailboxFacts[] => [mailbox({ id: "mb_1", lastSyncAt: ISO, organizerRole: "organizer", organizeConsentedAt: ISO } as Partial<MailboxFacts>)];
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -88,11 +98,11 @@ for (const folder of [SCREENER, "INBOX"]) describe(`the press says so before any
       await tick(0);
       await goTo("screener");
       await tick(50);
-      await fileToOhbox(c);
-      expect(c.textContent, "the press said nothing about why").toContain(WHY.nobody);
+      await fileToOhbox(c, true);
+      expect(c.textContent, "the press said nothing about why").toContain(WHY.nobody.replace(/\.$/, ""));
       expect(c.textContent, "the press did not say nothing was filed").toContain(en.screener.notFiled);
       expect(c.textContent, "the press claimed a filing").not.toContain("files there automatically");
-      const undo = [...c.querySelectorAll("button")].filter((b) => b.textContent?.trim() === en.screener.toastUndo);
+      const undo = within(c).queryAllByRole("button", { name: en.screener.toastUndo });
       expect(undo.length, "an Undo was offered for a press that did nothing").toBe(0);
       await goTo("ohbox");
       await tick(10_000);
@@ -112,6 +122,6 @@ for (const folder of [SCREENER, "INBOX"]) describe(`where the roster is a pass b
       await goTo("ohbox");
       await tick(200);
       expect(posts.length, "the premise: the write went and was refused").toBeGreaterThan(0);
-      expect(c.textContent, "the correction named no reason").toContain(WHY.nobody);
+      expect(c.textContent, "the correction named no reason").toContain(WHY.nobody.replace(/\.$/, ""));
   });
 });

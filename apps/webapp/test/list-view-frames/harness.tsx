@@ -5,19 +5,23 @@
  * answer after it. `?view=` picks a view mounted alone (Trash's live sheet, the address view).
  * The rig drives it through `window.__lv`; nothing here reaches a network.
  */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { createElement as h } from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine, mutationEffects,
-  type EngineMessage, type EngineMutation, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import { AppShell } from "../../app/shell/AppShell";
-import { TrashView } from "../../app/views/TrashView";
-import { AddressView } from "../../app/views/AddressView";
-import { KeymapProvider } from "../../app/shell/keymap";
-import { ListGoneProvider, listGoneFacts } from "../../app/shell/list-view";
+import { AppShell } from "../_todays-shell.js";
+import { Frame } from "@ohmail/app/frame";
+import { MailGround, mailPlaces } from "@ohmail/app/mail";
+import { TextProvider } from "@ohmail/app/text";
+import { fakeHost } from "../../../../packages/app/test/support/fake-host.js";
+import { fakeAddress, fakeWindow } from "../../../../packages/app/test/support/fake-window.js";
+import addressWords from "../../../../packages/app/messages/address.en.json";
+import trashWords from "../../../../packages/app/messages/trash.en.json";
 import messages from "../../messages/en.json";
 import "../../app/app.css";
 import "../../app/zero-layout.css";
@@ -159,20 +163,41 @@ async function boot(): Promise<void> {
   const intl = (children: unknown) => h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW, children } as never);
   const view = q.get("view");
   if (view === "trash-live") {
-    const live = {
-      supported: true, phase: "ready", mailboxes: [{ id: "mb1", address: ME, window: "ok" }], nextCursor: null, olderLoading: false,
-      items: [{ mailboxId: "mb1", uid: 1, uidValidity: "77", subject: "A receipt the mail server kept", from: { name: "Shop", address: "shop@example.invalid" },
-        date: "2026-09-10T10:00:00.000Z", messageIdHeader: "<m@x>", seen: false, origin: "provider" }],
-      reload: () => {}, loadOlder: () => {}, openBody: () => {},
-      bodyFor: () => ({ phase: "ready", text: "The receipt, read from the mail server's own Trash." }),
-    };
-    createRoot(mount).render(intl(h(KeymapProvider, { children: h(ListGoneProvider, {
-      value: listGoneFacts(() => false, new Set(), null),
-      children: h("div", { className: "app-root", children: h(TrashView, {
-        page: { available: true, items: [], loading: false, error: null, exhausted: true, loadMore: () => {} },
-        live, tags: [], now: NOW, onOpen: () => {}, hydrateBody: () => {}, onAction: () => {}, onAddTag: () => {},
-      } as never) }),
-    }) })));
+    const { host } = fakeHost({
+      engine,
+      service: "self",
+      scope: "trash-live-fixture",
+      places: mailPlaces(),
+      above: MailGround,
+      address: fakeAddress("#/trash"),
+      window: fakeWindow(innerWidth <= 699 ? "phone" : "desktop"),
+      wires: {
+        consent: {
+          ...consentTransport,
+          state: async () => ({ ...await consentTransport.state(), foldersEnabledAt: NOW.toISOString() }),
+        },
+        trash: {
+          list: async () => ({
+            mailboxes: [{ id: "mb1", address: ME, window: "ok" }],
+            nextCursor: null,
+            items: [{
+              mailboxId: "mb1", uid: 1, uidValidity: "77", subject: "A receipt the mail server kept",
+              from: { name: "Shop", address: SENDER }, date: "2026-09-10T10:00:00.000Z",
+              messageIdHeader: null, seen: false, origin: "provider",
+            }],
+          }),
+          body: async () => ({
+            subject: "A receipt the mail server kept",
+            text: "The receipt, read from the mail server's own Trash.",
+          }),
+        },
+      },
+    });
+    createRoot(mount).render(
+      h(TextProvider, { locale: "en", messages: { ...messages, ...trashWords }, timeZone: "UTC", now: NOW,
+        children: h(Frame, { host }),
+      }),
+    );
   } else if (view === "address-offline") {
     const offlineEngine = new OhmailEngine({
       adapter: { sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "1", hasMore: false, serverTime: NOW.toISOString() }),
@@ -181,8 +206,20 @@ async function boot(): Promise<void> {
       serverAddressSearch: async () => { throw new MutationRejectedError("this install is offline", { status: 503, code: "offline_read_only", retryable: true }); },
     } as never);
     await offlineEngine.start();
-    createRoot(mount).render(intl(h(KeymapProvider, { children: h("div", { className: "app-root", children:
-      h(AddressView, { engine: offlineEngine, version: 1, now: NOW, address: SENDER, onOpen: () => {} }) }) })));
+    const { host } = fakeHost({
+      engine: offlineEngine,
+      service: "self",
+      scope: "address-offline-fixture",
+      places: mailPlaces(),
+      above: MailGround,
+      address: fakeAddress("#/address/" + encodeURIComponent(SENDER)),
+      window: fakeWindow(innerWidth <= 699 ? "phone" : "desktop"),
+    });
+    createRoot(mount).render(
+      h(TextProvider, { locale: "en", messages: { ...messages, ...addressWords }, timeZone: "UTC", now: NOW,
+        children: h(Frame, { host }),
+      }),
+    );
   } else {
     createRoot(mount).render(intl(h(ThemeProvider, { children: h(ToastHost, {
       children: h(AppShell as never, { demo: false, engine, consentTransport, mailboxFacts: roster } as never),

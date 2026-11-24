@@ -97,7 +97,7 @@ vi.mock("../app/api-client", async () => {
 // `ApiError` is compared with `instanceof` inside the screen, so the mocked module's class has
 // to be the one the test throws. Imported AFTER the mock so the augmented module is in play.
 const { ApiError, apiOwnerBinding, bindApiOwner } = await import("../app/api-client");
-const { markSessionAlive } = await import("../app/shell/session-truth");
+const { markSessionAlive } = await import("@ohmail/app-logic/session/session-truth");
 const apiError = (status: number, code: string, message: string): Error =>
   Object.assign(new ApiError(status, code, message), {});
 
@@ -158,22 +158,45 @@ async function waitFor(el: HTMLElement, predicate: () => boolean, what: string, 
 
 async function mount(challenge = ""): Promise<HTMLDivElement> {
   await unmount();
-  const { LinkDesktopScreen } = await import("../app/(product)/link-desktop/LinkDesktopScreen.js");
+  const { LinkDesktopRoute } = await import("../app/(product)/link-desktop/LinkDesktopRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, children: h(LinkDesktopScreen, { challenge }),
+      locale: "en", messages, children: h(LinkDesktopRoute, { challenge }),
     }));
   });
   await settle();
   return host;
 }
 
-/** The one anchor that opens the app, or null. Found by SCHEME, not by label. */
-const deepLink = (el: HTMLElement): HTMLAnchorElement | null =>
-  el.querySelector<HTMLAnchorElement>('a[href^="ohmail://"]');
+/** The one press that opens the app, or null. Found by its label, the way a person finds it. */
+const deepLink = (el: HTMLElement): HTMLButtonElement | null =>
+  [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === messages.linkDesktop.openApp) ?? null;
+
+/** Where a press sends the document: recorded, never followed. */
+async function leavesFor(b: HTMLButtonElement): Promise<string | null> {
+  const real = window.location;
+  let went: string | null = null;
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { get href() { return document.URL; }, assign: (url: string) => { went = url; } },
+  });
+  try {
+    await act(async () => { b.click(); });
+  } finally {
+    Object.defineProperty(window, "location", { configurable: true, value: real });
+  }
+  return went;
+}
+
+/** The door to the sign-in page, or null. */
+const signInDoor = (el: HTMLElement): HTMLButtonElement | null =>
+  [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === messages.login.title) ?? null;
+
+/** The one step-up dialog's code field, over the page. */
+const codeField = (el: HTMLElement): HTMLInputElement | null => el.querySelector<HTMLInputElement>('[role="dialog"] input');
 
 /** The button whose label starts with `label`. Found by TEXT, the way a person finds it. */
 function button(el: HTMLElement, label: string): HTMLButtonElement {
@@ -211,9 +234,9 @@ async function submitForm(el: HTMLElement): Promise<void> {
   await settle();
 }
 
-const input = (el: HTMLElement, id: string): HTMLInputElement => {
-  const found = el.querySelector<HTMLInputElement>(`#${id}`);
-  if (!found) throw new Error(`no input #${id} on screen`);
+const input = (el: HTMLElement): HTMLInputElement => {
+  const found = codeField(el);
+  if (!found) throw new Error("no step-up code field on screen");
   return found;
 };
 
@@ -250,10 +273,10 @@ describe("the desktop link page", () => {
 
     expect(mintCalls).toBe(1);
     expect(el.textContent).toContain(CODE);
-    // 45, from `expiresIn`. A page rendering "120" here would be stating the default TTL
-    // rather than this code's, and would keep doing so after the server changed it.
-    expect(el.textContent).toMatch(/45 seconds/);
-    expect(el.textContent).not.toMatch(/120 seconds/);
+    // 45, from `expiresIn`, as the page's tag counts it. A page rendering 2:00 here would be stating the
+    // default TTL rather than this code's, and would keep doing so after the server changed it.
+    expect(el.textContent).toMatch(/0:45 left/);
+    expect(el.textContent).not.toMatch(/2:00 left/);
   });
 
   it("TAKES THE CODE OFF THE SCREEN when it expires", async () => {
@@ -287,18 +310,18 @@ describe("the desktop link page", () => {
     await press(button(el, "Show me a code"));
 
     // The prompt, not a redirect and not a sign-in: no /login, no password field.
-    expect(el.querySelector('a[href="/login"]'), "the loop's redirect is back").toBeNull();
+    expect(signInDoor(el), "the loop's redirect is back").toBeNull();
     expect(el.querySelector('input[type="password"]'), "the page asked for a password").toBeNull();
     expect(el.textContent).not.toContain(CODE);
 
     // Factor verified → the mint is retried and the code the visitor came for appears.
-    await typeInto(input(el, "stepup-code"), "123456");
+    await typeInto(input(el), "123456");
     await submitForm(el);
     expect(stepUpCalls, "the factor was never verified").toBe(1);
     expect(mintCalls, "the mint was not retried after the factor").toBe(2);
     expect(el.textContent).toContain(CODE);
     expect(loginCalls, "a confirmation signed in — one more web session per code").toBe(0);
-    expect(el.querySelector('a[href="/login"]')).toBeNull();
+    expect(signInDoor(el)).toBeNull();
   });
 
   it("a 401 says sign in, with the door to /login, and asks for no password here", async () => {
@@ -309,9 +332,9 @@ describe("the desktop link page", () => {
     await press(button(el, "Show me a code"));
 
     expect(el.textContent).toContain(messages.linkDesktop.signInFirst);
-    expect(el.querySelector('a[href="/login"]'), "the sign-in door").toBeTruthy();
+    expect(signInDoor(el), "the sign-in door").toBeTruthy();
     expect(el.querySelector('input[type="password"]')).toBeNull();
-    expect(el.querySelector("#stepup-code"), "a factor asked of a browser with no session").toBeNull();
+    expect(codeField(el), "a factor asked of a browser with no session").toBeNull();
     expect(mintCalls).toBe(1);
     expect(loginCalls).toBe(0);
   });
@@ -324,7 +347,7 @@ describe("the desktop link page", () => {
     await press(button(el, "Show me a code"));
 
     expect(el.textContent).toContain(messages.linkDesktop.signInFirst);
-    expect(el.querySelector("#stepup-code")).toBeNull();
+    expect(codeField(el)).toBeNull();
     expect(el.textContent).not.toContain(CODE);
   });
 
@@ -339,8 +362,8 @@ describe("the desktop link page", () => {
     const alerts = [...el.querySelectorAll('[role="alert"]')].map((n) => n.textContent).join(" | ");
     expect(alerts).toContain("ohmail is having a bad minute.");
     // Not read as a step-up: an unexpected refusal is stated, not turned into a prompt or a sign-in.
-    expect(el.querySelector("#stepup-code")).toBeNull();
-    expect(el.querySelector('a[href="/login"]')).toBeNull();
+    expect(codeField(el)).toBeNull();
+    expect(signInDoor(el)).toBeNull();
   });
 
   it("NO CHALLENGE, NO DEEP LINK — an unbound code is never handed to the scheme", async () => {
@@ -357,7 +380,7 @@ describe("the desktop link page", () => {
     // …and the mint was told there was no challenge, rather than being told an empty one.
     expect(mintBodies).toEqual([{ challenge: "" }]);
     // The retype instructions are still the whole route forward.
-    expect(el.textContent).toMatch(/Type the code above/);
+    expect(el.textContent).toMatch(/Type it into the app window that sent you here/);
   });
 
   it("WITH a challenge: the button carries the CODE and nothing else", async () => {
@@ -366,7 +389,9 @@ describe("the desktop link page", () => {
 
     const a = deepLink(el);
     expect(a, "a bound code was not offered to the app").not.toBeNull();
-    const url = new URL(a!.href);
+    const href = await leavesFor(a!);
+    expect(href, "the press opened nothing").not.toBeNull();
+    const url = new URL(href!);
     expect(url.protocol).toBe("ohmail:");
     expect(url.searchParams.get("code")).toBe(CODE);
     // NO TOKENS AND NO VERIFIER ON THE WIRE. The deep link carries the one-use handoff code and
@@ -375,13 +400,12 @@ describe("the desktop link page", () => {
     // second parameter here would be the whole point of the binding thrown away, so the query is
     // asserted as an exact set rather than by checking one key.
     expect([...url.searchParams.keys()]).toEqual(["code"]);
-    expect(a!.href).not.toContain(CHALLENGE);
+    expect(href).not.toContain(CHALLENGE);
 
     // The retype path stays on screen beside it. A scheme handler can be absent, or claimed by
     // something that does nothing visible, and a page whose only route forward is a button that
     // quietly did not work is a dead end.
-    expect(el.textContent).toMatch(/Type the code above/);
-    expect(el.textContent).toMatch(/If nothing opens/);
+    expect(el.textContent).toMatch(/If nothing opens, type it into .Code from the browser. in the app/);
   });
 
   it("the button DIES WITH THE CODE — it is never a stale link to a spent credential", async () => {
@@ -414,7 +438,7 @@ describe("the desktop link page", () => {
 
     const el = await mount(CHALLENGE);
     await press(button(el, "Show me a code"));
-    await typeInto(input(el, "stepup-code"), "123456");
+    await typeInto(input(el), "123456");
     await submitForm(el);
 
     expect(mintCalls).toBe(2);
@@ -443,7 +467,7 @@ describe("the page settles whose browser this is before it offers a code", () =>
     realRead = true;
     wire((_m, url) => (url === "/auth/refresh" ? REFRESH_MISSING : UNAUTHORIZED));
     const el = await mount();
-    await waitFor(el, () => el.querySelector('a[href="/login"]') !== null, "the sign-in door");
+    await waitFor(el, () => signInDoor(el) !== null, "the sign-in door");
     expect(el.textContent).toContain(messages.linkDesktop.signInFirst);
     expect(() => button(el, "Show me a code")).toThrow();
     expect(el.textContent).not.toMatch(LOST);
@@ -498,7 +522,7 @@ describe("the page settles whose browser this is before it offers a code", () =>
     signedIn = false;
     document.cookie = "tf_owner=; path=/; max-age=0";
     await press(button(el, "Show me a code"));
-    await waitFor(el, () => el.querySelector('a[href="/login"]') !== null, "the sign-in door");
+    await waitFor(el, () => signInDoor(el) !== null, "the sign-in door");
     expect(el.textContent).not.toMatch(LOST);
     expect(mints(), "a mint left with no account named").toEqual([]);
   });
@@ -520,11 +544,11 @@ describe("the page settles whose browser this is before it offers a code", () =>
     const el = await mount();
     await waitFor(el, () => [...el.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim().startsWith("Show me a code")), "the button");
     await press(button(el, "Show me a code"));
-    await waitFor(el, () => el.querySelector("#stepup-code") !== null, "the inline prompt's code field");
+    await waitFor(el, () => codeField(el) !== null, "the inline prompt's code field");
     document.cookie = "tf_owner=; path=/; max-age=0";
-    await typeInto(input(el, "stepup-code"), "123456");
+    await typeInto(input(el), "123456");
     await submitForm(el);
-    await waitFor(el, () => el.querySelector("#stepup-code") === null
+    await waitFor(el, () => codeField(el) === null
       && [...el.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim().startsWith("Show me a code")), "the page settled again");
     expect(el.textContent).not.toMatch(LOST);
     expect(sent, "the factor went out with no account named").not.toContain("POST /api/auth/step-up/totp");
@@ -592,7 +616,7 @@ describe("the desktop link page under a busy server", () => {
     await press(button(el, "Show me a code"));
 
     const status = el.querySelector('[role="status"]')?.textContent ?? "";
-    expect(status).toMatch(/^The server is busy — retrying in \d+ s\.$/);
+    expect(status).toMatch(/^The server is busy · retrying in \d+ s\.$/);
     expect(el.querySelector('[role="alert"]'), "a busy answer is not an error on screen").toBeNull();
     expect(el.textContent).not.toMatch(/sign in|session/i);
     expect(button(el, "Show me a code").disabled, "the button stays live during the wait").toBe(false);
@@ -751,12 +775,12 @@ describe("a factor in flight when /link-desktop settles again mints nothing park
     const el = await mount();
     await waitFor(el, () => [...el.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim().startsWith("Show me a code")), "the button");
     await press(button(el, "Show me a code"));
-    await waitFor(el, () => el.querySelector("#stepup-code") !== null, "the prompt's code field");
-    await typeInto(input(el, "stepup-code"), "123456");
+    await waitFor(el, () => codeField(el) !== null, "the prompt's code field");
+    await typeInto(input(el), "123456");
     await submitForm(el);
     await waitFor(el, () => sent.includes("POST /api/auth/step-up/totp"), "the factor on the wire");
     releasePrompt();
-    await waitFor(el, () => el.querySelector("#stepup-code") === null
+    await waitFor(el, () => codeField(el) === null
       && [...el.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim().startsWith("Show me a code")), "the page settled again");
     const atResettle = { mints: mintsSent, codeShown: el.textContent!.includes(CODE) };
     releaseFactor();

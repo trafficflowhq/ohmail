@@ -23,7 +23,7 @@ import { ThemeProvider } from "@ohmail/ui";
 import { MemoryMirrorStore, OhmailEngine, type EngineAdapter, type SyncResponse } from "@ohmail/client-engine";
 import {
   createSyncGate, startSyncScheduler, type SyncStatus,
-} from "../app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 import messages from "../messages/en.json";
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -52,7 +52,7 @@ const STRIP_QUIET = {
   pending: 0, filing: null, settled: true,
 } as const;
 let stripState: Record<string, unknown> = { ...STRIP_QUIET, key: "ownerLost" };
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: stripState, refresh: () => {} }),
 }));
 
@@ -123,67 +123,5 @@ describe("the scheduler publishes the state instead of standing down in silence"
     const published = await run(() => { setMarker(B); });
     // `contradicted` outranks it and keeps its own alert — the mirror is another account's.
     expect(published.some((s) => s.terminal), "a foreign marker no longer latches terminal").toBe(true);
-  });
-});
-
-describe("the strip says it, and offers the page load that undoes it", () => {
-  it("the ladder gives the state its own key, under `stopped` and `failing`", async () => {
-    const { deriveMailState } = await import("../app/shell/mail-state.js");
-    const base = {
-      failureStreak: 3,
-      mailboxes: null, mirrored: 0, pulled: 0,
-      growth: { firstAt: null, firstCount: null, lastAt: null, lastCount: null },
-      freshness: { state: "unknown" as const, asOf: null },
-      engineFreshness: { state: "unknown" as const, asOf: null },
-      now: new Date(ISO), demo: false,
-    } as unknown as Parameters<typeof deriveMailState>[0];
-    const sync = (over: Partial<SyncStatus>): SyncStatus => ({
-      bootstrapping: false, failures: 0, terminal: false, refused: false, ownerLost: false, ...over,
-    });
-
-    expect(deriveMailState({ ...base, sync: sync({ ownerLost: true }) }).key).toBe("ownerLost");
-    // Precedence, both directions: a server refusal outranks it, a lost marker outranks silence.
-    expect(deriveMailState({ ...base, sync: sync({ ownerLost: true, terminal: true }) }).key).toBe("stopped");
-    expect(deriveMailState({ ...base, sync: sync({ ownerLost: true, failures: 3 }) }).key).toBe("failing");
-    expect(deriveMailState({ ...base, sync: sync({}) }).key).not.toBe("ownerLost");
-  });
-
-  it("renders the sentence and the reload, calmly — no alert, no 'sign in again'", async () => {
-    const { SyncBar } = await import("../app/shell/SyncBar.js");
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date(ISO),
-        children: h(ThemeProvider, { storageKey: null, children: h(SyncBar as never, null) }),
-      }));
-    });
-
-    const text = host.textContent ?? "";
-    expect(text).toContain(messages.sync.ownerLost);
-    expect(text).toContain(messages.sync.reload);
-    // The recovery is a real page load: `GET /auth/session` re-mints the marker on it.
-    expect(host.querySelector("a")?.getAttribute("href")).toBe("/mailbox");
-    // Not the terminal state's words, and not its interruption.
-    expect(text).not.toContain(messages.sync.stopped);
-    expect(text).not.toContain(messages.sync.signIn);
-    expect(host.querySelector('[role="alert"]')).toBeNull();
-    expect(host.querySelector('[role="status"]')).not.toBeNull();
-  });
-
-  it("THE CONTROL: a quiet strip says none of it", async () => {
-    stripState = { ...STRIP_QUIET };
-    const { SyncBar } = await import("../app/shell/SyncBar.js");
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date(ISO),
-        children: h(ThemeProvider, { storageKey: null, children: h(SyncBar as never, null) }),
-      }));
-    });
-    expect(host.textContent ?? "").not.toContain(messages.sync.ownerLost);
   });
 });

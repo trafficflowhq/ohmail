@@ -2,7 +2,10 @@ import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { buildPdfFrame } from "../../../packages/app/pdf-preview/build.mjs";
+import { headerRules } from "../../../test/support/pdf-preview-hosts.js";
+import { createHostStatic, type HostStatic } from "../../../test/support/pdf-preview-hosts.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
@@ -41,18 +44,32 @@ const NON_DOCUMENT_CSP = /pub const NON_DOCUMENT_CSP: &str = "([^"]+)";/.exec(
 )![1]!;
 const policyOf = (file: string): string =>
   (JSON.parse(readFileSync(join(ROOT, "apps/desktop/src-tauri", file), "utf8")) as { app: { security: { csp: string } } }).app.security.csp;
+const FRAME_PATH = "/pdf-preview.html";
+const FRAME_DOCUMENT = buildPdfFrame(dirname(fromDesktop.resolve("pdfjs-dist/package.json")));
+const DESKTOP_FRAME_CSP = /pub const PDF_FRAME_CSP: &str = "([^"]+)";/.exec(
+  readFileSync(join(ROOT, "apps/desktop/src-tauri/src/navigation.rs"), "utf8"),
+)![1]!;
+const WEB_FRAME_HEADERS = Object.fromEntries(headerRules(null).find((rule) => rule.source === FRAME_PATH)!.headers
+  .map(({ key, value }) => [key, value]));
 const WINDOW_POLICY = policyOf("tauri.windows.conf.json");
 const BEFORE_POLICY = WINDOW_POLICY.replace("worker-src 'self'", "worker-src 'none'");
 
 /** A one-page PDF filled with one colour, padded to `size` bytes with a stream nothing draws. */
-function pdf(size = 0): Buffer {
-  const content = Buffer.from("0.8 0.1 0.1 rg 0 0 200 200 re f");
+function pdf(size = 0, secondPage = false): Buffer {
+  const stream = (rgb: string) => {
+    const commands = Buffer.from(`${rgb} rg 0 0 200 200 re f`);
+    return Buffer.concat([Buffer.from(`<< /Length ${commands.length} >>\nstream\n`), commands, Buffer.from("\nendstream")]);
+  };
   const objs: Buffer[] = [
     Buffer.from("<< /Type /Catalog /Pages 2 0 R >>"),
-    Buffer.from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+    Buffer.from(secondPage ? "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>" : "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
     Buffer.from("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << >> >>"),
-    Buffer.concat([Buffer.from(`<< /Length ${content.length} >>\nstream\n`), content, Buffer.from("\nendstream")]),
+    stream("0.8 0.1 0.1"),
   ];
+  if (secondPage) {
+    objs.push(Buffer.from("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 6 0 R /Resources << >> >>"));
+    objs.push(stream("0.1 0.1 0.8"));
+  }
   const build = (pad: number): Buffer => {
     const all = pad > 0 ? [...objs, Buffer.concat([Buffer.from(`<< /Length ${pad} >>\nstream\n`), noise(pad), Buffer.from("\nendstream")])] : objs;
     const parts: Buffer[] = [Buffer.from("%PDF-1.4\n")];
@@ -91,6 +108,9 @@ const dirs: string[] = [];
 /** What the page's documents asked the server for: path, and `Sec-Fetch-Dest`. */
 let asked: Array<[string, string | null]> = [];
 let policy = WINDOW_POLICY;
+let paired: HostStatic | null = null;
+let usePaired = false;
+let useWeb = false;
 
 const PROBE = `const out = {};
 try { out.eval = new Function("return 7")() === 7 ? "ran" : "?"; } catch { out.eval = "refused"; }
@@ -102,19 +122,52 @@ beforeAll(async () => {
   const { build } = await import("esbuild");
   const out = mkdtempSync(join(tmpdir(), "ohmail-pdf-preview-"));
   dirs.push(out);
-  await build({
+  const options = {
     entryPoints: [join(ROOT, "apps/desktop/test/rigs/pdf-preview-entry.ts")],
     bundle: true, format: "iife", platform: "browser", target: ["es2022"], jsx: "automatic",
     outdir: out, loader: { ".css": "css", ".svg": "file", ".png": "file", ".woff2": "file", ".woff": "file" },
     // The window build's alias, so the shared overlay's own import meets the same module.
-    alias: { "pdfjs-dist": join(ROOT, "apps/desktop/src/window-pdfjs.ts"), "next-intl": join(ROOT, "apps/webapp/test/editor-feel/intl-shim.mjs") },
+    alias: {
+      "pdfjs-dist": join(ROOT, "apps/desktop/src/window-pdfjs.ts"),
+      "next-intl": join(ROOT, "apps/webapp/test/editor-feel/intl-shim.mjs"),
+      react: join(ROOT, "node_modules/react"),
+      "react-dom": join(ROOT, "node_modules/react-dom"),
+    },
     banner: { js: "window.process = window.process || { env: {} };" },
     define: { "process.env.NODE_ENV": '"production"' }, logLevel: "warning",
+  } satisfies import("esbuild").BuildOptions;
+  await build(options);
+  const pairedBundle = await build({
+    ...options,
+    write: false,
+    alias: { ...options.alias, "pdfjs-dist": join(ROOT, "apps/desktop/src/paired-pdfjs.ts") },
   });
   bundle = readFileSync(join(out, "pdf-preview-entry.js"), "utf8");
-  server = createServer((req, res) => {
+  const meta = readFileSync(join(ROOT, "apps/desktop/host.html"), "utf8").match(/<meta http-equiv="Content-Security-Policy"[^>]*>/)![0];
+  writeFileSync(join(out, "index.html"), `<!doctype html><meta charset="utf-8">${meta}<script src="/rig.js"></script>`);
+  writeFileSync(join(out, "rig.js"), pairedBundle.outputFiles.find((file) => file.path.endsWith("pdf-preview-entry.js"))!.contents);
+  writeFileSync(join(out, FRAME_PATH.slice(1)), FRAME_DOCUMENT);
+  writeFileSync(join(out, "pdf.min.mjs"), LIBRARY);
+  writeFileSync(join(out, "pdf.worker.min.mjs"), WORKER);
+  writeFileSync(join(out, "probe-open.mjs"), PROBE);
+  paired = createHostStatic({ assetsDir: out });
+  server = createServer(async (req, res) => {
     const path = new URL(req.url ?? "/", "http://x").pathname;
     asked.push([path, (req.headers["sec-fetch-dest"] as string | undefined) ?? null]);
+    if (path === "/session-control") {
+      res.writeHead(200);
+      res.end(req.headers.cookie?.includes("pdf-probe-session=active") ? "active" : "absent");
+      return;
+    }
+    if (usePaired && paired) {
+      const request = new Request(new URL(path, "http://localhost"), {
+        headers: { "sec-fetch-dest": String(req.headers["sec-fetch-dest"] ?? "") },
+      });
+      const response = await paired.serve(request, new URL(request.url));
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(Buffer.from(await response.arrayBuffer()));
+      return;
+    }
     const js = (body: string | Buffer, csp: string | null = NON_DOCUMENT_CSP) => {
       res.writeHead(200, { "content-type": "text/javascript", ...(csp ? { "content-security-policy": csp } : {}) });
       res.end(body);
@@ -122,6 +175,13 @@ beforeAll(async () => {
     if (path === "/index.html") {
       res.writeHead(200, { "content-type": "text/html", "content-security-policy": policy });
       res.end('<!doctype html><meta charset="utf-8"><script src="/rig.js"></script>');
+    } else if (path === FRAME_PATH) {
+      const headers = useWeb ? WEB_FRAME_HEADERS : { "Content-Security-Policy": DESKTOP_FRAME_CSP };
+      res.writeHead(200, { ...headers, "content-type": "text/html; charset=utf-8" });
+      res.end(FRAME_DOCUMENT);
+    } else if (path === "/session-probe") {
+      res.writeHead(200, { "access-control-allow-origin": "null", "access-control-allow-credentials": "true" });
+      res.end("session probe");
     } else if (path === "/rig.js") js(bundle);
     else if (path === "/pdf.min.mjs") js(LIBRARY);
     else if (path === "/pdf.worker.min.mjs") js(WORKER);
@@ -148,21 +208,29 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-type Rig = { render: (b64: string) => Promise<Record<string, unknown>>; open: (id: string) => Promise<Record<string, unknown>>; worker: () => string };
+type Rig = { show: (b64: string) => void; render: (b64: string) => Promise<Record<string, unknown>>; open: (id: string) => Promise<Record<string, unknown>>; worker: () => string };
 
 /** One fresh page under `under`, with the console it printed and the requests it made. */
-async function onPage<T>(under: string, run: (page: Page) => Promise<T>): Promise<{ result: T; console: string[]; asked: Array<[string, string | null]> }> {
+async function onPage<T>(under: string, run: (page: Page) => Promise<T>, pairedPage = false, webPage = false): Promise<{ result: T; console: string[]; asked: Array<[string, string | null]> }> {
   policy = under;
+  usePaired = pairedPage;
+  useWeb = webPage;
   asked = [];
   const context = await browser!.newContext();
   const page = await context.newPage();
   const printed: string[] = [];
   page.on("console", (m) => printed.push(m.text()));
-  await page.goto(`${origin}/index.html`);
+  page.on("pageerror", (error) => printed.push(error.message));
+  await page.goto(`${origin}${pairedPage ? "/deep/pair/" : "/index.html"}`);
   await page.waitForFunction(() => typeof (window as unknown as { rig?: unknown }).rig === "object");
-  const result = await run(page);
-  await context.close();
-  return { result, console: printed, asked: [...asked] };
+  try {
+    const result = await run(page);
+    return { result, console: printed, asked: [...asked] };
+  } catch (error) {
+    throw new Error(`PDF browser probe failed: ${printed.join(" | ")}`, { cause: error });
+  } finally {
+    await context.close();
+  }
 }
 
 const SMALL = pdf().toString("base64");
@@ -174,6 +242,66 @@ const rendering = (b64: string) => (page: Page) =>
   }, [b64]);
 const workerAsks = (seen: Array<[string, string | null]>) => seen.filter(([p]) => p === "/pdf.worker.min.mjs");
 
+async function proveSealedLook(page: Page) {
+  await page.context().addCookies([{ name: "pdf-probe-session", value: "active", url: new URL("/", page.url()).href, httpOnly: true }]);
+  const control = await page.request.get(new URL("/session-control", page.url()).href);
+  expect(await control.text()).toBe("active");
+  await page.evaluate((b64) => (window as unknown as { rig: Rig }).rig.show(b64), pdf(0, true).toString("base64"));
+  const surface = page.locator('iframe[sandbox="allow-scripts"]');
+  await surface.waitFor({ timeout: 3_000 });
+  expect(await surface.getAttribute("sandbox")).toBe("allow-scripts");
+  const canvas = surface.contentFrame().locator("canvas");
+  await page.locator('[data-pages="2"][data-page="1"]').waitFor({ timeout: 10_000 });
+  const pixel = () => canvas.evaluate((element) => {
+    const c = element as HTMLCanvasElement;
+    return [...c.getContext("2d")!.getImageData(c.width / 2, c.height / 2, 1, 1).data];
+  });
+  expect(await pixel()).toEqual([204, 26, 26, 255]);
+  await page.getByRole("button", { name: "Next PDF page" }).click();
+  await page.locator('[data-pages="2"][data-page="2"]').waitFor({ timeout: 10_000 });
+  expect(await pixel()).toEqual([26, 26, 204, 255]);
+  const session = new URL("/session-probe", page.url()).href;
+  await page.evaluate(async () => {
+    const own = indexedDB.open("sealed-preview-probe");
+    await new Promise<void>((resolve, reject) => {
+      own.onsuccess = () => { own.result.close(); resolve(); };
+      own.onerror = reject;
+    });
+  });
+  const denied = await canvas.evaluate(async (_, url) => {
+    const blocked = async (operation: () => unknown) => {
+      try { await operation(); return false; } catch { return true; }
+    };
+    const check = await Promise.all([
+      blocked(() => parent.indexedDB),
+      blocked(() => indexedDB.open("sealed-preview-probe")),
+      blocked(() => fetch(url, { credentials: "include" })),
+    ]);
+    const code = `void (async () => {
+      let storage = false;
+      try { indexedDB.open("sealed-preview-probe"); } catch { storage = true; }
+      let session = false;
+      try { await fetch(${JSON.stringify(url)}, { credentials: "include" }); } catch { session = true; }
+      postMessage({ storage, session });
+    })();`;
+    const script = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+    const worker = new Worker(script);
+    try {
+      const answer = await new Promise((resolve, reject) => {
+        worker.onmessage = (event) => resolve({ origin: event.origin, ...event.data });
+        worker.onerror = reject;
+      });
+      return { windowOrigin: self.origin, bridge: "__TAURI_INTERNALS__" in self, check, worker: answer };
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(script);
+    }
+  }, session);
+  expect(denied).toMatchObject({
+    windowOrigin: "null", bridge: false, check: [true, true, true], worker: { storage: true, session: true },
+  });
+}
+
 describe("the window draws a PDF with its own worker", () => {
   it("under the window's policy a PDF draws, the worker is fetched once as a worker, and nothing parses on the page", async () => {
     const { result, console: printed, asked: seen } = await onPage(WINDOW_POLICY, rendering(SMALL));
@@ -181,6 +309,29 @@ describe("the window draws a PDF with its own worker", () => {
     expect(workerAsks(seen), "the worker's file was not fetched exactly once, as a worker").toEqual([["/pdf.worker.min.mjs", "worker"]]);
     expect(seen.filter(([p]) => p === "/pdf.min.mjs").map(([, d]) => d)).toEqual(["script"]);
     expect(printed.filter((l) => /fake worker/i.test(l))).toEqual([]);
+
+    const paired = await onPage(WINDOW_POLICY, async (page) => {
+      const drawn = await rendering(SMALL)(page);
+      const worker = await page.request.get(new URL("/pdf.worker.min.mjs", page.url()).href);
+      const otherWorker = await page.request.get(new URL("/probe-open.mjs", page.url()).href, { headers: { "sec-fetch-dest": "worker" } });
+      return { drawn, workerPolicy: worker.headers()["content-security-policy"], otherWorker: otherWorker.status() };
+    }, true);
+    expect(paired.result.drawn.error).toBeUndefined();
+    expect(paired.result.drawn).toMatchObject({ pages: 1, px: [204, 26, 26, 255], worker: "undefined" });
+    expect(paired.result.workerPolicy).toBe("default-src 'none'");
+    expect(paired.result.otherWorker).toBe(404);
+    expect(workerAsks(paired.asked).filter(([, destination]) => destination === "worker")).toHaveLength(1);
+    expect(paired.console.filter((line) => /fake worker/i.test(line))).toEqual([]);
+
+    for (const [host, policy, paired] of [
+      ["web", "default-src 'self'; frame-src 'self'; script-src 'self'", false],
+      ["desktop", WINDOW_POLICY, false],
+      ["paired page", WINDOW_POLICY, true],
+    ] as const) {
+      const sealed = await onPage(policy, proveSealedLook, paired, host === "web");
+      expect(sealed.asked.filter(([path]) => path === "/session-probe"), host).toEqual([]);
+      expect(workerAsks(sealed.asked), host).toEqual([]);
+    }
   }, 60_000);
 
   it("THE CONTROL: under worker-src 'none' the load fails, the worker is never asked for, and pdf.js does not fall back", async () => {
