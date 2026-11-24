@@ -33,8 +33,10 @@ function readerOf(messages: unknown[], drafts: unknown[] = []): EntityReader {
   } as unknown as EntityReader;
 }
 
+/* A From's display name is learned only where the sender's own provider vouched for it (`pass`), so the
+   received letters below carry that verdict unless a case is about the verdict itself. */
 const msg = (over: Record<string, unknown>): Record<string, unknown> => ({
-  id: "m", folder: "INBOX", to: [], cc: [], date: ago(1), ...over,
+  id: "m", folder: "INBOX", to: [], cc: [], date: ago(1), authVerdict: "pass", ...over,
 });
 
 const who = (address: string, name: string | null = null) => ({ address, name });
@@ -132,8 +134,8 @@ describe("whose name an address wears", () => {
     const book = addressBook(readerOf([
       msg({ id: "own", from: who("andi@bergerweb.invalid", "Andreas Ingold"), date: ago(3) }),
       msg({
-        id: "theirs",
-        from: who("buero@bootsvermietung.invalid", "Bootsvermietung Enge"),
+        id: "theirs", folder: "Sent",
+        from: who("me@example.invalid"),
         to: [who("andi@bergerweb.invalid", "Bootsvermietung Enge GmbH - Andreas Ingold")],
         date: ago(1),
       }),
@@ -148,8 +150,8 @@ describe("whose name an address wears", () => {
     const book = addressBook(readerOf([
       msg({ id: "own", from: who("andi@bergerweb.invalid", "Andreas Ingold"), date: ago(400) }),
       msg({
-        id: "theirs",
-        from: who("buero@bootsvermietung.invalid"),
+        id: "theirs", folder: "Sent",
+        from: who("me@example.invalid"),
         cc: [who("andi@bergerweb.invalid", "Bootsvermietung Enge GmbH - Andreas Ingold")],
         date: ago(0),
       }),
@@ -178,16 +180,16 @@ describe("whose name an address wears", () => {
     expect(book[0]?.name).toBe("Nora Lindt");
   });
 
-  it("an address that has never written to you wears the most recent label it was given", () => {
-    // Nothing self-declared exists for this person, so an observed label is all there is — and
-    // between two of them the recent one is the better guess, not the longer one.
+  it("an address that has never written to you wears the most recent label you gave it", () => {
+    // Nothing self-declared exists for this person, so the account's own label is all there is —
+    // and between two of them the recent one is the better guess, not the longer one.
     const book = addressBook(readerOf([
       msg({
-        id: "old", from: who("lena@example.invalid"), date: ago(200),
+        id: "old", folder: "Sent", from: who("me@example.invalid"), date: ago(200),
         to: [who("piet@example.invalid", "Piet from the old agency listing")],
       }),
       msg({
-        id: "new", from: who("lena@example.invalid"), date: ago(1),
+        id: "new", folder: "Sent", from: who("me@example.invalid"), date: ago(1),
         to: [who("piet@example.invalid", "Piet Brun")],
       }),
     ]));
@@ -301,6 +303,145 @@ describe("whose name an address wears", () => {
     expect(andi?.count).toBe(3);
     expect(andi?.lastAt).toBe(Date.parse(ago(2)));
     expect(andi?.name).toBe("Andreas Ingold");
+  });
+});
+
+/**
+ * A NAME NOBODY VOUCHED FOR IS NOT LEARNED.
+ *
+ * Found on a live mailbox: typing a person's full address in To and pressing Enter made the chip
+ * read "PayPal Service", and the letter went out as `To: "PayPal Service" <address>`. The name
+ * came from a received letter that paired it with that address. A received letter's To and Cc
+ * are its sender's words about other people, and a From nobody checked is anyone's words; only
+ * the account's own sent mail and a From the sender's provider passed may name somebody.
+ */
+describe("a name nobody vouched for is not learned", () => {
+  const carla = "carla@example.invalid";
+
+  it("a spoofed From pairing a name with an address does not teach that name", () => {
+    const book = addressBook(readerOf([msg({ from: who(carla, "PayPal Service"), authVerdict: "fail" })]));
+    expect(book.find((e) => e.address === carla)?.name).toBe("");
+  });
+
+  it("a name on a received letter's To or Cc is not learned, even from a sender that passed", () => {
+    const book = addressBook(readerOf([
+      msg({
+        from: who("service@pay.invalid", "Pay"),
+        to: [who(carla, "PayPal Service")],
+        cc: [who("dora@example.invalid", "PayPal Billing")],
+      }),
+    ]));
+    expect(book.find((e) => e.address === carla)?.name).toBe("");
+    expect(book.find((e) => e.address === "dora@example.invalid")?.name).toBe("");
+  });
+
+  it("a name from the account's own sent mail is still offered, and a spoofed one cannot replace it", () => {
+    const book = addressBook(readerOf(
+      [
+        msg({ id: "out", folder: "Sent", from: who("me@example.invalid"), to: [who(carla, "Carla Brun")], date: ago(9) }),
+        msg({ id: "spoof", from: who(carla, "PayPal Service"), authVerdict: "fail", date: ago(0) }),
+        msg({ id: "named", from: who("x@pay.invalid"), to: [who(carla, "PayPal Service")], date: ago(0) }),
+      ],
+      [{ id: "d1", status: "sent", to: [who("dora@example.invalid", "Dora Abt")], cc: [], updatedAt: ago(2) }],
+    ), { exclude: ["me@example.invalid"] });
+    expect(book.find((e) => e.address === carla)?.name).toBe("Carla Brun");
+    expect(matchAddresses(book, "carla").map((e) => e.name)).toEqual(["Carla Brun"]);
+    expect(matchAddresses(book, "dora").map((e) => e.name)).toEqual(["Dora Abt"]);
+  });
+
+  it("a reply that carried an unvouched name does not teach it either", () => {
+    // A reply copies the letter's From and Cc with their names, so the Sent copy and the sent draft
+    // repeat the name the forged letter gave; the account did not choose it.
+    const book = addressBook(readerOf(
+      [
+        msg({ id: "spoof", from: who(carla, "PayPal Service"), cc: [who("dora@example.invalid", "PayPal Billing")], authVerdict: "fail", date: ago(2) }),
+        msg({
+          id: "reply", folder: "Sent", from: who("me@example.invalid"), date: ago(1),
+          to: [who(carla, "PayPal Service")], cc: [who("dora@example.invalid", "PayPal Billing")],
+        }),
+      ],
+      [{ id: "d1", status: "sent", to: [who(carla, "paypal service")], cc: [], updatedAt: ago(1) }],
+    ));
+    expect(book.find((e) => e.address === carla)?.name).toBe("");
+    expect(book.find((e) => e.address === "dora@example.invalid")?.name).toBe("");
+  });
+
+  it("once the forged letter is gone, a reply that repeated its name still does not outrank the person's own", () => {
+    // The Sent copy cannot show that it was a reply, and the sent draft can: neither may stand above
+    // the name carla signs with when her provider gives no verdict.
+    const book = addressBook(readerOf(
+      [
+        msg({ id: "real", from: who(carla, "Carla Brun"), authVerdict: "unavailable", date: ago(5) }),
+        msg({ id: "reply", folder: "Sent", from: who("me@example.invalid"), to: [who(carla, "PayPal Service")], date: ago(1) }),
+      ],
+      [{ id: "d1", status: "sent", inReplyToMessageId: "gone", to: [who(carla, "PayPal Service")], cc: [], updatedAt: ago(1) }],
+    ));
+    expect(book.find((e) => e.address === carla)?.name).toBe("Carla Brun");
+  });
+
+  it("says when the name it shows is one nobody checked", () => {
+    const book = addressBook(readerOf([
+      msg({ id: "a", from: who(carla, "Carla Brun"), authVerdict: "pass" }),
+      msg({ id: "b", from: who("dora@example.invalid", "Dora Abt"), authVerdict: "unavailable" }),
+      msg({ id: "c", folder: "Sent", from: who("me@example.invalid"), to: [who("piet@example.invalid", "Piet Brun")] }),
+    ]));
+    expect(book.find((e) => e.address === carla)?.nameUnchecked).toBeUndefined();
+    expect(book.find((e) => e.address === "dora@example.invalid")?.nameUnchecked).toBe(true);
+    expect(book.find((e) => e.address === "piet@example.invalid")).toMatchObject({ name: "Piet Brun", nameUnchecked: true });
+  });
+});
+
+/**
+ * A SENDER'S NAME WHERE THE PROVIDER GIVES NO VERDICT.
+ *
+ * Only Gmail's stamp can be read as a pass; Microsoft, iCloud, Fastmail and self-hosted mailboxes
+ * carry no verdict on any letter. Their senders' names are still shown, as a weak name: used only
+ * when neither the account's own label nor a passed From names that address. A failed From still
+ * names nobody.
+ */
+describe("a sender's name where the provider gives no verdict", () => {
+  const lena = "lena@example.invalid";
+
+  it("a mailbox whose provider gives no verdict still learns its senders' names", () => {
+    for (const authVerdict of ["unavailable", "unauthenticated", null, undefined]) {
+      const book = addressBook(readerOf([msg({ from: who(lena, "Lena Eichspan"), authVerdict })]));
+      expect(book.find((e) => e.address === lena)?.name, String(authVerdict)).toBe("Lena Eichspan");
+    }
+  });
+
+  it("a From the provider marked as failing teaches no name, even where nothing else names the address", () => {
+    const book = addressBook(readerOf([
+      msg({ id: "a", from: who(lena, "PayPal Service"), authVerdict: "fail", date: ago(1) }),
+      msg({ id: "b", from: who(lena), authVerdict: "unavailable", date: ago(2) }),
+    ]));
+    expect(book.find((e) => e.address === lena)?.name).toBe("");
+  });
+
+  it("the account's own label for an address beats a newer unchecked From name", () => {
+    // Its own label: a letter it started itself. A Sent copy could be a reply repeating the name.
+    const book = addressBook(readerOf(
+      [msg({ id: "weak", from: who(lena, "PayPal Service"), authVerdict: "unavailable", date: ago(0) })],
+      [{ id: "d1", status: "sent", inReplyToMessageId: null, to: [who(lena, "Lena Eichspan")], cc: [], updatedAt: ago(9) }],
+    ));
+    const entry = book.find((e) => e.address === lena);
+    expect(entry?.name).toBe("Lena Eichspan");
+    expect(entry?.nameUnchecked).toBeUndefined();
+  });
+
+  it("a passed From name beats a newer unchecked one", () => {
+    const book = addressBook(readerOf([
+      msg({ id: "pass", from: who(lena, "Lena Eichspan"), authVerdict: "pass", date: ago(9) }),
+      msg({ id: "weak", from: who(lena, "PayPal Service"), authVerdict: null, date: ago(0) }),
+    ]));
+    expect(book.find((e) => e.address === lena)?.name).toBe("Lena Eichspan");
+  });
+
+  it("between two unchecked From names the newer one is shown", () => {
+    const book = addressBook(readerOf([
+      msg({ id: "old", from: who(lena, "Lena E."), authVerdict: "unavailable", date: ago(9) }),
+      msg({ id: "new", from: who(lena, "Lena Eichspan"), authVerdict: "unavailable", date: ago(1) }),
+    ]));
+    expect(book.find((e) => e.address === lena)?.name).toBe("Lena Eichspan");
   });
 });
 

@@ -436,6 +436,12 @@ export interface ApiServices {
    */
   sendCopyOutlivesAnswer?: boolean;
   /**
+   * This host keeps running after it answers (the local engine, a long-running server): the picture
+   * door may keep a mail server sign-in for the next part of the same mailbox. Absent on a host that
+   * freezes after its answer, where a kept connection would sit signed in, uncounted and untimed.
+   */
+  keepImap?: boolean;
+  /**
    * A delivered send's owed Sent copy is kept in the store until filed (`SendDeps.keepOwedCopy`):
    * `true` on the local engine, `OWED_COPY_SELF_HOST` / `OWED_COPY_CLOUD` on the server doors.
    */

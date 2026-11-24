@@ -279,6 +279,8 @@ export function localServices(
     // This process outlives every answer: the Sent copy is retried in memory, and an upload on a
     // slow link may run up to the ceiling, which ends it before a resolver may decide its row.
     sendCopyOutlivesAnswer: true,
+    // The picture door keeps a sign-in for the next picture of the same mailbox: this process lives on.
+    keepImap: true,
     // And a delivered send's owed Sent copy is kept on disk, so a quit or a crash does not lose it.
     sendKeepOwedCopy: true,
     sendSubmissionCeilingMs: SEND_SUBMISSION_CEILING_MS,

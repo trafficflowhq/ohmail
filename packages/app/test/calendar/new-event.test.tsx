@@ -86,7 +86,11 @@ it("offers known guests immediately and accepts one from the keyboard after a se
   const person = ["mara", "example.test"].join("@");
   const press = vi.fn(async () => ({ key: "create" }));
   w.port.press = press;
-  w.put("message", "hello", letter("hello", { from: { name: "Mara Chen", address: person } }));
+  w.put(
+    "message",
+    "hello",
+    letter("hello", { from: { name: "Mara Chen", address: person }, authVerdict: "pass" }),
+  );
   mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
   const form = within(screen.getByRole("dialog", { name: "New event" }));
   fireEvent.click(form.getByRole("button", { name: "Invitees" }));
@@ -109,7 +113,7 @@ it("offers known guests immediately and accepts one from the keyboard after a se
 it("matches a known guest address without regard to case and keeps their name", () => {
   const w = world();
   const address = ["Mara", "Example.Test"].join("@");
-  w.put("message", "hello", letter("hello", { from: { name: "Mara Chen", address } }));
+  w.put("message", "hello", letter("hello", { from: { name: "Mara Chen", address }, authVerdict: "pass" }));
   mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
   const form = within(screen.getByRole("dialog", { name: "New event" }));
   fireEvent.click(form.getByRole("button", { name: "Invitees" }));
@@ -119,6 +123,26 @@ it("matches a known guest address without regard to case and keeps their name", 
   expect(picker.getAllByRole("menuitem")).toEqual([picker.getByRole("menuitem", { name: /Mara Chen/ })]);
   fireEvent.keyDown(input, { key: "Enter" });
   expect(form.getByRole("button", { name: /^Mara Chen/ })).toBeTruthy();
+});
+
+it("adds a typed address without a name nobody checked, which only a pick from the list carries", () => {
+  const w = world();
+  const address = ["carla", "example.test"].join("@");
+  w.put(
+    "message",
+    "hello",
+    letter("hello", { from: { name: "PayPal Service", address }, authVerdict: "unavailable" }),
+  );
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  fireEvent.click(form.getByRole("button", { name: "Invitees" }));
+  const picker = within(screen.getByRole("dialog", { name: "Add invitees" }));
+  const input = picker.getByRole("textbox", { name: "Name or address" });
+  fireEvent.change(input, { target: { value: address } });
+  expect(picker.getByRole("menuitem", { name: /PayPal Service/ })).toBeTruthy();
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(form.queryByRole("button", { name: /PayPal Service/ })).toBeNull();
+  expect(form.getByRole("button", { name: new RegExp(`^${address}`) })).toBeTruthy();
 });
 
 it("writes a pasted HTTPS call link through the existing CalDAV create", async () => {
@@ -415,7 +439,11 @@ it("fills a run of whole days and its place from a typed line", async () => {
 it.each([false, true])("only includes a proposed guest if accepted (%s)", async (accept) => {
   const w = world();
   const contact = ["ben", "example.test"].join("@");
-  w.put("message", "from-ben", letter("from-ben", { from: { name: "Ben Arnold", address: contact } }));
+  w.put(
+    "message",
+    "from-ben",
+    letter("from-ben", { from: { name: "Ben Arnold", address: contact }, authVerdict: "pass" }),
+  );
   const press = vi.fn(async () => ({ key: "create" }));
   w.port.press = press;
   mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
