@@ -6,8 +6,7 @@
     "continue": "Continue",
     "unread": "The calendar cannot be read on this device",
     "way": {
-      "sentence": "My calendar is with <way></way>",
-      "label": "Where your calendar is",
+      "sentence": "My calendar is with",
       "inBrowser": "{provider} (opens in browser)",
       "group": "Ways to connect a calendar",
       "none": "No calendar can be connected from here",

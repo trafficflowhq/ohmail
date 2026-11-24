@@ -144,11 +144,11 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     // the one in which a demo fail-open reaches a live mailbox.
     delete process.env.NEXT_PUBLIC_DEMO;
     delete process.env.NEXT_PUBLIC_API_BASE;
-    await run(process.execPath, [NEXT_CLI, "build"], { TF_API_ORIGIN: origin });
+    await run(process.execPath, [NEXT_CLI, "build"], { TF_API_ORIGIN: origin, VERCEL: "1" });
 
     next = spawn(process.execPath, [NEXT_CLI, "start", "-p", String(appPort)], {
       cwd: WEBAPP,
-      env: { ...process.env, TF_API_ORIGIN: origin, VERCEL: "1", TF_WEB_CLIENT_IP_SECRET: webClientIpSecret },
+      env: { ...process.env, TF_API_ORIGIN: origin, VERCEL: undefined, TF_WEB_CLIENT_IP_SECRET: webClientIpSecret },
       stdio: "pipe",
     });
     await waitFor(`http://127.0.0.1:${appPort}/`);
@@ -271,7 +271,7 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
       headers: {
         "content-type": "application/json",
         origin: "https://ohmail.app",
-        "x-vercel-forwarded-for": client,
+        "x-real-ip": client,
         [proofHeader]: "unverified",
       },
       body,

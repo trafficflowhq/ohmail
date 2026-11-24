@@ -119,7 +119,8 @@ jobs:
             "$(echo control-2 | git hash-object --stdin | cut -c1-40)" "$(echo control-3 | git hash-object --stdin | cut -c1-24)" > "$scan/control/1"
           # Give gitleaks numbered files so its default path exclusions cannot skip added lines based on the source path.
           # Keep Git's printable path separately for diagnostics and retain each header in its own fragment.
-          git -c core.quotePath=true diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ HEAD^1 HEAD |
+          # Read diff attributes from the base so the change cannot hide its own lines.
+          git --attr-source=HEAD^1 -c core.quotePath=true diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ HEAD^1 HEAD |
             SCAN_FRAGMENTS="$scan/change" awk '
               /^diff --git / { if (fragment) close(fragment); fragment = ""; hunk = 0 }
               /^@@ / { hunk = 1 }
@@ -154,7 +155,7 @@ jobs:
             if [ -s "$scan/found" ]; then
               echo "::error::a secret in the added lines, by file and rule (the value is never printed):"
               awk 'FILENAME == ARGV[1] { path[$1] = substr($0, length($1) + 2); next }
-                   { print (($1 in path) ? path[$1] : "(unknown file)") ": " $2 }' "$scan/paths" "$scan/found"
+                   { print "- " (($1 in path) ? path[$1] : "(unknown file)") ": " $2 }' "$scan/paths" "$scan/found"
               exit 1
             fi
             [ "$rc" = 0 ] || { echo "::error::gitleaks exited $rc with no finding"; exit 1; }

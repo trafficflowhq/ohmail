@@ -230,10 +230,8 @@ function landOn(where: "settings" | "first-run"): void {
   for (const k of ONE_TIME) url.searchParams.delete(k);
   const hash = where === "settings" ? "#/settings/mailboxes" : "#/first-run";
   const changed = url.hash !== hash;
-  /* The router's own `history.state` is kept, as every writer under this app keeps it: a state
-     without the app router's marker makes it adopt the URL it was given and restore it over the
-     next hash change (the away notice's link opened nothing that way). */
-  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${hash}`);
+  // Use Next's history integration so the canonical URL loses the one-time inputs too.
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${hash}`);
   if (changed) window.dispatchEvent(new Event("hashchange"));
 }
 
@@ -242,7 +240,7 @@ function waitForJoin(): void {
   if (typeof window === "undefined" || !window.history?.replaceState) return;
   const url = new URL(window.location.href);
   for (const k of [...ONE_TIME, "settings"]) url.searchParams.delete(k);
-  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}`);
+  window.history.replaceState(null, "", `${url.pathname}${url.search}`);
 }
 
 /**

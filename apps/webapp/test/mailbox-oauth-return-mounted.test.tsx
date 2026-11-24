@@ -100,8 +100,23 @@ async function returned() {
     return fixture(input, init);
   };
 
-  const host = await mountCloudShell();
-  await tick(3000);
+  // Next captures the landing URL and can commit it again on the first render.
+  const nextState = { __NA: true };
+  const replace = window.history.replaceState.bind(window.history);
+  replace(nextState, "", window.location.href);
+  let canonical = window.location.href;
+  const integration = vi.spyOn(window.history, "replaceState").mockImplementation((data, unused, url) => {
+    if (!data?.__NA && url != null) canonical = new URL(url, window.location.href).href;
+    replace({ ...data, ...nextState }, unused, url);
+  });
+  let host: Awaited<ReturnType<typeof mountCloudShell>>;
+  try {
+    host = await mountCloudShell();
+    await tick(3000);
+    expect(canonical).toBe(window.location.href);
+  } finally {
+    integration.mockRestore();
+  }
   const pane = within(await vi.waitFor(() => within(host).getByRole("region", { name: messages.settings.mailboxes })));
   return { callback, completions, historyLength, pane, release };
 }

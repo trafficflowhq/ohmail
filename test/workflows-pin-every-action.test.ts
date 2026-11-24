@@ -941,11 +941,15 @@ if (basename(dir) === "control") {
     expect(r.inputs).toHaveLength(1);
   });
 
+  it("reads diff attributes from the base commit", () => {
+    expect(step.run).toContain("git --attr-source=HEAD^1 -c core.quotePath=true diff -U0 ");
+  });
+
   onUnix("refuses a finding by its rule and its file, and never prints what was found", () => {
     const found = '[{"RuleID":"github-pat","File":"/fragments/2","Match":"STUB-FOUND-VALUE"}]';
     const r = runScan(clean, { STUB_CHANGE: found, STUB_CHANGE_RC: "1" });
     expect(r.status).toBe(1);
-    expect(r.out).toMatch(/src\/new\.ts: github-pat/);
+    expect(r.out).toMatch(/^- src\/new\.ts: github-pat$/m);
     expect(r.out).not.toContain("STUB-FOUND-VALUE");
   });
 

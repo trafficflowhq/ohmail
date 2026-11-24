@@ -19,7 +19,8 @@ describe("forwarding the browser's client address to the API", () => {
     vi.resetModules();
     const secret = randomBytes(32).toString("hex");
     const origin = "http://localhost:3002";
-    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("VERCEL", undefined);
+    vi.stubEnv("OHMAIL_WEB_PLATFORM", "vercel");
     vi.stubEnv("TF_API_ORIGIN", origin);
     vi.stubEnv("TF_WEB_CLIENT_IP_SECRET", secret);
     const { middleware } = await import("../middleware");
@@ -37,7 +38,7 @@ describe("forwarding the browser's client address to the API", () => {
         connection: "keep-alive, x-proxy-hop",
         "keep-alive": "timeout=5",
         "x-proxy-hop": "fixture",
-        "x-vercel-forwarded-for": client,
+        "x-real-ip": `${client} , ${egress}`,
         [proofHeader]: "unverified",
       },
     });
@@ -84,9 +85,11 @@ describe("forwarding the browser's client address to the API", () => {
   it("authenticates the platform address in the upstream request headers", async () => {
     vi.resetModules();
     const secret = randomBytes(32).toString("hex");
-    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("OHMAIL_WEB_PLATFORM", "vercel");
     vi.stubEnv("TF_API_ORIGIN", "http://localhost:3002");
     vi.stubEnv("TF_WEB_CLIENT_IP_SECRET", secret);
+    vi.stubEnv("VERCEL", undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const { middleware } = await import("../middleware");
     const client = "2001:db8::7";
     const seconds = 1_800_000_000;
@@ -98,20 +101,20 @@ describe("forwarding the browser's client address to the API", () => {
       method,
       headers: {
         [proofHeader]: "unverified",
-        ...(platform ? { "x-vercel-forwarded-for": client } : {}),
+        ...(platform ? { "x-vercel-forwarded-for": "198.51.100.5", "x-real-ip": client } : {}),
       },
     }));
     const headerSent = (response: Response) => response.headers.get("x-middleware-request-" + proofHeader);
 
+    const encoded = await answer("/%61pi/hello", true, "GET");
+    expect(headerSent(encoded) === expected).toBe(true);
+    expect(encoded.headers.get("x-middleware-rewrite") === "http://localhost:3002/hello").toBe(true);
     const api = await answer("/api/auth/register", true);
     expect(headerSent(api) === expected).toBe(true);
     expect(api.headers.has(proofHeader)).toBe(false);
     const mixed = await answer("/ApI/auth/register", true);
     expect(headerSent(mixed) === expected).toBe(true);
     expect(mixed.headers.get("x-middleware-rewrite") === "http://localhost:3002/auth/register").toBe(true);
-    const encoded = await answer("/%61pi/hello", true, "GET");
-    expect(headerSent(encoded) === expected).toBe(true);
-    expect(encoded.headers.get("x-middleware-rewrite") === "http://localhost:3002/hello").toBe(true);
     const escaped = await answer("/api/messages/a%2Fb?search=%23", true, "GET");
     expect(escaped.headers.get("x-middleware-rewrite") === "http://localhost:3002/messages/a%2Fb?search=%23").toBe(true);
     expect(headerSent(await answer("/%61pi/waitlist", true, "GET"))).toBeNull();
@@ -121,11 +124,49 @@ describe("forwarding the browser's client address to the API", () => {
     const waitlist = await answer("/api/waitlist", true);
     expect(headerSent(waitlist)).toBeNull();
     expect(waitlist.headers.has("x-middleware-rewrite")).toBe(false);
+  });
 
-    vi.stubEnv("VERCEL", undefined);
-    const outsideVercel = await answer("/api/auth/register", true);
-    expect(headerSent(outsideVercel)).toBeNull();
-    expect(outsideVercel.headers.has("x-middleware-rewrite")).toBe(false);
+  it("scrubs an unsigned proof on an API request outside a Vercel build", async () => {
+    vi.resetModules();
+    vi.stubEnv("OHMAIL_WEB_PLATFORM", "");
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("TF_API_ORIGIN", "http://localhost:3002");
+    vi.stubEnv("TF_WEB_CLIENT_IP_SECRET", randomBytes(32).toString("hex"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { middleware } = await import("../middleware");
+    const response = await middleware(new NextRequest("https://web.example.test/api/auth/register", {
+      method: "POST",
+      headers: { [proofHeader]: "unverified", "x-vercel-forwarded-for": "2001:db8::7" },
+    }));
+    expect(response.headers.has("x-middleware-request-" + proofHeader)).toBe(false);
+    expect(response.headers.has("x-middleware-rewrite")).toBe(false);
+    const forwarded = response.headers.get("x-middleware-override-headers")?.split(",");
+    expect(forwarded).toContain("x-vercel-forwarded-for");
+    expect(forwarded).not.toContain(proofHeader);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { secretSet: false, address: "2001:db8::7", missing: "secret" },
+    { secretSet: true, address: undefined, missing: "address header" },
+    { secretSet: true, address: "invalid", missing: "address header" },
+    { secretSet: false, address: undefined, missing: "secret, address header" },
+  ])("warns once per isolate about a missing $missing", async ({ secretSet, address, missing }) => {
+    vi.resetModules();
+    vi.stubEnv("OHMAIL_WEB_PLATFORM", "vercel");
+    vi.stubEnv("TF_API_ORIGIN", "http://localhost:3002");
+    vi.stubEnv("TF_WEB_CLIENT_IP_SECRET", secretSet ? randomBytes(32).toString("hex") : undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { middleware } = await import("../middleware");
+    const request = () => new NextRequest("https://web.example.test/api/hello", {
+      headers: { [proofHeader]: "unverified", ...(address ? { "x-real-ip": address } : {}) },
+    });
+    const response = await middleware(request());
+    await middleware(request());
+    expect(response.headers.has("x-middleware-rewrite")).toBe(false);
+    expect(response.headers.has("x-middleware-request-" + proofHeader)).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(`Web client address proof missing input: ${missing}`);
   });
 
   it("matches API paths in any case", async () => {

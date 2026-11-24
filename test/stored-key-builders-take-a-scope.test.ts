@@ -61,14 +61,14 @@ const BUILDERS: Record<string, (scope: Scope) => string> = {
   originalLook: (s) => mailOriginalKey(s),
   subjectDisplay: (s) => subjectDisplayKey(s),
   reviewPutOff: (s) => seedNotNowKey(s),
-  newsScreeningPutOff: (s) => pileNoteNotNowKey("news", s),
-  receiptsScreeningPutOff: (s) => pileNoteNotNowKey("receipts", s),
   afterVerb: afterVerbKey,
   pictureQuality: (s) => imageQualityKeyFor(s),
 };
 
 /** The families that exist only for an identified account. */
 const KEPT_FOR_SOMEBODY: Record<string, (scope: string) => string> = {
+  newsScreeningPutOff: (s) => pileNoteNotNowKey("news", s),
+  receiptsScreeningPutOff: (s) => pileNoteNotNowKey("receipts", s),
   consentCache: (s) => bootCacheKey(CONSENT_BOOT_SCOPE, s),
   ownAddresses: (s) => bootCacheKey("own-addresses", s),
   unsubscribeSeen: unsubscribeSeenKey,

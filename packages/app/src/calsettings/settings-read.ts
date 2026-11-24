@@ -34,6 +34,9 @@ function useObservedCalendarSettings(
   const settingsVersion = port?.settingsVersion ?? port?.version ?? zero;
   const readVersion = reading?.port === port ? settingsVersion : (port?.version ?? zero);
   const version = useSyncExternalStore(port?.subscribe ?? still, readVersion, readVersion);
+  const firstReads = useRef(
+    new WeakMap<CalendarPort, { promise: Promise<CalendarSettingsWire>; stamp: number }>(),
+  );
   const lastRead = useRef<{ port: CalendarPort; version: number } | null>(null);
   const snapshot = useRef<SettingsSnapshot | null>(null);
   const publish = useCallback((next: SettingsSnapshot) => {
@@ -61,10 +64,24 @@ function useObservedCalendarSettings(
     lastRead.current = null;
     const started = ++revision.current;
     let live = true;
-    port.settings().then(
+    let read = reading?.port === port ? undefined : firstReads.current.get(port);
+    if (read === undefined) {
+      const promise = port.settings();
+      read = { promise, stamp: settingsStamp };
+      if (reading?.port !== port) {
+        const pending = firstReads.current;
+        pending.set(port, read);
+        const clear = () => {
+          pending.delete(port);
+        };
+        void promise.then(clear, clear);
+      }
+    }
+    const { promise, stamp } = read;
+    void promise.then(
       (said) => {
         if (live && started === revision.current && latest.current?.port === port) {
-          lastRead.current = { port, version: settingsStamp };
+          lastRead.current = { port, version: stamp };
           publish({ port, said });
         }
       },
@@ -73,7 +90,7 @@ function useObservedCalendarSettings(
     return () => {
       live = false;
     };
-  }, [port, publish, settingsVersion, version]);
+  }, [port, publish, reading?.port, settingsVersion, version]);
 
   const save = useCallback(
     async (change: SettingsChange) => {
