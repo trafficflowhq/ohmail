@@ -98,6 +98,7 @@ export function useMailRailFoot(): RailFootModel {
     "global",
   );
   const account = useAccountLine();
+  const row = binding.result?.mailboxId;
   const scheme = useSchemeTool();
   return useMemo(() => {
     const tools: NonNullable<RailFootModel["tools"]>[number][] = [];
@@ -114,11 +115,30 @@ export function useMailRailFoot(): RailFootModel {
     return {
       account,
       pull: binding.available
-        ? { label: ts(binding.pulling ? "pulling" : "pull"), busy: binding.pulling, onPress: binding.pull }
+        ? {
+            label: ts(binding.pulling ? "pulling" : (binding.result?.key ?? "pull")),
+            busy: binding.pulling,
+            onPress: row
+              ? () => commands.go({ place: "settings", sub: "mailboxes", words: { mailbox: row } })
+              : binding.pull,
+          }
         : null,
       ...(tools.length ? { tools } : {}),
     };
-  }, [account, binding.available, binding.pulling, binding.pull, scheme, ts, tp, mod, hasPalette, commands]);
+  }, [
+    account,
+    binding.available,
+    binding.pulling,
+    binding.pull,
+    binding.result,
+    row,
+    scheme,
+    ts,
+    tp,
+    mod,
+    hasPalette,
+    commands,
+  ]);
 }
 
 /** The foot's feeder, standing in the ground for the frame's life. */

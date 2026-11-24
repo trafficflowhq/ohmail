@@ -13,6 +13,18 @@
       "microsoft": "Microsoft 365"
     },
     "accounts": {
+      "noticeSignIn": "{name}: Sign in again",
+      "noticeConnection": "{name}: Calendars can’t connect",
+      "noticeOverdue": "{name}: Calendar check overdue",
+      "overdueDetail": "The scheduled calendar check is overdue",
+      "scheduledCheck": "Scheduled check",
+      "openCalendars": "Open Calendars",
+      "errorSince": "Since",
+      "checkState": {
+        "checking": "Checking…",
+        "current": "Checked",
+        "failed": "Couldn’t check"
+      },
       "useCalendar": "Use ohcal",
       "add": "Add a calendar account",
       "addAccount": "Add account",
@@ -21,6 +33,7 @@
       "signInAgain": "Sign in again",
       "state": {
         "inStep": "In step",
+        "overdue": "Overdue",
         "signedOut": "Signed out",
         "failing": "Not checked",
         "removing": "Removing"

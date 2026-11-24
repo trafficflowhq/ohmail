@@ -1,4 +1,3 @@
-/** The six calendar views derive visible occurrences from the host's calendar port. */
 import { useRef, useState } from "react";
 import { useKeyBindings } from "@ohmail/app-logic/keys";
 import { RefusalLine } from "@ohmail/ui/base";
@@ -52,6 +51,7 @@ import {
 } from "./canvas-gestures.js";
 import { useTodayPulse, type TodayVisit } from "./use-today-pulse.js";
 import { WeekMenus } from "./use-event-card-actions.js";
+import { useCalendarConnectionNotice } from "./connection-notice.js";
 import "./placement.css";
 export function CalendarBody(pane: PaneProps) {
   const { host } = useFrame();
@@ -61,6 +61,7 @@ export function CalendarBody(pane: PaneProps) {
   const empty = useCalendarFirstStep();
   const disabled = useSharedCalendarSettings()?.said?.enabledAt === null;
   const firstStep = empty || disabled;
+  useCalendarConnectionNotice(sources, !firstStep);
   const create = useNewEvent();
   useNewEventKey(
     create,

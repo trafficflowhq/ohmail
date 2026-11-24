@@ -13,6 +13,18 @@
       "microsoft": "Microsoft 365"
     },
     "accounts": {
+      "noticeSignIn": "{name}: Erneut anmelden",
+      "noticeConnection": "{name}: Kalender nicht erreichbar",
+      "noticeOverdue": "{name}: Kalenderprüfung überfällig",
+      "overdueDetail": "Die geplante Kalenderprüfung ist überfällig",
+      "scheduledCheck": "Geplante Prüfung",
+      "openCalendars": "Kalender öffnen",
+      "errorSince": "Seit",
+      "checkState": {
+        "checking": "Wird geprüft…",
+        "current": "Geprüft",
+        "failed": "Prüfung fehlgeschlagen"
+      },
       "useCalendar": "ohcal verwenden",
       "add": "Kalender-Account hinzufügen",
       "addAccount": "Account hinzufügen",
@@ -21,6 +33,7 @@
       "signInAgain": "Neu anmelden",
       "state": {
         "inStep": "Aktuell",
+        "overdue": "Überfällig",
         "signedOut": "Abgemeldet",
         "failing": "Nicht geprüft",
         "removing": "Wird entfernt"

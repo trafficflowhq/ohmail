@@ -6,9 +6,10 @@
  */
 import { useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { PULL_FIRE } from "@ohmail/app-logic/touch";
-import { Spinner } from "@ohmail/ui/base";
+import { Button, Spinner } from "@ohmail/ui/base";
 import { FrameContext } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
+import { useText } from "../text/index.js";
 import type { ListTouchProps } from "./contract.js";
 import { createListTouch, type ListLive, type ListTouchStore } from "./list-touch.js";
 import { ListTouchContext } from "./use-row-swipe.js";
@@ -84,7 +85,10 @@ function PullRoom({
 }
 
 export function ListTouch({ scroller, off = false, pull, run = true, children }: ListTouchProps) {
-  const touch = useContext(FrameContext)?.api.plan.pointer === "coarse";
+  const frame = useContext(FrameContext)?.api;
+  const touch = frame?.plan.pointer === "coarse";
+  const compact = frame?.plan.columns === 1;
+  const t = useText("sync");
   const [store] = useState(createListTouch);
   const live = useRef<ListLive>({ off, pull });
   live.current = { off, pull };
@@ -98,6 +102,23 @@ export function ListTouch({ scroller, off = false, pull, run = true, children }:
   return (
     <ListTouchContext.Provider value={touch ? store : null}>
       {touch && pull !== NONE ? <PullRoom store={store} busy={pull.busy} scroller={scroller} /> : null}
+      {(touch || compact) && pull !== NONE && (pull.busy || pull.result) ? (
+        <div className="tc-pull" aria-live="polite">
+          <Button
+            kind="quiet"
+            size="s"
+            icon="pull"
+            disabled={pull.busy}
+            onPress={() => {
+              const mailbox = pull.result?.mailboxId;
+              if (mailbox) frame?.commands.go({ place: "settings", sub: "mailboxes", words: { mailbox } });
+              else pull.run();
+            }}
+          >
+            {t(pull.busy ? "pulling" : (pull.result?.key ?? "pull"))}
+          </Button>
+        </div>
+      ) : null}
       {children}
       {touch && run ? <div className="tc-run" aria-hidden="true" /> : null}
     </ListTouchContext.Provider>

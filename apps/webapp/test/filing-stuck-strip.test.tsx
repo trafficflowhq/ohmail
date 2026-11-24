@@ -75,7 +75,7 @@ async function stripOf(mbs: MailboxFacts[], locale: "en" | "de" = "en"): Promise
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
       locale, messages: locale === "en" ? en : de, timeZone: "UTC", now: new Date(NOW),
-      children: h(SyncBar, null),
+      children: h(SyncBar, { details: true }),
     }));
   });
   /* Where the notice's one act leads: the strip's link became the frame's "Mailboxes", pressed here. */

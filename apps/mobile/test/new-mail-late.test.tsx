@@ -15,8 +15,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount as mountDom } from "./_rendered-dom";
 import type { PhoneMailbox } from "../src/net/mailboxes";
 
-const scene = vi.hoisted(() => ({ world: null as unknown, session: null as unknown }));
+const scene = vi.hoisted(() => ({ world: null as unknown, session: null as unknown, push: vi.fn() }));
 
+vi.mock("expo-router", () => ({ router: { push: scene.push } }));
 vi.mock("react-native", async () => (await import("./_rendered-dom")).rnDom);
 vi.mock("../src/state/world", () => ({ useWorld: () => scene.world }));
 vi.mock("../src/net/connection", () => ({ useConnection: () => ({ state: { k: "live", session: scene.session } }) }));
@@ -120,8 +121,8 @@ describe("the strip over the Ohbox says new mail is late, for as long as the ser
   it("arrives with the server's time, and leaves when the next read says fetching runs", async () => {
     await worldOver(sessionOf("managed", [wireRow({ behind: true, since: ago(50 * MIN) })]));
     const view = mount(h(LateStrip));
-    expect(notice(view.el)?.textContent).toBe(Copy.lateTitle);
-    expect(view.el.textContent).toContain(Copy.lateLineCloud(stamp(ago(50 * MIN))));
+    expect(notice(view.el)?.textContent).toBe(Copy.lateCloudSince(stamp(ago(50 * MIN))));
+    expect(view.el.textContent).toContain(Copy.lateCloudSince(stamp(ago(50 * MIN))));
 
     await worldOver(sessionOf("managed", [wireRow({ behind: false, since: ago(MIN) })]));
     view.render(h(LateStrip));
@@ -144,7 +145,7 @@ describe("the strip over the Ohbox says new mail is late, for as long as the ser
     const reader = { organizerRole: "reader" };
     await worldOver(sessionOf("managed", [wireRow({ behind: true, since: ago(50 * MIN) }, reader)]));
     const view = mount(h(LateStrip));
-    expect(notice(view.el)?.textContent).toBe(Copy.lateTitle);
+    expect(notice(view.el)?.textContent).toBe(Copy.lateCloudSince(stamp(ago(50 * MIN))));
     // Past the server's capacity it is off the roster, and the server takes its word off the row.
     const leftOut = { ...reader, syncBlockedReason: "at_capacity", syncBlockedSince: ago(MIN) };
     await worldOver(sessionOf("managed", [wireRow(null, leftOut)]));
@@ -152,24 +153,26 @@ describe("the strip over the Ohbox says new mail is late, for as long as the ser
     expect(view.el.textContent ?? "").toBe("");
   });
 
-  it("is one calm strip with nothing to press and no way to dismiss it", async () => {
+  it("is one calm strip with an action and Hide", async () => {
     await worldOver(sessionOf("managed", [wireRow({ behind: true, since: ago(50 * MIN) })]));
     const view = mount(h(LateStrip));
     expect(notice(view.el)).not.toBeNull();
     expect(view.el.querySelector('[role="alert"]')).toBeNull();
-    expect(view.el.querySelectorAll("button")).toHaveLength(0);
+    const buttons = [...view.el.querySelectorAll("button")];
+    expect(buttons.map((button) => button.textContent)).toEqual([Copy.quotaMailboxes, Copy.lateHide]);
+    buttons[0]?.click();
+    expect(scene.push).toHaveBeenCalledWith({ pathname: "/settings", params: { mailbox: "m-1" } });
   });
 
-  it("with no time on record it says so without one; after a day it says that plainly", async () => {
+  it("requires a recorded time and names it over a day later", async () => {
     await worldOver(sessionOf("managed", [wireRow({ behind: true, since: null })]));
     let view = mount(h(LateStrip));
-    expect(view.el.textContent).toContain(Copy.lateLineCloudNoTime);
+    expect(view.el.textContent).toBe("");
     view.unmount();
 
     await worldOver(sessionOf("managed", [wireRow({ behind: true, since: ago(26 * HOUR) })]));
     view = mount(h(LateStrip));
-    expect(notice(view.el)?.textContent).toBe(Copy.lateTitleDays(1));
-    expect(view.el.textContent).toContain(Copy.lateLineCloudDay(stamp(ago(26 * HOUR))));
+    expect(notice(view.el)?.textContent).toBe(Copy.lateCloudSince(stamp(ago(26 * HOUR))));
   });
 
   it("the time is the newest the behind rows carry", async () => {
@@ -178,8 +181,8 @@ describe("the strip over the Ohbox says new mail is late, for as long as the ser
       wireRow({ behind: true, since: ago(50 * MIN) }, { id: "m-2", address: "second@example.test" }),
       wireRow({ behind: false, since: ago(MIN) }, { id: "m-3", address: "third@example.test" }),
     ]));
-    expect(lateStripSaid(rows, NOW.getTime(), readerZone(), "en", "cloud")?.line)
-      .toBe(Copy.lateLineCloud(stamp(ago(50 * MIN))));
+    expect(lateStripSaid(rows, NOW.getTime(), readerZone(), "en", "cloud")?.title)
+      .toBe(Copy.lateCloudSince(stamp(ago(50 * MIN))));
   });
 
   it.each(["en", "de"] as const)("%s: a server somebody runs is named your ohmail server, never ohmail Cloud", async (locale) => {
@@ -188,13 +191,13 @@ describe("the strip over the Ohbox says new mail is late, for as long as the ser
       await worldOver(sessionOf("selfhost", [wireRow({ behind: true, since })]));
       const view = mount(h(LateStrip));
       expect(view.el.textContent)
-        .toContain(since === null ? Copy.lateLineServerNoTime : Copy.lateLineServer(stamp(since, locale)));
+        .toContain(since === null ? "" : Copy.lateServerSince(stamp(since, locale)));
       expect(view.el.textContent ?? "", "a self-hosted server was called Cloud").not.toMatch(/Cloud/);
       view.unmount();
     }
     // The day still shows in the title; "on us" is said of our own service only.
     expect(lateStripSaid(await worldOver(sessionOf("selfhost", [wireRow({ behind: true, since: ago(26 * HOUR) })])),
-      NOW.getTime(), readerZone(), locale, "server")?.title).toBe(Copy.lateTitleDays(1));
+      NOW.getTime(), readerZone(), locale, "server")?.title).toBe(Copy.lateServerSince(stamp(ago(26 * HOUR), locale)));
   });
 
   it("a phone that organizes on its own draws nothing, whatever a row carries", async () => {
@@ -222,8 +225,8 @@ describe("the strip over the Ohbox says new mail is late, for as long as the ser
     setActiveLocale("de");
     await worldOver(sessionOf("managed", [wireRow({ behind: true, since: ago(50 * MIN) })]));
     const view = mount(h(LateStrip));
-    expect(notice(view.el)?.textContent).toBe(DECKS.de.lateTitle);
-    expect(view.el.textContent).toContain(DECKS.de.lateLineCloud(stamp(ago(50 * MIN), "de")));
+    expect(notice(view.el)?.textContent).toBe(DECKS.de.lateCloudSince(stamp(ago(50 * MIN), "de")));
+    expect(view.el.textContent).toContain(DECKS.de.lateCloudSince(stamp(ago(50 * MIN), "de")));
     for (const key of ["lateTitle", "pullBehind", "pullBehindServer"] as const) {
       expect(DECKS.de[key], `${key} is English in the German deck`).not.toBe(DECKS.en[key]);
     }

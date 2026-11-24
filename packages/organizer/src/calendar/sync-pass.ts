@@ -134,7 +134,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   let changed = 0;
   let calendars = gate.calendars;
   let missing: readonly string[] | null = null;
-  /** The calendars were listed this turn: the connection's first finished listing is said even when it found none. */
+  /** The provider answered a calendar listing this turn, even if the list was empty. */
   let freshList = false;
   let duplicates: readonly DuplicateCalendar[] = [];
   const listingContext = { db, key, memory: deps.memory, halted: deps.halted };
@@ -246,8 +246,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     // The listing is asked again within the hour whatever the calendars say; a subscription has no listing to ask for.
     if (w !== "ics") at = Math.min(at, (deps.memory.listedAt.get(key.id) ?? nowMs) + LIST_EVERY_MS);
     await holdConnectionUntil(tx, key, new Date(at));
-    const firstListing = freshList && held.lastSyncedAt === null;
-    await setConnectionState(tx, key, held, { status: "active", errorCode: null, synced: changed + dropped > 0 || firstListing });
+    await setConnectionState(tx, key, held, { status: "active", errorCode: null, synced: freshList || read > 0 });
   }, { lock: "no key update" });
   if (settled === "gone") return { kind: "gone" };
   deps.memory.failures.delete(key.id);

@@ -207,7 +207,6 @@ export async function readMailboxRowsVia(
     return {
       ...mailboxFactsOf(item),
       provider: typeof item.provider === "string" ? item.provider : "",
-      ...(typeof item.failedAt === "string" || item.failedAt === null ? { failedAt: item.failedAt } : {}),
       ...(typeof item.retryCount === "number" ? { retryCount: item.retryCount } : {}),
       ...(typeof item.setAside === "number" ? { setAside: item.setAside } : {}),
       ...(typeof item.erasure?.remaining === "number" ? { erasure: { remaining: item.erasure.remaining } } : {}),
@@ -239,6 +238,7 @@ function mailboxFactsOf(m: MailboxWire): MailboxFacts {
     status: m.status,
     errorCode: m.errorCode ?? null,
     errorDetail: m.errorDetail ?? null,
+    ...(typeof m.failedAt === "string" || m.failedAt === null ? { failedAt: m.failedAt } : {}),
     ...(m.errorLocalServer === true ? { errorLocalServer: true } : {}),
     // Forwarded only in its whole shape: a partial one would state a count nobody measured.
     ...(isStoreRefusals(m.storeRefusals) ? { storeRefusals: m.storeRefusals } : {}),

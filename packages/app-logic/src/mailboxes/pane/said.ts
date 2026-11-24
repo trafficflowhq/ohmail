@@ -65,11 +65,10 @@ export function notCheckedOf(m: MailboxRow, ctx: Pick<RowContext, "now" | "stamp
 /** How long, how often and the diagnostic token: the tooltip of a failing mailbox, never its label. */
 function errorTitle(m: MailboxRow, ctx: RowContext): string | undefined {
   const parts: string[] = [];
-  if (m.failedAt)
-    parts.push(ctx.say({ key: "errSince", values: { when: ctx.stamps.ago(m.failedAt, ctx.now).abs } }));
+  const since = m.failedAt ?? m.unreachableSince ?? m.syncBlockedSince;
+  if (since) parts.push(ctx.say({ key: "errSince", values: { when: ctx.stamps.ago(since, ctx.now).abs } }));
   if (m.retryCount && m.retryCount > 1)
     parts.push(ctx.say({ key: "errAttempts", values: { count: m.retryCount } }));
-  if (m.errorDetail) parts.push(m.errorDetail);
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
@@ -77,16 +76,16 @@ export function rowStateOf(m: MailboxRow, ctx: RowContext): RowState {
   if (m.erasure)
     return { kind: "erasing", text: ctx.say({ key: "erasingLeft", values: { count: m.erasure.remaining } }) };
   if (m.status === "disabled") return { kind: "none" };
-  if (m.status === "error") {
+  if (m.status === "error" || m.unreachableSince) {
     const err = mailboxErrorKey(
-      m.errorCode ?? null,
+      m.errorCode ?? (m.unreachableSince ? "connect" : null),
       m.errorDetail,
       m.storeRefusals,
       (r) =>
         r.exact
           ? ctx.figure(r.count)
           : ctx.say({ key: "storeRefusalsFloor", values: { count: ctx.figure(r.count) } }),
-      undefined,
+      m.errorLocalServer,
       { appPassword: signsInWithAppPassword(m) },
     );
     const title = errorTitle(m, ctx);
@@ -98,7 +97,7 @@ export function rowStateOf(m: MailboxRow, ctx: RowContext): RowState {
   }
   if (m.syncBlockedSince) {
     const key = isSyncBlockReason(m.syncBlockedReason) ? `blocked_${m.syncBlockedReason}` : "blockedUnknown";
-    return { kind: "bad", text: ctx.say({ ns: "sync", key }) };
+    return { kind: "bad", text: ctx.say({ ns: "sync", key }), title: errorTitle(m, ctx) };
   }
   if (ctx.queued) return { kind: "wait", text: ctx.say({ key: "syncQueued" }) };
   const late = notCheckedOf(m, ctx);

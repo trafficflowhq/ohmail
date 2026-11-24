@@ -1,9 +1,8 @@
 /**
  * WHERE A CONNECTION'S AND A CALENDAR'S SYNC STANDS, as the rows keep it: `status` and `error_code`
  * (a word of the store's closed lists, or nothing), `next_poll_at` (when it is asked again), and
- * `last_synced_at`. A word or a status that changed is a change of the record, recorded with its
- * delta and its `updated_at` from the database's clock; the time of the next ask is bookkeeping and
- * moves neither.
+ * `last_synced_at`. Status changes, error changes and successful connection checks are recorded
+ * with a delta and `updated_at` from the database clock.
  */
 import { and, eq, sql } from "drizzle-orm";
 import { calCalendars, calConnections, calSettings, recordCalendarChanges, type LedgerTx, type Tx } from "@trafficflow/db";
@@ -30,8 +29,8 @@ export async function holdCalendarUntil(tx: Tx, key: ConnectionKey, calendarId: 
 }
 
 /**
- * The connection's status and word, with the change a device learns them by. Written only where
- * one of them moved; `synced` also stamps `last_synced_at`. The caller's transaction holds the
+ * The connection's status, error and successful check, with the change a device learns them by.
+ * A check stamps `last_synced_at` even when status and error stay the same. The transaction holds the
  * connection row and commits this as its last statement.
  */
 export async function setConnectionState(

@@ -14,6 +14,7 @@ import {
 import { useReport } from "../../frame/commands.js";
 import { useText } from "../../text/index.js";
 import type { CalendarTones } from "../../calendar/tones.js";
+import { calendarCheckDeadline } from "../../calendar/connection-notice.js";
 import { CalendarLine } from "../../calsetup/index.js";
 import { useWhen } from "../when.js";
 
@@ -33,6 +34,27 @@ export interface AccountLinesProps {
 /** A calendar's menu and its rename, one open at a time. */
 type Open = { readonly id: string; readonly as: "menu" | "rename" } | null;
 
+function AccountCheck({ check }: { check: () => Promise<unknown> }) {
+  const t = useText("calsettings");
+  const [state, setState] = useState<"checking" | "current" | "failed">();
+  return (
+    <Button
+      kind="quiet"
+      size="s"
+      disabled={state === "checking"}
+      onPress={() => {
+        setState("checking");
+        void check().then(
+          () => setState("current"),
+          () => setState("failed"),
+        );
+      }}
+    >
+      {t(state ? `accounts.checkState.${state}` : "accounts.checkNow")}
+    </Button>
+  );
+}
+
 export function AccountLines({
   account,
   tones,
@@ -51,13 +73,28 @@ export function AccountLines({
   const anchor = useRef<HTMLButtonElement | null>(null);
   const removeAnchor = useRef<HTMLButtonElement>(null);
   const { connection } = account;
+  const overdue = calendarCheckDeadline(connection) <= Date.now();
   const { setCalendar, check, remove } = port;
   const said = (done: Promise<unknown>, failed: string) => done.catch(() => report(t(failed)));
   const opened = open === null ? null : (account.calendars.find((k) => k.id === open.id) ?? null);
 
   return (
     <>
-      {account.fault ? <SettingNote warn>{faults(connectFaultKeyOf(account.fault))}</SettingNote> : null}
+      {account.fault ? (
+        <>
+          <SettingNote warn>{faults(connectFaultKeyOf(account.fault))}</SettingNote>
+          <SettingLine label={t("accounts.errorSince")} value={when(connection.updatedAt) ?? undefined} />
+        </>
+      ) : null}
+      {overdue ? (
+        <>
+          <SettingNote warn>{t("accounts.overdueDetail")}</SettingNote>
+          <SettingLine
+            label={t("accounts.scheduledCheck")}
+            value={when(connection.nextPollAt ?? null) ?? undefined}
+          />
+        </>
+      ) : null}
       <div role="group" aria-label={t("accounts.calendars")}>
         {account.calendars.map((k) => (
           <CalendarLine
@@ -85,11 +122,7 @@ export function AccountLines({
         ))}
       </div>
       <SettingLine label={t("accounts.checked")} value={when(connection.lastSyncedAt) ?? t("accounts.never")}>
-        {check === "none" ? null : (
-          <Button kind="quiet" size="s" onPress={() => void said(check(connection.id), "notChecked")}>
-            {t("accounts.checkNow")}
-          </Button>
-        )}
+        {check === "none" ? null : <AccountCheck check={() => check(connection.id)} />}
       </SettingLine>
       <SettingLine label={t("accounts.connectedWith")} value={wayWord}>
         {remove === "none" ? null : (

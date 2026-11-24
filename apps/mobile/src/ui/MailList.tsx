@@ -36,7 +36,7 @@ import {
 import { useTheme } from "../theme";
 import { mailSize } from "../theme/mail";
 import { KeyboardRoom } from "./keyboard-room";
-import { Section, Txt, panelSurface, pullRefreshControl, useListInsets, type PullRefresh } from "./base";
+import { Button, Section, Txt, panelSurface, pullRefreshControl, useListInsets, type PullRefresh } from "./base";
 import {
   FIRST_GROUP_TOP,
   LIST_WINDOW,
@@ -417,6 +417,9 @@ export function MailList<T>({
         renderScrollComponent={renderScroll}
         ListHeaderComponent={
           <View onLayout={onHead}>
+            {refresh?.result ? (
+              <Button label={refresh.result} variant="quiet" onPress={refresh.onRefresh} />
+            ) : null}
             {head}
             {gapAbove > 0 ? <View style={{ height: gapAbove }} /> : null}
           </View>

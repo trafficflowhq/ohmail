@@ -25,25 +25,10 @@
  * honoured, the spinner just stops claiming to watch.
  */
 
-/**
- * The outcome is said once, and only where the mail cannot say it: new rows need no sentence. The
- * quiet scan speaks ("Checked — nothing new.", pullQuiet), the capped watch speaks (pullSlow), and
- * a rung mailbox whose server cannot be reached ends the watch with pullUnreachable, because no
- * scan can happen; a ring whose answer says the server is not fetching new mail at all
- * (`fetching.behind`) starts no watch and says so at once (pullBehind, naming who is not checking),
- * because no scan will come and the waiting line would be false for as long as that lasts;
- * a refused ring says nothing — the sync strip owns failure sentences. "Nothing new" is judged against the MIRROR — ids before the press versus
- * after a fresh, successful post-scan drain; a new id in ANY pile counts as arrival and silences
- * the toast. One flight, two placements: the HOOK is called once and both placements share the
- * binding — two hooks would each carry their own `pulling`, and a resize mid-pull would reveal an
- * idle copy accepting a second POST.
- */
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { useManagedService } from "../doors/managed-service.js";
 import { useDemoMode, useEngine } from "../engine/context.js";
-import { serverUnreachable } from "../mail-state/mail-state.js";
+import { mailboxErrorNeedsAction, serverUnreachable } from "../mail-state/mail-state.js";
 import type { MailboxProbe } from "../mail-state/mail-state-binding.js";
-import type { ToastFn } from "../press/report.js";
 
 const SETTLE_POLL_MS = 2_000;
 const SETTLE_CAP_MS = 30_000;
@@ -87,6 +72,7 @@ export interface PullBinding {
   available: boolean;
   pulling: boolean;
   pull: () => void;
+  result?: { key: string; mailboxId?: string };
 }
 
 /**
@@ -102,29 +88,17 @@ export function usePull(): PullBinding | null {
   return binding !== null && binding.available ? binding : null;
 }
 
-/** The `sync` namespace's sentences, as the binder reads them. */
-export type PullWords = (key: string) => string;
-
 type Engine = ReturnType<typeof useEngine>;
-
-/** What one press says its outcome with: the report, the words, and who checks the mailboxes behind it. */
-interface PullSays {
-  readonly toast: ToastFn;
-  readonly t: PullWords;
-  /** Who checks the mailboxes behind this frame: ohmail Cloud only on the managed service. */
-  readonly managed: boolean;
-}
 
 /** Watch every rung mailbox's own scan, bounded by the cap. */
 async function watchScan(
   probe: MailboxProbe,
   rang: NonNullable<Awaited<ReturnType<Engine["requestPull"]>>>,
   alive: { readonly current: boolean },
-): Promise<{ settled: boolean; unreachable: boolean }> {
+): Promise<{ settled: boolean; failedMailbox?: string }> {
   /** Did the watch see every mailbox's own scan, or did the cap end it? */
   let settled = false;
-  /** Did a rung mailbox's server turn out unreachable? Then nothing could be checked. */
-  let unreachable = false;
+  let failedMailbox: string | undefined;
   // id → this mailbox's OWN baseline (DB-clock ms). Compared only against `lastSyncAt`,
   // which the worker writes with the same database clock.
   const baselines = new Map(rang.mailboxes.map((m) => [m.id, Date.parse(m.requestedAt)]));
@@ -139,23 +113,23 @@ async function watchScan(
       );
       if (settled) break;
       // A scan that cannot reach the server will not happen: say so rather than wait.
-      unreachable = rung.some(serverUnreachable);
-      if (unreachable) break;
+      failedMailbox = rung.find(
+        (m) => serverUnreachable(m) || (m.status === "error" && mailboxErrorNeedsAction(m)),
+      )?.id;
+      if (failedMailbox) break;
     } catch {
       // A failed poll is "we cannot see yet" — keep waiting; the cap settles us.
     }
   }
-  return { settled, unreachable };
+  return { settled, failedMailbox };
 }
 
 /** One press, end to end: the ring, the watch, the judgment, and the one sentence a person needs. */
 async function pullOnce(
   engine: Engine,
   probe: MailboxProbe | undefined,
-  say: PullSays,
   alive: { readonly current: boolean },
-): Promise<void> {
-  const { toast, t, managed } = say;
+): Promise<PullBinding["result"]> {
   // What the mirror held at the press — the "nothing new" judgment's left-hand side.
   const before = new Set(
     engine
@@ -170,13 +144,14 @@ async function pullOnce(
   // The server says it is not fetching: the request is stamped and nothing will scan it
   // until fetching runs again, so there is nothing to watch. Say so now.
   if (rang?.fetching?.behind === true) {
-    if (alive.current) toast(t(managed ? "pullBehind" : "pullBehindServer"));
-    return;
+    return { key: "pullPaused" };
   }
   const watched = rang !== null && rang.mailboxes.length > 0 && probe !== undefined;
-  const { settled, unreachable } = watched
+  const { settled, failedMailbox } = watched
     ? await watchScan(probe, rang, alive)
-    : { settled: false, unreachable: false };
+    : { settled: false, failedMailbox: undefined };
+  if (failedMailbox) return { key: "pullMailboxFailed", mailboxId: failedMailbox };
+  if (!rang) return { key: "pullPaused" };
   /**
    * The judgment drain — bounded, FRESH, and success-gated. Two awaits, not one, because
    * `syncOnce()` is single-flight: the first flushes whatever drain is already running —
@@ -188,58 +163,51 @@ async function pullOnce(
    * nothing.
    */
   let judged = false;
-  if (rang) {
-    const flushed = await boundedDrain(engine);
-    if (flushed !== "timeout") {
-      judged = (await boundedDrain(engine)) === "ok";
-    }
-  }
-  if (watched && unreachable && alive.current) {
-    toast(t("pullUnreachable"));
-  } else if (watched && judged && alive.current) {
-    const arrived = engine
-      .read()
-      .entries("message")
-      .some((e) => !before.has(e.id));
-    // New mail is its own feedback; only the outcomes the mail cannot show get a sentence.
-    if (!arrived) toast(settled ? t("pullQuiet") : t("pullSlow"));
-  }
+  const flushed = await boundedDrain(engine);
+  if (flushed !== "timeout") judged = (await boundedDrain(engine)) === "ok";
+  if (!watched || !judged) return undefined;
+  const arrived = engine
+    .read()
+    .entries("message")
+    .some((entry) => !before.has(entry.id));
+  return arrived ? undefined : { key: settled ? "pullCurrent" : "pullPending" };
 }
 
-/**
- * The one binding of Pull new mail. `probe`: the mailbox facts the settle watch reads (the sync strip's own seam);
- * `toast`: where an outcome is said; `t`: the `sync` namespace's sentences. Single flight: a press while one is out
- * does nothing.
- */
-export function usePullNewMail(probe: MailboxProbe | undefined, toast: ToastFn, t: PullWords): PullBinding {
+/** The rail, list menu and touch gesture share one request and its result. */
+export function usePullNewMail(probe: MailboxProbe | undefined): PullBinding {
   const engine = useEngine();
   const demo = useDemoMode();
-  /* Who checks the mailboxes behind this shell: ohmail Cloud only on the managed service. */
-  const managed = useManagedService();
   const [pulling, setPulling] = useState(false);
+  const [result, setResult] = useState<PullBinding["result"]>();
   const alive = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    alive.current = true;
+    return () => {
       alive.current = false;
-    },
-    [],
-  );
-  // Single-flight per tab without stale-closure re-arms: the ref is the latch, state is the paint.
+    };
+  }, []);
+  useEffect(() => {
+    if (!result) return;
+    const timer = setTimeout(() => setResult(undefined), result.mailboxId ? 15_000 : 5_000);
+    return () => clearTimeout(timer);
+  }, [result]);
   const inFlight = useRef(false);
 
   const pull = useCallback(() => {
     if (inFlight.current) return;
     inFlight.current = true;
+    setResult(undefined);
     setPulling(true);
     void (async () => {
       try {
-        await pullOnce(engine, probe, { toast, t, managed }, alive);
+        const next = await pullOnce(engine, probe, alive);
+        if (alive.current) setResult(next);
       } finally {
         inFlight.current = false;
         if (alive.current) setPulling(false);
       }
     })();
-  }, [engine, probe, toast, t, managed]);
+  }, [engine, probe]);
 
-  return { available: !demo && engine.pullAvailable(), pulling, pull };
+  return { available: !demo && engine.pullAvailable(), pulling, pull, result };
 }

@@ -113,14 +113,11 @@ describe("the connection said by the mail ground", () => {
     });
     await answered();
     const said = notice(frameEn.frame.connection.act.mailboxes);
-    expect(said?.querySelector("b")?.textContent).toContain("is not syncing");
+    expect(said?.querySelector("b")?.textContent).toContain("The mailbox is full");
     expect(said?.querySelector("b")?.textContent).not.toContain(frameEn.sync.blocked_mailbox_full);
-    expect(said?.textContent, "the frame's own words stood where the strip's sentence belongs").toContain(
-      "The mailbox is full.",
-    );
     fireEvent.click(within(said!).getByRole("button", { name: frameEn.frame.connection.act.mailboxes }));
     expect(address.read(), "the words were followed by anything but the frame's address").toBe(
-      "#/settings/mailboxes",
+      "#/settings/mailboxes?mailbox=mbx-1",
     );
   });
 
@@ -148,19 +145,34 @@ describe("the connection said by the mail ground", () => {
   });
 });
 
-it("keeps a provider's wait reason in the notice body", async () => {
-  const since = new Date(Date.now() - 5 * 60_000).toISOString();
+it("keeps a short provider wait quiet and opens the affected row for a sustained failure", async () => {
+  let age = 5;
   const { address } = mount({
     mailboxes: async () => [
-      mailbox("mbx-1", { syncBlockedReason: "provider_unavailable", syncBlockedSince: since }),
+      mailbox("mbx-1", {
+        syncBlockedReason: "provider_unavailable",
+        syncBlockedSince: new Date(Date.now() - age * 60_000).toISOString(),
+      }),
+    ],
+  });
+  await answered();
+  expect(notice(frameEn.frame.connection.act.mailboxes)).toBeNull();
+  cleanup();
+  age = 31;
+  const after = mount({
+    mailboxes: async () => [
+      mailbox("mbx-1", {
+        syncBlockedReason: "provider_unavailable",
+        syncBlockedSince: new Date(Date.now() - age * 60_000).toISOString(),
+      }),
     ],
   });
   await answered();
   const said = notice(frameEn.frame.connection.act.mailboxes);
   expect(said?.querySelector("b")?.textContent).toContain("is not syncing");
-  expect(said?.textContent).toContain("The mail server asked ohmail to wait.");
   fireEvent.click(within(said!).getByRole("button", { name: frameEn.frame.connection.act.mailboxes }));
-  expect(address.read()).toBe("#/settings/mailboxes");
+  expect(after.address.read()).toBe("#/settings/mailboxes?mailbox=mbx-1");
+  expect(address.read()).toBe("#/ohbox");
 });
 
 it.each([
