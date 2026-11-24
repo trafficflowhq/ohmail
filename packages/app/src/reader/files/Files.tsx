@@ -12,6 +12,7 @@ import {
   listRetryIsOffered,
   thumbnailOf,
 } from "@ohmail/app-logic/reader";
+import { MailRowMenu, type MenuTarget } from "../../place-list/MailRowMenu.js";
 import { useFrame } from "../../frame/commands.js";
 import { NONE } from "../../host/index.js";
 import { useLocale, useText } from "../../text/index.js";
@@ -62,6 +63,8 @@ function Tile({
   const tb = useText("body");
   const { host } = useFrame();
   const locale = useLocale();
+  const [menu, setMenu] = useState<MenuTarget | null>(null);
+  const openMenu = (at: MenuTarget["at"], anchor: HTMLElement) => setMenu({ at, anchor });
   const kind = kindOf(item);
   const size = sizeOf(item.sizeBytes, locale);
   if (item.state === "loading")
@@ -88,26 +91,58 @@ function Tile({
         : fault.way === "signIn" && recover !== NONE
           ? { label: tb("signIn"), onPress: () => recover("signIn") }
           : undefined;
-    return <FileNotArrived state="failed" kind={kind} name={item.filename} line={reason} way={way} />;
+    return (
+      <>
+        <FileNotArrived
+          state="failed"
+          kind={kind}
+          name={item.filename}
+          line={reason}
+          way={way}
+          onMenu={way ? openMenu : undefined}
+        />
+        {way && menu ? (
+          <MailRowMenu target={menu} label={item.filename} onClose={() => setMenu(null)} items={[way]} />
+        ) : null}
+      </>
+    );
   }
   const thumb = thumbnailOf(item);
   const look = fileLookOf(item.mimeType) !== "other" ? preview : null;
+  const download = {
+    label: t("download", { name: item.filename }),
+    busy: item.saving,
+    onPress: () => files.open(messageId, item.id),
+  };
+  const inspect = look
+    ? {
+        label: t("preview", { name: item.filename }),
+        onPress: () => look(item.id),
+      }
+    : null;
   return (
-    <FileTile
-      kind={kind}
-      name={item.filename}
-      size={item.inline ? `${size} · ${t("embedded")}` : size}
-      look={thumb ? <img src={thumb} alt="" /> : undefined}
-      main={{
-        label: look ? t("preview", { name: item.filename }) : t("download", { name: item.filename }),
-        onPress: () => (look ? look(item.id) : files.open(messageId, item.id)),
-      }}
-      save={{
-        label: t("download", { name: item.filename }),
-        busy: item.saving,
-        onPress: () => files.open(messageId, item.id),
-      }}
-    />
+    <>
+      <FileTile
+        kind={kind}
+        name={item.filename}
+        size={item.inline ? `${size} · ${t("embedded")}` : size}
+        look={thumb ? <img src={thumb} alt="" /> : undefined}
+        main={inspect ?? download}
+        save={download}
+        onMenu={openMenu}
+      />
+      {menu ? (
+        <MailRowMenu
+          target={menu}
+          label={item.filename}
+          onClose={() => setMenu(null)}
+          items={[
+            ...(inspect ? [{ ...inspect, icon: "clip" as const }] : []),
+            { label: download.label, icon: "download", disabled: item.saving, onPress: download.onPress },
+          ]}
+        />
+      ) : null}
+    </>
   );
 }
 

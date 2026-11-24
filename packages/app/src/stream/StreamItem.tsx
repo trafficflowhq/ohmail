@@ -95,7 +95,7 @@ export const StreamItem = memo(function StreamItem(props: StreamItemProps) {
       }}
       data-open={opened ? "" : undefined}
       onPointerDown={(e) => {
-        if (!inControl(e.target)) enter();
+        if (e.button === 0 && !inControl(e.target)) enter();
       }}
       onClick={(e) => {
         if (inControl(e.target)) return;

@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readerHeadingCases } from "./reader-heading-cases.js";
 import { readerLayoutCases } from "./reader-layout-cases.js";
 import { threadPictureCases } from "./thread-pictures-cases.js";
 
@@ -428,7 +429,7 @@ describe("the panel's menus in a real browser", () => {
 });
 
 it.each([540, 1000])(
-  "steps the heading back only in a short room (%i high)",
+  "steps the heading back in every room (%i high)",
   async (height) => {
     const page = await browser!.newPage({ viewport: { width: 1440, height }, reducedMotion: "reduce" });
     try {
@@ -439,9 +440,10 @@ it.each([540, 1000])(
       const heading = page.locator(".oh-readinghead-subject");
       const short = page.locator(".oh-readinghead-short");
       await heading.evaluate((el) => el.parentElement!.parentElement!.scrollTo(0, 315));
-      await expect.poll(() => short.isVisible()).toBe(height < 900);
+      const opacity = () => short.evaluate((el) => getComputedStyle(el).opacity);
+      await expect.poll(opacity).toBe("1");
       await heading.evaluate((el) => el.parentElement!.parentElement!.scrollTo(0, 0));
-      await expect.poll(() => short.isVisible()).toBe(false);
+      await expect.poll(opacity).toBe("0");
       expect(await heading.isVisible()).toBe(true);
     } finally {
       await page.close();
@@ -483,17 +485,19 @@ it.each([
         return {
           display: [compact.fontFamily, compact.fontWeight, compact.color],
           full: [full.fontFamily, full.fontWeight, full.color],
-          size: compact.fontSize,
-          title: getComputedStyle(el).getPropertyValue("--t-title").trim(),
-          truncation: [compact.whiteSpace, compact.textOverflow],
+          size:
+            parseFloat(compact.fontSize) *
+            new DOMMatrixReadOnly(getComputedStyle(el.querySelector(".oh-readinghead-short")!).transform).a,
+          title: parseFloat(getComputedStyle(el).getPropertyValue("--t-ui")),
+          wrapping: [compact.textWrap, compact.overflowWrap],
           overlay: getComputedStyle(el, "::after").content,
           edges: [Math.abs(header.left - view.left), Math.abs(header.right - (view.left + port.clientWidth))],
         };
       });
       expect.soft(style.display).toEqual(style.full);
-      expect.soft(style.size).toBe(style.title);
+      expect.soft(style.size).toBeCloseTo(style.title, 2);
       expect.soft(style.overlay).toBe("none");
-      expect(style.truncation).toEqual(["nowrap", "ellipsis"]);
+      expect(style.wrapping).toEqual(["balance", "anywhere"]);
       for (const edge of style.edges) expect(edge).toBeLessThanOrEqual(1);
     } finally {
       await page.close();
@@ -579,6 +583,7 @@ it.each([
           const scroller = head.parentElement!;
           scroller.scrollTop = 315;
           await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+          await Promise.all(head.getAnimations({ subtree: true }).map((animation) => animation.finished));
           const port = scroller.getBoundingClientRect();
           const box = head.getBoundingClientRect();
           const left = port.left + scroller.clientLeft;
@@ -973,3 +978,8 @@ it.each([
 
 readerLayoutCases();
 threadPictureCases();
+
+readerHeadingCases(
+  () => ({ browser: browser!, html, baseCss: readFileSync(resolve("packages/ui/src/base.css"), "utf8") }),
+  ORIGIN,
+);

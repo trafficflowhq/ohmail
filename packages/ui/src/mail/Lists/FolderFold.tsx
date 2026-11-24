@@ -49,7 +49,7 @@ export interface FolderFoldProps {
   onOpen?: (id: string) => void;
   onBranch?: (id: string) => void;
   /** A folder's own menu was asked for (a right click, the menu key): which folder, and where the pointer is. */
-  onMenu?: (id: string, at: { x: number; y: number }) => void;
+  onMenu?: (id: string, at: { x: number; y: number }, opener: HTMLElement) => void;
 }
 
 /** All the folders the shelf does not show, opened and shut in place in the sidebar. */
@@ -121,7 +121,11 @@ export function FolderFold({ label, narrow, find, groups, none, onOpen, onBranch
                     current={folder.current}
                     drop={folder.drop}
                     onPress={() => onOpen?.(folder.id)}
-                    onMenu={onMenu && folder.menu !== false ? (at) => onMenu(folder.id, at) : undefined}
+                    onMenu={
+                      onMenu && folder.menu !== false
+                        ? (at, opener) => onMenu(folder.id, at, opener)
+                        : undefined
+                    }
                   >
                     {folder.name}
                   </RailEntry>

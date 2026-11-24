@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "../../icons/Icon.js";
+import { mailContextTrigger, type Point } from "../../base/Overlays/menu-place.js";
 import { KeyHint } from "../../base/Primitives/KeyHint.js";
 import "./dock.css";
 
@@ -20,6 +21,7 @@ export interface DockPlace {
   current?: boolean;
   disabled?: boolean;
   onPress?: () => void;
+  onMenu?: (at: Point | Element, opener: HTMLElement) => void;
 }
 
 export interface DockProps {
@@ -74,6 +76,7 @@ function DockEntry({ place, hidden }: { place: DockPlace; hidden: boolean }) {
       aria-label={count ? `${place.label}, ${count}` : place.label}
       title={place.label}
       onClick={place.onPress}
+      {...mailContextTrigger(place.onMenu)}
     >
       {place.words ? null : <Icon name={place.icon} size={20} />}
       <span className="oh-dock-word">{place.label}</span>

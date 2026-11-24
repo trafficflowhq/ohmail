@@ -1,13 +1,17 @@
+import { MailRow } from "./MailRowMenu.js";
 /**
  * THE ROWS OF A LIST PLACE beside the reader: one row a letter, who wrote it (or whom it went to), its subject, its
  * first words and its hour, the cursor's row marked, and what the place says beside it (where it is, a tag). Pure
  * drawing over the place's model: a press opens.
  */
+import type { ListMenuItem } from "./ListMenu.js";
+import type { MenuTarget } from "./MailRowMenu.js";
+import type { ListVerbs } from "@ohmail/app-logic/place-list";
 import type { EngineMessage } from "@ohmail/wire";
 import type { ReactNode } from "react";
 import type { RowSelection } from "./use-row-selection.js";
 import type { RowContact } from "./use-row-contact.js";
-import { Row, Rows } from "@ohmail/ui/mail";
+import { Rows } from "@ohmail/ui/mail";
 import { useRowPeople } from "./people.js";
 
 export interface LetterRowsProps {
@@ -42,7 +46,9 @@ export interface LetterRowsProps {
   /** The words a screen reader hears after the name: unread or read. */
   readonly spoken: (m: EngineMessage) => string;
   /** A row's own menu (a right click, or the key that opens one), where the place has one: at the pointer. */
-  readonly onMenu?: (m: EngineMessage, at: { x: number; y: number }) => void;
+  readonly verbs?: ListVerbs;
+  readonly folderMove?: boolean;
+  readonly menuItems?: (m: EngineMessage, target: MenuTarget) => readonly ListMenuItem[];
 }
 
 export function LetterRows({
@@ -61,7 +67,9 @@ export function LetterRows({
   squares,
   file,
   spoken,
-  onMenu,
+  verbs,
+  folderMove,
+  menuItems,
 }: LetterRowsProps) {
   const rowPeople = useRowPeople();
   return (
@@ -88,7 +96,7 @@ export function LetterRows({
         const open = m.id === cursor;
         const pick = selection?.rowProps(m.id);
         return (
-          <Row
+          <MailRow
             key={m.id}
             {...pick}
             {...contact?.rowProps(m.from, m.id)}
@@ -105,7 +113,8 @@ export function LetterRows({
             unread={m.unread}
             open={open}
             onOpen={() => press(m.id)}
-            onMenu={onMenu ? (at) => onMenu(m, at) : undefined}
+            actions={{ message: m, verbs, screen: contact?.screen(m), folderMove }}
+            menuItems={menuItems ? (target) => menuItems(m, target) : undefined}
             listing={{
               name: `${name}: ${m.subject}`,
               spoken: spoken(m),

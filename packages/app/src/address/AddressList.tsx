@@ -53,6 +53,7 @@ export function AddressList({ plan }: PaneProps) {
     <ListColumn head={head} plan={plan} cursor={model.list.cursor}>
       {model.list.rows.length > 0 ? (
         <LetterRows
+          verbs={model.list.verbs}
           label={t(`side.${model.side}`)}
           rows={model.list.rows}
           cursor={model.list.cursor}

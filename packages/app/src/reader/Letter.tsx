@@ -172,6 +172,7 @@ export function Letter({
             message={message}
             unread={look === "dot" && unread}
             notice={notice}
+            pictures={views.find((control) => control.id === "pictures")}
             copy={copy}
             narrow={narrow ?? false}
             streamCard={streamCard ?? (clip ? "open" : undefined)}

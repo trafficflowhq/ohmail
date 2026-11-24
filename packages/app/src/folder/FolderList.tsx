@@ -36,9 +36,8 @@ function FolderColumn({
   const selection = useRowSelection(model.list.rows);
   const contact = useRowContact();
   const t = useText("folder");
-  const [asked, setAsked] = useState<{ folderId: string; id: string; at: { x: number; y: number } } | null>(
-    null,
-  );
+  const moveWord = useText("ohbox");
+  const [asked, setAsked] = useState<{ folderId: string; id: string; at: HTMLElement } | null>(null);
   const [batchMoveAt, setBatchMoveAt] = useState<HTMLElement | null>(null);
   const { move, older } = model;
   const folderId = model.folder?.id;
@@ -66,6 +65,8 @@ function FolderColumn({
       <div aria-hidden data-window-top="" style={{ height: window.padTop }} />
       {visible.length > 0 ? (
         <LetterRows
+          verbs={model.list.verbs}
+          folderMove
           selection={selection}
           contact={contact}
           label={model.path.at(-1) ?? t("way.all")}
@@ -77,10 +78,16 @@ function FolderColumn({
           file={t("row.file")}
           who={(m) => m.from.name ?? m.from.address}
           spoken={(m) => (m.unread ? t("row.unread") : t("row.read"))}
-          onMenu={
+          menuItems={
             move === null || folderId === undefined
               ? undefined
-              : (m, at) => setAsked({ folderId, id: m.id, at })
+              : (m, { anchor }) => [
+                  {
+                    label: moveWord("actionMove"),
+                    icon: "move",
+                    onPress: () => setAsked({ folderId, id: m.id, at: anchor }),
+                  },
+                ]
           }
         />
       ) : null}
@@ -188,7 +195,7 @@ function FolderMoveAsk({
   move: FolderMove;
   source: string;
   letters: readonly EngineMessage[];
-  at: HTMLElement | { x: number; y: number };
+  at: HTMLElement;
   close: () => void;
   onMoved?: () => void;
 }) {

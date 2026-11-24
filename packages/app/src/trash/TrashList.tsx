@@ -1,3 +1,4 @@
+import { MailRow } from "../place-list/MailRowMenu.js";
 /**
  * TRASH'S LIST: what ohmail deleted, each row with when and where Restore puts it, the cursor's row marked; under it,
  * the mail server's own Trash, read-only, in each of its states (a failure is said with a way to ask again, never
@@ -5,7 +6,7 @@
  */
 import { trashLiveKeyOf, useTrashModel, type TrashModel } from "@ohmail/app-logic/trash";
 import { Button, Empty, RefusalLine } from "@ohmail/ui/base";
-import { GroupHeading, ListHead, ListLine, Row, Rows } from "@ohmail/ui/mail";
+import { GroupHeading, ListHead, ListLine, Rows } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
 import { ListColumn, ListMenu } from "../place-list/index.js";
 import { useCursorWindow } from "../place-list/cursor-window.js";
@@ -59,7 +60,7 @@ export function TrashList({ plan }: PaneProps) {
                every language; the place is the person's own word for it). */
             const back = `← ${to}`;
             return (
-              <Row
+              <MailRow
                 key={r.id}
                 {...pick}
                 {...contact.rowProps(r.from, r.id)}
@@ -72,6 +73,7 @@ export function TrashList({ plan }: PaneProps) {
                 where={back}
                 open={open}
                 onOpen={() => model.open(r.id)}
+                menuItems={() => [{ label: t("restore"), icon: "history", onPress: () => model.restore(r) }]}
                 listing={{
                   name: `${who}: ${r.subject}`,
                   spoken: [deleted, to].filter(Boolean).join(", "),
@@ -138,7 +140,7 @@ function LiveSection({ model, t, contact }: { model: TrashModel; t: Text; contac
             const who = i.from.name ?? i.from.address;
             const open = model.cursor === key;
             return (
-              <Row
+              <MailRow
                 key={key}
                 {...contact.rowProps(i.from, key)}
                 who={who}

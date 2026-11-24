@@ -1,3 +1,4 @@
+import { MailRow } from "../place-list/MailRowMenu.js";
 /**
  * THE ONE LIST OF RESULTS. The device's first paint is drawn whole: the matches, then the closest words under their
  * heading. Once the store answered, its rows replace them in place, as a window over the walked slots: a result, a
@@ -159,7 +160,7 @@ export function SearchHitRow({
     </>
   );
   return (
-    <Row
+    <MailRow
       {...selection?.rowProps(m.id)}
       nameAction={who.address ? contactActions?.nameAction : undefined}
       who={who.who}
@@ -172,6 +173,7 @@ export function SearchHitRow({
       unread={m.unread}
       cursor={cursor}
       open={open}
+      actions={{ message: m, verbs: beside.selection?.verbs, screen: contact?.screen(m) }}
       onOpen={() => onOpen(hit)}
       contactHref={fragmentOf({ place: "address", sub: m.from.address, open: null, stage: null, words: {} })}
       onContact={contactActions?.addressAction ?? (() => beside.go.address(m.from.address))}

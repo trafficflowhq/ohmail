@@ -13,7 +13,7 @@ import type { PaneProps } from "../../src/frame/contract.js";
 import { StreamReading } from "../../src/stream/index.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
 import { fakeHost } from "../support/fake-host.js";
-import { fakeAddress, fakeWindow, ROOMS } from "../support/fake-window.js";
+import { fakeAddress, fakeAppearance, fakeWindow, ROOMS } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
 import { fakeMail, letter } from "../reader/support/fake-mail.js";
 import sharedEn from "../../messages/shared.en.json" with { type: "json" };
@@ -38,6 +38,10 @@ const room = ROOMS[device] ?? ROOMS.desktop;
 const size = { width: window.innerWidth || room.width, height: window.innerHeight || room.height };
 
 const short = q.get("body") === "short";
+const designed = q.get("body") === "designed";
+const design =
+  '<table width="600" bgcolor="#fff"><tr><td style="height:240px">Weekend edition</td></tr>' +
+  '<tr><td style="height:320px"><a href="https://subscriptions.example.test/leave">Unsubscribe here</a></td></tr></table>';
 const folder = place === "news" ? "ohmail/News" : "ohmail/Receipts";
 const sender = "editor@example.org";
 const fresh = 12;
@@ -51,18 +55,24 @@ const letters = Array.from({ length: 30 }, (_, index) => {
     arrivedAt: date,
     folder,
     unread: true,
-    body: short
-      ? "Thank you for reading."
-      : Array.from(
-          { length: 5 },
-          (_, i) => `Paragraph ${i + 1} of ${id}: what the issue says this week.`,
-        ).join("\n\n"),
+    body: designed
+      ? undefined
+      : short
+        ? "Thank you for reading."
+        : Array.from(
+            { length: 5 },
+            (_, i) => `Paragraph ${i + 1} of ${id}: what the issue says this week.`,
+          ).join("\n\n"),
   });
 });
 const mail = fakeMail(
   letters,
   [],
-  {},
+  designed
+    ? Object.fromEntries(
+        letters.map(({ id }) => [id, { state: "ready", text: "Weekend edition", html: design }]),
+      )
+    : {},
   {
     [`view_meta:${waterlineIdOf(place === "news" ? "reads" : "receipts")}`]: {
       newestSeenId: letters[fresh]!.id,
@@ -142,7 +152,8 @@ const { host } = fakeHost({
   scope: "acct-1",
   above: MailGround,
   places: observedPlaces,
-  ...(short ? { reader: mailReader({ body: letterBody, look: "none" }) } : {}),
+  ...(short || designed ? { reader: mailReader({ body: letterBody, look: "none" }) } : {}),
+  appearance: fakeAppearance({ face: "paper", scheme: q.get("scheme") === "dark" ? "dark" : "light" }),
   window: fakeWindow({ ...room, ...size, posture: "flat", reducedMotion: true }),
   address,
 });

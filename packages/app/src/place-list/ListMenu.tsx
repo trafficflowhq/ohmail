@@ -28,7 +28,7 @@ export interface ListMenuItem {
 const NO_RAIL = { read: (): RailModel | null => null, subscribe: (_told: () => void) => () => {} };
 
 /** The frame's one pull, as the host's rail model holds it; null outside a frame or where the host has none. */
-function useFramePull(): RailModel["pull"] {
+export function useFramePull(): RailModel["pull"] {
   const rail = useContext(FrameContext)?.rail ?? NO_RAIL;
   return useSyncExternalStore(rail.subscribe, rail.read, rail.read)?.pull ?? null;
 }

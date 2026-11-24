@@ -105,7 +105,7 @@ async function mountPane(
 function glyphIn(head: Element | null, caption: string) {
   const trigger = head ? within(head as HTMLElement).queryByRole("button", { name: caption }) : null;
   if (!trigger) return null;
-  return { trigger, name: trigger.textContent ?? "" };
+  return { trigger, name: trigger.getAttribute("aria-label"), words: trigger.textContent };
 }
 /** The sentence the glyph's card prints in full, with the card open (pressed once). */
 function sentenceOf(glyph: { trigger: HTMLElement }, caption: string): string | null {
@@ -197,7 +197,9 @@ describe("the reading pane", () => {
     const g = glyphIn(t, COPY.pixelCaption);
     expect(g, "the header carries no notice glyph").not.toBeNull();
     expect(g!.name).toBe(COPY.pixelCaption);
-    // The studio's chip: the sentence only when asked, in the chip's card (no tooltip describes it while closed).
+    expect(g!.words).toBe("");
+    // The full sentence is on hover and in the opened card.
+    expect(g!.trigger.getAttribute("title")).toBe(COPY.pixelOnly);
     expect(screen.queryByText(COPY.pixelOnly), "the sentence is stated while closed").toBeNull();
     expect(sentenceOf(g!, COPY.pixelCaption), "the chip's card does not print the sentence").toBe(COPY.pixelOnly);
     // Fact before controls: notice, then the menu, then the stamp (the order conversation.test holds).
@@ -238,6 +240,8 @@ describe("the reading pane", () => {
     await mountPane(msg("solo"), { locale: "de" });
     const g = glyphIn(headOf("solo"), DE.pixelCaption)!;
     expect(g.name).toBe(DE.pixelCaption);
+    expect(g.words).toBe("");
+    expect(g.trigger.getAttribute("title")).toBe(DE.pixelOnly);
     expect(sentenceOf(g, DE.pixelCaption)).toBe(DE.pixelOnly);
   });
 });
@@ -255,6 +259,7 @@ describe("a conversation's panels", () => {
       const g = glyphIn(panel.querySelector("header"), COPY.pixelCaption);
       expect(g, `panel ${panel.getAttribute("data-conv-id")} carries no notice glyph`).not.toBeNull();
       expect(g!.name).toBe(COPY.pixelCaption);
+      expect(g!.words).toBe("");
       expect(sentenceOf(g!, COPY.pixelCaption)).toBe(COPY.pixelOnly);
     }
     expect(el.querySelectorAll(".mb-bar-text").length, "a boxed line survived on a panel").toBe(0);

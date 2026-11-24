@@ -108,7 +108,7 @@ describe("each letter's body", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Show original" }));
     expect(press).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("Images blocked")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Images blocked" }).textContent).toBe("");
   });
 });
 
@@ -540,7 +540,7 @@ describe("the head", () => {
 
   it("prints the account's own address as you, once the room has read the mailboxes", async () => {
     mountReader({ letters: [letter("m1")], open: "m1", host: { mailboxes: async () => ME } });
-    expect(await screen.findByRole("button", { name: "you" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: `you (${ME[0]!.address})` })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "me@studio.example" })).toBeNull();
   });
 
@@ -592,7 +592,7 @@ describe("the head", () => {
       open: "m1",
       host: { mailboxes: async () => ME },
     });
-    await screen.findByRole("button", { name: "you" });
+    await screen.findByRole("button", { name: `you (${ME[0]!.address})` });
     const one = screen.getByRole("heading", { name: "Kiln schedule" }).closest("header")!;
     expect(within(one).getByRole("heading", { name: "Kiln schedule" })).toBeTruthy();
     expect(within(one).queryByText("Studio")).toBeNull();
@@ -649,12 +649,18 @@ describe("the head", () => {
     ];
     mountReader({ letters: [letter("m1", { to })], open: "m1", host: { mailboxes: async () => BOTH } });
     const panel = () => screen.getByRole("toolbar", { name: "Actions" });
-    expect(await screen.findAllByRole("button", { name: "you" })).toHaveLength(2);
+    expect(await screen.findByRole("button", { name: `you (${ME[0]!.address})` })).toBeTruthy();
+    expect(
+      (await screen.findAllByRole("button", { name: /^you \(/ })).map((chip) => chip.textContent),
+    ).toEqual(to.map((recipient) => `you (${recipient.address})`));
     expect(within(panel()).queryByRole("button", { name: "Reply all" })).toBeNull();
     cleanup();
     const cc = [{ name: "Ada", address: "ada@kiln.example" }];
     mountReader({ letters: [letter("m1", { to, cc })], open: "m1", host: { mailboxes: async () => BOTH } });
-    expect(await screen.findAllByRole("button", { name: "you" })).toHaveLength(2);
+    expect(await screen.findByRole("button", { name: `you (${ME[0]!.address})` })).toBeTruthy();
+    expect(
+      (await screen.findAllByRole("button", { name: /^you \(/ })).map((chip) => chip.textContent),
+    ).toEqual(to.map((recipient) => `you (${recipient.address})`));
     expect(within(panel()).getByRole("button", { name: "Reply all" })).toBeTruthy();
   });
 
@@ -778,9 +784,9 @@ describe("the head", () => {
       open: "k1",
       host: { mailboxes: async () => ME },
     });
-    await screen.findByRole("button", { name: "you" });
+    await screen.findByRole("button", { name: `you (${ME[0]!.address})` });
     const line = screen.getByRole("button", { name: "Ada Kiln" }).closest("p")!;
-    expect(line.textContent).toBe("to you · cc Ada Kiln details");
+    expect(line.textContent).toBe(`to you (${ME[0]!.address}) · cc Ada Kiln details`);
   });
 
   it("Later, Park and Resurface are toggles that say whether the letter is filed there", () => {

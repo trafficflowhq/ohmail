@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Avatar, Button } from "../../base/index.js";
+import { Avatar, Button, mailContextTrigger, type Point } from "../../base/index.js";
 import type { IconName } from "../../icons/Icon.js";
 import { RailEntry } from "./RailEntry.js";
 import "./rail-foot.css";
@@ -28,6 +28,7 @@ export interface RailFootProps {
     title: string;
     current?: boolean;
     onPress?: () => void;
+    onMenu?: (at: Point | Element, opener: HTMLElement) => void;
   };
   tools?: readonly RailFootTool[];
 }
@@ -63,6 +64,7 @@ export function RailFoot({ notice, pull, account, tools }: RailFootProps) {
               .join(" · ")}
             aria-current={account.current ? "page" : undefined}
             onClick={account.onPress}
+            {...mailContextTrigger(account.onMenu)}
           >
             <Avatar name={account.name} address={account.address} size="s" />
             <span className="oh-railfoot-who">

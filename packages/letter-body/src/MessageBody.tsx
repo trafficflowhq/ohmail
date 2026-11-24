@@ -3001,6 +3001,8 @@ export interface SanitizedMail {
   background: Rgb | null;
   /** The paper the frame is painted with; `null` keeps the frame's own light sheet. */
   paper?: Rgb | null;
+  /** The sender’s full-page ground when it accompanies a designed layout. */
+  canvasPaper?: Rgb | null;
   /** The ink the frame sets unstyled text in; `null` keeps the frame's own. */
   ink?: Rgb | null;
   /** The frame width the sheets were resolved at, and the widths they compared against (`letterBand`). */
@@ -3646,6 +3648,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     rich,
     background: paper.ground,
     paper: paper.paper,
+    canvasPaper: designed ? paper.page : null,
     ink: paper.ink,
     frameWidth,
     breaks: media.breaks,
@@ -3823,6 +3826,12 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 body{margin:0;padding:16px var(--ohmail-paper-inset,16px);background:var(--ohmail-paper,#fff);color:var(--ohmail-ink,#1b1b1b);
   font:15px/1.62 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   overflow-wrap:break-word}
+/* Continue the letter's paper behind its canvas when the body is scaled. */
+:root{background:var(--ohmail-paper,#fff)}
+/* Center the outer canvas, including the common full-width table with one inner table.
+   Leave the sender's layout rules and other tables within the design alone. */
+:where(body > :is(table,div,center), td:only-child > table:only-child){
+  margin-inline:auto}
 img{border:0}
 img:not([width]){max-width:100%;height:auto}
 a{color:#1a56db}
@@ -3834,12 +3843,15 @@ img[data-ohmail-blocked]:not([width="1"]),img[data-ohmail-embedded]:not([width="
 /* WHERE A LINK ACTUALLY GOES, without a line of script — the frame has none and never will.
    Shown on hover AND on focus, because a keyboard reader is exactly the person who cannot
    see a status bar. \`title\` carries the same sentence for assistive technology. */
+a[data-ohmail-host]:not([data-ohmail-elsewhere]){position:relative}
 a[data-ohmail-host]:hover::after,a[data-ohmail-host]:focus::after{
+  position:absolute;right:0;inset-block-end:100%;pointer-events:none;
+  background:var(--ohmail-paper,#fff);
   content:" \\2192 " attr(data-ohmail-host);font-size:.82em;opacity:.75;white-space:nowrap}
 /* Said WITHOUT hovering when the visible text names one place and the link goes to another
    — the click-tracker case, which is the one an unsuspecting reader cannot see. */
-a[data-ohmail-elsewhere]::after{
-  content:" (" attr(data-ohmail-host) ")";font-size:.82em;opacity:.7;white-space:nowrap}
+a[data-ohmail-elsewhere]::after,a[data-ohmail-elsewhere]:is(:hover,:focus)::after{
+  position:static;background:none;content:" (" attr(data-ohmail-host) ")";font-size:.82em;opacity:.7;white-space:nowrap}
 a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
 /* ── DARK VIEWING, GATED ON ONE ROOT ATTRIBUTE ─────────────────────────────────────────
    The transform is a single filter on the body — invert lightness, then hue-rotate 180° so
@@ -3857,10 +3869,13 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
    below. The body's background normally propagates to the frame's canvas and paints the whole
    viewport — but a body that has been SCALED no longer covers the right-hand edge, and a
    propagated background is painted outside the element's own filter, so that edge would show
-   #e4e4e4 as light grey beside an inverted mail. Declaring a background on :root takes over
-   the propagation with a value that is already the inverse of the body's, so the strip and the
-   paper match. In the unscaled case body covers the viewport and none of this is visible. */
+   #e4e4e4 as light grey beside an inverted mail. The root paints the existing dark default.
+   A designed canvas with its own paper paints that same paper underneath a scaled letter. */
 :root[data-ohmail-dark]{background:#1b1b1b}
+:root[data-ohmail-dark][data-ohmail-canvas-paper] body{background:var(--ohmail-paper)}
+:root[data-ohmail-dark][data-ohmail-canvas-paper][data-ohmail-scaled]::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:-1;
+  background:var(--ohmail-paper);filter:invert(1) hue-rotate(180deg)}
 /* Two wrongs make a right: the body filter negated every picture, so negate the pictures
    back — real images keep their real colours while the page around them stays inverted.
    The [data-ohmail-bgimg] marker is the same picture spelled as a CSS background (see the
@@ -4031,14 +4046,16 @@ export function buildMailDocument(
    * the point: a caller holding a boolean knows that images are on and NOT where they may come
    * from, so the only policy it could ask for was `'self'` — every url on this origin.
    */
-  opts: { imgSource?: string | null; dark?: boolean; reflow?: boolean; paper?: Rgb | null; ink?: Rgb | null; reader?: boolean; fitDesign?: boolean } = {},
+  opts: { imgSource?: string | null; dark?: boolean; reflow?: boolean; paper?: Rgb | null; canvasPaper?: Rgb | null; ink?: Rgb | null; reader?: boolean; fitDesign?: boolean } = {},
 ): string {
   // The paper rides on the ROOT ELEMENT and is independent of `dark`, so the light and dark
   // builds of the same message still differ by the attribute alone — which is the equality
   // `test/message-body.test.ts` pins and the reason the live flip can be a `toggleAttribute`.
-  const vars = [opts.paper ? `--ohmail-paper:${cssColor(opts.paper)}` : "", opts.ink ? `--ohmail-ink:${cssColor(opts.ink)}` : ""]
+  const ground = opts.canvasPaper ?? opts.paper;
+  const vars = [ground ? `--ohmail-paper:${cssColor(ground)}` : "", opts.ink ? `--ohmail-ink:${cssColor(opts.ink)}` : ""]
     .filter((v) => v !== "").join(";");
   const paper = vars ? ` style="${vars}"` : "";
+  const canvasPaper = opts.canvasPaper ? " data-ohmail-canvas-paper" : "";
   /**
    * REFLOW IS THE SAME MECHANISM AS DARK: one attribute, a block of dormant rules. It defaults
    * OFF here rather than on, so a caller that does not classify gets exactly the document this
@@ -4056,7 +4073,7 @@ export function buildMailDocument(
     ? ":where(:root[data-ohmail-reflow] *){max-width:100%}"
     : ":root[data-ohmail-reflow] *{max-width:100% !important}";
   return [
-    `<!doctype html><html${opts.dark === true ? " data-ohmail-dark=\"1\"" : ""}${reflow}${reader}${paper}><head><meta charset="utf-8">`,
+    `<!doctype html><html${opts.dark === true ? " data-ohmail-dark=\"1\"" : ""}${reflow}${reader}${canvasPaper}${paper}><head><meta charset="utf-8">`,
     `<meta http-equiv="Content-Security-Policy" content="${frameCsp(opts.imgSource ?? null)}">`,
     // Belongs to the same promise as the CSP: if a consented image is ever fetched through
     // the proxy, not even the path of the page the reader is on travels with it.
@@ -4715,7 +4732,7 @@ export function MessageBody({
       return { state: "unsupported" as const, historyAt: "unread" as QuotedVerdict };
     }
     const {
-      html: clean, blocked, sheets, oversize, light, reflow, prose, rich, paper, ink, cids, links, asks, fold, foldPaper = null, historyAt = "unread",
+      html: clean, blocked, sheets, oversize, light, reflow, prose, rich, paper, canvasPaper, ink, cids, links, asks, fold, foldPaper = null, historyAt = "unread",
     } = made;
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
@@ -4730,11 +4747,10 @@ export function MessageBody({
       // of the theme, so it can only change when `html` changes — and that already rebuilds
       // the frame. See `isRigidLayout` for what decides it.
       reflow,
-      // The mail's own paper, so a message this viewer declines to invert does not sit on a
-      // white sheet it never asked for — but a near-neutral light ground (the grey a template
-      // drops behind a white letter) is the app's white (`paintedPaper`).
-      // Ignored whenever the filter is on — see FRAME_CSS.
+      // Continue a designed canvas's ground through the gutters. Ordinary letters keep the
+      // normal paper treatment. A light paper is inverted with the designed canvas.
       paper: paper ?? null,
+      canvasPaper: fitDesign ? canvasPaper : null,
       // The body's own ink on a dark page it reads on, or ohmail's light ink on a dark page that names
       // none and where no element paints a background (`letterPaperOf`); else the frame's.
       ink: ink ?? null,
@@ -4745,7 +4761,13 @@ export function MessageBody({
     // The same document with its quoted history cut out: the frame's folded state, read as its own letter.
     const foldLight = foldPaper?.light ?? light;
     const foldDoc = fold
-      ? buildMailDocument(fold.html, { ...docOpts, dark: darkWanted && foldLight, paper: foldPaper?.paper ?? null, ink: foldPaper?.ink ?? null })
+      ? buildMailDocument(fold.html, {
+          ...docOpts,
+          dark: darkWanted && foldLight,
+          paper: foldPaper?.paper ?? null,
+          canvasPaper: fitDesign && !prose ? foldPaper?.page : null,
+          ink: foldPaper?.ink ?? null,
+        })
       : null;
     // Counted over `doc`, the string the frame parses, never over `clean`. Past one frame a letter
     // keeps its own path (the walk, else the text part) and loses only the flip to its layout; a
@@ -4887,13 +4909,14 @@ export function MessageBody({
    * a layout read.
    */
   const sizes = useRef(new WeakMap<Element, string>());
+  const dragFrame = useRef<{ frame: HTMLIFrameElement; width: number } | null>(null);
   const reportLayout = useRef(onBodyLayout);
   reportLayout.current = onBodyLayout;
 
   const measure = useCallback(() => {
     const frame = frameRef.current;
     const doc = frame?.contentDocument;
-    if (!frame || !doc?.documentElement) return;
+    if (!frame || !doc?.documentElement || dragFrame.current) return;
     const root = doc.documentElement;
     const reader = root.hasAttribute("data-ohmail-reader");
     const frameStyle = reader || frame.closest(".oh-message[data-unread]") ? getComputedStyle(frame) : null;
@@ -5040,6 +5063,7 @@ export function MessageBody({
     const shell = shellRef.current;
     if (!shell) return;
     const take = (): void => {
+      if (dragFrame.current) return;
       const w = shell.clientWidth;
       if (!(w > 0)) return;
       lastLetterWidth = w;
@@ -5061,10 +5085,51 @@ export function MessageBody({
     };
     take();
     if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(take);
+    const columns = shell.closest(".fr-columns");
+    const release = () => {
+      const held = dragFrame.current;
+      if (!held) return;
+      dragFrame.current = null;
+      held.frame.style.removeProperty("width");
+      held.frame.style.removeProperty("max-width");
+      held.frame.style.removeProperty("transform");
+      held.frame.style.removeProperty("transform-origin");
+    };
+    const drag = (event: Event) => {
+      if (!(event as CustomEvent<boolean>).detail) {
+        release();
+        take();
+        measure();
+        return;
+      }
+      const frame = frameRef.current;
+      const width = lastMeasure.current?.column;
+      if (!frame || !width || lastMeasure.current?.frame !== frame) return;
+      dragFrame.current = { frame, width };
+      frame.style.width = `${width}px`;
+      frame.style.maxWidth = "none";
+      frame.style.transformOrigin = "top left";
+    };
+    const ro = new ResizeObserver(() => {
+      const held = dragFrame.current;
+      if (!held) {
+        take();
+        return;
+      }
+      // Keep the mail's layout and the scroller's height until the divider is released.
+      const room = held.frame.parentElement?.clientWidth ?? held.width;
+      const scale = Math.min(1, room / held.width);
+      const inset = Math.max(0, (room - held.width) / 2);
+      held.frame.style.transform = `translateX(${inset}px) scale(${scale})`;
+    });
     ro.observe(shell);
-    return () => ro.disconnect();
-  }, [shellShown]);
+    columns?.addEventListener("oh-column-drag", drag);
+    return () => {
+      columns?.removeEventListener("oh-column-drag", drag);
+      ro.disconnect();
+      release();
+    };
+  }, [shellShown, measure]);
   const shownDoc = mail?.state === "ok" ? (frameFolded ? mail.foldDoc! : mail.doc) : null;
   const shownKey = mail?.state === "ok" ? (frameFolded ? mail.foldKey : mail.frameKey) : null;
   /** What the frame on screen was built from: the cut document's lists while folded. */

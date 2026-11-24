@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { THREAD_READ_HOLD_MS } from "../../../../test/support/engine-fixtures.js";
 import { SEEN_MAX_LATENCY_MS } from "@ohmail/app-logic/reading/seen-batch";
+import { MENU_KEY_CHORD } from "../../../ui/src/base/Overlays/menu-place.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const require_ = createRequire(resolve(process.cwd(), "package.json"));
@@ -18,12 +19,14 @@ type Page = Awaited<ReturnType<Awaited<ReturnType<typeof chromium.launch>>["newP
 const ORIGIN = "https://streams.states.invalid";
 let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
 let html = "";
+let menuReaderHtml = "";
 
 beforeAll(async () => {
   const states = (await import("./reader-states.mjs")) as {
     readerStatesPage: (entry?: string) => Promise<string>;
   };
   html = await states.readerStatesPage("packages/app/test/states/streams-page.tsx");
+  menuReaderHtml = await states.readerStatesPage();
   browser = await chromium.launch();
 }, 120_000);
 afterAll(async () => {
@@ -89,6 +92,40 @@ async function settled(page: Page): Promise<void> {
 }
 
 describe("the stream's read rule in a real browser", () => {
+  it("draws the News letter in dark mode both folded and expanded, with the folded fade", async () => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) =>
+        route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+      );
+      await page.goto(`${ORIGIN}/?place=news&body=designed&scheme=dark`);
+      const card = page.locator("[data-stream-item]").first();
+      const clip = card.locator(".oh-message-clip");
+      const frame = card.frameLocator(".mb-frame");
+      await expect.poll(() => clip.getAttribute("data-shut")).toBe("");
+      await frame.getByText("Weekend edition").waitFor({ state: "attached", timeout: 5000 });
+      expect(await clip.evaluate((el) => getComputedStyle(el).maskImage)).toContain("linear-gradient");
+      const filter = () => frame.locator("body").evaluate((el) => getComputedStyle(el).filter);
+      expect(await filter()).toContain("invert");
+      const gaps = await card.locator(".mb-frame").evaluate((frame) => {
+        const pane = frame.closest(".oh-message")!.getBoundingClientRect();
+        const design = (frame as HTMLIFrameElement)
+          .contentDocument!.querySelector("table")!
+          .getBoundingClientRect();
+        const left = frame.getBoundingClientRect().left + design.left - pane.left;
+        const right = pane.right - frame.getBoundingClientRect().left - design.right;
+        return { imbalance: Math.abs(left - right), pane: pane.width, frame: frame.clientWidth };
+      });
+      expect(Math.abs(gaps.pane - gaps.frame)).toBeLessThanOrEqual(2);
+      expect(gaps.imbalance).toBeLessThanOrEqual(2);
+      await card.getByRole("button", { name: "Expand" }).click();
+      await expect.poll(() => clip.getAttribute("data-shut")).toBeNull();
+      expect(await filter()).toContain("invert");
+    } finally {
+      await page.close();
+    }
+  });
+
   it("a wheel reads what it carries past the 90 px line at once, the item it rests on after 0.6 s, nothing before", async () => {
     const { page, errors } = await open();
     await page.waitForTimeout(800);
@@ -281,3 +318,147 @@ describe("the stream's read rule in a real browser", () => {
     await page.close();
   }, 60_000);
 });
+
+async function openMenuFixture(width = 1440, path = "/?place=news&body=short"): Promise<Page> {
+  const page = await browser!.newPage({ viewport: { width, height: 900 } });
+  await page.route(`${ORIGIN}/**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html; charset=utf-8",
+      body: path.startsWith("/reader") ? menuReaderHtml : html,
+    }),
+  );
+  await page.goto(`${ORIGIN}${path}&device=${width < 500 ? "phone" : "desktop"}`);
+  return page;
+}
+
+it.each(["pointer", MENU_KEY_CHORD, "ContextMenu"])(
+  "opens the News row menu with %s",
+  async (trigger) => {
+    const page = await openMenuFixture();
+    try {
+      const row = page.locator('.oh-row[data-id="n1"]');
+      if (trigger === "pointer") await row.click({ button: "right" });
+      else await row.press(trigger);
+      await page
+        .getByRole("menu")
+        .getByRole("menuitem", { name: "Open", exact: true })
+        .waitFor({ timeout: 3000 });
+      await page.keyboard.press("Escape");
+      expect(await page.getByRole("menu").count()).toBe(0);
+      expect(await row.evaluate((node) => node === document.activeElement)).toBe(true);
+    } finally {
+      await page.close();
+    }
+  },
+  20_000,
+);
+
+it.each([1440, 390])(
+  "opens the addressed message menu at %i px and leaves body text selectable",
+  async (width) => {
+    const page = await openMenuFixture(width);
+    try {
+      const card = page.locator('[data-stream-item="n1"]');
+      await card.locator(".oh-messagehead").click({ button: "right" });
+      await page
+        .getByRole("menu")
+        .getByRole("menuitem", { name: "Reply", exact: true })
+        .waitFor({ timeout: 3000 });
+      await page.keyboard.press("Escape");
+      const body = card.locator(".oh-message-body").first();
+      expect(
+        await body.evaluate((node) => {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          const selection = window.getSelection()!;
+          selection.removeAllRanges();
+          selection.addRange(range);
+          const text = selection.toString();
+          const native = node.dispatchEvent(
+            new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+          );
+          return native && text.length > 0 && selection.toString() === text;
+        }),
+      ).toBe(true);
+      expect(await page.getByRole("menu").count()).toBe(0);
+    } finally {
+      await page.close();
+    }
+  },
+  20_000,
+);
+
+it("the sidebar opens the focused place's menu and restores focus", async () => {
+  const page = await openMenuFixture();
+  try {
+    const news = page.locator('[data-rail-id="news"] button');
+    await news.press(MENU_KEY_CHORD);
+    const menu = page.getByRole("menu");
+    await menu.getByRole("menuitem", { name: "Open", exact: true }).waitFor({ timeout: 3000 });
+    await page.keyboard.press("Escape");
+    expect(await news.evaluate((node) => node === document.activeElement)).toBe(true);
+  } finally {
+    await page.close();
+  }
+}, 20_000);
+
+it("the context menu of an attachment offers its existing preview and download", async () => {
+  const page = await openMenuFixture(1440, "/reader?open=lt-invoice");
+  try {
+    const file = page.locator(".oh-file-main").first();
+    await file.press("ContextMenu");
+    const menu = page.getByRole("menu");
+    await menu.getByRole("menuitem", { name: /^Preview / }).waitFor({ timeout: 3000 });
+    expect(await menu.getByRole("menuitem", { name: /^Download / }).count()).toBe(1);
+    await page.keyboard.press("Escape");
+    expect(await file.evaluate((node) => node === document.activeElement)).toBe(true);
+  } finally {
+    await page.close();
+  }
+}, 20_000);
+
+it("a message in a thread opens its own menu without taking the HTML frame's native menu", async () => {
+  const page = await openMenuFixture(1440, "/reader?hostile=1&open=h-letin&screen=reading");
+  try {
+    const message = page.locator('[data-conv-id="h-unconfirmed"]');
+    const sender = message.locator(".oh-messagehead-sender");
+    await sender.press(MENU_KEY_CHORD);
+    await page
+      .getByRole("menu")
+      .getByRole("menuitem", { name: "Reply", exact: true })
+      .waitFor({ timeout: 3000 });
+    await page.keyboard.press("Escape");
+    expect(await sender.evaluate((node) => node === document.activeElement)).toBe(true);
+    const frame = message.frameLocator("iframe");
+    expect(
+      await frame
+        .locator("body")
+        .evaluate((node) =>
+          node.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+        ),
+    ).toBe(true);
+    expect(await page.getByRole("menu").count()).toBe(0);
+  } finally {
+    await page.close();
+  }
+}, 20_000);
+
+it("a recoverable attachment offers its existing retry from the menu key", async () => {
+  const page = await openMenuFixture(1440, "/reader?open=lt-files&state=server");
+  try {
+    const attachment = page.locator('.oh-file[data-state="failed"]');
+    const retry = attachment.getByRole("button");
+    const label = (await retry.innerText()).trim();
+    expect(label.length).toBeGreaterThan(0);
+    await retry.press(MENU_KEY_CHORD);
+    await page
+      .getByRole("menu")
+      .getByRole("menuitem", { name: label, exact: true })
+      .waitFor({ timeout: 3000 });
+    await page.keyboard.press("Escape");
+    expect(await retry.evaluate((node) => node === document.activeElement)).toBe(true);
+  } finally {
+    await page.close();
+  }
+}, 20_000);

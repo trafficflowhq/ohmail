@@ -1,6 +1,7 @@
 import { Fragment, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { Avatar, Button } from "../../base/index.js";
+import { Avatar, Button, mailContextTrigger, type Point } from "../../base/index.js";
 import { Icon } from "../../icons/Icon.js";
+import { HeadStamp } from "./MessageHeadStamp.js";
 import { AddressText } from "../AddressText.js";
 import { SelectionCircle, SelectionMark, type CircleSelection } from "../Lists/SelectionCircle.js";
 import "./message-head.css";
@@ -10,16 +11,15 @@ export interface HeadPerson {
   name: string;
   title?: string;
   textOnly?: boolean;
+  own?: boolean;
   /** Their card stands open: the name says so (`aria-expanded`). */
   expanded?: boolean;
   onPress?: (anchor: HTMLElement) => void;
 }
-
 interface HeadGroup {
   word: string;
   people: readonly HeadPerson[];
 }
-
 interface HeadDetails {
   label: string;
   open: boolean;
@@ -36,7 +36,6 @@ export interface HeadLine {
   value: string;
   note?: string;
 }
-
 export interface MessageHeadProps {
   /** Keep a folded preview’s recipient disclosure beside its single recipient field. */
   preview?: boolean;
@@ -66,7 +65,12 @@ export interface MessageHeadProps {
   delivery?: ReactNode;
   deliveryOpen?: boolean;
   /** The message's own menu. */
-  menu?: { label: string; expanded?: boolean; onPress?: (anchor: HTMLElement) => void };
+  menu?: {
+    label: string;
+    expanded?: boolean;
+    onPress?: (anchor: HTMLElement) => void;
+    onContext?: (at: Point | Element, opener: HTMLElement) => void;
+  };
   /**
    * When, as it is printed. A press turns short times into full dates and back; `title` says what a press does. `at`:
    * the instant, as a machine reads it (an ISO date), behind the printed words.
@@ -149,32 +153,6 @@ function Sender({
   );
 }
 
-function Stamp({ stamp, staticMetadata }: Pick<MessageHeadProps, "stamp" | "staticMetadata">) {
-  const when = (
-    <time className="oh-messagehead-when" dateTime={stamp.at}>
-      {stamp.when}
-    </time>
-  );
-  if (staticMetadata && !stamp.onPress) {
-    return (
-      <span className="oh-messagehead-stamp" title={stamp.title}>
-        {when}
-      </span>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className="oh-control oh-messagehead-stamp"
-      aria-pressed={stamp.full}
-      title={stamp.title}
-      onClick={stamp.onPress}
-    >
-      {when}
-    </button>
-  );
-}
-
 /** Who wrote it, to whom, and when. */
 export function MessageHead({
   sender,
@@ -196,6 +174,7 @@ export function MessageHead({
   return (
     <header
       className="oh-messagehead"
+      {...mailContextTrigger(menu?.onContext)}
       data-noted={note ? "" : undefined}
       data-preview={preview ? "" : undefined}
     >
@@ -220,7 +199,7 @@ export function MessageHead({
           />
         ) : null}
         {/* A letter with no date draws no stamp: no nameless control that toggles nothing. */}
-        {stamp.when && <Stamp stamp={stamp} staticMetadata={staticMetadata} />}
+        {stamp.when && <HeadStamp stamp={stamp} staticMetadata={staticMetadata} />}
       </span>
       {to?.length ? <Recipients groups={to} details={details} /> : null}
       {details?.open ? (
@@ -266,7 +245,6 @@ export function MessageHead({
     </header>
   );
 }
-
 function Recipients({ groups, details }: { groups: readonly HeadGroup[]; details?: HeadDetails }) {
   const line = useRef<HTMLParagraphElement>(null);
   const returnTo = useRef<string | null>(null);
@@ -329,11 +307,14 @@ function Recipients({ groups, details }: { groups: readonly HeadGroup[]; details
                 <Fragment key={at}>
                   {at ? <span className="oh-messagehead-sep">, </span> : null}
                   {person.textOnly ? (
-                    <span className="oh-messagehead-person">{person.name}</span>
+                    <span className="oh-messagehead-person" data-own={person.own ? "" : undefined}>
+                      {person.name}
+                    </span>
                   ) : (
                     <button
                       type="button"
                       className="oh-control oh-messagehead-person"
+                      data-own={person.own ? "" : undefined}
                       aria-haspopup="dialog"
                       aria-expanded={person.expanded ?? false}
                       title={person.title}
@@ -378,7 +359,6 @@ function Recipients({ groups, details }: { groups: readonly HeadGroup[]; details
     </p>
   );
 }
-
 function recipientFit(
   line: HTMLElement,
   groups: readonly HeadGroup[],

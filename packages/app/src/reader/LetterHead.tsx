@@ -1,6 +1,6 @@
 import type { EngineMessage } from "@ohmail/wire";
 import { useId, useState, type ReactNode } from "react";
-import { Icon } from "@ohmail/ui/base";
+import { Icon, type Point } from "@ohmail/ui/base";
 import { BlockedImages, type MessageHeadProps } from "@ohmail/ui/mail";
 import {
   awayAnswerStamp,
@@ -11,14 +11,14 @@ import {
   readerZone,
 } from "@ohmail/app-logic/reader";
 import { senderCheckFact, senderCheckSentence } from "@ohmail/app-logic/screener";
-import { forwardedToNames, recipientRows } from "@ohmail/app-logic/text/format";
+import { forwardedToNames, recipientRows, type RecipientRows } from "@ohmail/app-logic/text/format";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useMailboxName, useMailboxWord, useOwnAddresses } from "../frame/room.js";
 import { DeliveryLabel } from "../place-list/DeliveryLabel.js";
 import { useLocale, useText, useTimeZone, type Text } from "../text/index.js";
 import { LetterMenu } from "./actions/LetterMenu.js";
 import type { ContactOf } from "./contact/Contact.js";
-import type { LetterNotice } from "./ports.js";
+import type { LetterControl, LetterNotice } from "./ports.js";
 
 const CARD_RECIPIENT_CHIPS = 2;
 
@@ -32,6 +32,7 @@ export interface LetterHeadProps {
   message: EngineMessage;
   unread: boolean;
   notice: LetterNotice | null;
+  pictures?: LetterControl;
   copy: string | null;
   narrow: boolean;
   onPerson: (person: ContactOf) => void;
@@ -106,12 +107,20 @@ export function useLetterHeadPresentation(props: LetterHeadProps) {
         caption={notice.caption}
         sentence={notice.text}
         describe={preview}
+        pictures={props.pictures}
         open={noticeOpen}
         onOpen={() => setNoticeOpen(true)}
         onClose={() => setNoticeOpen(false)}
       />
     ) : undefined,
-    menu: hasMenu ? { label: t("head.menu"), expanded: menu !== null, onPress: setMenu } : undefined,
+    menu: hasMenu
+      ? {
+          label: t("head.menu"),
+          expanded: menu !== null,
+          onPress: (anchor) => setMenu({ anchor }),
+          onContext: (anchor, returnFocus) => setMenu({ anchor, returnFocus }),
+        }
+      : undefined,
     to: groups,
     details: {
       label: tm("details"),
@@ -143,7 +152,8 @@ export function useLetterHeadPresentation(props: LetterHeadProps) {
     menu: hasMenu && menu !== null && (
       <LetterMenu
         message={message}
-        anchor={menu}
+        anchor={menu.anchor}
+        returnFocus={menu.returnFocus}
         onClose={() => setMenu(null)}
         markUnread={props.markUnread}
       />
@@ -161,11 +171,15 @@ function useLetterHead({ message, copy, onPerson, card, preview = false, streamC
   const mailboxWord = useMailboxWord();
   const mailbox = mailboxWord(message.mailboxId);
   const place = placeOfFolder(message.folder);
-  const delivery = (preview || streamCard) && (place === "reads" || place === "receipts") ? mailbox : null;
+  const recipients = recipientRows(message, own);
+  const delivery =
+    (preview || streamCard) && (place === "reads" || place === "receipts")
+      ? distinctDelivery(mailbox, recipients)
+      : null;
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [full, setFull] = useState(false);
   const [details, setDetails] = useState(false);
-  const [menu, setMenu] = useState<HTMLElement | null>(null);
+  const [menu, setMenu] = useState<{ anchor: Element | Point; returnFocus?: HTMLElement } | null>(null);
   const mailboxName = useMailboxName();
   const senderCard = useId();
   const mine = (address: string): boolean => own.some((a) => a.toLowerCase() === address.toLowerCase());
@@ -185,7 +199,7 @@ function useLetterHead({ message, copy, onPerson, card, preview = false, streamC
     });
   };
   const forwardTo = isForwardedByUs(message) ? forwardedToNames(message) : null;
-  const groups = recipientGroups(message, own, { t, card, preview, mine, name, person });
+  const groups = recipientGroups(message, recipients, { t, card, preview, name, person });
   const now = new Date();
   const stamp = headStamp(letterStampInstant(message), now, readerZone(), locale, {
     yesterday: (time) => t("head.yesterday", { time }),
@@ -267,29 +281,35 @@ function useLetterHead({ message, copy, onPerson, card, preview = false, streamC
   };
 }
 
+/** A bare delivery address already printed on the recipient line adds no routing information. */
+function distinctDelivery(mailbox: string | null, recipients: RecipientRows): string | null {
+  if (mailbox === null) return null;
+  const repeated = [...recipients.to, ...recipients.cc].some(
+    (person) => person.me && person.address.trim().toLowerCase() === mailbox.toLowerCase(),
+  );
+  return repeated ? null : mailbox;
+}
+
 type Person = EngineMessage["from"];
 
 function recipientGroups(
   message: EngineMessage,
-  own: readonly string[],
+  recipients: RecipientRows,
   {
     t,
     card,
     preview,
-    mine,
     name,
     person,
   }: {
     t: Text;
     card: string | null;
     preview: boolean;
-    mine: (address: string) => boolean;
     name: (person: Person) => string | null;
     person: (person: Person, slot: string) => (anchor: HTMLElement) => void;
   },
 ) {
-  const recipients = recipientRows(message, own);
-  // A folded preview can say “you” for one addressee without exposing a lone list address.
+  // A folded preview can name its own mailbox without exposing an unrelated lone list address.
   const recipientCount = recipients.to.length + recipients.cc.length;
   const showRecipients =
     !preview ||
@@ -303,23 +323,20 @@ function recipientGroups(
     .filter((g) => g.people.length > 0)
     .map((g) => ({
       word: g.word,
-      people: g.people
-        .map((p, i) => {
-          const slot = `${message.id} ${g.slot} ${i}`;
-          if (preview && recipientCount === 1 && p.me) {
-            return { isOwn: true, name: t("head.you"), textOnly: true };
-          }
-          const isOwn = mine(p.address);
-          const displayName = name(p);
-          return {
-            isOwn,
-            name: isOwn ? t("head.you") : (displayName ?? displayAddress(p.address)),
-            title: isOwn && displayName ? `${displayName} <${p.address}>` : p.address,
-            expanded: card === slot,
-            onPress: person(p, slot),
-          };
-        })
-        .sort((left, right) => Number(right.isOwn) - Number(left.isOwn)),
+      people: g.people.map((p, i) => {
+        const slot = `${message.id} ${g.slot} ${i}`;
+        const address = displayAddress(p.address);
+        const displayName = name(p);
+        const label = p.me ? t("head.youAt", { address }) : (displayName ?? address);
+        if (preview && recipientCount === 1 && p.me) return { name: label, own: true, textOnly: true };
+        return {
+          name: label,
+          own: p.me,
+          title: p.me && displayName ? `${displayName} <${p.address}>` : p.address,
+          expanded: card === slot,
+          onPress: person(p, slot),
+        };
+      }),
     }));
   return showRecipients ? groups : undefined;
 }

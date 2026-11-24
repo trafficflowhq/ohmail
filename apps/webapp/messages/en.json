@@ -2346,6 +2346,7 @@
       "to": "to",
       "cc": "cc",
       "you": "you",
+      "youAt": "you ({address})",
       "youSender": "You",
       "yesterday": "yesterday {time}",
       "menu": "Message",

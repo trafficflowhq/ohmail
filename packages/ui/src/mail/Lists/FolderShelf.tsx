@@ -34,7 +34,7 @@ export interface FolderShelfProps {
   folders: readonly ShelfFolder[];
   onOpen?: (id: string) => void;
   /** A folder's own menu was asked for (a right click, the menu key): which folder, and where the pointer is. */
-  onMenu?: (id: string, at: { x: number; y: number }) => void;
+  onMenu?: (id: string, at: { x: number; y: number }, opener: HTMLElement) => void;
   /** The fold that opens the rest: its name, its name with the unread mail it hides, that count, whether it stands. */
   all?: { name: string; label: string; count?: string; expanded: boolean; onToggle?: () => void };
   /** The open fold. */
@@ -70,7 +70,9 @@ export function FolderShelf(props: FolderShelfProps) {
                 current={folder.current}
                 drop={folder.drop}
                 onPress={() => onOpen?.(folder.id)}
-                onMenu={onMenu && folder.menu !== false ? (at) => onMenu(folder.id, at) : undefined}
+                onMenu={
+                  onMenu && folder.menu !== false ? (at, opener) => onMenu(folder.id, at, opener) : undefined
+                }
               >
                 {folder.name}
               </RailEntry>

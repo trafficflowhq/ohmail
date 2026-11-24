@@ -426,13 +426,13 @@ describe("the header", () => {
     });
     // Known own address → `you`.
     mount({ letters: [withMe], open: "r", host: { mailboxes: async () => ME } });
-    await screen.findByRole("button", { name: "you" });
+    await screen.findByRole("button", { name: `you (${OWN})` });
     const faces = () =>
       within(letterOf("r")!)
         .getByRole("button", { name: "Anna Roth" })
         .closest("p")!
         .querySelectorAll("button:not([data-details])");
-    expect([...faces()].map((c) => c.textContent)).toEqual(["you", "Anna Roth"]);
+    expect([...faces()].map((c) => c.textContent)).toEqual([`you (${OWN})`, "Anna Roth"]);
     cleanup();
     // NOT known → the bare address, never the account's name. The explicit degradation branch.
     mount({ letters: [withMe], open: "r" });

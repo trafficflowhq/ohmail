@@ -56,21 +56,23 @@
   margin-block-start: calc(var(--blank-lines, 0) * var(--t-read) * var(--lh-read));
 }
 
+/* The preview's text measure must give way to the full sheet when it contains a frame. */
+.oh-message-body:has(> .mb > .mb-sheet) {
+  max-width: none;
+}
+
 /* A designed letter is its own paper from edge to edge of the sheet, as the kit draws one. */
 .mb:is([data-look="sheet"], [data-look="reader"]) .mb-sheet {
   margin: 0 calc(var(--sheet-pad) * -1);
   border-radius: 0;
   outline: 0;
   box-shadow: none;
+  max-width: none;
 }
 
 .oh-message[data-unread] .mb:is([data-look="sheet"], [data-look="reader"]) .mb-sheet {
   --ohmail-unread-paper-inset: calc(var(--sheet-pad) - var(--new-bar));
   margin-left: calc(var(--new-bar) - var(--sheet-pad));
-}
-
-.mb[data-look="reader"] .mb-sheet {
-  max-width: none;
 }
 
 /* The last thing on the sheet closes it: the paper takes the sheet's lower corners. */

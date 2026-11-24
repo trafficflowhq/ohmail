@@ -224,8 +224,8 @@ function useFolderRail(props: FolderRailProps) {
   const hiddenUnread = hidden.reduce((n, f) => n + unread(f, false), 0);
   const pinned = menu !== null && shelf.pinned.includes(menu.key);
   const target = menu === null ? undefined : byKey.get(menu.key);
-  const openMenu = (key: string, at: { x: number; y: number }, fromShelf?: true) =>
-    setMenu({ key, at, fromShelf });
+  const openMenu = (key: string, at: { x: number; y: number }, fromShelf?: true, opener?: HTMLElement) =>
+    setMenu({ key, at, fromShelf, opener });
   const rowCommand = folderRowCommands({
     tapMenus: props.tapMenus,
     menu,
@@ -312,7 +312,7 @@ export function FolderRail(props: FolderRailProps) {
           drop: dropOf(f),
         }))}
         onOpen={goTo}
-        onMenu={(key, at) => openMenu(key, at, true)}
+        onMenu={(key, at, opener) => openMenu(key, at, true, opener)}
         all={
           hidden.length > 0 || writable !== undefined
             ? {
@@ -366,7 +366,7 @@ export function FolderRail(props: FolderRailProps) {
             }))}
             onOpen={goTo}
             onBranch={branches.toggle}
-            onMenu={(key, at) => openMenu(key, at)}
+            onMenu={(key, at, opener) => openMenu(key, at, undefined, opener)}
           />
         ) : null}
         {props.children}
@@ -381,6 +381,7 @@ export function FolderRail(props: FolderRailProps) {
         dismiss={() => setMenu(null)}
         edits={edits}
         writable={writable}
+        onOpen={goTo}
       />
     </>
   );
