@@ -17,6 +17,7 @@ export type PlanInterval = "month" | "year";
 /** Where the account stands, as the service says it. A date arrives as the reader says it; `null` where none is known. */
 export type Standing =
   | { readonly state: "trial"; readonly ends: string | null }
+  | { readonly state: "trialEnded" }
   /** Access runs on for a while after a trial or a failed payment. */
   | { readonly state: "grace" | "overdue"; readonly until: string | null }
   | { readonly state: "active" }
@@ -25,6 +26,7 @@ export type Standing =
 /** What the access answer says of the subscription. */
 export interface SubscriptionStatus {
   readonly standing: Standing;
+  readonly trialEndedOn?: string;
   readonly trialProgress?: { readonly day: number; readonly total: number };
   /** How many mailboxes the account may connect; `null` where the answer does not say. */
   readonly mailboxes: number | null;

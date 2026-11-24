@@ -75,6 +75,7 @@ export interface SettingsDTO {
   blockRemoteImagesAt: ISODateTime | null;
   loadTrackingPixelsAt: ISODateTime | null;
   blockAutoUnsubscribeAt: ISODateTime | null;
+  screenerAcknowledgements?: number;
   foldersEnabledAt: ISODateTime | null;
   /** Per-mailbox "Use folders" EXCEPTIONS — `{ mailboxId: instant switched off }` (spec §17). */
   folderMailboxesOff: Record<string, ISODateTime>;

@@ -188,6 +188,8 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
     (r.provider === "caldav" || r.provider === "google" || r.provider === "microsoft") &&
     r.organizer?.trim() && r.organizer.trim().toLowerCase() === r.principal?.trim().toLowerCase().replace(/^mailto:/, ""),
   ).map((r) => r.id));
+  const mayDeleteCloudSeries = (row: (typeof rows)[number]) =>
+    organized.has(row.id) || (row.access === "writer" && row.myAnswer === null);
   const deletion = new Map(sources.flatMap((source) => {
     if (source.provider !== "caldav") return [];
     const members = seriesDeleteMembers(source.original, ZONES);
@@ -216,7 +218,7 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
   const changed = new Map<string, Awaited<ReturnType<typeof changedSeriesAudience>>>();
   for (const row of detailed) {
     const source = sourcesById.get(row.id);
-    if (source?.hasOverrides && !source.partial && organized.has(row.id) && (source.provider === "google" || source.provider === "microsoft")) {
+    if (source?.hasOverrides && !source.partial && mayDeleteCloudSeries(row) && (source.provider === "google" || source.provider === "microsoft")) {
       changed.set(row.id, await changedSeriesAudience(db, accountId, row));
     }
   }
@@ -226,7 +228,7 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
     const added = times(r.addedDates);
     const provider = sourcesById.get(r.id);
     const cloud = provider && (provider.provider === "google" || provider.provider === "microsoft") ? provider.provider : null;
-    const unchangedCloudSeries = cloud && provider && organized.has(r.id) && !provider.partial && !provider.hasOverrides && !excluded.length
+    const unchangedCloudSeries = cloud && provider && mayDeleteCloudSeries(r) && !provider.partial && !provider.hasOverrides && !excluded.length
       ? cloudDeleteMembers(cloud, {
         organizer: r.organizer, deleteGuests: invitees.get(r.id) ?? [], unchangedSeries: true,
       }, true, { kind: "record" }) : null;

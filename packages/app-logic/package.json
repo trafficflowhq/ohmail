@@ -82,6 +82,12 @@
       "node": "./dist/consent/partition.js",
       "default": "./src/consent/partition.ts"
     },
+    "./consent/screener-acknowledgements": {
+      "types": "./src/consent/screener-acknowledgements.ts",
+      "ohmail-source": "./src/consent/screener-acknowledgements.ts",
+      "node": "./dist/consent/screener-acknowledgements.js",
+      "default": "./src/consent/screener-acknowledgements.ts"
+    },
     "./consent/travelled-change": {
       "types": "./src/consent/travelled-change.ts",
       "ohmail-source": "./src/consent/travelled-change.ts",

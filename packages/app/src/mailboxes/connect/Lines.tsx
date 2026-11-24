@@ -6,6 +6,7 @@ import { helpFacts } from "@ohmail/app-logic/mailboxes/connect/use-connect-form"
 import { useRefusalAtThePress } from "@ohmail/app-logic/press/refusal-at-the-press";
 import { NONE } from "../../host/contract.js";
 import type { Drawn } from "./drawn.js";
+import { MicrosoftApproval } from "./MicrosoftApproval.js";
 import { ProviderHelp } from "./ProviderNote.js";
 import { sentenceOf } from "./sentence.js";
 import { Tested } from "./Tested.js";
@@ -17,13 +18,17 @@ import { EDIT_WORDS } from "./words.js";
  * that fills fields and sends nothing. The caller's own sentence (whose browser this is) stands before the form's.
  */
 export function Outcome({ d }: { d: Drawn }): ReactNode {
-  const { form, ask, words, say, text } = d;
+  const { form, ask, door, words, say, text } = d;
   const { state } = form;
   const guarded = ask.guard?.said ?? null;
   const shown = guarded ?? (state.shown === null ? null : sentenceOf(state.shown.said, text));
   const calm = guarded === null && state.shown?.calm === true;
   /* The refusal is brought into view and takes the keys. */
   const saidAt = useRefusalAtThePress<HTMLParagraphElement>(shown !== null && !calm ? shown : null);
+  const approval =
+    guarded === null && state.lastReason === "admin_consent_required" && door.signIn !== NONE
+      ? door.signIn.microsoftApproval
+      : undefined;
   const picker = text("providerPicker");
   const suggestion = guarded === null ? state.suggestion : null;
   const servers = form.found
@@ -58,6 +63,7 @@ export function Outcome({ d }: { d: Drawn }): ReactNode {
               {shown}
             </RefusalLine>
           )}
+          {approval ? <MicrosoftApproval read={approval} /> : null}
           {state.authHint !== null && authHintWantsLinks(state.authHint) ? (
             <ProviderHelp preset={authHintPreset()} picker={picker} />
           ) : null}

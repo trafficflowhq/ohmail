@@ -12,7 +12,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "ohmail",
     short_name: "ohmail",
-    description: "Consent-first email on the mailboxes you already own.",
+    description: "Consent-first, automated mail. and calendar.",
     start_url: "/",
     scope: "/",
     display: "standalone",

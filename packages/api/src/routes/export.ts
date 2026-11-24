@@ -56,6 +56,7 @@ export const exportRoutes: Route[] = [
         // The word as stated; the instant stays behind, as every consent's does.
         subjectHeading: subjectHeadingOf(s?.subjectHeading, s?.subjectHeadingAt),
         resurfaceTime: s?.resurfaceTime ?? null,
+        screenerAcknowledgements: s?.screenerAcknowledgements ?? 0,
         draftReplies: s?.draftReplies ?? true,
         screeningScope: s?.screeningScope ?? "window",
         ohboxPolicy: s?.ohboxPolicy ?? null,

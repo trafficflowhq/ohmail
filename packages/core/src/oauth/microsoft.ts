@@ -500,7 +500,8 @@ export function classifyConsentFailure(
   const e = (error ?? "").trim().toLowerCase();
   const d = errorDescription ?? "";
   // `AADSTS90094` — "the grant requires admin permission" — is the same remedy and joins the same arm.
-  if (d.includes("AADSTS65001") || d.includes("AADSTS90094") || e === "consent_required") {
+  if (d.includes("AADSTS65001") || d.includes("AADSTS90094") ||
+      e === "consent_required" || e === "admin_consent_required") {
     return "admin_consent_required";
   }
   // `AADSTS65004` is "user declined to consent"; `error_subcode=cancel` is the closed-the-window

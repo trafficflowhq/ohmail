@@ -12,7 +12,7 @@ import {
   invitationWithoutEventWhere, itipReplyHeaderWhere, listAddresses, heldForIdentitySql,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags, messageInvitations, invitationFieldOf,
-  SCREENER_SUGGESTION_PROVENANCE, isScreenerActRefusal, rulesTheActWrote, pendingRefileFrom, refileOwed,
+  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_FAILED, isScreenerActRefusal, rulesTheActWrote, pendingRefileFrom, refileOwed,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import type {
@@ -929,6 +929,7 @@ export async function materializeScreenerSuggestion(
     id: routingDecisions.id,
     messageId: routingDecisions.messageId,
     destination: routingDecisions.destination,
+    status: routingDecisions.status,
     confidence: routingDecisions.confidence,
     rationale: routingDecisions.rationale,
     spam: routingDecisions.spam,
@@ -952,6 +953,12 @@ export async function materializeScreenerSuggestion(
       eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
     )).limit(1);
   if (!r) return null;
+  if (r.status === SCREENER_SUGGESTION_FAILED) return {
+    id: r.id, messageId: r.messageId, senderKey: r.fromAddress.toLowerCase(),
+    decision: "hold", destination: "ohmail/Screener", spam: false, confidence: 0, failed: true,
+    boughtAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
+    actRefusedAt: null, actRefusal: null,
+  };
   const [pref] = await db.select({ ohboxPolicy: accountSettings.ohboxPolicy })
     .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
   const policy = resolveOhboxPolicy(pref?.ohboxPolicy ?? null);
@@ -1109,6 +1116,7 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
     folderMailboxesOff: off,
     locale: row?.locale ?? null,
     draftReplies: row?.draftReplies ?? true,
+    screenerAcknowledgements: row?.screenerAcknowledgements ?? 0,
     // The subject's place, present only while stated: an account that stated nothing sends the record
     // it sent before the key.
     ...(subjectHeading === null ? {} : { subjectHeading }),

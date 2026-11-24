@@ -10,6 +10,8 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   lockedQueryGroundAvailable, startLockedQueryGround, type LockedQueryGround,
 } from "../../../packages/db/test/_locked-query-ground.js";
+import { screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
+import { fakeSpendPort } from "../../../packages/organizer/test/_spendport.js";
 import { awayReplyCandidatesSql, awayReplyFlagRedeliverPass } from "../src/away-reply-flag-redeliver.js";
 
 const available = lockedQueryGroundAvailable("away-reply-locked.pg.test.ts");
@@ -96,4 +98,34 @@ describe.skipIf(!available)("away replies in a large mailbox with forced row sec
     }
     expect(elapsed, "away reply duration in milliseconds").toBeLessThan(500);
   }, 180_000);
+
+  it("honors a queued suggestion retry from before opt-in under row security", async () => {
+    const id = randomUUID();
+    const optedInAt = new Date("2025-12-20T00:00:00Z");
+    const createdAt = new Date("2025-12-10T00:00:00Z");
+    await owner`insert into accounts (id) values (${id})`;
+    await owner`insert into account_settings (account_id, auto_suggest_at) values (${id}, ${optedInAt})`;
+    const [mailbox] = await owner<{ id: string }[]>`insert into mailboxes
+      (account_id, provider, address, organizer_role)
+      values (${id}, 'imap', 'retry-mailbox@example.test', 'organizer') returning id`;
+    const [message] = await owner<{ id: string }[]>`insert into messages
+      (account_id, mailbox_id, body_hash, dedup_key, from_address, date, created_at, unread)
+      values (${id}, ${mailbox!.id}, 'fixture', 'retry', 'retry-sender@example.test', ${createdAt}, ${createdAt}, true)
+      returning id`;
+    await owner`insert into folder_state (account_id, message_id, desired_folder, observed_folder, last_set_by, reconcile_status)
+      values (${id}, ${message!.id}, 'ohmail/Screener', 'ohmail/Screener', 'external', 'settled')`;
+    await owner`insert into message_instances (account_id, mailbox_id, message_id, folder, uidvalidity, uid, is_primary)
+      values (${id}, ${mailbox!.id}, ${message!.id}, 'ohmail/Screener', 1, 1, true)`;
+    await owner`insert into routing_decisions (account_id, message_id, destination, input_provenance, status)
+      values (${id}, ${message!.id}, 'ohmail/Screener', 'screener_suggestion_retry', 'retry_due')`;
+    const credits = fakeSpendPort();
+    credits.budget(0);
+    const unreachable = async () => { throw new Error("the test spend port cannot buy a suggestion"); };
+    const db = bindDb(workerDb.db, { account: id }) as unknown as Tx;
+    const result = await screenerAutoSuggestPass(db, {
+      accountId: id, classifier: { classify: unreachable, screen: unreachable }, credits,
+      now: () => new Date("2026-01-01T00:00:00Z"),
+    });
+    expect(result).toMatchObject({ examined: 1, stopped: "out_of_credits" });
+  });
 });

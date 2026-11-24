@@ -20,6 +20,7 @@ export interface ScreenerSuggestControl {
   /** Waiting senders with no suggestion yet, and those that already have one (asked again at the same price). */
   readonly available: number;
   readonly resuggestable: number;
+  readonly retryable?: number;
   /** How many the open ladder draws from. */
   readonly pool: number;
   readonly sizes: readonly number[];
@@ -33,6 +34,7 @@ export interface ScreenerSuggestControl {
   readonly standing?: SuggestStanding | null;
   open(): void;
   openAgain(): void;
+  openRetry?(): void;
   choose(size: number): void;
   confirm(): void;
   cancel(): void;

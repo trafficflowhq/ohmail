@@ -9,6 +9,7 @@ import { useScreener, useScreenerBeside } from "../contract.js";
 
 export function Notices({ view }: { view: ScreenerView }) {
   const t = useText("screener");
+  const frame = useText("frame");
   const { windowNotice } = useScreenerBeside();
   const { impersonationFiled: claimed, unscreened, role } = useScreener();
   const { commands } = useFrame();
@@ -90,6 +91,7 @@ export function Notices({ view }: { view: ScreenerView }) {
           more={{
             label: t("place.noticesMore", { count: notices.length - 1 }),
             name: t("place.noticesMoreName"),
+            collapse: frame("notice.showFewer"),
           }}
           open={open}
           onOpen={setOpen}

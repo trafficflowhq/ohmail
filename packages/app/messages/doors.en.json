@@ -7,7 +7,7 @@
     "note": "Your own mailboxes are at ohmail.app.",
     "openDemo": "Open the demo",
     "signIn": "Sign in",
-    "footer": "ohmail · consent-first email on your own mailboxes",
+    "footer": "ohmail · Consent-first, automated mail. and calendar.",
     "missingTitle": "This page doesn’t exist.",
     "missingNote": "The address may be mistyped, or the page has moved.",
     "missingHome": "Back to ohmail."
@@ -405,6 +405,10 @@
     "tryAgain": "Try again",
     "signIn": "Sign in",
     "openDemo": "Open the demo"
+  },
+  "microsoftApprovalResult": {
+    "approved": "ohmail is approved for your organisation. The person can connect now.",
+    "declined": "The approval was cancelled. You can open the approval link again when you’re ready."
   },
   "accessLock": {
     "title": "This account is not active.",

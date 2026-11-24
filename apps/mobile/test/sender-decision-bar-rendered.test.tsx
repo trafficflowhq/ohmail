@@ -5,12 +5,14 @@
  * their own inset, or they touch the glass. The row opens scrolled so the AI's suggested capsule
  * is whole on screen: no scroll indicator says that more of the row lies to the right.
  */
-import { createElement, useEffect, useImperativeHandle, type ReactNode } from "react";
+import { act, createElement, useEffect, useImperativeHandle, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const shim = vi.hoisted(() => ({
   window: { width: 375, height: 667 },
   layouts: {} as Record<string, { x: number; width: number }>,
+  alert: vi.fn(),
+  world: {} as object,
   scrolls: [] as { x?: number; animated?: boolean }[],
 }));
 
@@ -30,6 +32,7 @@ vi.mock("react-native", async () => {
     };
   return {
     ...rnDom,
+    Alert: { alert: shim.alert },
     View: measured("View"),
     ScrollView: measured("ScrollView"),
     useWindowDimensions: () => ({ ...shim.window, scale: 2, fontScale: 1 }),
@@ -49,9 +52,10 @@ vi.mock("../src/theme/lift", () => ({ ringOnLift: () => ({}) }));
 vi.mock("../src/ui/base", async () => {
   const { rnDom } = await import("./_rendered-dom");
   const Txt = (p: { style?: unknown; testID?: string; children?: ReactNode }) => createElement(rnDom.Text, { style: p.style, testID: p.testID }, p.children);
-  const Tap = (p: { style?: unknown; children?: ReactNode }) => createElement(rnDom.Pressable, { style: p.style }, p.children);
+  const Tap = (p: Parameters<typeof rnDom.Pressable>[0]) => createElement(rnDom.Pressable, p);
+  const Container = ({ children }: { children?: ReactNode }) => children;
   const Nothing = () => null;
-  return { Txt, Tap, Badge: Nothing, Button: Nothing, Panel: Nothing, Screen: Nothing, Scroller: Nothing };
+  return { Txt, Tap, Badge: Nothing, Button: Nothing, Panel: Nothing, Screen: Container, Scroller: Container };
 });
 vi.mock("../src/ui/Segmented", () => ({ Segmented: () => null }));
 vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
@@ -64,16 +68,20 @@ vi.mock("../src/ui/EventCard", () => ({ EventCards: () => null }));
 vi.mock("../src/ui/not-organizing", () => ({ noneOrganizedWhy: () => null }));
 vi.mock("../src/state/relay", () => ({ relayMarkFor: () => null, senderSheetLine: () => null }));
 vi.mock("../src/state/live", () => ({ decideLinesOf: () => ({}), domainScopeOffered: () => true }));
-vi.mock("../src/state/world", () => ({ useBodies: () => ({}), useFilesStamp: () => 0, useWorld: () => ({}) }));
+vi.mock("../src/state/world", () => ({ useBodies: () => ({}), useFilesStamp: () => 0, useWorld: () => shim.world }));
 vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
 
 import { mount, styleOf } from "./_rendered-dom";
-import { DecisionBar } from "../src/ui/SenderDetail";
-import type { Destination } from "../src/state/model";
+import { DecisionBar, SenderDetail } from "../src/ui/SenderDetail";
+import { destDone, type Destination } from "../src/state/model";
+
+import { Copy } from "../src/copy";
 
 const mounted: { unmount(): void }[] = [];
 afterEach(() => {
   for (const m of mounted.splice(0)) m.unmount();
+  shim.alert.mockClear();
+  shim.world = {};
   shim.layouts = {};
   shim.scrolls = [];
 });
@@ -154,4 +162,36 @@ describe("the scrolling row opens on the AI's suggestion", () => {
     bar({ width: 375, height: 667 }, null);
     expect(shim.scrolls).toEqual([]);
   });
+});
+
+it.each(["spam", "screened"] as const)("files as %s immediately after showing the inline unsubscribe hint", (dest) => {
+  const row = {
+    routeKey: "sender", scope: "sender", name: "A sender", address: "sender@example.invalid",
+    held: [], reached: 0, firstContact: true,
+  };
+  const waiting = [row];
+  const decide = vi.fn();
+  const remember = vi.fn();
+  const close = vi.fn();
+  shim.world = {
+    worldKey: "account",
+    screener: { waiting },
+    mailboxes: { organizer: null, known: true },
+    screenerConfirmation: { acknowledged: 0, remember },
+    actions: { unsubClaimOf: () => "sends", unsubscribeIdsOf: () => ["held"], decide },
+  };
+  const m = mount(createElement(SenderDetail, { seg: "waiting", routeKey: row.routeKey, onClose: close }));
+  mounted.push(m);
+  expect(m.el.textContent).toContain(Copy.decideUnsub("sends", row.address, false));
+  const label = Copy.decideAria(destDone(dest), false);
+  const button = [...m.el.querySelectorAll<HTMLElement>('[data-role="button"]')]
+    .find((node) => node.dataset.label === label);
+  expect(button).toBeDefined();
+  act(() => button?.click());
+
+  expect(decide).toHaveBeenCalledTimes(1);
+  expect(decide).toHaveBeenCalledWith(row, dest, false, waiting, ["held"]);
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(shim.alert).not.toHaveBeenCalled();
+  expect(remember).not.toHaveBeenCalled();
 });

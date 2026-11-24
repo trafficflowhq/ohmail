@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useTranslations } from "next-intl";
-import { useConsent, usePartition } from "@ohmail/app-logic/consent";
+import { useConsent, usePartition, useScreenerAcknowledgements } from "@ohmail/app-logic/consent";
 import { useEngine } from "@ohmail/app-logic/engine/context";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import { otherOrganizerOf } from "@ohmail/app-logic/mail-state/mail-state";
@@ -57,6 +57,7 @@ export function WebContactScreening({ person, onClose, children }: ContactScreen
   const screener = useScreener();
   const { ownAddresses, firstImportDoneAt, consentView } = usePartition();
   const consent = useConsent();
+  const unsubscribeAcknowledgements = useScreenerAcknowledgements();
   const { mailboxes, rosterProbed } = useMailState();
   const now = useNowAt();
   const report = useReport();
@@ -344,6 +345,7 @@ export function WebContactScreening({ person, onClose, children }: ContactScreen
   }
   if (subjectRule.sheet) return subjectRule.sheet;
   return <SenderMenu
+    key={session}
     id={person.cardId}
     state={{ ...positionOf(person), messageId: message.id, address }}
     renderCard={(card, subjectRule, showAddress) => children(subjectRule, card, showAddress)}
@@ -361,6 +363,7 @@ export function WebContactScreening({ person, onClose, children }: ContactScreen
     })}
     organizer={otherOrganizerOf(mailboxes, new Set(sender.messages.map((letter) => letter.mailboxId)))}
     autoUnsubscribe={disclosesUnsubscribe}
+    unsubscribeAcknowledgements={unsubscribeAcknowledgements}
     lettersFor={(scope) => {
       const current = readContact();
       return current ? lettersFor(current, scope) : [];

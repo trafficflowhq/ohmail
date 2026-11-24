@@ -202,6 +202,95 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     expect(next.answer.write).toMatchObject({ state: "refused", reason: "earlier_refused" });
   });
 
+  it.each(["caldav", "google", "microsoft"])("records changes to another organizer's event on a writable %s calendar", async (provider) => {
+    const organizer = ["sharer", "example.test"].join("@");
+    const writable = await world({ provider, access: "writer", organizer });
+    const reader = await world({ provider, access: "reader", organizer });
+    const invitation = await world({ provider, access: "writer", organizer, myAnswer: "accepted" });
+    expect(await refusal(recordCalendarWrite(ctx(writable.accountId), "edit", update(writable, { title: "Changed" })))).toBe("accepted");
+    expect(await refusal(recordCalendarWrite(ctx(reader.accountId), "edit", update(reader, { title: "Changed" })))).toBe("409 calendar_read_only");
+    expect(await refusal(recordCalendarWrite(ctx(invitation.accountId), "edit", update(invitation, { title: "Changed" })))).toBe("409 calendar_read_only");
+    expect(await rowsOf(writable.accountId)).toMatchObject([{ op: "update", state: "pending" }]);
+  });
+
+  it.each(["caldav", "google", "microsoft"])("keeps an invitation with an unknown attendee address view only on an owned %s calendar", async (provider) => {
+    const organizer = ["sharer", "example.test"].join("@");
+    const unknown = ["unrecognized", "example.test"].join("@");
+    for (const access of ["owner", "writer"]) {
+      const w = await world({ provider, access, organizer });
+      await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId, address: unknown, role: "required", answer: "none" });
+      const c = ctx(w.accountId);
+      const expected = access === "owner" ? "409 calendar_read_only" : "accepted";
+      expect(await refusal(recordCalendarWrite(c, "edit", {
+        ...update(w, { title: "Changed" }), audience: { organizer, guests: [unknown] },
+      }))).toBe(expected);
+      expect(await refusal(recordCalendarWrite(c, "remove", {
+        kind: "calendar_event_delete", eventId: w.eventId, base: w.updatedAt, scope: { kind: "record" },
+        audience: { organizer, guests: [unknown] },
+      }))).toBe(expected);
+    }
+  });
+
+  it.each(["caldav", "google", "microsoft"].flatMap((provider) =>
+    (["update", "delete"] as const).flatMap((op) =>
+      ["external", "unreadable"].map((organizerKind) => ({ provider, op, organizerKind })),
+    ),
+  ))("refuses a $provider $op on an owned calendar with an $organizerKind organizer and no stored guests", async ({ provider, op, organizerKind }) => {
+    const organizer = organizerKind === "external" ? ["sharer", "example.test"].join("@") : "";
+    const w = await world({ provider, organizer });
+    if (provider === "caldav") {
+      const original = [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Example//EN", "BEGIN:VEVENT",
+        "UID:uid-1", "DTSTAMP:20261118T080000Z", "DTSTART:20261118T090000Z", "DTEND:20261118T100000Z",
+        `ORGANIZER:${organizer ? `mailto:${organizer}` : "urn:uuid:unreadable"}`,
+        "END:VEVENT", "END:VCALENDAR", "",
+      ].join("\r\n");
+      await db.update(calEvents).set({ original }).where(eq(calEvents.id, w.eventId));
+    }
+    const act = op === "update"
+      ? update(w, { title: "Changed" })
+      : { kind: "calendar_event_delete", eventId: w.eventId, base: w.updatedAt, scope: { kind: "record" } };
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), op, act))).toBe("409 calendar_read_only");
+    expect(await rowsOf(w.accountId)).toEqual([]);
+  });
+
+  it("refuses an invitation answer on an owned calendar without a stored answer", async () => {
+    const organizer = ["sharer", "example.test"].join("@");
+    const guest = ["unrecognized", "example.test"].join("@");
+    const w = await world({ organizer });
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId, address: guest, role: "required", answer: "none" });
+    const act = { kind: "calendar_event_answer", eventId: w.eventId, base: w.updatedAt, scope: { kind: "record" }, answer: "accepted" };
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), "answer", act))).toBe("409 calendar_read_only");
+    expect(await rowsOf(w.accountId)).toEqual([]);
+  });
+
+  it.each(["caldav", "google", "microsoft"].flatMap((provider) =>
+    (["update", "delete"] as const).map((op) => ({ provider, op })),
+  ))("records a $provider $op when the account organized the meeting and is listed as an attendee", async ({ provider, op }) => {
+    const w = await world({ provider, myAnswer: "accepted" });
+    const [{ address: organizer }] = await db.select({ address: mailboxes.address }).from(mailboxes)
+      .where(eq(mailboxes.accountId, w.accountId));
+    const guest = ["guest", "example.test"].join("@");
+    const original = [
+      "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Example//EN", "BEGIN:VEVENT",
+      "UID:uid-1", "DTSTAMP:20261118T080000Z", "DTSTART:20261118T090000Z", "DTEND:20261118T100000Z",
+      `ORGANIZER:mailto:${organizer}`, `ATTENDEE;PARTSTAT=ACCEPTED:mailto:${organizer}`, `ATTENDEE:mailto:${guest}`,
+      "END:VEVENT", "END:VCALENDAR", "",
+    ].join("\r\n");
+    await db.update(calEvents).set({ organizer, original: provider === "caldav" ? original : null })
+      .where(eq(calEvents.id, w.eventId));
+    await db.insert(calAttendees).values([
+      { accountId: w.accountId, eventId: w.eventId, address: organizer, role: "required", answer: "accepted" },
+      { accountId: w.accountId, eventId: w.eventId, address: guest, role: "required", answer: "none" },
+    ]);
+    const audience = { organizer, guests: [guest] };
+    const act = op === "update"
+      ? { ...update(w, { title: "Changed" }), audience }
+      : { kind: "calendar_event_delete", eventId: w.eventId, base: w.updatedAt, scope: { kind: "record" }, audience };
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), op, act))).toBe("accepted");
+    expect(await rowsOf(w.accountId)).toMatchObject([{ op, state: "pending" }]);
+  });
+
   it("refuses what the account may not write, and writes nothing for it", async () => {
     const w = await world();
     const other = await world();
@@ -357,10 +446,29 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     return { series, child };
   }
 
-  it.each(["google", "microsoft"])("confirms all guests and holds the exact changed-event versions before cancelling a %s series", async (provider) => {
-    const w = await world({ provider });
+  it.each(["google", "microsoft"])("serves deletion scopes and records a whole-series delete on a writable shared %s calendar", async (provider) => {
+    const w = await world({ provider, access: "writer" });
+    const organizer = ["sharer", "example.test"].join("@");
+    const principal = ["connected", "example.test"].join("@");
+    await db.update(calConnections).set({ principal }).where(eq(calConnections.id, w.connectionId));
+    const series = await weekly(w, { organizer, providerId: "shared-series" });
+    const c = ctx(w.accountId);
+    const shown = (await CALENDAR_BUILDERS.calendar_event(c.db, w.accountId, [series.id])).get(series.id);
+    expect(shown).toMatchObject({ deleteMembers: [{ at: null, organizer, guests: [] }] });
+    expect(shown?.deleteScopes).toContain("record");
+    const result = await record(c, "remove-series", {
+      kind: "calendar_event_delete", eventId: series.id, base: series.updatedAt.toISOString(),
+      scope: { kind: "record" }, audience: { organizer, guests: [] },
+    });
+    expect(result.answer.write).toMatchObject({ state: "pending", reason: null });
+  });
+
+  it.each([
+    ["google", "owner"], ["microsoft", "owner"], ["google", "writer"], ["microsoft", "writer"],
+  ])("confirms all guests and holds the exact changed-event versions before cancelling a %s series with %s access", async (provider, access) => {
+    const w = await world({ provider, access });
     const [host, first, second] = ["owner", "first", "second"].map((name) => [name, "example.test"].join("@"));
-    await db.update(calConnections).set({ principal: host! }).where(eq(calConnections.id, w.connectionId));
+    await db.update(calConnections).set({ principal: access === "owner" ? host! : first! }).where(eq(calConnections.id, w.connectionId));
     const { series, child } = await weeklyWithException(w, provider, { organizer: host! });
     await db.insert(calAttendees).values([
       { accountId: w.accountId, eventId: series.id, address: first!, name: "Series guest", role: "required", answer: "accepted" },

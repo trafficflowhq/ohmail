@@ -12,6 +12,7 @@ import { KeymapProvider } from "../../../../test/support/keymap-provider";
 import { NONE } from "@ohmail/app/host";
 import { ScreenerAbove, screenerPlace, type ScreenerBeside } from "@ohmail/app/screener";
 import { TextProvider, useTextLookup, type Messages } from "@ohmail/app/text";
+import { TestConsent } from "../../../../packages/app/test/screener/screener-world.js";
 import { fakeHost } from "../../../../packages/app/test/support/fake-host.js";
 import { fakeAddress, fakeWindow } from "../../../../packages/app/test/support/fake-window.js";
 import en from "../../messages/en.json";
@@ -188,7 +189,9 @@ async function mount(suggestions: SuggestionOverlay | null = null) {
   render(
     <TextProvider locale="en" messages={WORDS} timeZone="UTC">
       <KeymapProvider>
-        <Seated engine={engine} said={said} suggestions={suggestions} />
+        <TestConsent scope="acct-1" transport="none">
+          <Seated engine={engine} said={said} suggestions={suggestions} />
+        </TestConsent>
       </KeymapProvider>
     </TextProvider>,
   );

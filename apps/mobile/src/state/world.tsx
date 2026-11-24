@@ -22,6 +22,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { SCREENER_ACKNOWLEDGEMENTS, type ScreenerAcknowledgement } from "@ohmail/app-logic/consent/screener-acknowledgements";
 import { AppState } from "react-native";
 
 import { Copy } from "../copy";
@@ -36,6 +37,7 @@ import {
   writeAutoAct,
   writeFoldersEnabled,
   writeResurfaceTime,
+  writeScreenerAcknowledgement,
   writeSignature,
   writeThemeFace,
   type FoldersConsent,
@@ -477,6 +479,10 @@ export interface World {
    */
   resurfaceTime: string | null;
   remember(resurfaceTime: string): Promise<string | null>;
+  screenerConfirmation: {
+    acknowledged: number;
+    remember: (kind: ScreenerAcknowledgement) => void;
+  } | null;
   /**
    * THE APPEARANCE FACE'S ACCOUNT SCOPE (OHMARCHY-PLAN.md §3a). The DEVICE scope is not here —
    * it is `usePrefs().facePin`, which needs no session and works with the radio off; this half
@@ -774,6 +780,7 @@ function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null):
     // No account, so nothing has chosen a time and nothing can store one. The sheet still
     // chooses — on the product's 09:00, which is what `null` means everywhere.
     resurfaceTime: null,
+    screenerConfirmation: null,
     remember: () => Promise.resolve(null),
     // Nothing read and nothing to write to; the account face is only the kept one, if any.
     // `false` is "not confirmed", which is exactly what nothing-connected means.
@@ -827,7 +834,7 @@ export function useEngineQueuesAsk(): () => void {
 const NO_SIGNING: Omit<World["signing"], "write"> = { html: {}, sources: {}, changes: {} };
 
 /** The projection plus the per-render facts, the projection's getters carried over by descriptor. */
-function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement" | "signing" | "draftReplies">): World {
+function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement" | "signing" | "draftReplies" | "screenerConfirmation">): World {
   const out = Object.defineProperties({}, Object.getOwnPropertyDescriptors(projected)) as World;
   return Object.assign(out, facts);
 }
@@ -1063,6 +1070,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const [accountFaceKnown, setAccountFaceKnown] = useState(false);
   const [facePending, setFacePending] = useState(false);
   /* The act on suggestions, as the account's consent read last said it; `null` = no axis yet. */
+  const [screenerConsent, setScreenerConsent] = useState<{ owner: string; stored: number; pending: number } | null>(null);
   const [draftConsent, setDraftConsent] = useState<{ owner: string; allowed?: boolean } | null>(null);
   const [autoAct, setAutoAct] = useState<{ on: boolean; suggestOn: boolean } | null>(null);
   const [autoActPending, setAutoActPending] = useState(false);
@@ -1195,6 +1203,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       if (current.current !== m) return;
       // The resurface time off the SAME answer and the same rule — one read, every fact on it.
       setResurfaceTime(ans.resurfaceTime);
+      setScreenerConsent((prev) => ({
+        owner: session.ownerKey,
+        stored: (prev?.owner === session.ownerKey ? prev.stored : 0) | (ans.screenerAcknowledgements ?? 0),
+        pending: prev?.owner === session.ownerKey ? prev.pending : 0,
+      }));
       autoUnsubscribeNow.current = ans.autoUnsubscribe;
       /* The cutline half of the SAME answer — see `screening` above. A read that landed with no
          cutline fields is `unsupplied`, NOT still-waiting: nothing further is coming from this
@@ -1330,6 +1343,23 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     },
     [session],
   );
+  const rememberScreener = useCallback((kind: ScreenerAcknowledgement) => {
+    if (!session || !machine || current.current !== machine) return;
+    const owner = session.ownerKey;
+    const bit = SCREENER_ACKNOWLEDGEMENTS[kind];
+    setScreenerConsent((prev) => ({
+      owner,
+      stored: prev?.owner === owner ? prev.stored : 0,
+      pending: (prev?.owner === owner ? prev.pending : 0) | bit,
+    }));
+    const finish = (stored: number) => {
+      if (current.current !== machine) return;
+      setScreenerConsent((prev) => prev?.owner === owner
+        ? { owner, stored: prev.stored | stored, pending: prev.pending & ~bit }
+        : prev);
+    };
+    void writeScreenerAcknowledgement(session, kind).then(finish, () => finish(0));
+  }, [machine, session]);
   const setAutoActOn = useCallback(
     async (on: boolean): Promise<boolean> => {
       const m = machine;
@@ -2023,6 +2053,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         applyAll: applyFaceAllDevices,
         choose: chooseFace,
       },
+      screenerConfirmation: {
+        acknowledged: screenerConsent?.owner === sessionKey ? screenerConsent.stored | screenerConsent.pending : 0,
+        remember: rememberScreener,
+      },
       draftReplies: draftConsent?.owner === sessionKey ? draftConsent?.allowed : undefined,
       autoAct: autoAct === null ? null : { ...autoAct, pending: autoActPending, set: setAutoActOn },
       signing: { ...sigMore, write: writeSignatureNow },
@@ -2033,7 +2067,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projected, engine, session, actions, zone, conn.syncing, conn.syncError, outcomeSeq,
     outcomeOf, settlementOf, shownFace, accountFaceKnown, facePending, applyFaceAllDevices, chooseFace,
-    autoAct, autoActPending, setAutoActOn, seed, sigMore, writeSignatureNow, draftConsent, sessionKey]);
+    autoAct, autoActPending, setAutoActOn, seed, sigMore, writeSignatureNow, draftConsent, sessionKey, screenerConsent, rememberScreener]);
 
   /**
    * The freshness watcher — the clock's other half, after the memo because its sentinel IS the

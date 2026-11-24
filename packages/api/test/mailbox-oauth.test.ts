@@ -381,6 +381,18 @@ describe("cloud 0009 — GET /mailboxes/oauth/microsoft/callback (the bounce)", 
       .toBe("oauth_state_invalid");
   });
 
+  it.each([
+    ["admin_consent=True&tenant=fixture-tenant", "approved"],
+    ["admin_consent=False&error=access_denied&error_description=AADSTS65001", "declined"],
+  ])("answers the administrator’s consent return (%s)", async (query, outcome) => {
+    const w = await world();
+    const res = await w.H(req("GET", `/mailboxes/oauth/microsoft/callback?${query}`));
+    expect(res.status).toBe(303);
+    const location = new URL(res.headers.get("location")!);
+    expect(location.pathname).toBe("/microsoft-approval");
+    expect([...location.searchParams]).toEqual([["oauth", outcome]]);
+  });
+
   it("classifies the provider's own refusals — and admin-consent is tested BEFORE access_denied", async () => {
     const w = await world();
     const reason = async (qs: string): Promise<string> => {
@@ -778,6 +790,18 @@ describe("cloud 0009 — GET /mailboxes/oauth/microsoft/availability", () => {
     const off = await world({ disabled: true });
     const res = await off.H(availabilityReq(off.token), { msOAuth: envBootstrap });
     expect((await readAvailability(res)).available).toBe(false);
+  });
+
+  it("builds the admin approval link from the enabled Microsoft registration when asked", async () => {
+    const w = await world();
+    const request = req("GET", "/mailboxes/oauth/microsoft/availability?approval=1", { bearer: w.token });
+    const { text } = await readAvailability(await w.H(request));
+    const json = JSON.parse(text);
+    const expected = new URL("https://login.microsoftonline.com/organizations/adminconsent");
+    expected.searchParams.set("client_id", CLIENT_ID);
+    expect((json.data ?? json).adminApprovalUrl).toBe(expected.href);
+    expect(text).not.toContain("THE-CLIENT-SECRET");
+    expect(text).not.toContain(REDIRECT);
   });
 
   it("returns ONLY the verdict — no client id, secret or redirect URI crosses to the browser", async () => {

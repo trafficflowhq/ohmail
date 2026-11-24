@@ -89,7 +89,8 @@ export function faceOf(
     timeEditable:
       !viewOnly &&
       o.record.end !== null &&
-      (canEditRecord(o.record, connection, own, o.series) || (proposals && canProposeRecord(o.record, own))),
+      (canEditRecord(o.record, connection, own, o.calendar.access, o.series) ||
+        (proposals && canProposeRecord(o.record, own))),
     waits: o.record.myAnswer === "none",
     status,
     ...(conflict

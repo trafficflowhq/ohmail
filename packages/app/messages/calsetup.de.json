@@ -21,7 +21,7 @@
       "connecting": "Dein Kalender wird verbunden…",
       "connected": "Kalender verbunden.",
       "consent_declined": "Der Kalenderzugriff wurde abgelehnt.",
-      "admin_consent_required": "Deine Organisation muss den Kalenderzugriff genehmigen.",
+      "admin_consent_required": "Der Admin deiner Organisation muss ohmail einmal freigeben.",
       "consent_failed": "Der Anbieter konnte den Kalenderzugriff nicht genehmigen.",
       "session_expired": "Deine ohmail-Sitzung ist abgelaufen. Melde dich erneut an und verbinde dann deinen Kalender.",
       "state_expired": "Diese Kalenderanmeldung ist abgelaufen. Beginne erneut.",

@@ -9,12 +9,13 @@ import {
 } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
 import { dayStamp } from "../../shell/format";
+import { activeFormatZone, normalizeLocale, type AppLocale } from "../../shell/locale";
 import { formatStorageBytes, formatStoragePrice, type StorageOffer } from "../../shell/storage-state";
 import { leaveForManagePage } from "./manage-navigation";
 
 /** A day as the reader says it, by the product's one day formatter; nothing for a day that cannot be read. */
-const dayOf = (iso: string | null | undefined): string | null =>
-  typeof iso === "string" && Number.isFinite(Date.parse(iso)) ? dayStamp(iso) : null;
+const dayOf = (iso: string | null | undefined, locale?: AppLocale): string | null =>
+  typeof iso === "string" && Number.isFinite(Date.parse(iso)) ? dayStamp(iso, locale) : null;
 
 const CLOSED: Readonly<Record<NonNullable<AccountLifecycle["closedReason"]>, Extract<Standing, { state: "closed" }>["why"]>> = {
   trial_ended: "trialEnded",
@@ -24,15 +25,19 @@ const CLOSED: Readonly<Record<NonNullable<AccountLifecycle["closedReason"]>, Ext
 };
 
 /** Where the account stands, from the lifecycle the access answer names; `null` from a server that names none. */
-export function standingOf(lifecycle: AccountLifecycle | undefined): Standing | null {
+export function standingOf(
+  lifecycle: AccountLifecycle | undefined, locale?: AppLocale, now = Date.now(),
+): Standing | null {
   if (lifecycle === undefined) return null;
   switch (lifecycle.state) {
     case "trialing":
-      return { state: "trial", ends: dayOf(lifecycle.trialEndsAt) };
+      return Date.parse(lifecycle.trialEndsAt ?? "") <= now
+        ? { state: "trialEnded" }
+        : { state: "trial", ends: dayOf(lifecycle.trialEndsAt, locale) };
     case "grace":
-      return { state: "grace", until: dayOf(lifecycle.graceUntil) };
+      return { state: "grace", until: dayOf(lifecycle.graceUntil, locale) };
     case "past_due":
-      return { state: "overdue", until: dayOf(lifecycle.graceUntil) };
+      return { state: "overdue", until: dayOf(lifecycle.graceUntil, locale) };
     case "active":
       return { state: "active" };
     case "closed":
@@ -52,8 +57,12 @@ export function subscriptionStatusOf(
   locale: string,
 ): SubscriptionStatus | null {
   if (!access.metered) return null;
-  const standing = standingOf(access.lifecycle);
+  const dateLocale = normalizeLocale(locale) ?? undefined;
+  const standing = standingOf(access.lifecycle, dateLocale);
   if (standing === null) return null;
+  const trialEndedOn = standing.state === "trialEnded" || standing.state === "grace" ||
+    (standing.state === "closed" && standing.why === "trialEnded")
+    ? dayOf(access.lifecycle?.trialEndsAt, dateLocale) : null;
   const storage = accessStorage(access);
   const progress = access.trialProgress;
   const credits = accessAiCredits(access);
@@ -62,6 +71,7 @@ export function subscriptionStatusOf(
     progress.day >= 1 && progress.day <= progress.total;
   return {
     standing,
+    ...(trialEndedOn ? { trialEndedOn } : {}),
     ...(showsProgress ? { trialProgress: progress } : {}),
     mailboxes: access.mailboxes,
     ...(credits ? { aiCredits: credits } : {}),
@@ -128,7 +138,7 @@ export function useSubscriptionDoor(scope: string | null, withdraw: () => void):
       }
       // A URL is a non-empty string or it is nothing: an empty one, none at all and a 404 say the same thing.
       if (typeof url === "string" && url.length > 0) {
-        leaveForManagePage(url);
+        leaveForManagePage(url, activeFormatZone());
         return "left";
       }
       withdraw();

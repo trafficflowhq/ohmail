@@ -107,6 +107,7 @@
   "accountInvites",
   "accountSecurity",
   "accountOwn",
+  "microsoftApprovalResult",
   "accessLock",
   "subscribed",
   "appError",

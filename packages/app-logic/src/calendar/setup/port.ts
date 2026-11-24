@@ -54,6 +54,7 @@ export interface CalendarSetupPort {
    */
   readonly connect: ((ask: ConnectAsk) => Promise<ConnectAnswer>) | "none";
   /** Opens the provider's sign-in, or the browser setup if the host delegates it there. */
+  readonly microsoftApproval?: () => Promise<string | null>;
   readonly startOAuth?: (provider: CalendarOAuthProvider) => Promise<CalendarOAuthResult | void>;
   readonly oauthInBrowser?: boolean;
   /**

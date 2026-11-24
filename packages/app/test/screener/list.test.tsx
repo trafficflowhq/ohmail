@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { consentVia } from "@ohmail/app-logic/consent";
 import { BESIDE, modelOf, mountPlace, sender, type Asked } from "./screener-world.js";
 
 /**
@@ -343,6 +344,94 @@ describe("what the panel says before the press", () => {
     expect(panel().textContent).toContain("Sent to Mac, waiting for it to apply.");
     expect(within(panel()).queryAllByRole("button")).toEqual([]);
   });
+});
+
+it("asks once before applying suggestions that unsubscribe, including across devices", async () => {
+  const accounts = new Map<string, number>();
+  const applyAll = vi.fn();
+  const writes = vi.fn();
+  const waiting = [sender("lena", "Lena Hart", { ai: { dest: "spam", confidence: 0.95, rationale: "" } })];
+  const mountAccount = async (accountScope: string) => {
+    const read = vi.fn();
+    const consent = consentVia(async (path, init) => {
+      if (path === "/consent/settings") {
+        writes(JSON.parse(String(init?.body)));
+        accounts.set(accountScope, 4);
+      } else {
+        read();
+      }
+      return Response.json({
+        seedConfirmedAt: null,
+        dormancyDays: 60,
+        screenerAcknowledgements: accounts.get(accountScope) ?? 0,
+      });
+    });
+    const world = mountPlace(
+      modelOf(asked, {
+        accountScope,
+        waiting,
+        waitingCount: 1,
+        suggestedCount: 1,
+        applyAll,
+        unsubClaimOf: () => "sends",
+      }),
+      { consent: { ...consent, foldersStorable: false } },
+    );
+    await waitFor(() => expect(read).toHaveBeenCalled());
+    return world;
+  };
+  const apply = () => fireEvent.click(screen.getByRole("button", { name: "Apply 1" }));
+  const question = () => within(screen.getByRole("dialog", { name: "Apply 1 suggestion?" }));
+
+  const first = await mountAccount("account-one");
+  apply();
+  fireEvent.click(question().getByRole("button", { name: "Cancel" }));
+  expect(applyAll).not.toHaveBeenCalled();
+  expect(writes).not.toHaveBeenCalled();
+  apply();
+  expect(question().getByText(/1 unsubscribe request and no undo/)).toBeTruthy();
+  fireEvent.click(question().getByRole("button", { name: "Apply 1 suggestion" }));
+  apply();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(applyAll).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(writes).toHaveBeenCalledWith({ acknowledgeScreener: "applySuggestions" }));
+  first.view.unmount();
+
+  localStorage.clear();
+  const second = await mountAccount("account-one");
+  apply();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(applyAll).toHaveBeenCalledTimes(3);
+  second.view.unmount();
+
+  await mountAccount("account-two");
+  apply();
+  expect(question().getByText(/1 unsubscribe request and no undo/)).toBeTruthy();
+  expect(applyAll).toHaveBeenCalledTimes(3);
+});
+
+it("asks again when the organizer becomes unavailable during bulk confirmation", () => {
+  const ready = modelOf(asked, {
+    waiting: [sender("lena", "Lena Hart", { ai: { dest: "spam", confidence: 0.95, rationale: "" } })],
+    waitingCount: 1,
+    suggestedCount: 1,
+    applyAll: vi.fn(),
+    unsubClaimOf: () => "sends",
+  });
+  const remember = vi.fn(async () => ({ screenerAcknowledgements: 4 }));
+  const consent = consentVia(async () => Response.json({ seedConfirmedAt: null, dormancyDays: 60 }));
+  const world = mountPlace(ready, { consent: { ...consent, acknowledgeScreener: remember } });
+  const apply = () => fireEvent.click(screen.getByRole("button", { name: "Apply 1" }));
+  const question = () => screen.getByRole("dialog", { name: "Apply 1 suggestion?" });
+
+  apply();
+  world.again({ ...ready, role: { mode: "blocked", name: null, reason: "no_organizer", oauthOnly: false } });
+  fireEvent.click(within(question()).getByRole("button", { name: "Apply 1 suggestion" }));
+  expect(ready.applyAll).not.toHaveBeenCalled();
+  world.again(ready);
+  apply();
+  expect(question()).toBeTruthy();
+  expect(remember).not.toHaveBeenCalled();
 });
 
 describe("Mark all spam", () => {

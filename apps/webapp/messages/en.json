@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "ohmail",
-    "description": "The ohmail client — consent-first email on the mailboxes you already own.",
+    "description": "Consent-first, automated mail. and calendar.",
     "ogAlt": "The ohmail app icon — a lowercase \"oh.\" on the canvas tile"
   },
   "markAll": {
@@ -23,7 +23,7 @@
     "note": "Your own mailboxes are at ohmail.app.",
     "openDemo": "Open the demo",
     "signIn": "Sign in",
-    "footer": "ohmail · consent-first email on your own mailboxes",
+    "footer": "ohmail · Consent-first, automated mail. and calendar.",
     "missingTitle": "This page doesn’t exist.",
     "missingNote": "The address may be mistyped, or the page has moved.",
     "missingHome": "Back to ohmail."
@@ -1010,7 +1010,7 @@
     "suggest": {
       "open": "Suggest…",
       "label": "Suggest",
-      "sizeAll": "All {count}",
+      "sizeAll": "{count, plural, =0 {All} other {All #}}",
       "price": "{senders, plural, one {1 sender} other {# senders}} · {credits, plural, one {1 credit} other {# credits}}",
       "credits": "{credits, plural, one {1 credit} other {# credits}}",
       "priceUnmetered": "{senders, plural, one {1 sender} other {# senders}}",
@@ -1021,6 +1021,8 @@
       "confirm": "{count, select, all {Suggest for all {n} senders} first {Suggest for the first {n} senders} other {Suggest for {n, plural, one {1 sender} other {# senders}}}}",
       "cancel": "Cancel",
       "again": "Suggest again…",
+      "couldNot": "Could not suggest",
+      "retry": "Retry suggestions…",
       "labelAgain": "Suggest again",
       "confirmAgain": "{count, select, all {Suggest again for all {n} senders} first {Suggest again for the first {n} senders} other {Suggest again for {n, plural, one {1 sender} other {# senders}}}}",
       "ariaAgain": "How many senders with a suggestion to ask about again",
@@ -1284,12 +1286,9 @@
       "sure": "{sure, number, percent}",
       "toWaiting": "Screener",
       "unsub": {
-        "continue": "Continue",
         "final": "Once sent, it cannot be undone.",
         "screened": "Screen out and unsubscribe",
         "spam": "Spam and unsubscribe",
-        "spamDomain": "Mark {domain} as spam and unsubscribe",
-        "screenedDomain": "Screen out {domain} and unsubscribe",
         "service": "The request goes from ohmail’s servers, never from your browser, so your address and reading times stay out of their logs.",
         "computer": "The request goes from your computer, so the sender sees its network address."
       },
@@ -2473,8 +2472,8 @@
   },
   "hero": {
     "mark": "oh.",
-    "headline": "consent-first email\non your own mailboxes.",
-    "headlineAlt1": "consent-first email\non the mailboxes\nyou already own.",
+    "headline": "Consent-first, automated mail.\nand calendar.",
+    "headlineAlt1": "Consent-first,\nautomated mail.\nand calendar.",
     "headlineAlt2": "the last mail client\nyou will ever need.",
     "strapline": "fully open source and self-hostable.",
     "door": "ohmail <k>answers the door for you</k>: first-time senders <k>wait at the Screener</k> until you let them in, so your Ohbox holds only mail you said yes to — organized in place, <k>real folders</k> on the mailboxes you already own. <o>Leave anytime</o>; your mailbox stays organized.",
@@ -2937,7 +2936,7 @@
     "retry": "Try again"
   },
   "footer": {
-    "tagline": "Consent-first email on the mailboxes you already own.",
+    "tagline": "Consent-first, automated mail. and calendar.",
     "promise": "Your mailbox is the source of truth. Leave anytime — it stays organized.",
     "noTrackers": "No analytics on this site.",
     "analytics": "Visit statistics on this website, only if you agree. Never in the app, never on your mail.",
@@ -2956,9 +2955,9 @@
     "decline": "Decline"
   },
   "siteMeta": {
-    "title": "ohmail — Consent-first email on your own mailboxes.",
+    "title": "ohmail — Consent-first, automated mail. and calendar.",
     "description": "Fully open source and self-hostable. The Screener holds first-time senders until you decide; everything you said yes to is organized in place — real folders on your real server. The desktop app is free on macOS, Windows and Linux and runs entirely on your own machine. Cloud from $9/mo adds the web app and push, with a 14-day trial and no card.",
-    "ogAlt": "ohmail — consent-first email on your own mailboxes"
+    "ogAlt": "ohmail — Consent-first, automated mail. and calendar."
   },
   "siteScreener": {
     "title": "You decide who gets in.",
@@ -3256,7 +3255,7 @@
     "oauthFinishing": "Finishing the Microsoft connection…",
     "oauthConnected": "{address} is connected. The first sync starts on the next pass.",
     "oauthReconnected": "{address} is reconnected. Syncing resumes on the next pass.",
-    "oauth_admin_consent_required": "Your organisation has to approve ohmail before this mailbox can be connected. An administrator can grant it — either because ohmail has not been approved for your tenant yet, or because your tenant does not let people approve apps themselves.",
+    "oauth_admin_consent_required": "Your organisation’s administrator needs to approve ohmail once.",
     "oauth_consent_declined": "The Microsoft sign-in was cancelled, so nothing was connected.",
     "oauth_consent_failed": "Microsoft could not complete the sign-in. Try connecting again.",
     "oauth_state_invalid": "That Outlook connection link is no longer valid. Start again from here.",
@@ -6051,6 +6050,10 @@
     "stillHere": "Still here",
     "notConfirmed": "Not confirmed"
   },
+  "microsoftApprovalResult": {
+    "approved": "ohmail is approved for your organisation. The person can connect now.",
+    "declined": "The approval was cancelled. You can open the approval link again when you’re ready."
+  },
   "accessLock": {
     "title": "This account is not active.",
     "suspendedTitle": "This account is suspended.",
@@ -6172,6 +6175,14 @@
       "search": "Search",
       "write": "Write"
     },
+    "microsoftApproval": {
+      "fallback": "Ask your administrator to approve ohmail in Microsoft Entra.",
+      "title": "Admin approval",
+      "forward": "Your administrator opens this link once and approves ohmail for the organisation.",
+      "link": "Approval link",
+      "copy": "Copy",
+      "copied": "Copied"
+    },
     "notice": {
       "hide": "Hide",
       "collapse": "Collapse",
@@ -6179,6 +6190,7 @@
       "sendFailed": "Message not sent",
       "more": "{count} more",
       "moreName": "{count, plural, one {# more notice} other {# more notices}}",
+      "showFewer": "Show fewer",
       "moreClose": "Close"
     },
     "systemNotice": {
@@ -6666,7 +6678,7 @@
       "connecting": "Connecting your calendar…",
       "connected": "Calendar connected.",
       "consent_declined": "Calendar access was declined.",
-      "admin_consent_required": "Your organization needs to approve calendar access.",
+      "admin_consent_required": "Your organisation’s administrator needs to approve ohmail once.",
       "consent_failed": "The provider could not approve calendar access.",
       "session_expired": "Your ohmail session expired. Sign in again, then reconnect your calendar.",
       "state_expired": "This calendar sign-in expired. Start again.",

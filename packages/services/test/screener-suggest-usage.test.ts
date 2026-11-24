@@ -62,7 +62,7 @@ describe("the Screener's usage rides its release", () => {
     }]);
   });
 
-  it("a model fault: the charge stands and the release carries the failed call's line", async () => {
+  it("a model fault: the refund carries both failed calls", async () => {
     const w = await world();
     const svc = new ScreenerService({
       adapter: new FakeAdapter(), classifier: reporting(true), credits: w.credits, pricing: PLANE_PRICING, usageHost: "api",
@@ -70,8 +70,11 @@ describe("the Screener's usage rides its release", () => {
     // What the run answers for a sender the model could not judge is the gate tests' subject.
     await svc.suggest(w.ctx, { senders: ["alice@ex.example"] }).catch(() => undefined);
     expect(w.credits.releases).toHaveLength(1);
-    expect(w.credits.releases[0]!.refund).toBe(false);
-    expect(w.credits.releases[0]!.usage).toEqual([expect.objectContaining({ ok: false, inputTokens: null })]);
+    expect(w.credits.releases[0]).toMatchObject({ refund: true, attempt: expect.any(String) });
+    expect(w.credits.releases[0]!.usage).toEqual([
+      expect.objectContaining({ ok: false, inputTokens: null }),
+      expect.objectContaining({ ok: false, inputTokens: null }),
+    ]);
   });
 
   it("a store fault: the one release is the refund, and it carries the delivered call's line", async () => {

@@ -414,16 +414,14 @@ const sameStart = (t: CalendarTime, row: CalendarWriteRowFacts): boolean =>
 /** An address as an event names it, to compare with the account's own: lower case, without `mailto:`. */
 const addressOf = (a: string): string => a.trim().toLowerCase().replace(/^mailto:/, "");
 
-/**
- * Is this stored event someone else's? One whose own component names an organizer that is not
- * one of the account's own addresses (`own`: lower case), a line that names no mail address among
- * them; or one that names no organizer and holds the account's own answer (an invitation that names
- * nobody). An event that names no organizer and holds no answer of the account's is the account's own.
- */
-export function someoneElses(row: Pick<CalendarWriteRowFacts, "organizer" | "myAnswer">, own: ReadonlySet<string>): boolean {
-  if (row.organizer === null) return row.myAnswer !== null;
-  const organizer = addressOf(row.organizer);
-  return organizer === "" || !own.has(organizer);
+/** An invitation on an owned calendar can name the account by an attendee address we do not know. */
+export function isAttendeeCopy(
+  row: Pick<CalendarWriteRowFacts, "organizer" | "myAnswer">, own: ReadonlySet<string>, access: string,
+): boolean {
+  const org = row.organizer === null ? null : addressOf(row.organizer);
+  if (org !== null && org !== "" && own.has(org)) return false;
+  if (access === "owner") return org !== null || row.myAnswer !== null;
+  return row.myAnswer !== null;
 }
 
 /**
@@ -442,9 +440,8 @@ export interface CalendarWriteActRefusal {
  * door and the drain: a row the door recorded before a check is not sent either. `changedDays`:
  * {@link changedDaysOf}; `own`: the account's own addresses, lower case.
  *
- * - Someone else's event (its organizer is not one of the account's own addresses) takes the
- *   account's answer and nothing else: no change, no day's move or cancel, no removal, no split.
- *   An answer is taken only on someone else's event, and only where the account is invited to it.
+ * - An attendee copy takes only the account's answer. Other events can be changed when the
+ *   calendar grants write access, even when someone else organized the event.
  * - A series' listed days, or a series of more than one rule, are written by no act.
  * - One day of a series is named through its series (scope `occurrence` on the series' own row),
  *   never as a record of its own: a record's act on it would reach the series it stands in.
@@ -454,11 +451,11 @@ export interface CalendarWriteActRefusal {
  */
 export function writeActRefusal(
   row: CalendarWriteRowFacts, act: Exclude<CalendarEventAct, { kind: "calendar_event_create" }>, changedDays: number, own: ReadonlySet<string>,
-  reviewedException = false,
+  access: string, reviewedException = false,
 ): CalendarWriteActRefusal | null {
   const readOnly = (why: string): CalendarWriteActRefusal => ({ word: "read_only", why });
   const shape = (why: string): CalendarWriteActRefusal => ({ word: "repeat_unsupported", why });
-  if (someoneElses(row, own)) {
+  if (isAttendeeCopy(row, own, access)) {
     if (act.kind !== "calendar_event_answer") return readOnly("this event is someone else's invitation: it takes an answer and nothing else");
     if (row.myAnswer === null) return readOnly("the account is not invited to this event");
   } else if (act.kind === "calendar_event_answer") return readOnly("the account is not invited to this event");

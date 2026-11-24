@@ -142,7 +142,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           }
           return owed;
         },
-        run: async (accountId) => {
+        run: async (accountId, walk) => {
           scope.suggestOwedHints.delete(accountId);
           // MIXED: the suggest pass buys from the model and the entitlements program, so only the
           // database-only calls around it carry the tag.
@@ -161,6 +161,7 @@ export function cycleTailSection(scope: WorkerScope): void {
                 ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
               },
             );
+            if (ran) walk.suggestedAccounts.add(accountId);
             if (ran && (bought > 0 || why)) {
               scope.log.info("screener_suggest_owed_served", { accountId, bought, chargedAttempts, stopped: why, capped });
             }
@@ -676,7 +677,8 @@ export function cycleTailSection(scope: WorkerScope): void {
         // the first refusal stopping the account). Off by default. It books the SAME `debit_classify`
         // reason ingest meters with (the `classify:screener:<message_id>` source is a real duplicate
         // check), but the `screener` ACTION — an exclusive claim and the screening-only setup grant first.
-        run: async (accountId) => {
+        run: async (accountId, walk) => {
+          if (walk.suggestedAccounts.has(accountId)) return;
           // MIXED and untagged: the pass buys from the model and the entitlements program, and its
           // database calls carry no tag yet (a gap row names it).
           await scope.runTailStage("cycle.screenerAutoSuggestPass", "mixed", async () => {
@@ -703,10 +705,8 @@ export function cycleTailSection(scope: WorkerScope): void {
           }, (err) => {
             scope.log.error("screener_auto_suggest_failed", {
               accountId, err,
-              reason: "nothing is marked and no cursor persists — a sender whose suggestion was " +
-                "stored drops out of the candidate query, so the next cycle resumes at the next " +
-                "unbought sender; a charge with no stored row is retried free (the ledger source " +
-                "is the message, so the retry answers `duplicate`)",
+              reason: "stored suggestions drop out of the candidate query. New debits for unfinished " +
+                "suggestions go through the refund path before the next cycle retries.",
             });
           });
         },
@@ -1046,7 +1046,7 @@ export function cycleTailSection(scope: WorkerScope): void {
       if (scope.tailWalk === null) {
         const mailboxesNow = await tailSnapshot();
         scope.tailWalk = {
-          mailboxes: mailboxesNow, accounts: accountsOf(mailboxesNow), section: 0, list: null, index: 0,
+          mailboxes: mailboxesNow, accounts: accountsOf(mailboxesNow), suggestedAccounts: new Set(), section: 0, list: null, index: 0,
           rotationMs: scope.lastRotationMs ?? 0, dueRevisits: scope.lastDueRevisits, startedAt: turnStarted, workMs: 0, turns: 0,
           sectionMs: TAIL_SECTIONS.map(() => 0),
         };

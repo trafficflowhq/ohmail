@@ -1,6 +1,8 @@
 /** @vitest-environment jsdom */
 import type { ScreenerSenderDTO } from "@ohmail/wire";
 import { act, renderHook } from "@testing-library/react";
+import { createElement, type PropsWithChildren } from "react";
+import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { describe, expect, it } from "vitest";
 import { SHARED_PROVIDER_DOMAINS } from "@trafficflow/core/rule-order";
 import {
@@ -86,6 +88,11 @@ const WORDS: ScreenerKeyWords = {
   fileRead: { ohbox: "read o", reads: "read r", receipts: "read c", screened: "read n", spam: "read x" },
 };
 
+function ConsentFixture({ children }: PropsWithChildren) {
+  const row = useConsentState(false, null, "none");
+  return createElement(ConsentContext.Provider, { value: row }, children);
+}
+
 function view(state: ScreenerState, over: Partial<ScreenerViewInput> = {}) {
   current = state;
   const said = { went: [] as KeySegment[], undone: 0 };
@@ -108,7 +115,7 @@ function view(state: ScreenerState, over: Partial<ScreenerViewInput> = {}) {
         ...over,
         selected: props.selected,
       }),
-    { initialProps: { state, selected } },
+    { initialProps: { state, selected }, wrapper: ConsentFixture },
   );
   const again = () => hook.rerender({ state: current!, selected });
   /* The selection lives above the view; each step is drawn again with what it chose. */

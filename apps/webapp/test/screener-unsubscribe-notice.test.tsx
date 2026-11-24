@@ -3,6 +3,7 @@ import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { TextProvider } from "@ohmail/app/text";
 import { useBulkAsk, useDecide } from "../../../packages/app-logic/src/screener/view-parts.js";
 import type { DecisionDestination } from "../../../packages/app-logic/src/screener/decision.js";
@@ -129,6 +130,11 @@ async function mountState(
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   let latest: DecisionSurface | null = null;
 
+  function ConsentFixture() {
+    const row = useConsentState(false, null, "none");
+    return h(ConsentContext.Provider, { value: row }, h(Probe));
+  }
+
   function Probe(): null {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
@@ -168,7 +174,7 @@ async function mountState(
         locale: opts.locale ?? "en",
         messages: (opts.locale === "de" ? de : en) as never,
         timeZone: "UTC",
-        children: h(Probe),
+        children: h(ConsentFixture),
       }),
     );
   });

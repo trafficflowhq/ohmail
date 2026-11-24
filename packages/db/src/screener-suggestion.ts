@@ -1,7 +1,7 @@
-import { and, eq, inArray, isNull, sql, type Column, type SQL } from "drizzle-orm";
-import { messages, routingDecisions } from "./schema-mail.js";
+import { and, eq, inArray, isNull, ne, sql, type Column, type SQL } from "drizzle-orm";
+import { accountSettings, messages, routingDecisions } from "./schema-mail.js";
 import { recordChanges, type Tx } from "./change-log.js";
-import type { Dialect } from "./dialect/index.js";
+import { dialect, type Dialect } from "./dialect/index.js";
 
 /**
  * Where a bought Screener suggestion is stored — the row shape, in ONE place, for the two callers
@@ -35,6 +35,64 @@ export const SCREENER_SUGGESTION_PROVENANCE = "screener_suggestion";
  * remember.
  */
 export const SCREENER_SUGGESTION_STATUS = "suggestion";
+/** Exhausted retries for this message. An explicit purchase can replace this inert row. */
+export const SCREENER_SUGGESTION_FAILED = "suggestion_failed";
+
+const SCREENER_RETRY = "screener_suggestion_retry";
+const RETRY_STATES = ["retry_due", "retry_once", "retry_twice"] as const;
+
+function retryOf(accountId: string, messageId: string) {
+  return and(
+    eq(routingDecisions.accountId, accountId), eq(routingDecisions.messageId, messageId),
+    eq(routingDecisions.inputProvenance, SCREENER_RETRY),
+  );
+}
+
+/** A manual run can leave approved work to an opted-in worker. Background attempts advance it. */
+export async function recordScreenerSuggestionRetry(
+  db: Tx, accountId: string, messageId: string, opts: { grant: Date; advance?: true },
+): Promise<"pending" | "exhausted" | "withdrawn"> {
+  return db.transaction(async (tx) => {
+    // Serialize with opt-out and with another caller recording the same retry.
+    const [settings] = await dialect(tx).forUpdate(
+      tx.select({ grant: accountSettings.autoSuggestAt }).from(accountSettings)
+        .where(eq(accountSettings.accountId, accountId)),
+    );
+    if (settings?.grant?.getTime() !== opts.grant.getTime()) return "withdrawn";
+    const match = retryOf(accountId, messageId);
+    const [retry] = await tx.select({ status: routingDecisions.status })
+      .from(routingDecisions).where(match).limit(1);
+    if (retry) {
+      if (!opts.advance) return "pending";
+      const at = RETRY_STATES.findIndex((status) => status === retry.status);
+      const next = RETRY_STATES[at + 1];
+      if (next === undefined) return "exhausted";
+      await tx.update(routingDecisions).set({ status: next }).where(match);
+    } else {
+      await tx.insert(routingDecisions).values({
+        accountId, messageId, destination: "ohmail/Screener", inputProvenance: SCREENER_RETRY,
+        status: opts.advance ? RETRY_STATES[1] : RETRY_STATES[0],
+      });
+    }
+    return "pending";
+  });
+}
+
+export async function clearScreenerSuggestionRetries(db: Tx, accountId: string): Promise<void> {
+  await db.delete(routingDecisions).where(and(
+    eq(routingDecisions.accountId, accountId), eq(routingDecisions.inputProvenance, SCREENER_RETRY),
+  ));
+}
+
+/** Retry only the same message that was already approved. A new representative has to qualify on its own. */
+export function screenerSuggestionRetryDue(accountId: string, messageId: SQL): SQL<boolean> {
+  return sql<boolean>`exists (
+    select 1 from ${routingDecisions} pending
+    where pending.account_id = ${accountId}
+      and pending.message_id = ${messageId}
+      and pending.input_provenance = ${SCREENER_RETRY}
+  )`;
+}
 
 /** What one classifier verdict contributes to the stored row. */
 export interface ScreenerSuggestionRow {
@@ -50,6 +108,7 @@ export interface ScreenerSuggestionRow {
    * quietly stop every rule its advice could write.
    */
   senderReason: string;
+  failed?: true;
 }
 
 /**
@@ -64,10 +123,12 @@ export interface ScreenerSuggestionRow {
  */
 export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow): Promise<void> {
   await db.transaction(async (tx) => {
+    await tx.delete(routingDecisions).where(retryOf(row.accountId, row.messageId));
     const removed = await tx.delete(routingDecisions).where(and(
       eq(routingDecisions.accountId, row.accountId),
       eq(routingDecisions.messageId, row.messageId),
       eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
+      row.failed ? eq(routingDecisions.status, SCREENER_SUGGESTION_FAILED) : undefined,
     )).returning({ id: routingDecisions.id });
     const [inserted] = await tx.insert(routingDecisions).values({
       accountId: row.accountId,
@@ -77,7 +138,7 @@ export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow
       confidence: row.confidence,
       rationale: row.rationale,
       spam: row.spam,
-      status: SCREENER_SUGGESTION_STATUS,
+      status: row.failed ? SCREENER_SUGGESTION_FAILED : SCREENER_SUGGESTION_STATUS,
       senderReason: row.senderReason,
     }).returning({ id: routingDecisions.id });
     await recordChanges(tx, [
@@ -127,8 +188,20 @@ export function screenerSuggestedSenderExists(
         on rd.message_id = sm.id
        and rd.account_id = ${account}
        and rd.input_provenance = ${SCREENER_SUGGESTION_PROVENANCE}
+       and rd.status <> ${SCREENER_SUGGESTION_FAILED}
      where sm.account_id = ${account}
        and lower(sm.from_address) = ${senderExpr}
+  )`;
+}
+
+/** The current representative exhausted its automatic attempts. A new message gets its own chances. */
+export function screenerSuggestionExhausted(accountId: string, messageId: SQL): SQL<boolean> {
+  return sql<boolean>`exists (
+    select 1 from ${routingDecisions} failed
+    where failed.account_id = ${accountId}
+      and failed.message_id = ${messageId}
+      and failed.input_provenance = ${SCREENER_SUGGESTION_PROVENANCE}
+      and failed.status = ${SCREENER_SUGGESTION_FAILED}
   )`;
 }
 
@@ -160,6 +233,7 @@ export interface StoredSenderSuggestion {
   authVerdict: string | null;
   /** The fact that capped the verdict, or `none`; NULL on a row stored before mail 0156. */
   senderReason: string | null;
+  failed?: true;
 }
 
 /**
@@ -171,7 +245,7 @@ export interface StoredSenderSuggestion {
  * `senders` must already be lower-cased; the map is keyed the same way.
  */
 export async function screenerSuggestionsBySender(
-  db: Tx, accountId: string, senders: string[],
+  db: Tx, accountId: string, senders: string[], includeFailures = false,
 ): Promise<Map<string, StoredSenderSuggestion>> {
   const out = new Map<string, StoredSenderSuggestion>();
   if (senders.length === 0) return out;
@@ -195,9 +269,11 @@ export async function screenerSuggestionsBySender(
     actRefusal: routingDecisions.actRefusal,
     authVerdict: messages.authVerdict,
     senderReason: routingDecisions.senderReason,
+    status: routingDecisions.status,
     rank: sql<number>`row_number() over (
       partition by ${sender}
-      order by ${routingDecisions.createdAt} desc, ${routingDecisions.id} desc
+      order by case when ${routingDecisions.status} = ${SCREENER_SUGGESTION_FAILED} then 1 else 0 end,
+        ${routingDecisions.createdAt} desc, ${routingDecisions.id} desc
     )`.as("rank"),
   }).from(routingDecisions)
     .innerJoin(messages, and(
@@ -210,6 +286,7 @@ export async function screenerSuggestionsBySender(
       eq(routingDecisions.accountId, accountId),
       eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
       inArray(sender, senders),
+      includeFailures ? undefined : ne(routingDecisions.status, SCREENER_SUGGESTION_FAILED),
     ))
     .as("ranked");
 
@@ -224,6 +301,7 @@ export async function screenerSuggestionsBySender(
     actRefusal: ranked.actRefusal,
     authVerdict: ranked.authVerdict,
     senderReason: ranked.senderReason,
+    status: ranked.status,
   }).from(ranked).where(eq(ranked.rank, 1));
 
   for (const r of rows) {
@@ -237,6 +315,7 @@ export async function screenerSuggestionsBySender(
       actRefusal: r.actRefusal ?? null,
       authVerdict: r.authVerdict ?? null,
       senderReason: r.senderReason ?? null,
+      ...(r.status === SCREENER_SUGGESTION_FAILED ? { failed: true } : {}),
     });
   }
   return out;

@@ -137,9 +137,9 @@ describe("the consent read as the consent row declares it", () => {
       blockRemoteImagesAt: true, loadTrackingPixelsAt: true, blockAutoUnsubscribeAt: true, foldersEnabledAt: true,
       folderMailboxesOff: true, signatures: true, signaturesHtml: true, signatureSources: true, signatureChanges: true,
       dormancyChange: true, locale: true, themeFace: true, resurfaceTime: true, onboardingCompletedAt: true,
-      screeningScope: true, draftReplies: true,
+      screeningScope: true, draftReplies: true, screenerAcknowledgements: true,
     };
-    expect(Object.keys(heldEqual)).toHaveLength(21);
+    expect(Object.keys(heldEqual)).toHaveLength(22);
   });
 });
 

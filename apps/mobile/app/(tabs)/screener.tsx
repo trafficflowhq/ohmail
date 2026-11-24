@@ -8,6 +8,7 @@
  * classifier runs client-side, and a row without a suggestion honestly has
  * none. The shelf's rows go through `MailList`, which mounts a window of them.
  */
+import { SCREENER_ACKNOWLEDGEMENTS } from "@ohmail/app-logic/consent/screener-acknowledgements";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -106,25 +107,39 @@ function ScreenerBody() {
   const latest = useRef(w);
   latest.current = w;
   const applying = useRef(false);
+  const unsubscribeRequests = (plan: SuggestedDecision[]) =>
+    new Set(plan.flatMap((item) => item.unsubscribe)).size;
   const startApply = (only?: string) => {
     const plan = planSuggestions(waiting, w.actions.unsubscribeIdsOf).filter((item) => only === undefined || item.row.routeKey === only);
-    if (plan.length) setConfirmation({ worldKey: w.worldKey, plan });
+    if (!plan.length || applying.current) return;
+    const draft = { worldKey: w.worldKey, plan };
+    if (unsubscribeRequests(plan) > 0 &&
+        ((w.screenerConfirmation?.acknowledged ?? 0) & SCREENER_ACKNOWLEDGEMENTS.applySuggestions)) {
+      void applyPlan(draft);
+    } else {
+      setConfirmation(draft);
+    }
   };
-  const confirmApply = async () => {
-    if (confirmation === null || applying.current) return;
+  const applyPlan = async (draft: NonNullable<typeof confirmation>) => {
+    if (applying.current || latest.current.worldKey !== draft.worldKey) return;
     applying.current = true;
     setConfirmation(null);
     try {
       await applySuggestions(
-        confirmation.plan,
-        () => latest.current.worldKey === confirmation.worldKey ? latest.current.screener.waiting : [],
+        draft.plan,
+        () => latest.current.worldKey === draft.worldKey ? latest.current.screener.waiting : [],
         (...args) => latest.current.actions.decide(...args),
       );
     } finally {
       applying.current = false;
     }
   };
-  const requests = new Set(confirmation?.plan.flatMap((item) => item.unsubscribe)).size;
+  const requests = confirmation ? unsubscribeRequests(confirmation.plan) : 0;
+  const confirmApply = () => {
+    if (confirmation === null || applying.current || latest.current.worldKey !== confirmation.worldKey) return;
+    if (requests > 0) w.screenerConfirmation?.remember("applySuggestions");
+    void applyPlan(confirmation);
+  };
   const suggested = planSuggestions(waiting, w.actions.unsubscribeIdsOf).length;
   // What the Spam count follows: a filing moves it, and the impersonation line asks again.
   const spamMark = useMemo(() => spamLettersMark(spam), [spam]);
@@ -274,7 +289,7 @@ function ScreenerBody() {
         {requests > 0 ? <Txt variant="body" tone="ink2" style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
           {Copy.screenBulkUnsubscribe(requests)}
         </Txt> : null}
-        <SheetRow label={Copy.screenApplySuggestions(confirmation?.plan.length ?? 0)} onPress={() => { void confirmApply(); }} />
+        <SheetRow label={Copy.screenApplySuggestions(confirmation?.plan.length ?? 0)} onPress={confirmApply} />
       </Sheet>
     </Screen>
   );
