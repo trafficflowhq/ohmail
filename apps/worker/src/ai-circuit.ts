@@ -1,6 +1,6 @@
 import { ModelConsentWithdrawn, type SpendPort } from "@trafficflow/db";
 import { ClassifierFaultError } from "@ohmail/organizer/classifier-fault";
-import { ModelDeclinedError, SensitivePayloadRefusal } from "@trafficflow/core";
+import { ModelDeclinedError } from "@trafficflow/core";
 import type { AiCallOptions, ClassifierPort, ClassifierInput, ClassifierResult, Logger } from "@trafficflow/core";
 
 /**
@@ -207,39 +207,6 @@ export function makeClassifierCircuit(
       result = await (call ? ask(input, call) : ask(input));
     } catch (err) {
       if (err instanceof ModelConsentWithdrawn) throw err;
-      // A REFUSAL AT THE SINK IS NOT A MODEL FAULT, AND COUNTING IT AS ONE WAS THE BUG.
-      // `SensitivePayloadRefusal` says on the class the breaker must never count it as an outage; without
-      // this the sensitivity gate FIRING incremented `consecutiveFaults` and `DEFAULT_FAULT_THRESHOLD` of
-      // them withheld the classifier from the whole mailbox (nothing leaked; the cost was availability).
-      // This wrapper is on the AUTOMATIC path the outbound-consent ruling did NOT change; the pressed
-      // `ScreenerService.suggest` redacts via `redactForModel`. BY CLASS, never `err.name` (`dead-letter.ts`'s
-      // rule), like `ClassifierFaultError`/`LeaseUnavailableError`/`MimeParseError` — a VALUE import of
-      // `@trafficflow/core` `deps.test.ts` permits (its `FORBIDDEN_IN_SRC` is matched as raw substrings, so
-      // do not spell specifiers here). NEUTRAL, not a success (thrown before `consecutiveFaults++`/`close()`),
-      // and rethrown UNWRAPPED to the message-scoped dead-letter boundary; the full fix is `pipeline.ts`'s catch (`test/ai-refusal.test.ts`).
-      if (err instanceof SensitivePayloadRefusal) {
-        // ERROR level, not warn. `pipeline.ts` refuses sensitive mail before the credit gate and
-        // before the classifier is touched, so a refusal arriving HERE means `classifySensitivity`
-        // and `screenOutboundText` disagreed about the same bytes: the first line of defence
-        // missed what the second caught. That is a defect report about our own detector and it
-        // must be as loud as one. `screen` is `{safe, category, reason}` and carries no message
-        // content by construction, which is why it is safe to log whole.
-        log?.error("classifier_sensitive_refusal", {
-          screen: err.screen, consecutiveFaults,
-          reason: "the outbound screen refused this payload at the SINK — nothing was sent, but "
-            + "an upstream check that should have set no_ai did not; NOT counted as a model fault",
-        });
-        // The money. `pipeline.ts` charges BEFORE it classifies, and its no-refund argument is
-        // that the retry is free and honours the charge. That argument does not survive here:
-        // the screen is deterministic in the bytes, so every retry refuses again and the charge
-        // buys nothing, ever. Same call and same one-charge-in-flight assumption the success
-        // path below already makes when it clears the map.
-        // THIS mailbox's charge, not everybody's. The screen is deterministic in the bytes of
-        // ONE message, so it says nothing about any other mailbox's call — and another
-        // mailbox's classification may still be in flight and about to be delivered.
-        refundOwnCharge("classifier_sensitive_refusal", mailboxId);
-        throw err;
-      }
       // A DECLINE IS THE PROVIDER ANSWERING, NOT FAILING — the refusal's door, beside it. A safety
       // refusal or a cut-off answer speaks for one message, so it is NEUTRAL here: counted, it kept
       // a mailbox faulting behind one message while other mailboxes' successes kept the breaker

@@ -162,7 +162,7 @@ function why() {
   expect(suggest).not.toBe(NONE);
   if (suggest === NONE) throw new Error("No suggestion control mounted");
   const { standing, inFlight } = suggest.noAdvice;
-  return noSuggestionReason(sender!, standing, inFlight.has(selected));
+  return noSuggestionReason(standing, inFlight.has(selected));
 }
 
 /** Twelve senders, newest first — enough that a bounded run cannot reach the back of the queue. */
@@ -176,13 +176,12 @@ describe("why a waiting sender has no suggestion", () => {
     expect(within(host!).getByRole("button", { name: "Choose where this sender's mail goes" }).textContent).toBe("a place");
   });
 
-  it("NO_AUTO_AI — nothing was suggested by itself, and the row says that instead of 'yet'", async () => {
+  it("shows the ordinary pending state for sign-in mail", async () => {
     // The representative is the newest held message, which is the row selected first.
     const held = [msg("nx", "quiet@ex.example", 23, { noAi: true }), ...MANY.slice(1)];
     await mountView(held);
-    expect(why()).toBe("no_auto_ai");
-    expect(text()).toContain("kept out of automatic AI");
-    expect(text(), "the promise is what this case exists to remove").not.toContain("No suggestion yet");
+
+    expect(why()).toBe("pending");
   });
 
   it("UNAVAILABLE — a run stopped on the spend gate, and the rows it never reached say so", async () => {
@@ -270,13 +269,11 @@ describe("the coming state — a run is buying this sender", () => {
     expect(text()).not.toContain("A suggestion is coming");
   });
 
-  it("…and it outranks nothing: no_ai mail and a stopped run keep their own sentences", async () => {
+  it("identifies the same pending state with automatic suggestions enabled", async () => {
     const held = [msg("nx", "quiet@ex.example", 23, { noAi: true }), ...MANY.slice(1)];
     await mountView(held, { optedIn: true });
-    // The selected (newest) row is the no_ai one — the opt-in does not promise what the
-    // sensitivity pass keeps away from every model.
-    expect(why()).toBe("no_auto_ai");
-    expect(text()).not.toContain("A suggestion is coming");
+
+    expect(why()).toBe("pending");
   });
 
   it("…and it disappears with the chip", async () => {
@@ -379,7 +376,7 @@ describe("a refused suggest request sets the standing, and the row says why", ()
     const { ApiError } = await import("../app/api-client");
     const error = new ApiError(402, "subscription_required", "subscription required", undefined, { coded: true });
     const standing = standingOfRefusal(error);
-    const reason = noSuggestionReason({}, standing, true);
+    const reason = noSuggestionReason(standing, true);
     expect(reason).toBe("unavailable");
     expect(noSuggestionKey(reason, standing)).toBe("noSuggestionRefused");
     expect(copy.noSuggestionRefused).toContain("the server refused the request");

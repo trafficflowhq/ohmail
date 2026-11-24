@@ -198,8 +198,8 @@ describe("a REFUSING credit gate degrades to rules-only, byte-identically", () =
   });
 });
 
-describe("the gate is asked LAST, so sensitivity decides before money does", () => {
-  it("NEVER asks for a debit for a no_ai message — the short-circuit is the enforcement", async () => {
+describe("the gate is asked after routing eligibility", () => {
+  it("debits once to classify a sign-in message", async () => {
     const g = gate(true);
     const classifier = new SpyClassifier(FEED);
     const otp = eml({
@@ -209,12 +209,8 @@ describe("the gate is asked LAST, so sensitivity decides before money does", () 
 
     const out = await run(createChange(otp), { classifier, credits: g });
 
-    // No debit was even ASKED for, so no ledger row can exist. (The authoritative version of
-    // this assertion ran against a real `credit_ledger` in
-    // the services suite's metering test until metering left this journal — a spy proves the call did not happen,
-    // the ledger proves no money moved.)
-    expect(g.asked).toEqual([]);
-    expect(classifier.calls).toBe(0);
+    expect(g.asked).toHaveLength(1);
+    expect(classifier.calls).toBe(1);
     // And the message still routed: sensitive mail short-circuits to INBOX.
     expect(JSON.parse(out.plan).new.desired).toBe("INBOX");
     expect(JSON.parse(out.plan).new.sensitivity.flags.no_ai).toBe(true);

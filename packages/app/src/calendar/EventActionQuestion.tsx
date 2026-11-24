@@ -43,11 +43,15 @@ function patternLine(rule: Rule, start: CivilDate, t: Text, locale: string): str
     });
   }
   const day = rule.byMonthDay[0] ?? start.day;
-  const ordinal = rule.byDay[0]?.ordinal;
+  // "The first Tuesday" is said either way a rule can write it: 1TU, or TU with its position apart (BYSETPOS=1).
+  const ordinal =
+    rule.byDay[0]?.ordinal ||
+    (rule.byDay.length === 1 && rule.bySetPos.length === 1 ? rule.bySetPos[0] : undefined);
   if (rule.freq === "MONTHLY") {
+    const count = rule.interval;
     return ordinal && names[0]
-      ? t("actions.repeat.monthlyWeekday", { ordinal: ordinalName(ordinal, t), weekday: names[0] })
-      : t("actions.repeat.monthlyDate", { day });
+      ? t("actions.repeat.monthlyWeekday", { count, ordinal: ordinalName(ordinal, t), weekday: names[0] })
+      : t("actions.repeat.monthlyDate", { count, day });
   }
   if (rule.freq === "YEARLY") {
     const month = rule.byMonth[0] ?? start.month;

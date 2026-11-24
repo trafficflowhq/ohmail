@@ -21,6 +21,38 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.3] — 2026-11-24
+
+### Draft replies and get AI suggestions for any mail
+
+Drafting and Screener suggestions now work for mail about sign-in codes and password resets. Automatic suggestions use the same message eligibility when enabled.
+
+### Google Play offers the Android app on devices without a portrait screen
+
+The Android app no longer requires a portrait screen, so it can be installed from Google Play on devices that only have a landscape screen.
+
+### Connecting a calendar shows what is happening
+
+After signing in to a calendar account, the setup shows the account as connected, its calendars as they are found, and the events as they are read. Calendars can be chosen as soon as they appear while the events keep loading. If finding the calendars takes longer than a few seconds, you can keep going and ohmail tells you when they are ready. A refused sign-in says why and offers Try again. A calendar that could not be read says why on its line and no longer keeps the step reading, and an account without calendars says so. An empty calendar now counts as read after its first reading.
+
+### The desktop apps for Linux and macOS are built again
+
+The Linux, Linux on ARM and macOS desktop installers build again. Version 2.0.2 reached the Cloud and the phones only, so this release brings its changes to the desktop apps as well.
+
+### Letters keep their written line breaks
+
+The reader keeps greetings, list items and signatures on consecutive lines when the writer puts them there. A blank line in a reply takes up one line of text.
+
+### The reader holds your place as pictures load
+
+On desktop and web, when a picture covers the reading line, the reader keeps the text below it in place as the picture loads. Reading position is also preserved in Firefox.
+
+### Screener sender details fit better on phones
+
+The sender address starts at the left when the name has to leave the line. Mailbox chips give way before names, and hidden items leave more room for the sender's domain.
+
+Tabbing to the sender name keeps the full domain and the keyboard focus ring visible.
+
 ## [2.0.2] — 2026-11-24
 
 ### CalDAV calendars keep syncing when the provider moves them to another of its servers
@@ -19130,7 +19162,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.2...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.3...HEAD
+[2.0.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.3
 [2.0.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.2
 [2.0.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.1
 [2.0.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.0

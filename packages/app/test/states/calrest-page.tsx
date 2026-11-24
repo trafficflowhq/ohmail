@@ -101,6 +101,8 @@ function setupAddress(): string {
   const from = q.get("from") === "settings" ? "&from=settings" : "";
   const way = q.get("provider") === "icloud" ? "icloud" : null;
   if (step === "signin" && way) return `#/cal/cal-setup?step=signin&way=${way}${from}`;
+  if (step === "calendars" && ["finding", "slow", "arriving", "failed"].includes(state ?? ""))
+    return `#/cal/cal-setup?step=calendars&connection=google${from}`;
   if (step === "calendars" || step === "default" || step === "wait")
     return `#/cal/cal-setup?step=${step}&way=icloud&connection=icloud${from}`;
   return `#/cal/cal-setup?step=way${from}`;

@@ -505,7 +505,7 @@ describe("automatic suggestions at the standalone drain's tail", () => {
    * mutation that turns this red turns those red too, which is the property that makes "both
    * doors" true by construction rather than by two files agreeing today.
    */
-  it("never sends a flagged sender to the model — the unflagged one beside it still goes", async () => {
+  it("suggests for sign-in, indeterminate and ordinary mail alike", async () => {
     const m = model();
     const s = await boot(m);
     await giveItAModel(s);
@@ -527,16 +527,9 @@ describe("automatic suggestions at the standalone drain's tail", () => {
     await s.syncUntilQuiet();
     const sent = m.completions.slice(before);
 
-    // The ordinary sender still gets an answer — this door's feature is not switched off.
-    expect((await suggestionsOf(s)).map((r) => r.messageId)).toEqual([ordinary]);
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toContain("shop@example.test");
-
-    // AND NEITHER FLAGGED SENDER TRAVELLED — by address, and by the passcode's own digits.
-    const wire = sent.join("\n");
-    expect(wire, "a flagged sender was sent to the model").not.toContain("bank@example.test");
-    expect(wire, "the indeterminate sender was sent to the model").not.toContain("unknown@example.test");
-    expect(wire, "the passcode left this machine").not.toContain("482913");
+    expect((await suggestionsOf(s)).map((r) => r.messageId).sort()).toEqual([ordinary, flagged, unreadable].sort());
+    expect(sent).toHaveLength(3);
+    expect(sent.join("\n")).toContain("Use 482913 to sign in.");
   }, 120_000);
 
   it("stops on the model's FIRST fault, and converges once the model comes back", async () => {

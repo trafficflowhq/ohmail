@@ -407,7 +407,8 @@ async function finishReading(
     nextAt = at;
   }
 
-  const wrote = changed + dropped > 0 || reading.changed > 0;
+  // A calendar's first reading says it was read even when it holds nothing: a device learns by it that the calendar is in.
+  const wrote = changed + dropped > 0 || reading.changed > 0 || cal.lastSyncedAt === null;
   const cleared = cal.errorCode !== null;
   const last = await applyChunk(apply, [], async (tx, changes) => {
     await tx.update(calCalendars).set({

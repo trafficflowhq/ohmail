@@ -141,6 +141,8 @@ export function sanitizeOutboundHtml(html: string, keepQuotedHistory = false): s
 export function prepareOutboundDelivery(rawHtml: string, draftText: string): OutboundBody {
   const sanitized = sanitizeOutboundHtml(rawHtml);
   const html = sanitized
+    .replaceAll("<p>", '<p style="margin:0">')
+    .replace(/<(ul|ol)>/g, '<$1 style="margin-top:0;margin-bottom:0">')
     .replace(/<(h[1-3])>/g, (_tag, heading: "h1" | "h2" | "h3") => {
       const size = { h1: 28, h2: 20, h3: 17 }[heading];
       return `<${heading} style="font-size:${size}px;font-weight:700;line-height:1.6;margin:8px 0">`;

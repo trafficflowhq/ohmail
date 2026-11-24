@@ -20,7 +20,7 @@ export function LetterBody(props: LetterProps) {
   return noticeOnly ? (
     <PreviewNotice messageId={props.messageId} html={html} onNotice={onNotice} locale={locale} />
   ) : (
-    <MessageBody {...props} look={onBodyLayout ? "reader" : "sheet"} />
+    <MessageBody {...props} look={onBodyLayout ? "reader" : "sheet"} fitDesign />
   );
 }
 

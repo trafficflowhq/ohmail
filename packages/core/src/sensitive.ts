@@ -1,22 +1,11 @@
 import type { NormalizedMessage } from "./types.js";
 import { CONFUSABLES, CONFUSABLE_RE, INVISIBLE, INVISIBLE_CLASS, SOFT_HYPHEN } from "./text-fold.js";
 
-/**
- * Sensitivity detection: the upstream half of "sensitive mail never reaches a model".
- * `flags.no_ai` is the ONLY barrier between an authentication mail and the model; every AI door
- * reads it. Three outcomes, not two: a finite phrase allowlist is authority for the POSITIVE
- * answer only; the negative requires reading every human-visible representation, in a held
- * vocabulary, nothing reversibly hidden — otherwise INDETERMINATE → `no_ai`. A corpus test caps
- * the seeded indeterminate rate at {@link SEEDED_INDETERMINATE_CEILING}. `no_ai`/`no_kb` fail
- * closed; `no_forward`/`priority` follow a positive only. Bodies are stored in full; redaction is
- * model-boundary only. Nothing here calls a model.
- */
-
+/** Classify mail locally for sensitivity labels, filing, and forwarding behavior. */
 export type SensitivityCategory = "otp" | "verification" | "password_reset" | "security_alert";
 
 /**
- * The genuine third outcome. `sensitive` remains "positively identified", so routing, redaction
- * and `no_forward` keep their old meaning; `indeterminate` is "we cannot support the negative
+ * The genuine third outcome. `sensitive` remains "positively identified", so routing and `no_forward` keep their old meaning; `indeterminate` is "we cannot support the negative
  * claim", and it is the one that also sets `no_ai`.
  */
 export type SensitivityVerdict = "sensitive" | "indeterminate" | "ordinary";
@@ -41,7 +30,7 @@ export interface SensitivityResult {
   category: SensitivityCategory | null;
   /**
    * Empty unless `verdict === "indeterminate"`. NOT PERSISTED: `messages` carries the four
-   * flags and `sensitivity_category`, and no column records WHY a message was withheld, so the
+   * flags and `sensitivity_category`, and no column records the indeterminate reason, so the
    * production indeterminate rate is not measurable from the database today. Adding that column
    * needs a schema change and a migration, which belong to another workstream — recorded as owed.
    */
@@ -52,10 +41,7 @@ export interface SensitivityResult {
    * `storeRedactedBody`) are removed. The mail already sits unredacted on the IMAP server, the
    * master, so redacting the cloud/display copy only hid content from the mailbox's OWNER, and it
    * over-fired. The stored, served and displayed body is now the FULL original, always. What
-   * remains is the disclosure gate to a MODEL: `flags.no_ai`/`no_kb` keep sensitive and
-   * indeterminate mail out of automatic AI, and {@link redactForModel} / {@link
-   * screenOutboundText} strip the credential VALUE from user-pressed AI payloads. {@link
-   * redactSensitiveText} is used ONLY by the model gate, never by storage.
+   * remains is the local classification and its persisted flags.
    */
 }
 
@@ -823,16 +809,6 @@ const AUTH_URL_MARKER = new RegExp(
  */
 const TOKEN_SEGMENT = /[A-Za-z0-9_\-.~+%]+/g;
 /**
- * The REDACTION pattern, used only by {@link redactAuthUrls} — deliberately broader than
- * {@link looksLikeOpaqueToken} and deliberately not shared with it.
- *
- * Detection and redaction want opposite errors. Detection decides whether a message is withheld
- * from a model and stored redacted, so over-matching costs the user a feature (it cost 31% of one
- * account's Screener). Redaction runs only on a message ALREADY judged to carry a credential, and
- * its only error is blanking a few characters of a URL nobody will read. Broad is correct there.
- */
-const OPAQUE_TOKEN = /[A-Za-z0-9_\-.~+/=%]{12,}/;
-/**
  * The shape of a secret rather than of a word: long, AND carrying what words in URLs do not — a
  * digit or a case change. A DIGIT OR ANY UPPERCASE LETTER, not "mixed case": the corpus pins
  * `…/session?t=SECRET-LOGIN-TOKEN`, an all-caps bearer token with no digit, which a mixed-case
@@ -980,323 +956,6 @@ const SCAN_CAP_CHARS = 128_000;
 export const SEEDED_INDETERMINATE_CEILING = 0.05;
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
- * 7. REDACTION
- * ════════════════════════════════════════════════════════════════════════════════════════ */
-
-/**
- * A credential-looking token: 4–8 digits, or a 6–10 char UPPER alphanumeric, or a grouped code
- * (`123-456`, `ABC 123`) — the shapes providers use to make a code easy to read back.
- *
- * Only ever applied to mail already judged sensitive, so its breadth costs nothing on ordinary
- * mail. Redaction is best-effort defence in depth and CANNOT rescue a false negative: the flags
- * are what actually keep the message away from the model.
- */
-/**
- * The second branch cannot use `\b`. A vocabulary-framed Arabic-Indic code (`رمز التحقق ٠١٢٣٤٥`)
- * classified `sensitive` and still left its code unredacted in the model payload: every
- * alternative above is ASCII-only, and `\b` is defined against `[A-Za-z0-9_]` even under `u`, so
- * `\b(\p{Nd}{4,8})\b` matches NOTHING on a pure Arabic-digit run — measured, a guard reporting
- * success while doing nothing. The boundary is explicit lookarounds instead. The ASCII
- * alternatives keep their original `\b` verbatim; the new branch is purely ADDITIVE — wholesale
- * replacement would silently regress redaction (`é123456` matches `\b`, not the lookaround);
- * verified byte-identical on twelve ASCII cases.
- */
-const CODE =
-  /\b([0-9]{4,8}|[A-Z0-9]{6,10}|[0-9]{3,4}[-\s][0-9]{3,4}|[A-Z0-9]{3,4}[-\s][A-Z0-9]{3,4})\b|(?<![\p{L}\p{Nd}_])(\p{Nd}{4,8}|\p{Nd}{3,4}[-\s]\p{Nd}{3,4})(?![\p{L}\p{Nd}_])/gu;
-
-/* ══════════════════════════════════════════════════════════════════════════════════════════
- * 7a. THE SHORT ONE-TIME CODE — the shapes {@link CODE} and {@link B64_RUN} both step over
- * ════════════════════════════════════════════════════════════════════════════════════════ */
-
-/**
- * 7a. The screen usually fires on the SUBJECT's vocabulary, and the redactor is then handed a
- * snippet whose credential is in a form no pass reaches: `482913` base64-encoded is `NDgyOTEz`,
- * half of {@link B64_RUN}'s floor, so `redacted: true` described a transform that removed
- * nothing. Measured on already-flagged payloads: base64, percent-escaped, HTML-entity, mixed-case
- * and lower-hex values all left intact. Not a lower floor — that blanks every six-letter word.
- * Instead: an ENCODED run is DECODED AND LOOKED AT ({@link looksLikeCredentialValue} rejects
- * `Q29uZmlybQ`→`Confirm`); a PLAIN token needs the {@link CODE} shape plus the FRAME (the shared
- * credential-noun lexicon).
- */
-
-/** Latin vowels including the accented ones, and `y`, which carries a syllable in Welsh and in `rhythm`. */
-const VOWEL = /[aeiouyàáâãäåèéêëìíîïòóôõöùúûüýÿ]/i;
-
-/**
- * A word has vowels; a randomly drawn code usually does not. `bcpq`, `tsrn`, `KMXQR` are codes;
- * `Confirm`, `ready`, `hello` are not.
- *
- * The threshold is deliberately harsh (**under a quarter**), because German prose is vowel-poor in
- * exactly this range — `nicht` is 1-in-5 and `schritt` is 1-in-7 — and this predicate is only ever
- * consulted in a position a word can occupy. It is therefore paired with {@link STOPWORDS}
- * everywhere it is used, and never used on its own to decide an unframed token.
- */
-function looksUnpronounceable(token: string): boolean {
-  const letters = token.replace(/[^\p{L}]/gu, "");
-  if (letters.length < 4) return false;
-  let vowels = 0;
-  for (const ch of letters) if (VOWEL.test(ch)) vowels++;
-  return vowels / letters.length < 0.25;
-}
-
-/**
- * The shape a one-time code occupies: one 4–12 run, or 2–4 hyphen-joined groups of 3–6
- * (`482-913`, `bcp-qts`). A SPACE IS NOT A GROUP SEPARATOR — it was for an hour and the corpus
- * caught it twice in one run: `hello world` satisfied the grouped arm as two five-character
- * groups and a whole German sentence as four, so the standalone-line rule blanked the line. The
- * space-grouped digit shape providers really use (`448 213`) is not lost: {@link CODE} has
- * carried `[0-9]{3,4}[-\s][0-9]{3,4}` since before any of this, and it runs first.
- */
-// THE GROUPED ALTERNATIVE COMES FIRST, and that ordering is load-bearing wherever this source is
-// used UNANCHORED. Alternation is ordered, so with the single run first, `bcpq-tsrn-mxvl` matched
-// `bcpq`, the terminator `(?![-A-Za-z0-9_])` was satisfied by the hyphen, and the payload left as
-// `[REDACTED]-tsrn-mxvl` — a PARTIALLY redacted secret, which is the failure mode
-// {@link redactSensitiveText}'s ordering comment already names as worse than none. The hyphen is
-// in the terminator for the same reason: a run of five groups now matches nothing rather than its
-// first four.
-const VALUE_SHAPE_SRC = "[A-Za-z0-9]{3,6}(?:-[A-Za-z0-9]{3,6}){1,3}|[A-Za-z0-9]{4,12}";
-const VALUE_SHAPE = new RegExp(`^(?:${VALUE_SHAPE_SRC})$`);
-
-/**
- * Is this string a credential VALUE rather than a word?
- *
- * Two arms, and the first carries almost all of the traffic. **A digit inside the run** is the
- * discriminator that separates `a3F9kQ`, `a3f9c1`, `482913` and `bcp-1ts` from every word in every
- * language this product reads — prose does not put digits inside words. The second arm is for the
- * letters-only draws (`KMXQR`, `bcpq-tsrn-mxvl`): unpronounceable AND not a function word, and it
- * is only ever reached from a FRAMED position, never from open text.
- */
-function looksLikeCredentialValue(token: string): boolean {
-  if (!VALUE_SHAPE.test(token)) return false;
-  const compact = token.replace(/[- ]/g, "");
-  if (/[0-9]/.test(compact)) return true;
-  // A Capitalised word is a NAME, not a code. Measured: `Schmidt` alone on the signature line of a
-  // verification mail is 1 vowel in 7 and was blanked. Providers draw codes in one case —
-  // `bcpqtsrn`, `KMXQR` — so refusing the `Xxxxx` shape costs the letters-only arm nothing.
-  if (/^\p{Lu}\p{Ll}+$/u.test(compact)) return false;
-  return looksUnpronounceable(compact) && !STOPWORDS.has(compact.toLowerCase());
-}
-
-/**
- * A short base64 run, BELOW {@link B64_RUN}'s floor — where a real one-time code lives.
- *
- * Six characters is the floor because four bytes (`1234`) encode to six plus padding, and four
- * digits is the shortest PIN {@link CODE} recognises. The ceiling is fifteen so this pass and
- * {@link B64_RUN} partition the space instead of overlapping: sixteen and up is already blanked
- * unconditionally, and that rule is untouched — it exists for a different reason (a run that long
- * is machine text whatever it decodes to) and keeps its floor.
- */
-const SHORT_B64_RUN = /(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{6,15}={0,2}(?![A-Za-z0-9+/=])/g;
-/** Percent escapes, four or more: `%34%38%32%39%31%33`. Matched by no pass at all before this. */
-const PCT_ESCAPE_RUN = /(?:%[0-9A-Fa-f]{2}){4,}/g;
-/** Numeric HTML entities, decimal or hex, four or more: `&#52;&#56;…` / `&#x34;&#x38;…`. */
-const ENTITY_RUN = /(?:&#(?:[Xx][0-9A-Fa-f]{1,6}|[0-9]{1,7});){4,}/g;
-
-/**
- * Decode one candidate run and answer whether it was carrying a credential.
- *
- * `Buffer.from(…, "base64")` SUBSTITUTES U+FFFD rather than throwing on bytes that are not UTF-8
- * — the measurement {@link looksLikeText} was written under — so the replacement character is the
- * decoder telling us the run was never base64 in the first place. {@link VALUE_SHAPE} then rejects
- * anything that is not ASCII alphanumeric, which is every accidental decode that survives.
- */
-function decodesToCredential(decode: () => string): boolean {
-  let plain: string;
-  try { plain = decode(); } catch { return false; }
-  if (!plain || plain.includes(REPLACEMENT_CHAR)) return false;
-  return looksLikeCredentialValue(plain.trim());
-}
-
-/**
- * Does `text` carry a credential in one of the SHORT reversible encodings {@link
- * redactShortEncodedRuns} can remove? Separate from the redactor because {@link redactForModel}
- * returns text UNCHANGED once {@link screenOutboundText} answers `safe` — so the short-encoding
- * passes were reachable only when another signal had already failed the screen, and could do
- * nothing about their motivating case: a generically framed message whose only sensitive content
- * IS the encoded run. The same three regexes and the same {@link decodesToCredential} test asked
- * as a question — one set of patterns, two consumers, so screen and redactor cannot disagree.
- * Deliberately LAST: decoding is the expensive arm.
- */
-function hasShortEncodedCredential(text: string): boolean {
-  const decoders: Array<[RegExp, (run: string) => string]> = [
-    [SHORT_B64_RUN, (run) => Buffer.from(run, "base64").toString("utf8")],
-    [PCT_ESCAPE_RUN, (run) => decodeURIComponent(run)],
-    [ENTITY_RUN, (run) => decodeEntities(run)],
-  ];
-  for (const [re, decode] of decoders) {
-    // `lastIndex` is reset because these are module-level /g regexes shared with the redactor;
-    // a leftover offset from a previous caller would silently start the scan mid-string.
-    re.lastIndex = 0;
-    for (const m of text.matchAll(re)) {
-      if (decodesToCredential(() => decode(m[0]))) return true;
-    }
-  }
-  return false;
-}
-
-function redactShortEncodedRuns(text: string): string {
-  return text
-    .replace(SHORT_B64_RUN, (run) =>
-      decodesToCredential(() => Buffer.from(run, "base64").toString("utf8")) ? "[REDACTED]" : run)
-    .replace(PCT_ESCAPE_RUN, (run) =>
-      decodesToCredential(() => decodeURIComponent(run)) ? "[REDACTED]" : run)
-    .replace(ENTITY_RUN, (run) =>
-      decodesToCredential(() => decodeEntities(run)) ? "[REDACTED]" : run);
-}
-
-/**
- * A 4–12 character run carrying BOTH a letter and a digit — `a3F9kQ`, `a3f9c1`, `q3wvsxca`.
- *
- * Unconditional within a code-framed payload, and that is a strictly SMALLER step than the one
- * {@link CODE} already takes: its `[A-Z0-9]{6,10}` arm blanks `NEWSLETTER` and `REMINDER`, which
- * are words, while nothing here matches a word at all. The residue is version-shaped tokens —
- * `SHA256`, `iPhone15` — blanked inside an authentication mail, which is the trade
- * {@link OPAQUE_TOKEN}'s docblock already prices for URL tails.
- */
-const MIXED_ALNUM_TOKEN =
-  /(?<![A-Za-z0-9_])(?=[A-Za-z0-9]{4,12}(?![A-Za-z0-9_]))(?=[A-Za-z0-9]*[0-9])(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{4,12}/g;
-
-/**
- * The value sitting DIRECTLY after a credential noun: `code: bcp-qts`, `Ihr Code lautet …`,
- * `codice di verifica: …`. The noun list is {@link CRED_NOUN_SUBSTR} and {@link
- * CRED_NOUN_GENERIC} spliced in by `.source` — the same lexicon the classifier's numeric backstop
- * reads, so a locale added there is added here and there is no second list to forget. Adjacency
- * is what makes the letters-only arm of {@link looksLikeCredentialValue} safe to consult: `Your
- * code is ready` puts `ready` in this position and `ready` is pronounceable, `nicht` is a {@link
- * STOPWORDS} entry, and `one-time` precedes the noun rather than following it.
- */
-// NAMED groups, because {@link CRED_NOUN_GENERIC} carries a capturing group of its own and
-// splicing its `.source` in therefore shifts every positional index by one. Read positionally,
-// this rule handed `looksLikeCredentialValue` the matched NOUN instead of the value after it and
-// redacted nothing — a pass that ran, matched, and did no work.
-// The separator between the noun and the value: an optional copula, an optional colon, optional
-// emphasis asterisks, each with bounded whitespace around it. **BOUNDED and not `[ \t]*`**, because
-// four consecutive unbounded star groups backtrack polynomially on a long run of spaces that ends in
-// no match — a subject is not length-capped the way `bodySnippet`'s 200 characters are, and this
-// runs on sender-controlled bytes. Eight is generous enough for the aligned `Code:     482913`
-// layout templates produce.
-const CUE_GAP = "[ \\t]{0,8}(?:(?:is|ist|lautet|est|è|es|sind|são)[ \\t]{0,8})?"
-  + "(?:[:=][ \\t]{0,8})?\\*{0,2}[ \\t]{0,8}";
-const CUE_ADJACENT_VALUE = new RegExp(
-  `(?<cue>(?:${CRED_NOUN_SUBSTR.source}|${CRED_NOUN_GENERIC.source})${CUE_GAP})`
-  + `(?<val>${VALUE_SHAPE_SRC})(?![-A-Za-z0-9_])`,
-  "giu",
-);
-
-/**
- * The colon rule, forced by a transport fact. `Here is the code you need: KMXQR` puts four words
- * between noun and value, so {@link CUE_ADJACENT_VALUE} misses it, and a standalone-line rule
- * would be correct and dead: `bodySnippet` collapses all whitespace before any model payload is
- * built, so no line stands alone. What survives the collapse is the COLON: a value directly after
- * one, with a credential cue within {@link CODE_PROXIMITY} — the same {@link hasCredentialCue}
- * the numeric backstop uses, commerce rejection included, so `order code: 4821` is excluded here
- * exactly as there. The colon keeps this from being "any word near the word code": `Your code is
- * ready` has none.
- */
-const COLON_FRAMED_VALUE = new RegExp(`:[ \\t]{0,8}\\*{0,2}[ \\t]{0,8}(${VALUE_SHAPE_SRC})(?![-A-Za-z0-9_])`, "gu");
-
-/**
- * A token standing ALONE on its line — the way a provider presents a code in the BODY, and a
- * position ordinary prose does not occupy. Leading/trailing markup and punctuation are peeled
- * first, because a plain-text rendering of a bold HTML code arrives as `**bcpq-tsrn**`.
- *
- * Kept even though the collapse above means the live Screener payload never contains a newline:
- * `redactForModel` is exported, the snippet's shape is `pipeline.ts`'s decision rather than this
- * module's, and a rule that costs nothing is the wrong thing to remove on the strength of another
- * file's current behaviour.
- */
-const STANDALONE_TRIM = /^[\s*_>#|-]+|[\s*_.,:;!|-]+$/g;
-
-function redactFramedCodes(text: string): string {
-  const afterLines = text.split("\n").map((line) => {
-    const core = line.replace(STANDALONE_TRIM, "");
-    if (!core || !looksLikeCredentialValue(core)) return line;
-    return line.replace(core, "[REDACTED]");
-  }).join("\n");
-  const afterCue = afterLines.replace(CUE_ADJACENT_VALUE, (whole: string, ...rest: unknown[]) => {
-    const groups = rest[rest.length - 1] as Record<string, string | undefined> | undefined;
-    const cue = groups?.cue ?? "";
-    const val = groups?.val ?? "";
-    return val && looksLikeCredentialValue(val) ? `${cue}[REDACTED]` : whole;
-  });
-  // `afterCue`, not `afterLines` — the offset a `replace` callback is handed indexes the string
-  // being replaced, and the pass above can change its length. Reading the proximity window out of
-  // the pre-pass string would slide it by however many characters the cue rule removed.
-  const afterColon = afterCue.replace(COLON_FRAMED_VALUE, (whole: string, val: string, at: number) => {
-    if (!looksLikeCredentialValue(val)) return whole;
-    const window = afterCue.slice(Math.max(0, at - CODE_PROXIMITY), at + 1);
-    return hasCredentialCue(window, window) ? whole.replace(val, "[REDACTED]") : whole;
-  });
-  return afterColon.replace(MIXED_ALNUM_TOKEN, "[REDACTED]");
-}
-
-/**
- * Run `f` over everything that is NOT inside a URL.
- *
- * {@link redactUrlTails} owns URLs and deliberately KEEPS THE HOST — an ESP host like
- * `url1234.example.tv` is the
- * single most useful routing signal in a payload and it is not a secret. `url1234` is also a
- * letter-and-digit run, so without this the host rule and the token rule would contradict each
- * other and the newer one would win.
- */
-function outsideUrls(text: string, f: (s: string) => string): string {
-  URL_RUN.lastIndex = 0;
-  const out: string[] = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = URL_RUN.exec(text)) !== null) {
-    out.push(f(text.slice(last, m.index)), m[0]);
-    last = m.index + m[0].length;
-  }
-  out.push(f(text.slice(last)));
-  return out.join("");
-}
-
-/**
- * Does the screen's own verdict say a CODE is expected in this payload? The gate for the
- * plain-text passes above, read from {@link OutboundScreen} rather than re-derived.
- * `security_alert` is excluded on purpose: "New sign-in from Chrome on macOS" carries no code,
- * and the device and place are exactly what the user is paying the model to read — an alert that
- * DOES frame a code classifies `otp` instead, so nothing is lost. `auth_url_token` is excluded
- * for the same reason: a bare magic link has no code beside it, and {@link redactUrlTails} has
- * already taken the token.
- */
-function codeFramed(screen: OutboundScreen): boolean {
-  if (screen.reason === "credential_shape") return true;
-  return screen.category === "otp" || screen.category === "verification"
-    || screen.category === "password_reset";
-}
-
-/**
- * A magic link is a credential in URL form, and {@link CODE} does not reach it — `SECRET-LOGIN-
- * TOKEN` is not a digit run and the `?t=` is not a word boundary away from anything. Redacting
- * the token-bearing tail of an authentication URL closes the stored-redacted half for the
- * passwordless class the way `CODE` closes it for the OTP class.
- */
-function redactAuthUrls(text: string): string {
-  AUTH_URL_MARKER.lastIndex = 0;
-  return text.replace(AUTH_URL_MARKER, (url) => {
-    const cut = url.search(/[?#]/);
-    const head = cut >= 0 ? url.slice(0, cut) : url;
-    return `${head.replace(OPAQUE_TOKEN, "[REDACTED]")}${cut >= 0 ? "?[REDACTED]" : ""}`;
-  });
-}
-
-/**
- * The redaction, as one function — the transform that strips a credential VALUE out of a payload
- * bound for a MODEL. No longer applied to anything the user stores or reads: storage redaction is
- * gone (the mailbox already holds the mail unredacted, so hiding the display copy only hid it
- * from the user), and the only callers are the model gate — {@link redactForModel} and the
- * user-requested AI path. The credential a user sees is never blanked; the credential a model
- * sees always is. The order is load-bearing: {@link redactAuthUrls} runs FIRST because it
- * rewrites whole URL tails — running {@link CODE} first would blank a digit run inside a token
- * and leave the rest intact, a partially-redacted secret.
- */
-export function redactSensitiveText(text: string): string {
-  return redactAuthUrls(text).replace(CODE, "[REDACTED]");
-}
-
-/* ══════════════════════════════════════════════════════════════════════════════════════════
  * 8. THE DECISION
  * ════════════════════════════════════════════════════════════════════════════════════════ */
 
@@ -1384,6 +1043,9 @@ function noticeWords(subject: string, text: string, htmlText: string): number {
 }
 
 /** A code-shaped token: a digit run {@link codeRunSpans} admits, or a letters-and-digits token. */
+const MIXED_ALNUM_TOKEN =
+  /(?<![A-Za-z0-9_])(?=[A-Za-z0-9]{4,12}(?![A-Za-z0-9_]))(?=[A-Za-z0-9]*[0-9])(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{4,12}/g;
+
 function codeSpans(s: string): Array<[number, number]> {
   const spans = codeRunSpans(s);
   for (const m of s.matchAll(MIXED_ALNUM_TOKEN)) spans.push([m.index, m.index + m[0].length]);
@@ -1397,14 +1059,6 @@ const CUE_AT = {
   security_alert: new RegExp(ALERT.source, "gi"),
 };
 
-/**
- * Is a cue of `category` backed by a code? Either a code stands alone on a line, which is how a
- * notice presents one and where prose never puts one — for an HTML part a line as it is laid out
- * ({@link htmlLayoutLines}: a code alone in its table row counts, a label beside its value does
- * not) — or a code-shaped token sits within {@link CODE_PROXIMITY} of the cue, found by POSITION
- * on the form its vocabulary matches on; a sliced window cut `Zugangscode` in half 44 characters
- * before its code.
- */
 function cueBackedByCode(rep: Representation, category: SensitivityCategory): boolean {
   const numeric = rep.canonical.numeric;
   const lines = rep.markup === undefined ? numeric : canonicalise(htmlLayoutLines(rep.markup)).numeric;
@@ -1534,8 +1188,7 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
   // BODY REDACTION IS REMOVED. This function no longer decides "store the redacted body" — the
   // ingest path stores the FULL original, always, because the mailbox on the IMAP server already
   // holds it unredacted and hiding the display copy only hid it from the user. What survives is the
-  // MODEL gate: `no_ai`/`no_kb` (fail-closed on indeterminate) and, at the model boundary,
-  // `redactForModel`. See the `SensitivityResult` note.
+  // Persist the sensitivity flags for existing wire and store consumers.
   return {
     sensitive,
     verdict,
@@ -1548,241 +1201,4 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
       priority: sensitive,
     },
   };
-}
-
-/* ══════════════════════════════════════════════════════════════════════════════════════════
- * 9. THE SINK-SIDE SCREEN
- * ════════════════════════════════════════════════════════════════════════════════════════ */
-
-export interface OutboundScreen {
-  safe: boolean;
-  category: SensitivityCategory | null;
-  reason: "vocabulary" | "credential_shape" | "auth_url_token" | null;
-}
-
-/**
- * The LAST check before a payload is serialised for a model. The classifier carries no
- * sensitivity flag of its own and cannot catch an upstream false negative; this function is that
- * flag — it re-reads the payload about to leave, with the same local detector, and refuses. It
- * screens on CONTENT ONLY — recognised vocabulary, an unframed credential shape, an
- * authentication URL bearing a token — never on `unsupported_script` or `unrecognised_language`:
- * those are upstream ROUTING decisions, and a sink throwing on any non-Latin payload would break
- * `ScreenerService` for every non-Latin sender without protecting anything. The sink refuses what
- * must never be sent; the upstream decides what we are not sure about.
- */
-/** What {@link redactForModel} hands back: the two fields to send, and whether it changed them. */
-export interface ModelSafeText {
-  subject: string;
-  snippet: string;
-  /**
-   * True ⇒ the screen fired and both fields were rewritten: {@link redactSensitiveText} for
-   * plain values, {@link redactUrlTails} for URL tails, and {@link redactEncodedRuns} for
-   * base64 / quoted-printable runs the embedded decoder would have read.
-   */
-  redacted: boolean;
-}
-
-/**
- * Make a payload sendable, for a caller whose user asked: the AI-OPEN half of the rule. {@link
- * screenOutboundText} answers "does this carry credential material"; this answers "then what do I
- * send": the same bytes with the credential VALUE removed. CONDITIONAL because {@link CODE}
- * matches `URGENT`, `WELCOME` and any 4–8 digit run: run everywhere it would blank ordinary
- * subjects, so the screen decides per payload whether the redactor runs. It reads the BYTES,
- * never `messages.no_ai`: the stored flag is known-wrong for historical rows, and the RAW-stored
- * subject is where the code usually is. No residue check: vocabulary cannot be redacted — words
- * are not values — so `redacted` is a reported fact, never a veto.
- */
-export function redactForModel(subject: string, snippet: string): ModelSafeText {
-  // The whole screen, not just `.safe` — {@link codeFramed} reads the category to decide whether
-  // the short-code passes may run, and re-screening each field separately would answer a
-  // different question from the one the sink asked about the joined payload.
-  const screen = screenOutboundText(subject, snippet);
-  if (screen.safe) return { subject, snippet, redacted: false };
-  const framed = codeFramed(screen);
-  // Order: QP soft breaks are unfolded first, so a value wrapped across lines is contiguous when
-  // {@link CODE} reads it; then the plain-text passes blank values and URL tails; then {@link
-  // redactEncodedRuns} blanks every run the embedded decoder could have read. Encoded-last is
-  // load-bearing: whatever the earlier passes leave of a machine run, it removes. {@link
-  // redactFramedCodes} sits between the two — AFTER {@link redactSensitiveText} so everything
-  // `CODE` reaches is already gone, and OUTSIDE URLs so it cannot contradict {@link
-  // redactUrlTails}'s decision to keep the host. {@link redactShortEncodedRuns} runs last of all,
-  // on text whose plain values are already `[REDACTED]`, so the only runs left to decode are
-  // genuinely encoded ones.
-  const clean = (t: string): string => {
-    const unfolded = t.replace(QP_SOFT_BREAK, "");
-    const plain = redactUrlTails(redactSensitiveText(unfolded));
-    const short = framed ? outsideUrls(plain, redactFramedCodes) : plain;
-    return redactShortEncodedRuns(redactEncodedRuns(short));
-  };
-  return { subject: clean(subject), snippet: clean(snippet), redacted: true };
-}
-
-/**
- * The click-tracker hole. {@link redactAuthUrls} only rewrites a URL whose OWN path or query
- * names an authentication marker; a measured password-reset mail carried its link as an ESP
- * click-tracking wrapper (`/ls/click?upn=<base64 of the real URL>`) — no marker, token intact.
- * Opening the AI path made the wrapper load-bearing: "the credential is removed before any AI
- * request is built" is only true if this is closed too. So on an already-flagged payload, every
- * opaque-looking run in the TAIL of every URL is blanked, marker or none. The HOST is kept — the
- * sender's domain is the most useful routing signal and not a secret. NOT applied to storage: the
- * model path may be strictly more redacted than the stored one, never less.
- */
-const URL_RUN = /https?:\/\/[^\s<>"')\]]+/gi;
-/** Everything after the authority: the first `/`, `?` or `#` and onward. */
-const URL_TAIL = /^(https?:\/\/[^/?#\s]*)([\s\S]*)$/i;
-const TAIL_SEGMENT = /[A-Za-z0-9_\-.~+%=]{16,}/g;
-
-/**
- * The encoded form is redacted like the plain one. {@link screenOutboundText} DECODES embedded
- * base64/QP before judging, but redaction rewrites the ORIGINAL bytes and {@link CODE}'s `\b`
- * never fires inside a contiguous base64 run — so a payload flagged for its encoded credential
- * could leave with it intact. On an already-flagged payload every run the embedded decoder would
- * read is blanked — every {@link B64_RUN}, every {@link QP_HEX_RUN} — QP soft breaks unfolded
- * first. Cost: a ≥16-character unbroken alphanumeric stretch is blanked even when it is words;
- * hosts survive — `.` is not in the base64 alphabet. The sixteen floor stays — that long is
- * machine text; shorter encodings are {@link redactShortEncodedRuns}'s job.
- */
-const QP_HEX_RUN = /(?:=[0-9A-Fa-f]{2})+/g;
-/** A quoted-printable soft line break: `=` at end of line — "the value continues on the next". */
-const QP_SOFT_BREAK = /=\r?\n/g;
-
-function redactEncodedRuns(text: string): string {
-  return text.replace(QP_HEX_RUN, "[REDACTED]").replace(B64_RUN, "[REDACTED]");
-}
-
-function redactUrlTails(text: string): string {
-  URL_RUN.lastIndex = 0;
-  return text.replace(URL_RUN, (url) => {
-    const m = URL_TAIL.exec(url);
-    if (!m) return url;
-    const [, authority, tail] = m;
-    if (!tail) return url;
-    TAIL_SEGMENT.lastIndex = 0;
-    // `looksLikeOpaqueToken` is reused rather than restated: it is the same "long, and carrying
-    // something words in URLs do not" test, and a second spelling of it here is how the two come
-    // to disagree about the next token shape somebody reports.
-    return authority + tail.replace(TAIL_SEGMENT, (seg) =>
-      looksLikeOpaqueToken(seg) ? "[REDACTED]" : seg);
-  });
-}
-
-export function screenOutboundText(...parts: Array<string | null | undefined>): OutboundScreen {
-  const raw = parts.filter((p): p is string => typeof p === "string" && p.length > 0).join("\n");
-  if (!raw) return { safe: true, category: null, reason: null };
-  const canonical = canonicalise(raw);
-  const rep: Representation = { label: "outbound", raw, canonical };
-
-  const category = categoryOf(rep);
-  if (category) return { safe: false, category, reason: "vocabulary" };
-  const { decoded } = decodeEmbedded(raw);
-  for (const d of decoded) {
-    // VOCABULARY ONLY on a decoded representation, and this asked to be `credentialShapeIn` too.
-    // It was written that way, and then removed again, because it changed no outcome on any
-    // payload that could be constructed for it: `credentialShapeIn` needs framing or a token
-    // SHAPE, and the decoded text that reaches here without either is a bare numeric run, which
-    // it does not fire on by design — an order number and a one-time code are the same six
-    // digits. Shipping it would have added a branch whose comment claimed a hole was closed while
-    // the hole stayed open, which is worse than the hole. The bare-code-without-framing case is a
-    // standing limit of the DETECTOR, recorded as such, not something this loop can reach.
-    const c = categoryOf({ label: "outbound:decoded", raw: d, canonical: canonicalise(d) });
-    if (c) return { safe: false, category: c, reason: "vocabulary" };
-  }
-  if (credentialShapeIn(rep)) {
-    return { safe: false, category: null, reason: "credential_shape" };
-  }
-  if (hasAuthUrlToken(raw) || hasAuthUrlToken(canonical.plain)) {
-    return { safe: false, category: null, reason: "auth_url_token" };
-  }
-  // LAST, because it decodes: the short reversible runs the redactor can strip but nothing above
-  // can see. `decodeEmbedded` covers base64 from sixteen characters up and quoted-printable; it
-  // matches no short base64 run, no percent-escape run and no numeric-entity run — the three
-  // forms {@link redactShortEncodedRuns} exists for. Without this arm those passes never ran in
-  // the case they were written for, because {@link redactForModel} short-circuits on `safe`.
-  if (hasShortEncodedCredential(raw) || hasShortEncodedCredential(canonical.plain)) {
-    return { safe: false, category: null, reason: "credential_shape" };
-  }
-  return { safe: true, category: null, reason: null };
-}
-
-/* ══════════════════════════════════════════════════════════════════════════════════════════
- * 10. THE MODEL-SINK DOOR
- * ════════════════════════════════════════════════════════════════════════════════════════ */
-
-/** The three classes a refusal carries: the reason a screened payload was not sent. */
-export type ModelSinkReason = "vocabulary" | "credential_shape" | "auth_url_token";
-
-/**
- * One document a model sink is about to serialise — a label for the log and its fields in order,
- * an address last.
- *
- * The door reads the fields' join and every pair of its prose fields in this order, so a field set
- * between the two halves of a split credential cannot push them out of each other's
- * {@link CODE_PROXIMITY} window. An address is read in the join only: paired, it would sit beside a
- * subject's tail, where no letter puts it. The label is a constant this codebase chose, never
- * content.
- */
-export interface ModelSinkDocument {
-  label: string;
-  fields: Array<string | null | undefined>;
-}
-
-/**
- * What the door answers, as a union so that "refused" and "no reason" cannot both be true: a
- * caller narrowing on `admitted` gets a `reason` it can put in a sentence without asserting.
- * `where` names the refusing document — for the log line, never for the person.
- */
-export type ModelSinkVerdict =
-  | { admitted: true; reason: null; category: null; where: null }
-  | { admitted: false; reason: ModelSinkReason; category: SensitivityCategory | null; where: string };
-
-/**
- * The reason class in plain words — the half of the refusal a PERSON reads. One sentence per
- * class, stated about the MESSAGE rather than about the draft, so the site that refuses supplies
- * its own consequence ("…, so no draft was generated"). It lives beside the door because three
- * sinks share it and three copies of it is three different sentences for one refusal.
- */
-export const MODEL_SINK_REFUSAL_SENTENCE: Record<ModelSinkReason, string> = {
-  vocabulary: "this message reads like an authentication mail",
-  credential_shape: "this message contains something that looks like a credential",
-  auth_url_token: "this message carries a sign-in link with a token in it",
-};
-
-/**
- * THE ONE DOOR every model sink passes its assembled input through, BEFORE the request exists.
- *
- * {@link screenOutboundText} already reads a JOIN; what was missing was a call site handing it
- * one — the sinks assembled `{subject, from, snippet}` field by field, so a credential split
- * across a subject and a body passed every per-field flag and arrived whole at the model. Per
- * DOCUMENT, not one giant join: a code in a KB note and "verification" in an unrelated sibling
- * are not a credential. A refusal is a REFUSAL, never a redacted payload — that would be a false
- * state about what the model saw.
- */
-export function screenModelInput(docs: ModelSinkDocument[]): ModelSinkVerdict {
-  for (const doc of docs) {
-    for (const parts of readingsOf(doc)) {
-      const screen = screenOutboundText(...parts);
-      if (screen.safe) continue;
-      // Every refusal `screenOutboundText` makes today names its class. `credential_shape` is the
-      // fail-closed default rather than a cast, so a future unclassified refusal still refuses.
-      const reason = screen.reason ?? "credential_shape";
-      return { admitted: false, reason, category: screen.category, where: doc.label };
-    }
-  }
-  return { admitted: true, reason: null, category: null, where: null };
-}
-
-/** A field that is one address and nothing else: a sender, never prose. */
-const BARE_ADDRESS = /^[^\s@]+@[^\s@]+$/;
-
-/**
- * A document's join, then every pair of its non-empty prose fields in their order: the join with
- * the fields between two halves taken out. Never a pair reversed, and never one with an address,
- * either of which sets two texts side by side that the document never had there.
- */
-function readingsOf(doc: ModelSinkDocument): string[][] {
-  const fields = doc.fields.filter((f): f is string => typeof f === "string" && f.length > 0);
-  // Two fields' one pair is their join.
-  if (fields.length < 3) return [fields];
-  const prose = fields.filter((f) => !BARE_ADDRESS.test(f.trim()));
-  return [fields, ...prose.flatMap((a, i) => prose.slice(i + 1).map((b) => [a, b]))];
 }

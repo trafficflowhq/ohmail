@@ -333,7 +333,7 @@ export interface ApiServices {
    * nothing is kept: a composition that never said where files go keeps none.
    */
   scheduledFiles?: ScheduledFilesKeeping;
-  // AI draft-from-history. `drafting` assembles the sensitivity-safe context + stores
+  // AI draft-from-history. `drafting` assembles the account-scoped context + stores
   // the draft; `drafter` is the INJECTED DraftPort (a mock in tests, a model-backed
   // adapter in a deployment that has one). A model needs an API key, which is
   // deployment config, so `drafter` is optional and the route 500s cleanly when it is
@@ -1098,5 +1098,3 @@ export interface ApiFaultLogPort {
     errorClass: string; requestId: string | null; at: Date;
   }): Promise<void>;
 }
-
-

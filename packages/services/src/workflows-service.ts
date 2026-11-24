@@ -493,9 +493,7 @@ export class WorkflowsService {
     if (!declared.some((s) => s?.tool === "draft_reply")) return;
     // 503, not a 4xx: nothing about the REQUEST is wrong. The identical call succeeds on a
     // configured host, and on this host the moment the key is wired, with no change by the
-    // client — the unprocessability is a property of the DEPLOYMENT. (Its exact complement is
-    // `sensitive_no_ai` 422 in DraftingService: a property of the message that no server change
-    // fixes.) `retryable: false` is explicit because the status heuristic would get it wrong:
+    // client — the unprocessability is a property of the DEPLOYMENT. `retryable: false` is explicit because the status heuristic would get it wrong:
     // `HttpAdapter.rejectionOf` reads `wire.error.retryable ?? (status >= 500 || status === 429)`,
     // so an unannotated 503 tells a client to retry forever something only an operator can fix.
     throw new ServiceError(

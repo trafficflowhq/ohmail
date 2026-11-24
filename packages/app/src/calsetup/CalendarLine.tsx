@@ -18,6 +18,10 @@ export interface CalendarLineProps {
   readonly menuOpen?: boolean;
   readonly defaultLabel?: string;
   readonly viewOnlyLabel?: string;
+  /** Where the line stands alone in a sheet: the square at 12 in a gutter of this class. */
+  readonly gutter?: string;
+  /** The id of what is said of it besides its name: why it could not be read. */
+  readonly describedBy?: string;
 }
 
 export function CalendarLine(p: CalendarLineProps) {
@@ -26,8 +30,17 @@ export function CalendarLine(p: CalendarLineProps) {
     return (
       <SettingLine
         label={p.calendar.name}
-        lead={<CalendarSquare tone={p.tone} hollow={!p.calendar.shown} />}
+        lead={
+          p.gutter === undefined ? (
+            <CalendarSquare tone={p.tone} hollow={!p.calendar.shown} />
+          ) : (
+            <span className={p.gutter}>
+              <CalendarSquare tone={p.tone} size={12} hollow={!p.calendar.shown} />
+            </span>
+          )
+        }
         tag={p.viewOnlyLabel}
+        describedBy={p.describedBy}
         toggle={onChange ? { on: p.calendar.shown, onChange } : undefined}
       />
     );

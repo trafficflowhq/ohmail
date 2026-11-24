@@ -403,7 +403,7 @@ describe("what the open sender's sentence says", () => {
     const cut = sender("c", {
       ai: { dest: "screener", confidence: 0, rationale: "x", noAnswer: "over_quote" } as never,
     });
-    for (const s of [hold, cut, sender("n"), sender("q", { noAi: true })]) {
+    for (const s of [hold, cut, sender("n")]) {
       expect(suggestionWords(s, NO_RUN).dest).toBeNull();
       expect(suggestionWords(s, NO_RUN).sure).toBeNull();
     }
@@ -412,7 +412,6 @@ describe("what the open sender's sentence says", () => {
     expect(cut.ai?.noAnswer).toBe("over_quote");
     expect(suggestionWords(sender("n"), NO_RUN).badge).toBeNull();
     expect(keys(sender("n"))).toEqual([]);
-    expect(keys(sender("q", { noAi: true }))).toEqual(["noSuggestionNoAutoAi"]);
   });
 
   it("what ohmail measured comes first, before the model's advice", () => {

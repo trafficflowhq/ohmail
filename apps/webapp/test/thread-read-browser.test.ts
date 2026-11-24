@@ -32,8 +32,11 @@ const SHEETS = [
   "packages/tokens/src/tokens.css",
   "packages/ui/src/base.css",
   "packages/ui/src/composites/message.css",
+  "packages/ui/src/composites/stream.css",
+  "packages/ui/src/mail/Reading/message.css",
   "apps/webapp/app/app.css",
   "packages/letter-body/src/message-body.css",
+  "packages/letter-body/src/message-body-sheet.css",
 ].map((p) => readFileSync(join(ROOT, p), "utf8")).join("\n");
 
 function chunk(tag: string, data: Buffer): Buffer {
@@ -115,12 +118,463 @@ interface Framed {
 }
 interface Landing { before: string[][]; reads: string[][]; aInView: boolean }
 
+/** Under this frame width the reader lays every letter out at the column (`REFLOW_BELOW_PX`). */
+const REFLOW_BELOW_PX = 480;
+/** The smallest scale a letter is fitted at, for its type to stay readable (`MIN_FIT_SCALE`). */
+const MIN_FIT_SCALE = 0.6;
+
+const designFixtures = [
+  { name: "600px table", width: 600, html: '<table class="canvas" width="600"><tr><td>Weekly edition</td></tr></table>' },
+  { name: "640px heading and button", width: 640, html: '<table class="canvas" width="640"><tr><td><h1 style="font-size:48px">The weekend edition</h1><a href="https://example.test/edition" style="display:inline-block;padding:16px 36px;background:#ddd">Read the edition</a></td></tr></table>' },
+  { name: "fluid table", width: 600, fluid: true, html: '<table class="canvas" width="100%" style="max-width:600px"><tr><td>Responsive edition</td></tr></table>' },
+  { name: "fixed inner table", width: 260, html: '<table width="100%"><tr><td><table class="canvas" width="260"><tr><td>A narrow card</td><td>More</td></tr></table></td></tr></table>' },
+];
+
+interface DesignRig {
+  openDesign(html: string): void;
+  openPreview(html: string): void;
+  openAnchored(html: string, width?: number, thread?: boolean): void;
+  openPendingPress(html: string): void;
+  pressEarlier(): string | null;
+  deliverPicture(data: string): void;
+  resizeDesign(width: number): void;
+  showDesign(open: boolean, reader: boolean): void;
+}
+
+function paintedDesign(page: Page) {
+  return page.evaluate(() => {
+    const frame = document.querySelector<HTMLIFrameElement>(".mb-frame")!;
+    const doc = frame.contentDocument!;
+    const root = doc.documentElement;
+    const table = doc.querySelector<HTMLElement>(".canvas")!;
+    const rect = table.getBoundingClientRect();
+    const sheet = frame.closest<HTMLElement>(".oh-message, .scast")!;
+    const inset = parseFloat(getComputedStyle(doc.body).paddingLeft);
+    return {
+      frame: frame.clientWidth, sheet: sheet.clientWidth, inset,
+      drawn: rect.width, layout: table.offsetWidth, right: rect.right, left: rect.left,
+      scale: rect.width / table.offsetWidth,
+      scaled: getComputedStyle(doc.body).transform !== "none",
+      reflow: root.getAttribute("data-ohmail-reflow"),
+    };
+  });
+}
+
 const ENGINES = [["chromium", pw.chromium], ["webkit", pw.webkit]] as const;
 for (const [name, engine] of ENGINES) {
   describe.runIf(existsSync(engine.executablePath()))(`${name}: the thread-read rule over a laid-out reader`, () => {
     let browser: Browser | null = null;
     beforeAll(async () => { browser = await engine.launch(); }, 120_000);
     afterAll(async () => { await browser?.close(); });
+
+    for (const { name: designName, width, fluid, html } of designFixtures) {
+      it(`draws the ${designName} across pane resizes and when opened in the reader`, async () => {
+        const page = await open(browser!);
+        try {
+          await page.evaluate((value) => (window as unknown as { rig: DesignRig }).rig.openDesign(value), html);
+          await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
+          let wide = 0;
+          for (const paneWidth of [940, 720, 560, 390, 940]) {
+            await page.evaluate((w) => (window as unknown as { rig: DesignRig }).rig.resizeDesign(w), paneWidth);
+            await expect.poll(async () => {
+              const m = await paintedDesign(page);
+              return Math.abs(m.frame - m.sheet);
+            }).toBeLessThanOrEqual(3);
+            await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+            const m = await paintedDesign(page);
+            const room = m.frame - 2 * m.inset;
+            if (paneWidth === 940) wide = m.drawn;
+            // Never cut: the letter's right edge stays inside the frame, its left edge too; only a letter already
+            // shrunk to the smallest readable scale may reach past it.
+            expect(m.left).toBeGreaterThanOrEqual(-1);
+            if (m.scale > MIN_FIT_SCALE + 0.001) expect(m.right).toBeLessThanOrEqual(m.frame + 1);
+            else expect(m.right).toBeLessThanOrEqual(m.frame + 0.02 * width);
+            if (fluid || width <= room) {
+              // It fits: drawn at its own width, never a narrow column.
+              expect(m.drawn).toBeGreaterThanOrEqual(Math.min(width, room) - 3);
+              expect(m.scale).toBeCloseTo(1, 2);
+            } else if (m.frame >= REFLOW_BELOW_PX) {
+              // Wider than the pane: laid out at its own width and scaled down evenly to the pane.
+              expect(m.layout).toBe(width);
+              expect(m.scale).toBeLessThan(1);
+              expect(m.reflow).toBeNull();
+              expect(m.drawn).toBeGreaterThanOrEqual(room - 3);
+            } else {
+              // A pane narrower than a reading column lays the letter out at the column instead.
+              // (WebKit keeps a table wider than `max-width`; it is then fitted as in a wide column.)
+              expect(m.reflow).toBe("column");
+              expect(m.drawn).toBeGreaterThanOrEqual(room * 0.9);
+            }
+          }
+          await page.evaluate(() => (window as unknown as { rig: DesignRig }).rig.showDesign(false, false));
+          await page.locator(".oh-message-clip[data-shut]").waitFor({ state: "attached" });
+          // A shut card's letter is as wide as the card, not a narrow cut column.
+          await expect.poll(async () => {
+            const m = await paintedDesign(page);
+            return Math.abs(m.frame - m.sheet);
+          }).toBeLessThanOrEqual(3);
+          await page.evaluate(() => (window as unknown as { rig: DesignRig }).rig.showDesign(true, true));
+          await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
+          const designWidth = fluid ? width : wide;
+          await expect.poll(async () => Math.abs((await paintedDesign(page)).drawn - designWidth)).toBeLessThanOrEqual(1);
+          if (!fluid && width > 390) {
+            for (const paneWidth of [560, 390, 940]) {
+              await page.evaluate((w) => (window as unknown as { rig: DesignRig }).rig.resizeDesign(w), paneWidth);
+              await expect.poll(async () => {
+                const m = await paintedDesign(page);
+                return {
+                  layout: m.layout,
+                  leftInFrame: m.left >= -1,
+                  scaled: m.scale < 0.999,
+                  fitted: m.right <= m.frame + 1 || Math.abs(m.scale - MIN_FIT_SCALE) < 0.0001,
+                };
+              }).toEqual({ layout: width, leftInFrame: true, scaled: paneWidth < width, fitted: true });
+              const m = await paintedDesign(page);
+              if (m.right > m.frame + 1) {
+                expect(m.scale).toBeCloseTo(MIN_FIT_SCALE, 4);
+                await expectSidewaysAccess(page);
+              } else {
+                expect(m.scale).toBeGreaterThanOrEqual(MIN_FIT_SCALE - 0.0001);
+              }
+            }
+          }
+        } finally {
+          await page.context().close();
+        }
+      }, 15_000);
+    }
+
+    async function openNarrow(page: Page, html: string, preview: boolean) {
+      await page.evaluate(({ value, preview }) => {
+        const rig = (window as unknown as { rig: DesignRig }).rig;
+        if (preview) rig.openPreview(value);
+        else {
+          rig.openDesign(value);
+          rig.resizeDesign(390);
+          rig.showDesign(true, true);
+        }
+      }, { value: html, preview });
+      await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
+    }
+
+    async function expectSidewaysAccess(page: Page) {
+      const reached = await page.evaluate(() => {
+        const doc = document.querySelector<HTMLIFrameElement>(".mb-frame")!.contentDocument!;
+        const root = doc.documentElement;
+        const frame = doc.defaultView!;
+        const table = doc.querySelector(".canvas")!;
+        const position = getComputedStyle(root);
+        const overflow = position.overflowX;
+        const right = table.getBoundingClientRect().right;
+        frame.scrollTo(Math.ceil(right - root.clientWidth) + 1, 0);
+        return { overflow, scroll: frame.scrollX, right: table.getBoundingClientRect().right, width: root.clientWidth };
+      });
+      expect(["auto", "scroll", "visible"]).toContain(reached.overflow);
+      expect(reached.scroll).toBeGreaterThan(0);
+      expect(reached.right).toBeLessThanOrEqual(reached.width + 1);
+    }
+
+    for (const preview of [false, true]) {
+      const surface = preview ? "phone News preview" : "full reader";
+      for (const width of [640, 760]) {
+        it(`keeps a ${width}px newsletter readable at 390px in the ${surface}`, async () => {
+          const page = await open(browser!);
+          try {
+            await openNarrow(page, `<table class="canvas" width="${width}"><tr><td>Weekend edition</td></tr></table>`, preview);
+            const m = await paintedDesign(page);
+            expect(m.layout).toBe(width);
+            expect(m.scale).toBeCloseTo(MIN_FIT_SCALE, 4);
+            if (m.right > m.frame + 1) await expectSidewaysAccess(page);
+          } finally {
+            await page.context().close();
+          }
+        });
+      }
+
+      it(`scrolls a long data cell at full size in the ${surface}`, async () => {
+        const page = await open(browser!);
+        try {
+          const html = '<table class="canvas" width="100%" style="max-width:600px"><tr>' +
+            '<td style="white-space:nowrap">' + "M".repeat(80) + '</td></tr></table>';
+          await openNarrow(page, html, preview);
+          const m = await paintedDesign(page);
+          expect(m.reflow).toBe("1");
+          expect(m.scaled).toBe(false);
+          expect(m.scale).toBeCloseTo(1, 3);
+          await expectSidewaysAccess(page);
+        } finally {
+          await page.context().close();
+        }
+      });
+    }
+
+    it("refits an already measured newsletter when a late font widens its row", async () => {
+      const page = await open(browser!);
+      try {
+        const html = '<table class="canvas" width="600"><tr><td><span style="white-space:nowrap;font:20px/24px Late, Arial">' +
+          "i".repeat(60) + '</span></td></tr></table>';
+        await page.evaluate((value) => {
+          const rig = (window as unknown as { rig: DesignRig }).rig;
+          rig.openDesign(value);
+          rig.resizeDesign(560);
+          rig.showDesign(true, true);
+        }, html);
+        await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
+        const before = await paintedDesign(page);
+        expect(before.layout).toBe(600);
+        const font = readFileSync(join(ROOT, "packages/tokens/fonts/jetbrains-latin.woff2")).toString("base64");
+        await page.evaluate(async (base64) => {
+          const doc = document.querySelector<HTMLIFrameElement>(".mb-frame")!.contentDocument!;
+          const sheet = doc.createElement("style");
+          sheet.textContent = `@font-face { font-family: Late; src: url(data:font/woff2;base64,${base64}); }`;
+          doc.head.appendChild(sheet);
+          await doc.fonts.load("20px Late", "i");
+        }, font);
+        await expect.poll(async () => (await paintedDesign(page)).layout).toBeGreaterThan(before.layout + 100);
+        await expect.poll(async () => (await paintedDesign(page)).scale).toBeLessThan(before.scale - 0.1);
+        const after = await paintedDesign(page);
+        expect(after.scale).toBeGreaterThanOrEqual(MIN_FIT_SCALE - 0.0001);
+        expect(after.right).toBeLessThanOrEqual(after.frame + 1);
+      } finally {
+        await page.context().close();
+      }
+    });
+
+    it.each([false, true])("keeps the text below a late width-only picture on the reading line (embedded: %s)", async (embedded) => {
+      const release = Promise.withResolvers<void>();
+      const page = await open(browser!, { asked: 0, now: 0, most: 0, release: release.promise });
+      try {
+        const src = embedded ? "cid:issue-cover" : "https://pictures.example.test/edition-held.png";
+        const html = '<table width="600" cellspacing="0" cellpadding="0">' +
+          '<tr><td style="height:400px">Before the picture</td></tr>' +
+          `<tr><td><img src="${src}" width="600" alt="Cover"></td></tr>` +
+          '<tr><td style="height:50px;text-align:center"><p class="reading-text">The line being read</p></td></tr>' +
+          '<tr><td style="height:1000px">After the line</td></tr></table>';
+        await page.evaluate((value) => (window as unknown as { rig: DesignRig }).rig.openAnchored(value), html);
+        await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
+        const photo = page.frameLocator(".mb-frame").getByRole("img", { name: "Cover" });
+        if (!embedded) {
+          await expect.poll(() => photo.evaluate((img: HTMLImageElement) => img.src.includes("/api/img"))).toBe(true);
+        }
+        const line = page.frameLocator(".mb-frame").locator(".reading-text");
+        await page.evaluate(() => {
+          const frame = document.querySelector<HTMLIFrameElement>(".mb-frame")!;
+          const text = frame.contentDocument!.querySelector(".reading-text")!;
+          frame.closest(".read-col")!.scrollTop += frame.getBoundingClientRect().top + text.getBoundingClientRect().top - 12;
+        });
+        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        const top = async () => (await line.boundingBox())!.y;
+        const before = await top();
+        expect(Math.abs(before - 12)).toBeLessThanOrEqual(1);
+        const frame = page.locator(".mb-frame");
+        const height = (await frame.boundingBox())!.height;
+        if (embedded) {
+          await page.evaluate((data) => (window as unknown as { rig: DesignRig }).rig.deliverPicture(data),
+            `data:image/png;base64,${PNG.toString("base64")}`);
+        } else {
+          release.resolve();
+        }
+        await expect.poll(() => photo.evaluate((img: HTMLImageElement) => img.naturalHeight)).toBe(8);
+        await expect.poll(async () => (await frame.boundingBox())!.height).toBeGreaterThan(height + 50);
+        expect(Math.abs(await top() - before)).toBeLessThanOrEqual(2);
+      } finally {
+        release.resolve();
+        await page.context().close();
+      }
+    });
+
+    it.each([
+      { width: 940, thread: false, positionApi: false },
+      { width: 390, thread: false, positionApi: false },
+      { width: 940, thread: true, positionApi: false },
+      { width: 390, thread: true, positionApi: false },
+      { width: 390, thread: false, positionApi: true },
+    ])("holds text below a picture at $width px (thread: $thread, position API: $positionApi)", async (fixture) => {
+      const release = Promise.withResolvers<void>();
+      const page = await open(browser!, { asked: 0, now: 0, most: 0, release: release.promise });
+      try {
+        const html = '<table width="600" cellspacing="0" cellpadding="0">' +
+          '<tr><td style="height:400px">Before the picture</td></tr>' +
+          '<tr><td><img src="https://pictures.example.test/cover-held.png" width="600" alt="Cover"></td></tr>' +
+          '<tr><td style="text-align:center"><span class="reading-text">The first line after the cover</span></td></tr>' +
+          '<tr><td style="height:1000px">After the line</td></tr></table>';
+        await page.evaluate(({ html, width, thread }) => {
+          (window as unknown as { rig: DesignRig }).rig.openAnchored(html, width, thread);
+        }, { html, ...fixture });
+        await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
+        const photo = page.frameLocator(".mb-frame").getByRole("img", { name: "Cover" });
+        await expect.poll(() => photo.evaluate((img: HTMLImageElement) => img.src.includes("/api/img"))).toBe(true);
+        await page.evaluate(({ positionApi }) => {
+          const frame = document.querySelector<HTMLIFrameElement>(".mb-frame")!;
+          const doc = frame.contentDocument!;
+          if (positionApi) {
+            const getRange = doc.caretRangeFromPoint.bind(doc);
+            Object.defineProperties(doc, {
+              caretRangeFromPoint: { value: undefined },
+              caretPositionFromPoint: { value: (x: number, y: number) => {
+                const range = getRange(x, y);
+                return range && { offsetNode: range.startContainer, offset: range.startOffset };
+              } },
+            });
+          }
+          const target = doc.querySelector(positionApi ? ".reading-text" : 'img[alt="Cover"]')!;
+          const { top, height } = target.getBoundingClientRect();
+          frame.closest(".read-col")!.scrollTop += frame.getBoundingClientRect().top + top + height / 2 - 14;
+        }, fixture);
+        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        const cover = (await photo.boundingBox())!;
+        const line = page.frameLocator(".mb-frame").locator(".reading-text");
+        const before = (await line.boundingBox())!.y;
+        if (!fixture.positionApi) {
+          expect(cover.y).toBeLessThan(14);
+          expect(cover.y + cover.height).toBeGreaterThan(14);
+          expect(before).toBeGreaterThan(14);
+        }
+        const height = (await page.locator(".mb-frame").boundingBox())!.height;
+        release.resolve();
+        await expect.poll(async () => (await page.locator(".mb-frame").boundingBox())!.height).toBeGreaterThan(height + 50);
+        expect(Math.abs((await line.boundingBox())!.y - before)).toBeLessThanOrEqual(2);
+      } finally {
+        release.resolve();
+        await page.context().close();
+      }
+    });
+
+    it("captures the reading anchor once after a burst of scroll events", async () => {
+      const page = await open(browser!);
+      try {
+        await page.evaluate(() => {
+          const rig = (window as unknown as { rig: DesignRig }).rig;
+          rig.openAnchored('<table width="600"><tr><td style="text-align:center">' +
+            '<p style="font-size:24px">A line of the edition</p>'.repeat(60) + '</td></tr></table>');
+        });
+        await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
+        const hits = await page.evaluate(async () => {
+          const frame = document.querySelector<HTMLIFrameElement>(".mb-frame")!;
+          const doc = frame.contentDocument!;
+          const scroller = frame.closest<HTMLElement>(".read-col")!;
+          const line = doc.querySelectorAll("p")[10]!;
+          scroller.scrollTop += frame.getBoundingClientRect().top + line.getBoundingClientRect().top - 8;
+          const nextFrame = () => new Promise<void>((done) => requestAnimationFrame(() => done()));
+          await nextFrame();
+          await nextFrame();
+          const getRange = doc.caretRangeFromPoint.bind(doc);
+          let calls = 0;
+          doc.caretRangeFromPoint = (x, y) => { calls++; return getRange(x, y); };
+          for (let i = 0; i < 8; i++) {
+            scroller.scrollTop += 1;
+            scroller.dispatchEvent(new Event("scroll"));
+          }
+          const duringScroll = calls;
+          await nextFrame();
+          return { duringScroll, afterFrame: calls };
+        });
+        expect(hits).toEqual({ duringScroll: 0, afterFrame: 1 });
+      } finally {
+        await page.context().close();
+      }
+    });
+
+    it.each([false, true])("bounds caret lookups in a pane full of pictures (frames throttled: %s)", async (throttled) => {
+      const page = await open(browser!);
+      try {
+        const picture = `<img src="data:image/png;base64,${PNG.toString("base64")}" width="200" height="16" alt="Photo">`;
+        const html = '<table width="600" cellspacing="0" cellpadding="0">' +
+          `<tr><td style="text-align:center">${(picture + "<br>").repeat(60)}</td></tr></table>`;
+        await page.evaluate((html) => (window as unknown as { rig: DesignRig }).rig.openAnchored(html), html);
+        await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
+        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        const result = await page.evaluate(async (throttled) => {
+          const frame = document.querySelector<HTMLIFrameElement>(".mb-frame")!;
+          const doc = frame.contentDocument!;
+          const scroller = frame.closest<HTMLElement>(".read-col")!;
+          const getRange = doc.caretRangeFromPoint.bind(doc);
+          const probes: number[] = [];
+          doc.caretRangeFromPoint = (x, y) => {
+            probes.push(y);
+            return getRange(x, y);
+          };
+          if (throttled) window.requestAnimationFrame = () => 0;
+          scroller.scrollTop = 100;
+          scroller.dispatchEvent(new Event("scroll"));
+          if (throttled) await new Promise((done) => setTimeout(done, 48));
+          else await new Promise((done) => requestAnimationFrame(() => done(undefined)));
+          return { scroll: scroller.scrollTop, probes };
+        }, throttled);
+        expect(result.scroll).toBe(100);
+        expect(result.probes.length).toBeGreaterThan(0);
+        expect(result.probes.length).toBeLessThanOrEqual(12);
+      } finally {
+        await page.context().close();
+      }
+    });
+
+    it("leaves a hand scroll where it lands while a list press is still pending", async () => {
+      const page = await open(browser!);
+      try {
+        const html = '<table width="600"><tr><td style="height:900px">The long edition</td></tr></table>';
+        await page.evaluate((html) => (window as unknown as { rig: DesignRig }).rig.openPendingPress(html), html);
+        await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
+        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        const result = await page.evaluate(async () => {
+          const scroller = document.querySelector<HTMLElement>(".read-col")!;
+          const rig = (window as unknown as { rig: DesignRig }).rig;
+          Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 0 });
+          const pending = rig.pressEarlier();
+          Reflect.deleteProperty(scroller, "clientHeight");
+          scroller.style.setProperty("--oh-thread-landing-room", "30px");
+          scroller.scrollTop = 240;
+          const handTop = scroller.scrollTop;
+          scroller.dispatchEvent(new Event("scroll"));
+          await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+          const afterScroll = scroller.scrollTop;
+          window.dispatchEvent(new Event("resize"));
+          await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+          return { pending, handTop, afterScroll, afterMeasure: scroller.scrollTop };
+        });
+        expect(result.pending).toBe("earlier");
+        expect(result.handTop).toBeGreaterThan(0);
+        expect(result.afterScroll).toBe(result.handTop);
+        expect(result.afterMeasure).toBe(0);
+      } finally {
+        await page.context().close();
+      }
+    });
+
+    it("holds the letter top when a picture fills the rest of the reading pane", async () => {
+      const page = await open(browser!);
+      const errors: Error[] = [];
+      page.on("pageerror", (error) => errors.push(error));
+      try {
+        const html = '<table width="600" cellspacing="0" cellpadding="0">' +
+          `<tr><td><img src="data:image/png;base64,${PNG.toString("base64")}" width="600" height="1000" alt="Cover"></td></tr>` +
+          '<tr><td>The line after the cover</td></tr></table>';
+        await page.evaluate((html) => (window as unknown as { rig: DesignRig }).rig.openAnchored(html, 940, true), html);
+        await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
+        const photo = page.frameLocator(".mb-frame").getByRole("img", { name: "Cover" });
+        await photo.evaluate((img) => {
+          const frame = img.ownerDocument.defaultView!.frameElement!;
+          const scroller = frame.closest<HTMLElement>(".read-col")!;
+          scroller.scrollTop += frame.getBoundingClientRect().top + img.getBoundingClientRect().top + 80;
+        });
+        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        const cover = (await photo.boundingBox())!;
+        const pane = (await page.locator(".read-col").boundingBox())!;
+        expect(cover.y).toBeLessThan(pane.y + 14);
+        expect(cover.y + cover.height).toBeGreaterThan(pane.y + pane.height);
+        const letter = page.locator("[data-conv-id=open]");
+        const before = (await letter.boundingBox())!.y;
+        const earlier = page.locator("[data-conv-id=earlier]");
+        const height = (await earlier.boundingBox())!.height;
+        await earlier.evaluate((element, height) => { element.style.height = `${height + 100}px`; }, height);
+        expect((await earlier.boundingBox())!.height).toBeCloseTo(height + 100);
+        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        expect(Math.abs((await letter.boundingBox())!.y - before)).toBeLessThanOrEqual(2);
+        expect(errors).toEqual([]);
+      } finally {
+        await page.context().close();
+      }
+    });
 
     for (const pictures of [0, 1])
       it(`a framed letter of ~8000px (${pictures} late picture${pictures === 1 ? "" : "s"}) is read by its top once measured and in view for the dwell, once, its end never shown`, async () => {

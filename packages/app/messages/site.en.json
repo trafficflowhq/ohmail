@@ -138,8 +138,8 @@
     "unchanged": "unchanged",
     "pointGradTitle": "Patterns graduate into rules",
     "pointGrad": "Decide the same way three times and ohmail asks to make it a rule. You approve it once — from then on it runs deterministically, with no AI at all.",
-    "pointOtpTitle": "Codes are sacred",
-    "pointOtp": "When mail carries a verification code or login link, that code is stripped before anything reaches AI, and the mail is never forwarded and never routed automatically — structurally, with no setting to turn it off. You always see the message in full; only what a model would read is stripped.",
+    "pointOtpTitle": "Read verification codes in full",
+    "pointOtp": "Verification mail is visible in full in your reader. Forwarding protection applies to messages that ohmail identifies as sensitive.",
     "pointByoTitle": "Your key, your machine — or ours",
     "pointByo": "On the desktop app your mail stays on your machine, with no ohmail server in the loop — and its AI, if you want one, is your own API key or a local model, set in the app; the bill is yours. On Cloud: a monthly bag of AI credits is included, and mail keeps flowing rules-only when it runs out.",
     "illusRules": "Rules · most mail",
@@ -388,7 +388,7 @@
     "cloudCost": "From $9 a month, 14 days free.",
     "same": "Cloud is self-hosting, done for you: the same open server, the same organizer, the same mailbox as the master. What changes is whose machine holds the copy — and that we bill for running it.",
     "honest": "The fine print for Cloud: it is not end-to-end encrypted. The service reads mail to file and search it, and a small number of people with production database access could technically read it. Never sold, never mined, never used for anything but serving you.",
-    "aiNote": "AI on Cloud goes to Anthropic under commercial API terms: your mail is never used to train models, and requests are retained only briefly (currently up to 30 days); there is no zero-retention agreement yet. On every tier, a credential inside a message — a code, a login link, a reset token — is stripped before a request is built, and automatic routing skips that mail entirely. Structural, not a setting."
+    "aiNote": "AI on Cloud goes to Anthropic under commercial API terms: your mail is never used to train models, and requests are retained only briefly (currently up to 30 days); there is no zero-retention agreement yet."
   },
   "folders": {
     "title": "This is what your IMAP looks like.",

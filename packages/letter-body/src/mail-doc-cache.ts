@@ -44,6 +44,7 @@ export interface MailDocInputs {
   /** A marked link asks in a tab of its own, so it carries no `href` (`link-ask.ts`). */
   askInPage: boolean;
   reader?: boolean;
+  fitDesign?: boolean;
   settledCids?: ReadonlySet<string>;
   /**
    * The frame's width: not in the key, because most letters read alike at every width. An entry holds the
@@ -119,6 +120,7 @@ function keyOf(i: CacheInputs): string {
     i.forward ? "f" : "-",
     i.askInPage ? "a" : "-",
     i.reader ? "r" : "-",
+    i.fitDesign ? "fit" : "-",
     serialOf(i.settledCids),
   ].join("\u0000");
 }

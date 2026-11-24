@@ -324,7 +324,7 @@ export function useDraftReply(opts: {
 
 /**
  * The server's own sentence — or an honest one when the server did not give one. Every refusal on this path was
- * written to be read: "no AI credits remain on this account" (402), "cannot AI-draft a sensitive message" (422),
+ * written to be read: "no AI credits remain on this account" (402),
  * "this deployment has no AI drafter connected" (503) — passed through verbatim. An unhandled fault is not one of
  * them: a 500's envelope is `{"error":{"code":"internal","message":"internal error"}}`, and quoting it puts "internal
  * error" in front of a person as though the app were explaining itself — which this surface did while `GET

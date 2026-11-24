@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import type { EngineMutation } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -798,6 +798,16 @@ let roots: Root[] = [];
 let host: HTMLDivElement | null = null;
 let dispatched: EngineMutation[] = [];
 const REAL_MUTATE = OhmailEngine.prototype.mutate;
+
+/*
+ * THE SHELL'S MODULE GRAPH, ONCE, before any case. Imported inside `mountShell` it landed in the first
+ * case: cold, that is the whole webapp transformed and evaluated, about 10 s of a busy runner's 15 s.
+ * Past 15 s that case timed out with its act() still open, and every later case that presses Send or
+ * opens a reply found React's work queued behind it and never run.
+ */
+beforeAll(async () => {
+  await Promise.all([import("./_todays-shell.js"), import("@ohmail/ui")]);
+}, 120_000);
 
 beforeEach(() => {
   dispatched = [];

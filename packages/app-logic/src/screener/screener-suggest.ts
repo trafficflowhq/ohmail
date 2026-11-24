@@ -85,15 +85,7 @@ export interface SenderSuggestion {
   reasonCount?: number;
 }
 
-/**
- * The skip reasons a ROW can show — every one except `not_held` and `no_auto_ai`.
- *
- * Narrowed rather than reusing the wire enum whole, because `not_held` means the sender has left
- * the gate, so there is no row on screen to put it on; and `no_auto_ai` answers only the unpressed
- * batch, while the row speaks from the mirror's own `no_ai` flag (`noSuggestionReason`). Naming
- * both in the type is what stops a later change quietly rendering a chip nothing should carry.
- */
-export type SuggestSkipShown = Exclude<ScreenerSkipReason, "not_held" | "no_auto_ai">;
+export type SuggestSkipShown = Exclude<ScreenerSkipReason, "not_held" | "attempts_exhausted">;
 
 /** Suggestions known so far, keyed by {@link senderKey}. */
 export type SuggestionOverlay = ReadonlyMap<string, SenderSuggestion>;
@@ -472,9 +464,8 @@ export const HYDRATE_DEBOUNCE_MS = 10_000;
  */
 export const AUTO_BATCH_SIZE = 10;
 
-/** The next automatic batch: the queue's front, past the senders held out of automatic AI. */
-function autoBatchOf(queue: readonly string[], heldOut: ReadonlySet<string>): string[] {
-  return queue.filter((a) => !heldOut.has(senderKey(a))).slice(0, AUTO_BATCH_SIZE);
+function autoBatchOf(queue: readonly string[]): string[] {
+  return queue.slice(0, AUTO_BATCH_SIZE);
 }
 
 /* The spend announcement. A purchase changes a number OTHER surfaces show —
@@ -723,13 +714,6 @@ export function useScreenerSuggestions(opts: {
      * independent keys; neither result may discard the other.
      */
     autoRun: 0,
-    /**
-     * SENDERS THE SERVER ANSWERED `no_auto_ai`, by {@link senderKey} — held out of every later
-     * automatic batch and opt-in quote for this mount. Without it they stay unsuggested at the front
-     * of the queue and each visit's batch re-posts them: ten of them and it never buys again. The
-     * server's verdict remembered, not a second rule; a press still asks about them.
-     */
-    autoHeldOut: new Set<string>(),
   });
 
   useEffect(() => {
@@ -999,7 +983,7 @@ export function useScreenerSuggestions(opts: {
     if (!autoSuggest || !canRequest(permissionVersion, true) || !link.current.wire.configured()) return;
     if (!hydrateSettled) return;
     if (io.current.autoFired || io.current.autoDisarmed) return;
-    const set = autoBatchOf(io.current.queue, io.current.autoHeldOut);
+    const set = autoBatchOf(io.current.queue);
     if (set.length === 0) return;
     // LATCHED BEFORE THE AWAIT. Set after it, two effect passes racing each other both read
     // false and both buy — and the second batch is money nobody asked for.
@@ -1011,8 +995,6 @@ export function useScreenerSuggestions(opts: {
     flying(setInFlight, set, true);
     void (async () => {
       try {
-        // `automatic`: NOBODY PRESSED THIS, and the server holds it to the automatic rule — a sender
-        // whose mail is kept out of automatic AI comes back `no_auto_ai`, unasked and uncharged.
         const maySend = () => link.current.active && io.current.autoRun === run && canRequest(permissionVersion, true);
         const idempotencyKey = newKey();
         const res = await suggestWithBackoff(
@@ -1020,10 +1002,6 @@ export function useScreenerSuggestions(opts: {
           maySend,
         )
           .finally(() => flying(setInFlight, set, false));
-        // Remembered even from a stale answer: the verdict is about the sender, not this run.
-        for (const s of res.skipped) {
-          if (s.reason === "no_auto_ai") io.current.autoHeldOut.add(senderKey(s.sender));
-        }
         if (io.current.autoRun !== run) return;
         merge([
           ...res.suggestions.map((s) => ({ address: s.sender, suggestion: toSuggestion(s) })),
@@ -1494,7 +1472,7 @@ export function useScreenerSuggestions(opts: {
       if (!canRequest(permissionVersion)) return;
       io.current.optInPermission = permissionVersion;
       // The batch's own set and the batch's own rule, so the quote prices exactly what it buys.
-      const set = autoBatchOf(addresses, io.current.autoHeldOut);
+      const set = autoBatchOf(addresses);
       // NOTHING TO BUY IS ANSWERED LOCALLY, not by the server. `parseSenderSet` 400s on an empty
       // list, so asking would turn "your Screener is empty" into "that setting did not save".
       // The setting is still turnable on from here — an empty queue today says nothing about the
@@ -1643,9 +1621,8 @@ export function toSuggestion(a: {
 /**
  * The senders a run could not answer for, as overlay entries.
  *
- * `not_held` is deliberately absent: that sender is no longer at the gate, so their row is not on
- * screen to carry a chip. So is `no_auto_ai` — see {@link SuggestSkipShown}. Every other reason
- * describes a row the person is still looking at.
+ * `not_held` has no row to carry a chip. `attempts_exhausted` applies to one message,
+ * so it does not become part of the sender's overlay.
  */
 /**
  * THE SENDERS A STOPPED RUN NEVER REACHED — the reason, on their own rows.
@@ -1677,7 +1654,7 @@ export function toStopped(
 
 export function toSkips(skipped: Array<{ sender: string; reason: ScreenerSkipReason }>) {
   return skipped
-    .filter((s) => s.reason !== "not_held" && s.reason !== "no_auto_ai")
+    .filter((s) => s.reason !== "not_held" && s.reason !== "attempts_exhausted")
     .map((s) => ({
       address: s.sender,
       suggestion: {

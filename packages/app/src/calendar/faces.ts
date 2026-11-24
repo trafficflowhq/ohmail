@@ -14,6 +14,8 @@ export interface CalendarEventFace extends CalendarEventView {
   readonly conflict?: boolean;
   readonly retryWriteId?: string;
   readonly invitation?: import("../reader/InvitationLetterCard.js").InvitationLetterProps;
+  /** The account's own answer to this day, where it gave one; `apart`: a day of a series answered otherwise than the series. */
+  readonly said?: { readonly answer: "accepted" | "tentative" | "declined"; readonly apart: boolean };
 }
 
 export interface FaceWords {
@@ -28,6 +30,12 @@ function stateOf(o: ShownOccurrence): CalendarEventView["state"] {
   if (o.record.myAnswer === "none") return "to-answer";
   if (o.record.status === "tentative" || o.record.myAnswer === "tentative") return "maybe";
   return "plain";
+}
+
+function saidOf(o: ShownOccurrence): Pick<CalendarEventFace, "said"> {
+  const answer = o.record.myAnswer;
+  if (answer !== "accepted" && answer !== "tentative" && answer !== "declined") return {};
+  return { said: { answer, apart: o.series !== null && o.key !== null && o.series.myAnswer !== answer } };
 }
 
 export function faceOf(
@@ -92,6 +100,7 @@ export function faceOf(
       (canEditRecord(o.record, connection, own, o.calendar.access, o.series) ||
         (proposals && canProposeRecord(o.record, own))),
     waits: o.record.myAnswer === "none",
+    ...saidOf(o),
     status,
     ...(conflict
       ? { conflict }

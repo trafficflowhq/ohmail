@@ -134,7 +134,7 @@ export type TriageState = Exclude<WireTriageState, "resurfaced">;
  * to blank mail flagged sensitive; that is removed: the mail already sits
  * in full on the person's own server, so hiding the app's copy only hid it
  * from the one person entitled to read it, and the detector over-fired on
- * ordinary mail. Sensitivity is still a label (kept out of automatic AI),
+ * ordinary mail. Sensitivity is still a label,
  * but it no longer withholds the body. The predicate stays as a single
  * named seam — its callers gate body fetch, search indexing and the body
  * cache — a constant `false` on purpose.

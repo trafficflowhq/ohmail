@@ -5,7 +5,7 @@ import {
   resolveCutline, onServerPool, senderIsActiveSql, heldSenderKeysSql, heldArrivedInsideSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
   notGoneSql, readGoneMailboxIds,
   screenerAttemptKey, storeScreenerSuggestion,
-  screenerSuggestedSenderExists, hasScreenerSuggestionForSender, automaticAiAdmits, screenerSuggestionExhausted,
+  screenerSuggestedSenderExists, hasScreenerSuggestionForSender, screenerSuggestionExhausted,
   screenerSuggestionRetryDue, recordScreenerSuggestionRetry,
   decisionCanBeApplied, readAccountSettings, readRequestEligibility, reverseCharge, suggestionConsentGate, ModelConsentWithdrawn,
   type AccessPort, type AiUsageLine, type RefundObligationPort, type RefundObligationReason, type ReverseChargeFact, type SpendPort,
@@ -15,7 +15,7 @@ import { screenerUsageHook, type UsageHook } from "./ai-usage-line.js";
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import { correspondentsAmong } from "@trafficflow/core/adapters/drizzle-repo";
 import {
-  askScreeningQuestion, capSuggestion, ModelDeclinedError, SensitivePayloadRefusal, senderCheckAll, senderFacts,
+  askScreeningQuestion, capSuggestion, ModelDeclinedError, senderCheckAll, senderFacts,
   silentLogger,
   type ClassifierPort, type Logger, type SenderSignals,
 } from "@trafficflow/core/mail";
@@ -27,8 +27,7 @@ import {
  * never `pending_approval`/`approved`), so every sender still waits for a human. Four spend bounds: ONE
  * PURCHASE PER SENDER; the WATERMARK `account_settings.auto_suggest_at` (only senders ingested after
  * opt-in); the per-cycle cap {@link AUTO_SUGGEST_BATCH}; and `spend()` (never `tryDebit`) BEFORE the
- * model, first refusal stops the pass. Flagged mail (`no_ai`/`sensitivity_category`, `sensitive.ts`) is
- * excluded, unlike the pressed `ScreenerService.suggest`. Buying is shared across the app boundary
+ * model. A provider fault stops the pass. Buying is shared across the app boundary
  * (`askScreeningQuestion`, `storeScreenerSuggestion`, one ledger `screenerAttemptKey`); `apps/sidecar` runs this same function from its drain tail like `bubbleUpPass`, refused unless the host declares `unmetered`. */
 
 /** Where held first-contact senders wait — the queue this pass reads and never writes. */
@@ -443,23 +442,11 @@ export async function screenerAutoSuggestPass(
         });
       } catch (err) {
         if (err instanceof ModelConsentWithdrawn) break;
-        // A DECLINE OR A REFUSAL AT THE SINK SKIPS THIS SENDER AND THE BATCH GOES ON. Each speaks
-        // for one sender's mail, not the endpoint: stopping on it stalled every later held sender
-        // behind the oldest one, each cycle, and kept a charge that bought nothing. The charge comes
-        // back at the door (`drafter_failed`: the call it paid for produced nothing), uncounted, and
-        // the sender is held out for a day unless it writes again; the sink's screen reads the same
-        // bytes the same way, so asking sooner draws the same refusal.
-        if (err instanceof ModelDeclinedError || err instanceof SensitivePayloadRefusal) {
-          if (err instanceof ModelDeclinedError) {
-            log.info("screener_auto_suggest_declined", {
-              accountId, messageId: c.messageId, stopReason: err.stopReason, refusalCategory: err.refusalCategory,
-            });
-          } else {
-            log.warn("screener_auto_suggest_refused_at_sink", {
-              accountId, messageId: c.messageId, refusal: err.screen.reason ?? "unnamed", cooldownMs: DECLINE_COOLDOWN_MS,
-            });
-          }
-          if (err instanceof ModelDeclinedError && err.stopReason === "max_tokens") {
+        if (err instanceof ModelDeclinedError) {
+          log.info("screener_auto_suggest_declined", {
+            accountId, messageId: c.messageId, stopReason: err.stopReason, refusalCategory: err.refusalCategory,
+          });
+          if (err.stopReason === "max_tokens") {
             if (await exhaustIfNeeded(c)) chargedAttempt ??= previousAttempt;
           } else {
             declines.remember(accountId, c.messageId, now.getTime() + DECLINE_COOLDOWN_MS);
@@ -589,8 +576,6 @@ async function selectCandidates(
     createdAt: messages.createdAt,
     // CARRIED SO THE OUTER PREDICATE CAN READ THEM, and read there rather than here — see the
     // sensitivity paragraph below for why filtering inside this `DISTINCT ON` would be a defect.
-    noAi: messages.noAi,
-    sensitivityCategory: messages.sensitivityCategory,
     sortKey: sortKey.as("sort_key"),
     rank: sql<number>`row_number() over (
       partition by ${sender} order by ${sortKey} desc, ${messages.id} desc
@@ -641,10 +626,7 @@ async function selectCandidates(
       // aliases, no user action after opt-in — ten senders a cycle until the balance was gone, at the
       // choosing of anyone who can email the account.
       sql`not ${screenerSuggestedSenderExists(dialect(db), opts.accountId, sql`lower(${reps.fromAddress})`)}`,
-      // (3) THE SENSITIVITY EXCLUSION — a flagged representative is not a candidate. Both columns,
-      // the stricter reading of each, through the ONE predicate the suggest route's automatic batch
-      // reads too (`automaticAiAdmits`); asked before the LIMIT, so the page reaches the senders behind.
-      automaticAiAdmits({ noAi: reps.noAi, sensitivityCategory: reps.sensitivityCategory }),
+      // (3) A representative that exhausted its retries is not bought again.
       sql`not ${screenerSuggestionExhausted(opts.accountId, sql`${reps.messageId}`)}`,
       // (4) THE CUTLINE — the same expression `GET /consent` counts through and `GET /screener`
       // now lists through. Without it this pass bought advice about senders no surface shows,

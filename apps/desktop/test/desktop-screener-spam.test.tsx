@@ -6,6 +6,7 @@ import { act } from "react";
 import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
 import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
+import { SCREENER_ACKNOWLEDGEMENTS, type ScreenerAcknowledgement } from "@trafficflow/core/screener-acknowledgements";
 import { createFeed } from "@ohmail/app/host";
 import { TextProvider } from "@ohmail/app/text";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
@@ -32,6 +33,7 @@ beforeEach(() => {
     disconnect = noop;
   });
   Element.prototype.scrollIntoView ??= noop;
+  Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
   vi.stubGlobal("fetch", async () => { throw new Error("the Desktop fixture only uses its bridge"); });
 });
 afterEach(() => {
@@ -111,15 +113,28 @@ it("Desktop Spam files the inspected mail under its account and sends nothing af
     letter("Later decision", "ohmail/Screener", "Monthly"),
   ]);
   let mailboxId = scope;
+  let accountNow = account;
   let providerConfirms = false;
+  /* The server keeps a confirmation per account, as its settings row does: a yes counts for every mailbox of it. */
+  const acknowledged = new Map<string, number>();
   vi.stubGlobal("__TAURI_INTERNALS__", {
     transformCallback: () => 1,
-    invoke: async (_command: string, payload?: { url?: string }) => {
+    invoke: async (_command: string, payload?: { url?: string; method?: string; body?: number[] }) => {
       const pathname = String(payload?.url).split("?")[0];
+      if (pathname === "/consent/settings" && payload?.method === "PATCH") {
+        const asked = JSON.parse(new TextDecoder().decode(new Uint8Array(payload.body ?? []))) as {
+          acknowledgeScreener?: ScreenerAcknowledgement;
+        };
+        if (asked.acknowledgeScreener) {
+          acknowledged.set(accountNow, (acknowledged.get(accountNow) ?? 0) | SCREENER_ACKNOWLEDGEMENTS[asked.acknowledgeScreener]);
+        }
+      }
       const answer = pathname === "/mailboxes"
         ? { items: [{ id: mailboxId, address: "mailbox@example.invalid", status: "connected", lastSyncAt: ISO,
           organizerRole: "organizer", organizeConsentedAt: ISO, providerConfirms }] }
-        : pathname === "/consent" ? { seedConfirmedAt: ISO, dormancyDays: 60, autoUnsubscribe: false, counts: {} } : {};
+        : pathname === "/consent" ? { seedConfirmedAt: ISO, dormancyDays: 60, autoUnsubscribe: false, counts: {},
+          screenerAcknowledgements: acknowledged.get(accountNow) ?? 0 }
+        : pathname === "/consent/settings" ? { screenerAcknowledgements: acknowledged.get(accountNow) ?? 0 } : {};
       const encode = new TextEncoder();
       const header = encode.encode(JSON.stringify({ status: 200, statusText: "OK", h: [] }));
       const body = encode.encode(JSON.stringify(answer));
@@ -168,6 +183,7 @@ it("Desktop Spam files the inspected mail under its account and sends nothing af
   await pressSpam(/Later decision/);
   expect(filing()).toEqual(beforeSwitch);
   mailboxId = otherScope;
+  accountNow = otherAccount;
   const otherEngine = await engineOver([letter("New account letter", "ohmail/Screener", "Daily", {
     accountId: otherAccount, mailboxId: otherScope,
   })]);
@@ -179,24 +195,32 @@ it("Desktop Spam files the inspected mail under its account and sends nothing af
   expect(filing()).toEqual(beforeSwitch);
 
   providerConfirms = true;
-  async function openConfirmation(scope: string, accountId: string, subject: string) {
+  async function pressSpamOn(scope: string, accountId: string, subject: string) {
     mailboxId = scope;
+    accountNow = accountId;
     const engine = await engineOver([letter(subject, "ohmail/Screener", "Letters", { accountId, mailboxId: scope })]);
     window.history.replaceState(null, "", "/#/screener");
     await act(async () => { mounted.rerender(desktopFrame(desktopProps(engine, scope, accountId))); });
     await act(async () => { await vi.dynamicImportSettled(); });
     await tick(3000);
     await pressSpam(new RegExp(subject));
-    return within(document.body).getByRole("dialog", { name: messages.screener.place.unsub.spam });
   }
+  const confirmation = () => within(document.body).getByRole("dialog", { name: messages.screener.place.unsub.spam });
 
-  const first = within(await openConfirmation("original-mailbox", "shared-account", "First confirmation"));
+  await pressSpamOn("original-mailbox", "shared-account", "First confirmation");
+  const first = within(confirmation());
   expect(first.getByText(/goes from your computer/)).toBeTruthy();
   await act(async () => { first.getByRole("button", { name: messages.screening.unsubCommitMaybe }).click(); });
-  const sameAccount = within(await openConfirmation("replacement-mailbox", "shared-account", "Second confirmation"));
-  expect.soft(sameAccount.queryByText(/goes from your computer/)).toBeNull();
-  expect.soft(sameAccount.queryByRole("button", { name: "Continue" })).not.toBeNull();
+  /* Asked once for this account: Spam on another of its mailboxes files at once, and the note does not show again. */
+  writes.length = 0;
+  await pressSpamOn("replacement-mailbox", "shared-account", "Second confirmation");
+  expect(within(document.body).queryByRole("dialog")).toBeNull();
+  expect(within(document.body).queryByText(/goes from your computer/)).toBeNull();
+  await tick(COMMIT_MS + 300);
+  expect(filing()).toContainEqual(expect.objectContaining({
+    kind: "screener_decide", senderId: "Second confirmation", decision: "no", dest: "spam",
+  }));
 
-  const other = within(await openConfirmation("third-mailbox", "third-account", "Third confirmation"));
-  expect(other.getByText(/goes from your computer/)).toBeTruthy();
+  await pressSpamOn("third-mailbox", "third-account", "Third confirmation");
+  expect(within(confirmation()).getByText(/goes from your computer/)).toBeTruthy();
 });

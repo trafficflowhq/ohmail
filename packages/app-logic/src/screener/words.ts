@@ -53,7 +53,7 @@ export function suggestionWords(sender: ScreenerSenderDTO, why: NoAdvice): Sugge
   const badge = ai?.noAnswer ? "aiNoAnswerChip" : ai?.dest === "screener" ? "aiHoldChip" : null;
   const lines: WordsLine[] = [];
   if (!ai) {
-    const reason = noSuggestionReason(sender, why.standing, why.inFlight.has(senderKey(sender.from.address)));
+    const reason = noSuggestionReason(why.standing, why.inFlight.has(senderKey(sender.from.address)));
     const key = noSuggestionKey(reason, why.standing, why.subscriptionPane);
     if (key !== null) lines.push({ key });
   }

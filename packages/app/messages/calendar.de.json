@@ -37,12 +37,13 @@
         "rule": "Wiederholungsregel {rule}",
         "weekdays": "Jeden Werktag",
         "ordinal": "{order, select, first {ersten} second {zweiten} third {dritten} fourth {vierten} last {letzten} fromEnd {{count}. von hinten gezählten} other {{count}.}}",
-        "monthlyDate": "Jeden Monat am {day}.",
-        "monthlyWeekday": "Jeden Monat am {ordinal} {weekday}",
+        "monthlyDate": "{count, plural, one {Jeden Monat} other {Alle # Monate}} am {day}.",
+        "monthlyWeekday": "{count, plural, one {Jeden Monat} other {Alle # Monate}} am {ordinal} {weekday}",
         "yearlyDate": "Jedes Jahr am {date}",
         "yearlyWeekday": "Jedes Jahr am {ordinal} {weekday} im {month}"
       },
-      "moveWhen": "Auf {when} verschieben"
+      "moveWhen": "Auf {when} verschieben",
+      "changeAnswer": "Deine Antwort auf {answer} ändern"
     },
     "draft": {
       "discarded": "Verworfen",
@@ -223,6 +224,8 @@
     "closeAgenda": "Terminliste schließen",
     "toAnswer": "zu beantworten",
     "stepBefore": "{unit, select, month {Der vorige Monat} year {Das vorige Jahr} week {Die vorige Woche} other {Der vorige Tag}}",
-    "stepAfter": "{unit, select, month {Der nächste Monat} year {Das nächste Jahr} week {Die nächste Woche} other {Der nächste Tag}}"
+    "stepAfter": "{unit, select, month {Der nächste Monat} year {Das nächste Jahr} week {Die nächste Woche} other {Der nächste Tag}}",
+    "said": "{answer, select, accepted {du hast zugesagt} tentative {du hast vielleicht gesagt} other {du hast abgesagt}}",
+    "saidOne": "{answer, select, accepted {du hast für diesen Termin zugesagt} tentative {du hast für diesen Termin vielleicht gesagt} other {du hast für diesen Termin abgesagt}}"
   }
 }

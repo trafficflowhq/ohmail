@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/trafficflowhq/ohmail/releases/latest"><img src="https://img.shields.io/badge/download-v2.0.2-F0EBE3?style=flat&amp;labelColor=12100E" alt="Latest release" /></a>
+  <a href="https://github.com/trafficflowhq/ohmail/releases/latest"><img src="https://img.shields.io/badge/download-v2.0.3-F0EBE3?style=flat&amp;labelColor=12100E" alt="Latest release" /></a>
   <a href="https://github.com/trafficflowhq/ohmail/releases"><img src="https://img.shields.io/github/downloads/trafficflowhq/ohmail/total?style=flat&amp;labelColor=12100E&amp;color=F0EBE3" alt="Total downloads across all releases" /></a>
   <a href="https://github.com/trafficflowhq/ohmail"><img src="https://img.shields.io/github/stars/trafficflowhq/ohmail?style=flat&amp;label=%E2%98%85&amp;labelColor=12100E&amp;color=F0EBE3" alt="GitHub stars" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-F0EBE3?style=flat&amp;labelColor=12100E" alt="License: AGPL-3.0" /></a>
@@ -126,7 +126,7 @@ Run the whole stack on your own box with Docker Compose.
 <summary>Also in the box: rules you can read, AI only if you want it, Answer Later, History, Send later, one Undo</summary>
 
 - **Rules you can read.** Every decision is a rule under Settings › Rules that you can change or revoke. Moving a message yourself teaches the rule that filed it.
-- **AI only if you want it.** Standalone Desktop uses your own Anthropic, OpenAI or OpenCode Go key, or a local model through Ollama. Cloud uses its built-in AI and your plan credits; a self-hosted server uses the provider its operator configures. Suggestions and drafts are optional in each mode. Automatic asking and filing are off until enabled; sensitive mail is not filed automatically. Mail containing one-time codes or other authentication material is not sent to a model.
+- **AI only if you want it.** Standalone Desktop uses your own Anthropic, OpenAI or OpenCode Go key, or a local model through Ollama. Cloud uses its built-in AI and your plan credits; a self-hosted server uses the provider its operator configures. Suggestions and drafts are optional in each mode. Automatic asking and filing are off until enabled.
 - **Impersonations go to Spam.** A waiting message that presents itself as a company it cannot be from goes to Spam on its own, without AI and without a rule, and stays in ohmail's own Spam. The Screener lists each one with its reason and Put back. Messages with a code in them stay where you see them. You can switch it off.
 - **Answer Later, Park and Resurface.** Queue the mail you owe a reply and answer it one at a time in the Reply Run. Or put mail away until the day it should come back.
 - **History.** Every message you own, newest first, with the months and years on the side to jump anywhere.

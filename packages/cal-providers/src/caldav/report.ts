@@ -61,6 +61,25 @@ function shareAccess(response: DavResponse): boolean | null {
   return childOf(share, DAV, "read-write") === null ? null : true;
 }
 
+/**
+ * A signal that ends with `signal` or after `ms`, whichever comes first. Built from one controller and a timer, because not every
+ * host that runs this has `AbortSignal.any` (the phone's engine, a browser test's window). `done` clears the timer and the listener.
+ */
+function withBudget(signal: AbortSignal, ms: number): { readonly signal: AbortSignal; readonly done: () => void } {
+  const budget = new AbortController();
+  const end = (): void => budget.abort();
+  const timer = setTimeout(end, ms);
+  if (signal.aborted) end();
+  else signal.addEventListener("abort", end, { once: true });
+  return {
+    signal: budget.signal,
+    done: () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", end);
+    },
+  };
+}
+
 async function sharedWriteAccess(s: Session, id: string, fallback: boolean): Promise<boolean> {
   if (s.signal.aborted) return fallback;
   const asked = await ask(s, "PROPFIND", id, "0", COLLECTION_ACCESS);
@@ -126,16 +145,21 @@ export async function calendarsOf(s: Session, home: string, principal: string): 
       zone: zoneOf(response),
     });
   }
-  const probe = { ...s, signal: AbortSignal.any([s.signal, AbortSignal.timeout(ACCESS_PROBE_BUDGET_MS)]) };
-  for (let i = 0; i < calendars.length; i += 4) {
-    await Promise.all(calendars.slice(i, i + 4).map(async (cal, index) => {
-      if (needsAccess.has(cal.id)) {
-        const writable = await sharedWriteAccess(probe, cal.id, cal.writable);
-        calendars[i + index] = { ...cal, writable };
-      } else if (cal.owned && cal.writable && await allowsMove(s, cal.id)) {
-        calendars[i + index] = { ...cal, nativeMove: true };
-      }
-    }));
+  const budget = withBudget(s.signal, ACCESS_PROBE_BUDGET_MS);
+  const probe = { ...s, signal: budget.signal };
+  try {
+    for (let i = 0; i < calendars.length; i += 4) {
+      await Promise.all(calendars.slice(i, i + 4).map(async (cal, index) => {
+        if (needsAccess.has(cal.id)) {
+          const writable = await sharedWriteAccess(probe, cal.id, cal.writable);
+          calendars[i + index] = { ...cal, writable };
+        } else if (cal.owned && cal.writable && await allowsMove(s, cal.id)) {
+          calendars[i + index] = { ...cal, nativeMove: true };
+        }
+      }));
+    }
+  } finally {
+    budget.done();
   }
   return { ok: true, calendars };
 }

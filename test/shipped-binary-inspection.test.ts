@@ -129,6 +129,29 @@ describe("every platform job reads its shipped binary", () => {
         for (const url of unlisted) expect(refused.err).toContain(`unexpected first-party URL: ${url}`);
       });
 
+      it("admits the Cloud origin with the sealed session's file name glued to its end", () => {
+        // The 2.0.2 release build, read off Linux x64, Linux arm64 and macOS: the origin and the
+        // file name sit side by side in read-only data, sometimes with the next literal's letters.
+        const binary = [CSP, FEED, `${CLOUD}cloud-tokens.seal`, `${CLOUD}cloud-tokens.sealthe sealed session`].join("\0");
+        const { code, err } = run(job, binary);
+        expect(err).toBe("");
+        expect(code).toBe(0);
+      });
+
+      it("refuses a look-alike host that starts with the Cloud origin", () => {
+        const lookalikes = [
+          `${CLOUD}.evil.example`,
+          `${CLOUD}x.example`,
+          `${CLOUD}-secure.example`,
+          `${CLOUD}cloud-tokens.seal.evil.example`,
+        ];
+        for (const url of lookalikes) {
+          const { code, err } = run(job, [CSP, FEED, CLOUD, url].join("\0"));
+          expect(code, url).toBe(1);
+          expect(err).toContain(`unexpected first-party URL: ${url}`);
+        }
+      });
+
       it("refuses a first-party URL nobody named", () => {
         const { code, err } = run(job, `${CSP}\n${FEED}\n${CLOUD}\nhttps://beacon.ohmail.app/t\n`);
         expect(code).not.toBe(0);

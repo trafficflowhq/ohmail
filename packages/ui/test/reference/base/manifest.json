@@ -1,10 +1,10 @@
 {
   "shard": {
     "id": "kit-base",
-    "file": "kit-base-73819da01a97.17.tar.gz",
-    "revision": 17,
-    "sha256": "5d816cc3c6bbe3db0dd373ebcaa681c3e3c579ac6311a287f3f3b950543bfb7d",
-    "bytes": 9277789,
+    "file": "kit-base-68c6837413f9.18.tar.gz",
+    "revision": 18,
+    "sha256": "a214c78525219c1b00fc56c022060cdf27549a17de5e8fd5f091f08a1418cc49",
+    "bytes": 9280407,
     "urls": []
   },
   "rows": [
@@ -8093,6 +8093,62 @@
       "stateHash": "5f6711b18ea51a00",
       "source": "9b0b4ff4778d9471",
       "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21"
+    },
+    {
+      "key": "Spinner/pull@ohmarchy-dark-phone",
+      "file": "b860e2d25b80d297",
+      "png": {
+        "sha256": "ea196796bc3b162f9548052b622cb8c346dbe3a02690b42d7da8ba65d5a95adb",
+        "w": 32,
+        "h": 32,
+        "scale": 2
+      },
+      "scene": { "sha256": "6905fb4323dfc98b6eda2fbf07df2b0d30dd50ff251604a6d273f9d060ffe7c7" },
+      "stateHash": "afbc4e316b25ea68",
+      "source": "a06b16cf8b2f95f8",
+      "studioCommit": "68c6837413f9f5be864c516c36c5cf4d356a11ce"
+    },
+    {
+      "key": "Spinner/pull@ohmarchy-light-phone",
+      "file": "b2f203cbb4c6670a",
+      "png": {
+        "sha256": "8aa8cf499b285374bd1d7e9cf82ba4ba45da73b50ca003c057565b12550c23e3",
+        "w": 32,
+        "h": 32,
+        "scale": 2
+      },
+      "scene": { "sha256": "3977cd20ff4d81ca75993d9d379280515421104c248a313ae1ec73f6f3746e33" },
+      "stateHash": "afbc4e316b25ea68",
+      "source": "a06b16cf8b2f95f8",
+      "studioCommit": "68c6837413f9f5be864c516c36c5cf4d356a11ce"
+    },
+    {
+      "key": "Spinner/pull@paper-dark-phone",
+      "file": "1f76f7d7cf8f4f2c",
+      "png": {
+        "sha256": "f772f90ad10d62c638d8fb8d5876dd7c5d1c83aa2dbb6d4806246c2442a89165",
+        "w": 32,
+        "h": 32,
+        "scale": 2
+      },
+      "scene": { "sha256": "ecd3487c289b9a623dd98dda952c4ec26e3a0603ee1900732112a179186c1c3e" },
+      "stateHash": "afbc4e316b25ea68",
+      "source": "a06b16cf8b2f95f8",
+      "studioCommit": "68c6837413f9f5be864c516c36c5cf4d356a11ce"
+    },
+    {
+      "key": "Spinner/pull@paper-light-phone",
+      "file": "2a62c11558debad7",
+      "png": {
+        "sha256": "5b191569c57f5cf31428c822f337a580f33400c3931e8a02461067e0cbd5fc8b",
+        "w": 32,
+        "h": 32,
+        "scale": 2
+      },
+      "scene": { "sha256": "17bbc2cb025db0f90f0cae5a4ea05a8baef8e614d35de2c95106061dfc76ed39" },
+      "stateHash": "afbc4e316b25ea68",
+      "source": "a06b16cf8b2f95f8",
+      "studioCommit": "68c6837413f9f5be864c516c36c5cf4d356a11ce"
     },
     {
       "key": "StepDots/rest@ohmarchy-light-desktop",

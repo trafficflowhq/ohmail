@@ -1223,7 +1223,6 @@ packages/core/test/post-round-trip-writes.test.ts	source-text	reads source as te
 packages/core/test/quoted-history-parts.test.ts	data	reads data files (eml)	none	mail-io	
 packages/core/test/route-override-census.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
 packages/core/test/screener-admission-census.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
-packages/core/test/sensitive.short-code.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
 packages/db-mail/test/package.test.ts	source-text	reads source as text (js, ts)	layer 1	services-proof	
 packages/db/test/alert-drill-staff-grant.pg.test.ts	data	reads data files (json, sql)	none	services-proof	
 packages/db/test/alert-drill.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	

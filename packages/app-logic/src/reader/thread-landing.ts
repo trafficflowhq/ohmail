@@ -94,26 +94,31 @@ function conversationTops(scope: HTMLElement, top0: number, scrollTop: number) {
 
 export function useThreadPosition(
   scroller: HTMLElement | null,
-  manual: boolean,
+  keepLanding: boolean,
   releaseOpening: () => void,
   pin: { current: string | null },
 ) {
   const layout = useRef<ReturnType<typeof threadLayout> | null>(null);
   const readingAnchor = useRef<ReadingAnchor | null>(null);
+  const anchorPending = useRef(false);
   const rememberReadingAnchor = useCallback(
     (preferred?: string) => {
-      if (!manual || !scroller || !layout.current) return;
+      anchorPending.current = false;
+      if (!keepLanding || !scroller || !layout.current) return;
       const { at, line, view } = layout.current;
-      readingAnchor.current = readingAnchorAt(at, line, view, scroller.scrollTop, preferred);
+      readingAnchor.current = readingAnchorAt(at, line, view, scroller, preferred);
     },
-    [scroller, manual],
+    [scroller, keepLanding],
   );
+  const captureMovedAnchor = useCallback(() => {
+    if (anchorPending.current) rememberReadingAnchor();
+  }, [rememberReadingAnchor]);
   const wasClamped = useCallback((): boolean => {
     const previous = readingAnchor.current?.scroll;
-    if (!manual || !scroller || previous === undefined) return false;
+    if (!keepLanding || !scroller || anchorPending.current || previous === undefined) return false;
     const max = scrollMax(scroller);
     return previous > max && Math.abs(scroller.scrollTop - max) <= 1;
-  }, [scroller, manual]);
+  }, [scroller, keepLanding]);
   const moved = useCallback(
     (hand: boolean): boolean => {
       if (!scroller) return false;
@@ -121,19 +126,125 @@ export function useThreadPosition(
         releaseOpening();
         pin.current = null;
       }
-      if (!manual || (!hand && readingAnchor.current?.scroll === scroller.scrollTop)) return false;
-      rememberReadingAnchor();
+      if (!keepLanding || (!hand && readingAnchor.current?.scroll === scroller.scrollTop)) return false;
+      anchorPending.current = true;
       return true;
     },
-    [scroller, manual, releaseOpening, pin, rememberReadingAnchor],
+    [scroller, keepLanding, releaseOpening, pin],
   );
-  return { layout, readingAnchor, rememberReadingAnchor, wasClamped, moved };
+  return {
+    layout,
+    readingAnchor,
+    anchorPending,
+    rememberReadingAnchor,
+    captureMovedAnchor,
+    wasClamped,
+    moved,
+  };
 }
 
 interface ReadingAnchor {
   readonly id: string;
   readonly offset: number;
   readonly scroll: number;
+  readonly text: { range: Range; offset: number } | null;
+}
+
+function caretRangeAt(doc: Document, x: number, y: number): Range | null {
+  if (doc.caretRangeFromPoint) return doc.caretRangeFromPoint(x, y);
+  const position = doc.caretPositionFromPoint?.(x, y);
+  if (!position || position.offsetNode.nodeType !== Node.TEXT_NODE) return null;
+  const range = doc.createRange();
+  range.setStart(position.offsetNode, position.offset);
+  range.collapse(true);
+  return range;
+}
+
+/** Prefer the text at the reading line, or the first visible line below a picture. */
+function frameTextAt(
+  letter: HTMLElement,
+  scroller: HTMLElement,
+  line: number,
+  view: number,
+): ReadingAnchor["text"] {
+  const frame = letter.querySelector<HTMLIFrameElement>("iframe.mb-frame");
+  const doc = frame?.contentDocument;
+  if (!frame || !doc || (!doc.caretRangeFromPoint && !doc.caretPositionFromPoint)) return null;
+  const bounds = frame.getBoundingClientRect();
+  const offset = bounds.top - scroller.getBoundingClientRect().top;
+  const start = line - offset;
+  if (start < 0 || start >= bounds.height) return null;
+  const x = Math.min(bounds.width, doc.documentElement.clientWidth) / 2;
+  const end = Math.min(bounds.height, view - offset);
+  let y = start;
+  for (let probes = 0; probes < 12 && y < end; probes++) {
+    const range = caretRangeAt(doc, x, y);
+    const element = doc.elementFromPoint(x, y);
+    if (range?.startContainer.nodeType === Node.TEXT_NODE) {
+      const rect = range.getBoundingClientRect();
+      // At the top edge of a cell, the caret can already find its text below the cell's padding.
+      const inElement = y < rect.top && rect.top < end && element?.contains(range.startContainer);
+      if (rect.height > 0 && y <= rect.bottom + 1 && (y >= rect.top - 1 || inElement)) {
+        return { range, offset: offset + rect.top };
+      }
+    }
+    const bottom = element?.getBoundingClientRect().bottom;
+    y = bottom !== undefined && bottom > y ? bottom + 1 : y + 6;
+  }
+  return null;
+}
+
+export function readingLanding(
+  scroller: HTMLElement,
+  letters: ReturnType<typeof conversationTops>,
+  anchor: ReadingAnchor | null,
+  manual: boolean,
+) {
+  if (!anchor) return;
+  const visible = letters.get(anchor.id);
+  if (!visible) return;
+  const text = textLanding(scroller, visible.letter, anchor);
+  if (text) return { letter: visible.letter, top: text.top, offset: text.offset };
+  if (manual) return { letter: visible.letter, top: visible.top, offset: anchor.offset };
+}
+
+function textLanding(scroller: HTMLElement, letter: HTMLElement, anchor: ReadingAnchor) {
+  const text = anchor.text;
+  if (!text) return null;
+  const frame = letter.querySelector<HTMLIFrameElement>("iframe.mb-frame");
+  const doc = frame?.contentDocument;
+  if (!frame || !doc) return null;
+  const range = rangeInDocument(text.range, doc);
+  if (!range) return null;
+  const rect = range.getBoundingClientRect();
+  if (rect.height === 0) return null;
+  return {
+    top:
+      frame.getBoundingClientRect().top +
+      rect.top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop,
+    offset: text.offset,
+  };
+}
+
+/** Embedded bytes can replace the frame document while the letter's text stays the same. */
+function rangeInDocument(range: Range, doc: Document): Range | null {
+  const source = range.startContainer;
+  if (source.ownerDocument === doc) return source.isConnected ? range : null;
+  const oldBody = source.ownerDocument?.body;
+  if (!oldBody?.contains(source) || !doc.body) return null;
+  const path: number[] = [];
+  for (let node = source; node !== oldBody; node = node.parentNode!) {
+    path.push(Array.from(node.parentNode!.childNodes).indexOf(node as ChildNode));
+  }
+  let node: Node | undefined = doc.body;
+  while (node && path.length) node = node.childNodes[path.pop()!];
+  if (node?.nodeType !== Node.TEXT_NODE || node.nodeValue !== source.nodeValue) return null;
+  const replacement = doc.createRange();
+  replacement.setStart(node, range.startOffset);
+  replacement.collapse(true);
+  return replacement;
 }
 
 /** Keep the letter on the reading line, or the one just below it when the line falls between letters. */
@@ -141,17 +252,24 @@ function readingAnchorAt(
   letters: ReturnType<typeof conversationTops>,
   line: number,
   view: number,
-  scroll: number,
+  scroller: HTMLElement,
   preferred?: string,
 ): ReadingAnchor | null {
+  const scroll = scroller.scrollTop;
+  const inView = ({ top, bottom }: { top: number; bottom: number }) =>
+    bottom > scroll + line && top < scroll + view;
+  const anchor = (id: string, { top, letter }: { top: number; letter: HTMLElement }): ReadingAnchor => ({
+    id,
+    offset: top - scroll,
+    scroll,
+    text: frameTextAt(letter, scroller, line, view),
+  });
   if (preferred !== undefined) {
     const letter = letters.get(preferred);
-    if (letter && letter.bottom > scroll + line && letter.top < scroll + view) {
-      return { id: preferred, offset: letter.top - scroll, scroll };
-    }
+    if (letter && inView(letter)) return anchor(preferred, letter);
   }
-  for (const [id, { top, bottom }] of letters) {
-    if (bottom > scroll + line && top < scroll + view) return { id, offset: top - scroll, scroll };
+  for (const [id, letter] of letters) {
+    if (inView(letter)) return anchor(id, letter);
   }
   return null;
 }

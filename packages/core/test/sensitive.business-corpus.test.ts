@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifySensitivity, screenOutboundText } from "../src/sensitive.js";
+import { classifySensitivity } from "../src/sensitive.js";
 import type { NormalizedMessage } from "../src/types.js";
 import {
   BUSINESS_CORPUS, DOCUMENTS_CARRYING_A_CODE, LONG_NOTICES, LONG_SENSITIVE,
@@ -19,12 +19,6 @@ describe("long business mail reads ordinary", () => {
     expect(r.verdict, `${c.id} → ${r.category ?? r.reasons.join(",")}`).toBe("ordinary");
     expect(r.reasons).toEqual([]);
     expect(r.flags).toEqual({ no_ai: false, no_forward: false, no_kb: false, priority: false });
-  });
-
-  it("the corpus bites: the vocabulary still matches every document", () => {
-    // The sink reads the vocabulary without the notice rule, so it names what each document says.
-    const silent = BUSINESS_CORPUS.filter((c) => screenOutboundText(c.subject, c.text).category === null);
-    expect(silent.map((c) => c.id)).toEqual([]);
   });
 
   it("covers seven kinds of business mail in four languages", () => {

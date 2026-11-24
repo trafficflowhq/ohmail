@@ -335,7 +335,7 @@ export interface AiPlan {
   result: ClassifierResult;
   patternKey: string;          // "sender:<from>→<destination>"
   graduated: boolean;
-  autoApplied: boolean;        // graduated && confidence >= bar
+  autoApplied: boolean;        // trained routing met the confidence and filing checks
 }
 
 export interface NewPlan {
@@ -953,10 +953,6 @@ export function dedupKeysOf(normalized: NormalizedMessage): { fp: string; prior:
 
 /** A short preview of the body for the DTO snippet + the classifier input. */
 function bodySnippet(normalized: NormalizedMessage): string {
-  // The FULL text, always — the snippet is the list preview the user reads, and body redaction is
-  // removed. It is also the classifier input, but a sensitive/indeterminate message never reaches
-  // the classifier (the AI condition below opens with `!no_ai`) and the model boundary re-screens
-  // with `redactForModel` regardless, so a full snippet here never carries a code to a model.
   return snippetOfText(normalized.textBody);
 }
 
@@ -1303,8 +1299,7 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
      * SAME plan — arrival folder kept, `'external'`, no decision recorded — and above the
      * `listRules`/`knownSenders` reads for a stronger reason than cost: a reader must not merely
      * discard the gate's verdict, it must never COMPUTE one. `sensitivity` IS still computed,
-     * deliberately: pure, local, landing on the message row where `no_ai` is a standing property
-     * — a reader storing "not sensitive" would hand its own AI-draft door a wrong answer. What it
+     * deliberately: pure, local, landing on the message row for the reader and forwarding policy. What it
      * may NOT do is force `INBOX`: that is a MOVE. `seen` is the SERVER's flag: a reader claiming
      * mail unread would mark somebody's archive unread in every other client.
      */
@@ -1515,16 +1510,7 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
     const attemptKey = classifyAttemptKey(mailboxId, key);
     const consent = deps.readModelConsent ? modelConsentGate(deps.readModelConsent) : undefined;
     let charge: SpendOutcome | undefined;
-    // AI gate: classify only on the unclear residue, never for sensitive/no_ai mail, and only
-    // when the account may spend. The classifier is not even constructed for sensitive messages,
-    // so the raw secret never leaves the process. THE ORDER OF THIS CONDITION IS THE INVARIANT:
-    // `&&` short-circuits, so the money question is asked LAST and a `no_ai` message can never
-    // reach `tryDebit` — "a sensitive message produces no metering row" is a property of the
-    // control flow, not of anyone remembering. Move `tryDebit` earlier and the AI-metering ledger
-    // test fails. `credits` ABSENT means unmetered, not refused: the free desktop tier and every
-    // pre-gate test run this branch with no gate, and the plan must be identical.
     if (
-      !sensitivity.flags.no_ai &&
       classifier &&
       routing &&
       correspondent === null &&
@@ -1595,7 +1581,7 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
       if (result) {
         const patternKey = `sender:${normalized.from.address}→${result.destination}`;
         const graduated = await routing.isGraduated(accountId, patternKey, "route");
-        const autoApplied = graduated && result.confidence >= AUTO_APPLY_CONFIDENCE_BAR;
+        const autoApplied = !sensitivity.flags.no_ai && graduated && result.confidence >= AUTO_APPLY_CONFIDENCE_BAR;
         if (autoApplied) desired = result.destination;
         ai = { result, patternKey, graduated, autoApplied };
       }
@@ -2050,9 +2036,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
 
     // The full original body, always — text AND html, sensitive or not. Body redaction is
     // removed: the mailbox on the IMAP server already holds this mail unredacted, so a redacted
-    // display copy only hid it from the one person entitled to read it, and it over-fired. The
-    // disclosure gate to a MODEL is elsewhere and unchanged — `no_ai`/`no_kb` keep this mail out
-    // of automatic AI, and `redactForModel` strips the credential from any user-pressed payload.
+    // display copy only hid it from the one person entitled to read it.
     // `prepareHtmlForStorage` is the ONLY route html takes into the database — the sole writer of
     // `message_bodies.html`. The storage-cap seam is inside this one call: the adapter reserves
     // the bytes against `deps.storageCap` in this transaction, and at cap stores the withheld

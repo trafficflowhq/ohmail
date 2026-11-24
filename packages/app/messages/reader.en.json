@@ -80,7 +80,7 @@
       "youSender": "You",
       "yesterday": "yesterday {time}",
       "menu": "Message",
-      "sensitive": "Verification code · kept out of AI"
+      "sensitive": "Verification code"
     }
   },
   "body": {
