@@ -1,9 +1,0 @@
-### An invitation can be answered by mail
-
-When a letter carries a meeting invitation, ohmail now keeps which event it is about, which occurrence and revision, what it asks (an invitation, an answer, a cancellation, a counter-proposal), when the event starts, who organizes it, which of your addresses was invited and the answer you gave. It is read once, when the letter arrives, from the invitation's calendar part; nothing else of the calendar part is stored. Letters that arrived before this version get the same, a few at a time, read again from your mail server without changing anything there. Every app (desktop, web, phone, Cloud and your own server) receives it with the letter.
-
-Accepting, tentatively accepting or declining an invitation sends one reply to its organizer alone, from the address the invitation was sent to, as a calendar reply (iTIP) that names the event, the occurrence and your answer. The reply is in your Sent folder and in the conversation. Pressing the same answer twice, or on two devices at once, sends it once; changing your answer sends a new reply. Every app answers the same way, on Cloud, on your own server, and on a desktop or phone that keeps its own mail, and answers work with the calendar switched off: an invitation and its answer are mail.
-
-Nothing is sent without your press. An invitation forwarded to you or sent to another of your addresses, one its organizer cancelled afterwards or replaced with a newer version, and one answered meanwhile on another device are refused with a reason, and nothing is sent; an invitation that comes again after a cancellation can be answered. A calendar part that is malformed or larger than an invitation ever is leaves its letter exactly as it was.
-
-Answering an invitation, here or in another mail program, no longer counts its organizer as someone you wrote to: declining an invitation from a stranger does not let their next letters past the Screener.
