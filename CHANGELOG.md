@@ -21,6 +21,14 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.4] — 2026-11-24
+
+### Check both iCloud sign-in details when connecting a calendar
+
+If iCloud refuses a calendar connection, setup asks you to check your Apple Account email address and use an app-specific password created for that account.
+
+You can paste an iCloud app-specific password with or without dashes, with spaces, or in uppercase when connecting or signing in again.
+
 ## [2.0.3] — 2026-11-24
 
 ### Draft replies and get AI suggestions for any mail
@@ -19162,7 +19170,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.3...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.4...HEAD
+[2.0.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.4
 [2.0.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.3
 [2.0.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.2
 [2.0.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.1

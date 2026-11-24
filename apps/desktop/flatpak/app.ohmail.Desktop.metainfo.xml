@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.4" date="2026-11-24">
+      <description>
+        <ul>
+          <li>Check both iCloud sign-in details when connecting a calendar</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.3" date="2026-11-24">
       <description>
         <ul>
@@ -405,15 +412,6 @@
           <li>The web sign-in page explains why your previous sign-in ended</li>
           <li>Web sign-out shows progress while the browser forgets the account</li>
           <li>Faster live updates and smoother first sync on the web</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.13" date="2026-11-17">
-      <description>
-        <ul>
-          <li>The Screener's offer answers on a large account</li>
-          <li>A letter your mail server accepts late is recorded as sent</li>
-          <li>A send waits for a busy server instead of failing</li>
         </ul>
       </description>
     </release>
