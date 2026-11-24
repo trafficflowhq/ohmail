@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const oauth = "https://oauth2.googleapis.com/token";
 const publisher = "https://androidpublisher.googleapis.com";
 const edits = "/androidpublisher/v3/applications/app.ohmail/edits";
-const internal = "qa";
+const internal = "internal";
 const commitOptions = "?changesInReviewBehavior=ERROR_IF_IN_REVIEW";
 
 class PlayError extends Error {}
