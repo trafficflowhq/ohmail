@@ -6760,6 +6760,7 @@
       "addressInvalid": "That is not an address a calendar can be read from.",
       "addressRefused": "Calendars are not read from that address.",
       "hostUnknown": "That server could not be found.",
+      "hostMoved": "The server moved its calendars to another address. It is tried again by itself.",
       "unreachable": "The server did not answer. It is tried again by itself.",
       "unreadable": "What the server sent could not be read.",
       "unknown": "The calendar could not be connected."

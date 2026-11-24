@@ -101,9 +101,13 @@ describe("CalDAV's writer", () => {
     ].join("\r\n");
   const cut = plainDate(2026, 11, 18);
 
-  it.each(["create", "change", "move", "remove"] as const)(
-    "can %s on a numbered host after following a home alias in a fresh turn",
-    async (operation) => {
+  it.each(
+    (["create", "change", "move", "remove"] as const).flatMap((operation) =>
+      (["p01", "p02"] as const).map((storedOn) => [operation, storedOn] as const),
+    ),
+  )(
+    "can %s on a numbered host after following a home alias in a fresh turn (stored on %s, the alias names p01)",
+    async (operation, storedOn) => {
       const home = "/dav/calendars/mila/";
       const alias = "/calendar-home/";
       const redirects: Record<string, string> = {};
@@ -112,7 +116,8 @@ describe("CalDAV's writer", () => {
       const numbered = `p01-${base}`;
       redirects[alias] = `http://${numbered}${home}`;
       b.dav.addCalendar("personal");
-      const stored = (path: string) => `http://${numbered}${path}`;
+      // A row stored on another numbered host, as before the provider moved the account, names the same place at today's host.
+      const stored = (path: string) => `http://${storedOn}-${base}${path}`;
       const cal = { id: stored(b.dav.paths.collection("studio")) };
       const to = { id: stored(b.dav.paths.collection("personal")) };
       const source = b.dav.paths.member("studio", "kiln.ics");
@@ -175,6 +180,12 @@ describe("CalDAV's writer", () => {
       expect(sent.map((request) => [request.host, request.method, request.path, request.signedIn])).toEqual([
         [numbered, method, path, true],
       ]);
+      if (operation === "move") {
+        expect(sent.map((request) => request.headers.destination)).toEqual([
+          `http://${numbered}${b.dav.paths.member("personal", "kiln.ics")}`,
+        ]);
+      }
+      expect(b.dav.seen.filter((request) => request.host.startsWith("p02-"))).toEqual([]);
     },
   );
   it("finds the original UID at the destination when the response to MOVE was lost", async () => {

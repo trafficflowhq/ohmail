@@ -9,10 +9,10 @@
  * connection from the turn's key, never from anything a provider answered. A word that waits for
  * the person is written only where the stored sign-in is still the one this turn opened.
  */
-import type { ProviderWord } from "@ohmail/cal-providers";
+import { calendarKey, type ProviderWord } from "@ohmail/cal-providers";
 import { and, eq, ne, or, isNull, sql } from "drizzle-orm";
 import { calCalendars } from "@trafficflow/db";
-import { applyListing, pruneUnlistedCalendars, storedCalendars, type StoredCalendar } from "./calendars.js";
+import { applyListing, mergeDuplicateCalendars, pruneUnlistedCalendars, storedCalendars, type DuplicateCalendar, type StoredCalendar } from "./calendars.js";
 import { inConnection, passDb, type ConnectionDb, type ConnectionKey } from "./connection.js";
 import { exchangeInvitationPass } from "./exchange-invitations.js";
 import { releaseReadings, remember } from "./memory.js";
@@ -134,6 +134,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   let changed = 0;
   let calendars = gate.calendars;
   let missing: readonly string[] | null = null;
+  let duplicates: readonly DuplicateCalendar[] = [];
   const listingContext = { db, key, memory: deps.memory, halted: deps.halted };
   const listedAt = deps.memory.listedAt.get(key.id) ?? Number.NEGATIVE_INFINITY;
   // A subscription is one calendar whose id never changes, and listing it fetches its whole file: it is
@@ -144,11 +145,12 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     if (stopping()) return { kind: "halted" };
     if (signIn.superseded()) return { kind: "superseded" };
     if (!listed.ok) return settleConnection(deps, db, key, signIn, listed.reason, listed.retryAfterMs);
-    const applied = await applyListing(listingContext, listed.value, calendars);
+    const applied = await applyListing(listingContext, listed.value, calendars, (id) => calendarKey(w, id));
     if (!applied.ok) return { kind: applied.why };
     remember(deps.memory.listedAt, key.id, deps.clock.now());
     changed += applied.changed;
     missing = applied.missing;
+    duplicates = applied.duplicates;
   }
 
   // A due listing refreshes access before the drain checks each queued write.
@@ -165,6 +167,9 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   }
 
   if (missing !== null) {
+    const merged = await mergeDuplicateCalendars(listingContext, duplicates);
+    if (!merged.ok) return { kind: merged.why };
+    changed += merged.changed;
     const pruned = await pruneUnlistedCalendars(listingContext, missing);
     if (!pruned.ok) return { kind: pruned.why };
     changed += pruned.changed;

@@ -4537,8 +4537,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const loadInlineImages = (messageId: string, contentIds: string[]): void => {
     if (contentIds.length === 0) return;
     // `loadInlineImages` never rejects, so a `catch` here could not fire; what a blank box needs
-    // stated is that the pass minted NOTHING for a document that asked for pictures.
-    void engine.loadInlineImages(messageId, contentIds).then(() => {
+    // stated is that the pass minted NOTHING for a document that asked for pictures. The reader
+    // shows this one letter, so its pictures are the ones on screen (`first`).
+    void engine.loadInlineImages(messageId, contentIds, { first: true }).then(() => {
       if (engine.inlineImagesOf(messageId).size === 0) logAttachmentRefusal("inline_images_none");
     });
   };
