@@ -1,3 +1,4 @@
+import { MailRow } from "../place-list/MailRowMenu.js";
 /**
  * A STREAM PLACE'S LIST: the head with its count of new items and the list's menu (Mark all read), one row per item,
  * and the line "Seen up to here", with when it was drawn, between what is new since the last visit and what is not. A row draws no unread dot: newness is
@@ -12,7 +13,7 @@ import { lineStampOf, presentsUnread, useStreamModel, type StreamModel } from "@
 import { sentRowRecipient } from "@ohmail/app-logic/text/format";
 import { useSentLabel } from "@ohmail/app-logic/text/row-copy";
 import { Button, Empty } from "@ohmail/ui/base";
-import { GroupHeading, ListHead, Row, Rows } from "@ohmail/ui/mail";
+import { GroupHeading, ListHead, Rows } from "@ohmail/ui/mail";
 import { useFrame } from "../frame/commands.js";
 import { ProductSwitch } from "../frame/ProductSwitch.js";
 import { NONE } from "../host/index.js";
@@ -70,7 +71,7 @@ function ItemRow({
   const pick = selection.rowProps(m.id);
   const selected = (model.openId ?? model.standingId) === m.id;
   return (
-    <Row
+    <MailRow
       {...pick}
       {...(sent ? {} : contact.rowProps(m.from, m.id))}
       who={byline}
@@ -86,6 +87,12 @@ function ItemRow({
       cursor={selected && !model.openId}
       stream
       unread={unread}
+      actions={{
+        message: m,
+        verbs: model.verbs,
+        screen: contact.screen(m),
+        markUnread: () => model.markUnread(m.id),
+      }}
       onOpen={() => model.open(m.id, false, true)}
       onKeyboardOpen={() => model.open(m.id, true, true)}
       listing={{

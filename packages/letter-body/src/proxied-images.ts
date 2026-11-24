@@ -9,7 +9,7 @@
  * `<style>` sheet with proxied `url()`s in its parked form (those urls as `none`), the live form in
  * {@link DEFERRED_STYLE_ATTR} or {@link DEFERRED_SHEET_ATTR} and its urls in {@link DEFERRED_URLS_ATTR}.
  * This queue hands them out once the frame has loaded, at most {@link PROXIED_IMAGES_IN_FLIGHT} in
- * flight. The frame newest to load goes first, its pictures top to bottom. A CSS url is fetched by
+ * flight. Pictures on the first screen start before the rest of the frame's batch. A CSS url is fetched by
  * a probe `<img>` of the frame's own document, so the live style swapped in once its urls have
  * ended finds them already loaded there and asks for none of them again. A url whose probe did not
  * load (a refusal carries no cache lifetime) is swapped in as `none`, never asked a second time.
@@ -76,8 +76,13 @@ function swapIn(el: Element, failed: ReadonlySet<string> = new Set()): void {
 }
 
 function tasksOf(doc: Document): Task[] {
-  const tasks: Task[] = [];
+  const first: Task[] = [];
+  const rest: Task[] = [];
+  const screen = doc.defaultView?.frameElement?.ownerDocument.documentElement.clientHeight ?? 0;
   for (const el of doc.querySelectorAll(`[${DEFERRED_SRC_ATTR}],[${DEFERRED_URLS_ATTR}]`)) {
+    // Style sheets can name many pictures without revealing where any will be displayed.
+    const box = el.tagName === "STYLE" ? null : el.getBoundingClientRect();
+    const tasks = box && box.top < screen && (box.width > 0 || box.height > 0) ? first : rest;
     const src = el.tagName === "IMG" ? el.getAttribute(DEFERRED_SRC_ATTR) : null;
     if (src) {
       tasks.push({
@@ -111,7 +116,7 @@ function tasksOf(doc: Document): Task[] {
       });
     }
   }
-  return tasks;
+  return [...first, ...rest];
 }
 
 export function createProxiedImageQueue(max = PROXIED_IMAGES_IN_FLIGHT): ProxiedImageQueue {

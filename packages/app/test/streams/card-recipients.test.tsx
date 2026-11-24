@@ -43,3 +43,21 @@ it.each([[[]], [[person("Adele")]]])("keeps the folded head quiet with zero or o
   expect(card().queryByRole("button", { name: "Adele" })).toBeNull();
   expect(card().queryByRole("button", { name: /show.*details/i })).toBeNull();
 });
+
+it("gives the News sender the room taken by the repeated mailbox address", async () => {
+  const own = person("Adele");
+  mountStreamFrame({
+    at: "#/reads",
+    letters: [issue("first", 12, { mailboxId: "mb-first", to: [own] })],
+    mailboxes: async () => [
+      { id: "mb-first", address: own.address, addressIsOwn: true, status: "active" },
+      { id: "mb-second", address: person("Bill").address, addressIsOwn: true, status: "active" },
+    ],
+  });
+  const stream = card();
+  const to = await stream.findByText(`you (${own.address})`, { exact: true });
+  const head = to.closest(".oh-messagehead")!;
+  expect(head.querySelector(".oh-messagehead-delivery")).toBeNull();
+  expect(head.querySelector(".oh-messagehead-sender")?.textContent).toContain("The Weekly");
+  expect(head.querySelector("button[data-details]")?.textContent).toBe("details");
+});

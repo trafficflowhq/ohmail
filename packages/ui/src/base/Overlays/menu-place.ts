@@ -1,3 +1,4 @@
+import type { KeyboardEvent, MouseEvent } from "react";
 /** Where a menu stands: at its anchor or at a point, flipped and held inside the window. */
 import { cssPoint } from "../ui-zoom.js";
 
@@ -75,6 +76,25 @@ export function placeMenu(
  * What a thing with a context menu listens for: a right click opens at the pointer; the menu key
  * and Shift+F10 open at the thing itself. Spread it on the element.
  */
+/** The second key that opens a context menu, held with Shift; also a keyboard chord name for browser tests. */
+export const MENU_KEY = "F10";
+export const MENU_KEY_CHORD = `Shift+${MENU_KEY}`;
+
+export function isContextMenuKey(e: { key: string; shiftKey: boolean }): boolean {
+  return e.key === "ContextMenu" || (e.key === MENU_KEY && e.shiftKey);
+}
+
+export function keepsNativeContextMenu(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  if (target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), .oh-over'))
+    return true;
+  const selection = target.ownerDocument.getSelection();
+  if (!selection || selection.isCollapsed) return false;
+  return selection.getRangeAt(0).commonAncestorContainer.contains(target)
+    ? selection.containsNode(target, true)
+    : target.contains(selection.anchorNode) || target.contains(selection.focusNode);
+}
+
 export function contextTrigger(open: (at: Point | Element) => void): {
   onContextMenu: (e: { preventDefault(): void; clientX: number; clientY: number }) => void;
   onKeyDown: (e: { key: string; shiftKey: boolean; currentTarget: Element; preventDefault(): void }) => void;
@@ -85,9 +105,39 @@ export function contextTrigger(open: (at: Point | Element) => void): {
       open(cssPoint(e));
     },
     onKeyDown: (e) => {
-      if (e.key !== "ContextMenu" && !(e.key === "F10" && e.shiftKey)) return;
+      if (!isContextMenuKey(e)) return;
       e.preventDefault();
       open(e.currentTarget);
     },
+  };
+}
+
+/** A mail control keeps the native menu for fields and selected text. */
+export function mailContextTrigger<T extends HTMLElement>(
+  open?: (at: Point | Element, opener: HTMLElement) => void,
+) {
+  return {
+    onContextMenu: open
+      ? (e: MouseEvent<T>) => {
+          if (e.defaultPrevented || keepsNativeContextMenu(e.target)) return;
+          const opener = e.target instanceof Element ? e.target.closest("button, [tabindex]") : null;
+          const fallback = e.currentTarget.querySelector<HTMLElement>('button[aria-haspopup="menu"], button');
+          contextTrigger((at) =>
+            open(at, opener instanceof HTMLElement ? opener : (fallback ?? e.currentTarget)),
+          ).onContextMenu(e);
+        }
+      : undefined,
+    onKeyDown: open
+      ? (e: KeyboardEvent<T>) => {
+          if (e.defaultPrevented || keepsNativeContextMenu(e.target)) return;
+          const opener = e.target instanceof HTMLElement ? e.target : e.currentTarget;
+          contextTrigger((at) => open(at, opener)).onKeyDown({
+            key: e.key,
+            shiftKey: e.shiftKey,
+            currentTarget: opener,
+            preventDefault: () => e.preventDefault(),
+          });
+        }
+      : undefined,
   };
 }

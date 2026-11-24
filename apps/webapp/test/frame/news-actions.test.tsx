@@ -136,7 +136,8 @@ describe("the seams", () => {
       expect(card, "the News card stands in its pile").not.toBeNull();
       await act(async () => { card.querySelector<HTMLButtonElement>(".oh-message-more button")!.click(); });
       await tick(1_000);
-      expect(card.querySelector(".oh-blocked")?.textContent).toBe(COPY.imagesCaption);
+      const shield = within(card).getByRole("button", { name: COPY.imagesCaption });
+      expect(shield.textContent).toBe("");
       const bar = card.querySelector<HTMLElement>(".oh-letterviews");
       expect(card.querySelector(".mb-bar"), "the sender’s blocked pictures must not add a boxed sentence").toBeNull();
       expect(bar, "the button lost its row").not.toBeNull();
@@ -150,7 +151,10 @@ describe("the seams", () => {
       expect(card.querySelector(".oh-blocked")?.getAttribute("aria-expanded")).toBe("false");
       expect(bar!.compareDocumentPosition(card.querySelector(".mb")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(asked, "the pictures were fetched before anybody pressed Show images").toEqual([]);
-      await act(async () => { button!.click(); });
+      await act(async () => { shield.click(); });
+      const notice = within(document.body).getByRole("dialog", { name: COPY.imagesCaption });
+      expect(within(notice).getByRole("note").textContent).toBe(COPY.blockedMany(2));
+      await act(async () => { within(notice).getByRole("menuitem", { name: COPY.show }).click(); });
       await tick(1_000);
       expect(asked).toEqual([`/api/messages/${letter.id}/load-remote`]);
     } finally {

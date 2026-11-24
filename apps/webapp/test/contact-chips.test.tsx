@@ -107,7 +107,7 @@ async function mountHeader(open: EngineMessage, inert = false) {
   });
   mutations = mounted.mail.mutations;
   await act(async () => { await Promise.resolve(); });
-  if (ownAddresses.length > 0) await screen.findByRole("button", { name: "you" });
+  if (ownAddresses.length > 0) await screen.findByRole("button", { name: `you (${ownAddresses[0]})` });
   return mounted;
 }
 
@@ -331,7 +331,7 @@ describe("the reader's own address reads as you", () => {
     ownName = "Mila Brändli";
     await mountHeader(msg());
     const me = chips()[0]!;
-    expect(me.textContent).toBe("you");
+    expect(me.textContent).toBe(`you (${ownAddresses[0]})`);
     expect(me.title).toBe("Mila Brändli <bare@x.invalid>");
     await click(me);
     expect(popover()!.textContent).toContain("Mila Brändli");
@@ -343,7 +343,7 @@ describe("the reader's own address reads as you", () => {
     ownAddresses = ["bare@x.invalid"];
     ownName = null;
     await mountHeader(msg());
-    expect(chips()[0]!.textContent).toBe("you");
+    expect(chips()[0]!.textContent).toBe(`you (${ownAddresses[0]})`);
     expect(chips()[0]!.title).toBe("bare@x.invalid");
   });
 

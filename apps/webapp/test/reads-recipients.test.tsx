@@ -584,12 +584,13 @@ describe("the count keeps focus, always folds back, and says what it counts", ()
   });
 
   it("the count's accessible name carries the field, the names and the count", async () => {
-    await mountRecipientLetter(message([{ name: null, address: "me@x.invalid" }, ...six], six), { own: ["me@x.invalid"] });
+    const mailbox = "me@x.invalid";
+    await mountRecipientLetter(message([{ name: null, address: mailbox }, ...six], six), { own: [mailbox] });
     host = screen.getByRole("region", { name: en.news.stream.label });
     const [toCount, ccCount] = within(host!).queryAllByRole("button")
       .filter((button) => button.getAttribute("data-details"));
     expect(toCount!.getAttribute("aria-label")).toBe(
-      "to you, Anna Roth, Bo Lind and 4 others. Show every recipient, the exact date and where this message sits");
+      `to you (${mailbox}), Anna Roth, Bo Lind and 4 others. Show every recipient, the exact date and where this message sits`);
     expect(ccCount!.getAttribute("aria-label")).toBe(
       "cc Anna Roth, Bo Lind, Cy Cole and 3 others. Show every recipient, the exact date and where this message sits");
   });

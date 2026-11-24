@@ -7,7 +7,7 @@
  */
 import { Fragment, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { ariaShortcut, useBinding, useModGlyph, type DisabledReason } from "@ohmail/app-logic/keys";
-import { Dock, Rail, RailEntry, RailFoot, type DockPlace } from "@ohmail/ui/mail";
+import { Dock, Rail, type DockPlace } from "@ohmail/ui/mail";
 import type {
   FrameCommands,
   FramePlaces,
@@ -27,6 +27,7 @@ import type { Signal } from "../host/index.js";
 import { useText, useTextLookup, type Text } from "../text/index.js";
 import { useRailDropState } from "./rail-drag.js";
 import { RAIL_BOX } from "./rail-keys.js";
+import { MailPlaceButton, MailRailFoot, usePlaceContextMenu } from "./MailRailMenu.js";
 import { placeDigits } from "./chords.js";
 
 /**
@@ -40,13 +41,14 @@ function Entry({ entry, t }: { entry: RailEntryModel; t: Text }) {
   useShortcut(() => box.current?.firstElementChild ?? null, shortcut);
   return (
     <span ref={box} className="fr-railtarget" {...target}>
-      <RailEntry
+      <MailPlaceButton
         {...drawn}
+        name={label}
         onPress={onPress}
         label={entry.count ? t("rail.counted", { place: label, count: entry.count }) : undefined}
       >
         {label}
-      </RailEntry>
+      </MailPlaceButton>
     </span>
   );
 }
@@ -100,7 +102,8 @@ function PlaceRailEntry({
   const drop = useRailDropState(rail.drop === undefined ? null : { kind: "pile", action: rail.drop });
   return (
     <span className="fr-railtarget" data-rail-id={place.id} data-rail-drop={rail.drop}>
-      <RailEntry
+      <MailPlaceButton
+        name={label}
         kind="place"
         drop={drop}
         icon={rail.icon}
@@ -123,7 +126,7 @@ function PlaceRailEntry({
         onPress={disabled ? undefined : () => go({ place: place.id })}
       >
         {label}
-      </RailEntry>
+      </MailPlaceButton>
     </span>
   );
 }
@@ -216,34 +219,6 @@ export function SideRail({
           </Fragment>
         ) : null;
       }).filter(Boolean);
-  const pull = fed?.pull
-    ? {
-        label: fed.pull.label,
-        keyHint: fed.pull.keyHint,
-        busy: fed.pull.busy,
-        onPress: fed.pull.onPress,
-      }
-    : undefined;
-  /* The kit's foot always draws an account line; where nobody is known the frame draws the notice and Pull alone. */
-  const foot = fed?.account ? (
-    <RailFoot notice={notice} pull={pull} account={fed.account} tools={fed.tools} />
-  ) : (
-    <div className="fr-railfoot">
-      {notice}
-      {pull ? (
-        <RailEntry
-          kind="tool"
-          icon="pull"
-          keyHint={pull.keyHint}
-          busy={pull.busy}
-          title={pull.label}
-          onPress={pull.onPress}
-        >
-          {pull.label}
-        </RailEntry>
-      ) : null}
-    </div>
-  );
   const rail = (
     <Rail
       drawer={drawer}
@@ -262,7 +237,7 @@ export function SideRail({
             }
       }
       groups={drawer && switcher ? [switcher, ...groups] : groups}
-      foot={foot}
+      foot={<MailRailFoot fed={fed} notice={notice} />}
     />
   );
   /* The rail stands in a box that draws nothing: the zone walk finds it there (`RailKeys`), and a fed rail's feeder
@@ -331,7 +306,11 @@ export function DockRail({
           })),
   );
   const tabs = all.filter((p) => DOCK_TABS.includes(p.id));
-  const shown = upright ? all : tabs;
+  const menu = usePlaceContextMenu();
+  const shown = (upright ? all : tabs).map((place) => ({
+    ...place,
+    onMenu: place.onPress ? menu.show(place.label, place.onPress) : undefined,
+  }));
   /* Where the app stands: the place an entry is marked current for, or else the address's. */
   const here = all.find((p) => p.current)?.id ?? route.place;
   /* The keys a fed rail names are said on the dock's Write and Search too: a keyboard is at hand beside the columns. */
@@ -372,6 +351,7 @@ export function DockRail({
           onPress: model?.write?.onPress ?? (() => commands.write()),
         }}
       />
+      {menu.menu}
     </span>
   );
 }

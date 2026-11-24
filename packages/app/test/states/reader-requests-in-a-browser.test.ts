@@ -9,6 +9,7 @@
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { openReaderPage } from "./reader-pages.js";
 
 const require_ = createRequire(resolve(process.cwd(), "package.json"));
 const { chromium } = require_("@playwright/test") as typeof import("@playwright/test");
@@ -65,3 +66,58 @@ describe("the reader's requests in a real browser", () => {
     expect(of("h-claims")).toBe(0);
   }, 60_000);
 });
+
+it.each([
+  ["desktop", 1440, "en", "Tracker blocked", "A tracking pixel was blocked."],
+  ["phone", 390, "de", "Tracker blockiert", "Ein Tracking-Pixel wurde blockiert."],
+] as const)(
+  "the %s shield uses only an icon and discloses the full sentence",
+  async (device, width, lang, caption, sentence) => {
+    const page = await browser!.newPage({ viewport: { width, height: 900 }, hasTouch: device === "phone" });
+    try {
+      await openReaderPage(page, `screen=reading&open=lt-journal&device=${device}&lang=${lang}`);
+      const shield = page.getByRole("button", { name: caption });
+      await shield.waitFor();
+      if (device === "desktop") await shield.hover();
+      expect(await shield.textContent()).toBe("");
+      expect((await shield.boundingBox())!.width).toBeLessThanOrEqual(32);
+      expect(await shield.getAttribute("title")).toBe(sentence);
+      await (device === "phone" ? shield.tap() : shield.click());
+      const dialog = page.getByRole("dialog", { name: caption });
+      await dialog.getByRole("note").waitFor();
+      expect(await dialog.getByRole("note").textContent()).toBe(sentence);
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "hidden" });
+      expect(await shield.evaluate((button) => button === document.activeElement)).toBe(true);
+    } finally {
+      await page.close();
+    }
+  },
+  60_000,
+);
+
+it.each([
+  ["en", "to you ("],
+  ["de", "an dich ("],
+] as const)(
+  "prints the own address with the recipient and keeps details in %s",
+  async (lang, words) => {
+    const page = await browser!.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    try {
+      await openReaderPage(page, `screen=reading&open=lt-journal&device=phone&lang=${lang}`);
+      const head = page.locator('[data-conv-id="lt-journal"] .oh-messagehead');
+      const to = head.locator(".oh-messagehead-to");
+      await to.waitFor();
+      const ownAddress = await to.locator("button[title]").getAttribute("title");
+      expect(ownAddress).toMatch(/@/);
+      expect(await to.textContent()).toContain(words);
+      expect(await to.textContent()).toContain(ownAddress?.match(/<([^>]+)>$/)?.[1] ?? ownAddress);
+      const details = to.locator("button[data-details]");
+      await details.tap();
+      await head.locator(".oh-messagehead-lines").waitFor();
+    } finally {
+      await page.close();
+    }
+  },
+  60_000,
+);

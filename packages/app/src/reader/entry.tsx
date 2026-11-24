@@ -25,6 +25,7 @@ import type { LetterNotice, ReaderParts } from "./ports.js";
 import { Reader } from "./Reader.js";
 import { Squares } from "./Squares.js";
 import { useFrame } from "../frame/commands.js";
+import { useSignal } from "../frame/feeds.js";
 import { readThreadOrder } from "./thread-order.js";
 import { useOwnGone } from "../frame/own-gone.js";
 import { READER_DOM } from "./read-dom.js";
@@ -177,6 +178,8 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
   }
   const PreviewBody: NonNullable<ReaderEntry["PreviewBody"]> = ({ message, children }) => {
     const Body = useParts().body;
+    const { host } = useFrame();
+    const { scheme } = useSignal(host.device.appearance);
     const body = useLetterBody(message, false);
     if (isProtected(message) || !body.html) return children;
     return (
@@ -185,7 +188,7 @@ export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
         text={body.text}
         html={body.html}
         subject={message.subject}
-        scheme="light"
+        scheme={scheme}
         owner={null}
         remoteLoaded={false}
         imageProxy={null}

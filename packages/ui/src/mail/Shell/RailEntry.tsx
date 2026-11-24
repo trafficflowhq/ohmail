@@ -1,7 +1,8 @@
 import { useId, useLayoutEffect, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { KeyHint } from "../../base/index.js";
 import { tagDot } from "../../base/Primitives/hue.js";
-import { cssPoint } from "../../base/ui-zoom.js";
+import { isContextMenuKey } from "../../base/Overlays/menu-place.js";
+import { cssPoint, cssRect } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { animate, motionShape } from "../../motion/motion.js";
 import "./rail-entry.css";
@@ -78,7 +79,7 @@ export interface RailEntryProps {
   disabled?: boolean;
   onPress?: () => void;
   /** A right click, or the key that opens the context menu: the entry's own menu, where the pointer is. */
-  onMenu?: (at: { x: number; y: number }) => void;
+  onMenu?: (at: { x: number; y: number }, entry: HTMLButtonElement) => void;
 }
 
 /** One place: its sign, its name, its count. */
@@ -110,7 +111,7 @@ export function RailEntry(props: RailEntryProps) {
   const menu = onMenu
     ? (event: MouseEvent<HTMLButtonElement>) => {
         event.preventDefault();
-        onMenu(cssPoint(event));
+        onMenu(cssPoint(event), event.currentTarget);
       }
     : undefined;
 
@@ -135,6 +136,16 @@ export function RailEntry(props: RailEntryProps) {
       style={style}
       onClick={onPress}
       onContextMenu={menu}
+      onKeyDown={
+        onMenu
+          ? (event) => {
+              if (event.defaultPrevented || !isContextMenuKey(event)) return;
+              event.preventDefault();
+              const rect = cssRect(event.currentTarget);
+              onMenu({ x: rect.left, y: rect.bottom }, event.currentTarget);
+            }
+          : undefined
+      }
     >
       {folds ? (
         <span className="oh-railentry-chevron">

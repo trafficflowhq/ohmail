@@ -1,6 +1,7 @@
 /** The door of `tags`: one tag across every place, or every tag, beside the reader. */
 export {
   TagsModelContext,
+  judgeTagName,
   useTagsList,
   useTagsModel,
   type RenameAnswer,

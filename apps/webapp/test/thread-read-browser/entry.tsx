@@ -19,6 +19,7 @@ import { LetterBody } from "../../../../packages/app/src/reader/body/LetterBody"
 import { TextProvider } from "../../../../packages/app/src/text";
 import type { EngineMessage } from "@ohmail/wire";
 import { Message } from "../../../../packages/ui/src/mail/Reading/Message";
+import { ColumnHandle } from "../../../../packages/ui/src/mail/Shell/ColumnHandle";
 
 interface Log { reads: string[][]; at: number[] }
 const frames = (n: number): Promise<void> =>
@@ -297,9 +298,27 @@ function openPreview(html: string): void {
   ));
 }
 
+function openResize(html: string) {
+  document.body.replaceChildren();
+  function NewsColumns() {
+    const [width, setWidth] = useState(320);
+    return <div className="fr-columns resize-rig" style={{ display: "flex" }}>
+      <style>{".resize-rig .oh-columnhandle { position: static; width: 100%; height: 100%; margin: 0 }"}</style>
+      <div style={{ flex: `0 0 ${width}px` }} />
+      <div style={{ width: 12 }}>
+        <ColumnHandle column="list" label="List width" value={width} min={320} max={720} onChange={setWidth} />
+      </div>
+      <div className="fr-reading" style={{ flex: 1, minWidth: 0, height: 500, overflow: "auto" }}>
+        <MessageBody owner={null} html={html} text="Text version" look="reader" fitDesign />
+      </div>
+    </div>;
+  }
+  flushSync(() => createRoot(document.body).render(<NewsColumns />));
+}
+
 let designed: ReturnType<typeof designedPane>;
 (window as unknown as { rig: unknown }).rig = {
-  framed, landing, pictures, backgrounds, streamPress, pressed, openPreview, openAnchored, openPendingPress,
+  framed, landing, pictures, backgrounds, streamPress, pressed, openPreview, openAnchored, openPendingPress, openResize,
   pressEarlier: () => pressEarlier(),
   deliverPicture: (data: string) => deliverPicture(data),
   openDesign: (html: string) => { designed = designedPane(html); },

@@ -144,6 +144,7 @@ function HeldLetterContent({
       describe
       caption={notice.caption}
       sentence={notice.text}
+      pictures={views.find((control) => control.id === "pictures")}
       open={noticeOpen}
       onOpen={() => setNoticeOpen(true)}
       onClose={() => setNoticeOpen(false)}

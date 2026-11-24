@@ -1,6 +1,7 @@
-import type { ReactNode, Ref } from "react";
+import { useRef, type ReactNode, type Ref } from "react";
 import { Faces, Sentence } from "../../base/index.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
+import { useReadingHeadMotion } from "./reading-head-motion.js";
 import "./reading-head.css";
 
 export interface ReadingHeadProps {
@@ -41,6 +42,8 @@ export function ReadingHead({
   squares,
   under,
 }: ReadingHeadProps) {
+  const header = useRef<HTMLElement>(null);
+  useReadingHeadMotion(header, subject, names, squares != null);
   const byline = (
     <p className="oh-text oh-readinghead-byline">
       <Faces people={people} more={peopleMore} />
@@ -53,6 +56,7 @@ export function ReadingHead({
   const told = !sentence || people.length > 0 || Boolean(names || tags || mailbox || squares);
   return (
     <header
+      ref={header}
       className="oh-readinghead"
       data-bare={subject || sentence ? undefined : ""}
       data-sentence={sentence ? "" : undefined}
