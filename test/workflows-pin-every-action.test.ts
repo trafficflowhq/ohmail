@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -788,19 +789,43 @@ describe("ci.yml's secret scan", () => {
     expect(step.env?.GITLEAKS).toMatch(/^ghcr\.io\/gitleaks\/gitleaks:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/);
   });
 
-  /** A docker that records its arguments and each input, and answers the control and the change as told. */
-  const DOCKER = `#!/usr/bin/env bash
-printf '%s\\n' "$*" >> "$STUB_DIR/args"
-n=$(ls "$STUB_DIR" | grep -c '^input-' || true)
-cat > "$STUB_DIR/input-$n"
-both='[{"RuleID":"github-pat","StartLine":2},{"RuleID":"ohmail-key-ring","StartLine":3}]'
-if grep -q secret-scan-control "$STUB_DIR/input-$n"; then printf '%s\\n' "\${STUB_CONTROL:-$both}"; exit 1; fi
-printf '%s\\n' "\${STUB_CHANGE-null}"
-exit "\${STUB_CHANGE_RC:-0}"
+  /** Record each fragment and simulate the scanner's exit status and JSON report. */
+  const DOCKER = String.raw`#!/usr/bin/env node
+const { appendFileSync, readdirSync, readFileSync } = require("node:fs");
+const { basename, join } = require("node:path");
+const args = process.argv.slice(2);
+const mount = ":/fragments:ro";
+const dir = args.find((arg) => arg.endsWith(mount)).slice(0, -mount.length);
+const fragments = readdirSync(dir).sort().map((name) => ({
+  path: "/fragments/" + name,
+  text: readFileSync(join(dir, name), "utf8"),
+}));
+appendFileSync(join(process.env.STUB_DIR, "args"), JSON.stringify(args) + "\n");
+appendFileSync(join(process.env.STUB_DIR, "inputs"), JSON.stringify(fragments.map(({ text }) => text)) + "\n");
+
+if (basename(dir) === "control") {
+  const both = '[{"RuleID":"github-pat","StartLine":2},{"RuleID":"ohmail-key-ring","StartLine":3}]';
+  process.stdout.write(process.env.STUB_CONTROL ?? both);
+  process.exitCode = 1;
+} else if (process.env.STUB_DETECT === "1") {
+  const rules = [
+    ["sourcegraph-access-token", /sourcegraph|sgp_/i, /\b(?:sgp_)?[0-9a-f]{40}\b/i],
+    ["aws-access-token", /akia/i, /\bAKIA[A-Z2-7]{16}\b/],
+    ["github-pat", /ghp_/, /ghp_[a-z0-9]{36}/i],
+  ];
+  const findings = fragments.flatMap(({ path, text }) =>
+    rules.flatMap(([RuleID, keyword, pattern]) =>
+      keyword.test(text) && pattern.test(text) ? [{ RuleID, File: path }] : []));
+  process.stdout.write(JSON.stringify(findings));
+  process.exitCode = findings.length ? 1 : 0;
+} else {
+  process.stdout.write(process.env.STUB_CHANGE ?? "null");
+  process.exitCode = Number(process.env.STUB_CHANGE_RC ?? "0");
+}
 `;
   const rootFile = (p: string) => readFileSync(publicPath(p), "utf8");
-  /* The step runs on the Linux runners only, with their git, jq and tar. */
-  const onLinux = it.skipIf(process.platform !== "linux");
+  /* Exercise the Bash step on Unix hosts. */
+  const onUnix = it.skipIf(process.platform === "win32");
 
   /** The step over a merge commit of a base and a change, as GitHub checks a pull request out. */
   function runScan(change: (write: (p: string, text: string) => void) => void, stub: Record<string, string> = {}) {
@@ -826,31 +851,69 @@ exit "\${STUB_CHANGE_RC:-0}"
     const r = spawnSync("bash", ["-c", step.run!], {
       cwd: repo, encoding: "utf8", env: { ...env, RUNNER_TEMP: temp, STUB_DIR: stubs, GITLEAKS: step.env!.GITLEAKS!, ...stub },
     });
-    const inputs = readdirSync(stubs).filter((f) => f.startsWith("input-")).sort().map((f) => readFileSync(join(stubs, f), "utf8"));
-    let args: string[] = [];
-    try { args = readFileSync(join(stubs, "args"), "utf8").split("\n").filter(Boolean); } catch { /* docker never ran */ }
-    return { status: r.status, out: `${r.stdout}${r.stderr}`, inputs, args, repo: realpathSync(repo) };
+    const records = (file: string) => {
+      try { return readFileSync(join(stubs, file), "utf8").trimEnd().split("\n"); }
+      catch { return []; }
+    };
+    const inputs = records("inputs").flatMap((line) => JSON.parse(line) as string[]);
+    return {
+      status: r.status, out: `${r.stdout}${r.stderr}`, inputs,
+      args: records("args").map((line) => JSON.parse(line) as string[]), repo: realpathSync(repo), temp,
+    };
   }
   const clean = (write: (p: string, text: string) => void) => {
-    write("notes.txt", "kept line\nadded line\n");
+    write("notes.txt", "kept line\nadded line\n++ looks like a patch header\n");
     write("src/new.ts", "export const x = 1;\n");
   };
 
-  onLinux("scans the control, then the added lines under their files' headers, never a removed line, in a sealed container", () => {
+  onUnix("scans the control, then the added lines under their files' headers, never a removed line, in a sealed container", () => {
     const r = runScan(clean);
     expect(r.status, r.out).toBe(0);
-    expect(r.inputs).toHaveLength(2);
+    expect(r.inputs).toHaveLength(3);
     expect(r.inputs[0]).toMatch(/^\+\+\+ b\/secret-scan-control\n/);
     expect(r.inputs[0]).toMatch(/\bghp_[0-9a-zA-Z]{36}\b/);
     expect(r.inputs[0]).toMatch(new RegExp(`\\b${KEY_RING_V1}=[0-9a-f]{64}\\b`));
-    expect(r.inputs[1]!.split("\n")).toEqual(["+++ b/notes.txt", "+added line", "+++ b/src/new.ts", "+export const x = 1;", ""]);
-    for (const a of r.args) {
-      expect(a).toBe(`run --rm -i --network none -v ${r.repo}/.github/secret-scan.toml:/secret-scan.toml:ro ${step.env!.GITLEAKS} `
-        + "stdin --config /secret-scan.toml --redact --no-banner --report-format json --report-path -");
+    expect(r.inputs.slice(1)).toEqual([
+      "+++ b/notes.txt\n+added line\n+++ looks like a patch header\n",
+      "+++ b/src/new.ts\n+export const x = 1;\n",
+    ]);
+    expect(r.args).toHaveLength(2);
+    for (const [index, input] of ["control", "change"].entries()) {
+      const mount = r.args[index]?.[7];
+      expect(mount).toContain(`${r.temp}/secret-scan-`);
+      expect(mount).toMatch(new RegExp(`/${input}:/fragments:ro$`));
+      expect(r.args[index]).toEqual([
+        "run", "--rm", "--network", "none", "-v", `${r.repo}/.github/secret-scan.toml:/secret-scan.toml:ro`,
+        "-v", mount, step.env!.GITLEAKS, "dir", "--config", "/secret-scan.toml",
+        "--redact", "--no-banner", "--report-format", "json", "--report-path", "-", "/fragments",
+      ]);
     }
   });
 
-  onLinux("refuses a path the base ignores, though the change's own ignore file lets it through, before any scan", () => {
+  const fixtureHash = createHash("sha1").update("synthetic fixture data").digest("hex");
+
+  onUnix("accepts a commit hash when the Sourcegraph keyword is only in a different file", () => {
+    const r = runScan((write) => {
+      write("illustration.svg", "<!-- Generated with Sourcegraph -->\n");
+      write("verdict.json", JSON.stringify({ base: fixtureHash }) + "\n");
+    }, { STUB_DETECT: "1" });
+    expect(r.status, r.out).toBe(0);
+  });
+
+  onUnix("refuses a generated Sourcegraph, AWS or GitHub credential in an added file", () => {
+    for (const [path, rule, fixture] of [
+      ["service settings.txt", "sourcegraph-access-token", "sgp_" + fixtureHash],
+      ["illustration.svg", "aws-access-token", ["A", "K", "I", "A"].join("") + Array.from({ length: 16 }, (_, i) => "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"[(i * 7 + 3) % 32]).join("")],
+      ["credentials.txt", "github-pat", "ghp_" + fixtureHash.slice(0, 36)],
+    ]) {
+      const r = runScan((write) => write(path, `credential=${fixture}\n`), { STUB_DETECT: "1" });
+      expect(r.status, r.out).toBe(1);
+      expect(r.out).toContain(`${path}: ${rule}`);
+      expect(r.out).not.toContain(fixture);
+    }
+  });
+
+  onUnix("refuses a path the base ignores, though the change's own ignore file lets it through, before any scan", () => {
     const r = runScan((write) => {
       write("deploy/selfhost/.env", "POSTGRES_PASSWORD=x\n");
       write(".gitignore", `${rootFile(".gitignore")}!.env\n`);
@@ -860,22 +923,22 @@ exit "\${STUB_CHANGE_RC:-0}"
     expect(r.inputs).toEqual([]);
   });
 
-  onLinux("refuses when the control is not found by both rules, before the change is scanned", () => {
+  onUnix("refuses when the control is not found by both rules, before the change is scanned", () => {
     const r = runScan(clean, { STUB_CONTROL: '[{"RuleID":"github-pat","StartLine":2}]' });
     expect(r.status).toBe(1);
     expect(r.out).toMatch(/control.*ohmail-key-ring/);
     expect(r.inputs).toHaveLength(1);
   });
 
-  onLinux("refuses a finding by its rule and its file, and never prints what was found", () => {
-    const found = '[{"RuleID":"github-pat","StartLine":4,"Match":"STUB-FOUND-VALUE"}]';
+  onUnix("refuses a finding by its rule and its file, and never prints what was found", () => {
+    const found = '[{"RuleID":"github-pat","File":"/fragments/2","Match":"STUB-FOUND-VALUE"}]';
     const r = runScan(clean, { STUB_CHANGE: found, STUB_CHANGE_RC: "1" });
     expect(r.status).toBe(1);
     expect(r.out).toMatch(/src\/new\.ts: github-pat/);
     expect(r.out).not.toContain("STUB-FOUND-VALUE");
   });
 
-  onLinux("refuses a scan that wrote no report, whatever it exited", () => {
+  onUnix("refuses a scan that wrote no report, whatever it exited", () => {
     for (const rc of ["0", "1"]) expect(runScan(clean, { STUB_CHANGE: "", STUB_CHANGE_RC: rc }).status, rc).toBe(1);
   });
 });
