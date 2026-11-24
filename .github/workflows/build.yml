@@ -583,7 +583,7 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              "$CLOUD_URL"*([a-z])) : ;;
+              "$CLOUD_URL"?(cloud-tokens.seal)*([a-z])) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
               # is the greyed-out example in the address field plus the same example
@@ -1541,7 +1541,7 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              "$CLOUD_URL"*([a-z])) : ;;
+              "$CLOUD_URL"?(cloud-tokens.seal)*([a-z])) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
               # is the greyed-out example in the address field plus the same example
@@ -2364,6 +2364,10 @@ jobs:
           # an exact match, which would reject a different host or added path.
           # The Rust constant in config.rs can have adjacent bytes glued to
           # its end, so the audit accepts the exact origin and lowercase glue.
+          # The one other glue is the sealed session's file name, stored next
+          # to the origin (`cloud-tokens.seal`, then lowercase glue). It is
+          # named whole: a dot, a hyphen or a slash anywhere else after the
+          # origin can make a different host, so those stay refused.
           #
           # Re-split inside ALL_URLS at each scheme so an unlisted address
           # glued to a listed one is checked on its own. The two substitutions
@@ -2390,7 +2394,7 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              "$CLOUD_URL"*([a-z])) : ;;
+              "$CLOUD_URL"?(cloud-tokens.seal)*([a-z])) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
               # is the greyed-out example in the address field plus the same example
@@ -3561,7 +3565,7 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              "$CLOUD_URL"*([a-z])) : ;;
+              "$CLOUD_URL"?(cloud-tokens.seal)*([a-z])) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
               # is the greyed-out example in the address field plus the same example
