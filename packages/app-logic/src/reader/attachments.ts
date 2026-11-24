@@ -736,11 +736,7 @@ export function useMessageAttachments(
   );
 
   const needCidImages = useCallback(
-    (id: string, contentIds: string[]): void => {
-      // Fire-and-forget on purpose: the outcome is not a return value but an engine
-      // notification, and `loadInlineImages` never rejects — its caller is a render effect.
-      void engine.loadInlineImages(id, contentIds);
-    },
+    (id: string, contentIds: string[]): Promise<void> => engine.loadInlineImages(id, contentIds),
     [engine],
   );
 

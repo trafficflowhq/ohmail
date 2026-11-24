@@ -3,7 +3,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, contacts, folderState, messageInstances, messages, rules,
   fencedAccountWrite, fileImpersonationLetters, impersonationReturnedSenders, AccountErasedError,
-  resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
+  resolveCutline, onServerPool, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
   notGoneSql, readGoneMailboxIds, readListAddresses, readOwnAddresses, domainOf, ruleMatchKeySql,
   IMPERSONATION_FILING_IDS_MAX, SCREENER_FOLDER,
   type ResolvedCutline, type Tx,
@@ -251,7 +251,7 @@ async function selectClaimSenders(
   const sender = sql`lower(${messages.fromAddress})`;
   const sortKey = heldSortKey(d, { date: sql`${messages.date}`, arrivedAt: sql`${messages.createdAt}` });
   const gone = await readGoneMailboxIds(db, opts.accountId);
-  const reps = db.select({
+  const held = db.select({
     messageId: messages.id,
     fromAddress: messages.fromAddress,
     rank: sql<number>`row_number() over (
@@ -270,8 +270,11 @@ async function selectClaimSenders(
       eq(folderState.desiredFolder, SCREENER_FOLDER),
       isNull(messages.deletedAt),
       notGoneSql(d, messages.mailboxId, gone),
-    ))
-    .as("reps");
+    ));
+  const reps = held.as("reps");
+  const candidates = onServerPool(db) ? sql`
+    select lower(from_address) from (${held}) held
+    where rank = 1 and held_arrival = 0` : undefined;
   // The outer row's address named with its subquery's alias: see the act's selection for why.
   const repSender = sql`lower(${sql.identifier("reps")}.${sql.identifier(messages.fromAddress.name)})`;
   const latest = sql`${sql.identifier("reps")}.${sql.identifier("latest")}`;
@@ -294,7 +297,7 @@ async function selectClaimSenders(
            and cf.auto_filing_undone_at is null
            and cm.mailbox_id in (${organized})
       )`,
-      sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone)})`,
+      sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone, { candidates })})`,
       sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
       opts.after === null ? undefined : sql`(${latest}, ${repSender}) > (${d.ts(opts.after.at)}, ${opts.after.address})`,
     ))

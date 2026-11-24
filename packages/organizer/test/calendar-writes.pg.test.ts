@@ -568,7 +568,9 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     await t.due();
     expect((await t.turn()).kind).toBe("synced");
     expect(during).toBeNull();
-    expect((await connectionOf(w, t.accountId, t.connectionId)).nextPollAt!.getTime()).toBeLessThanOrEqual(Date.now());
+    const [schedule] = await w.db.select({ due: sql<boolean>`${calConnections.nextPollAt} <= now()` })
+      .from(calConnections).where(and(eq(calConnections.accountId, t.accountId), eq(calConnections.id, t.connectionId)));
+    expect(schedule?.due).toBe(true);
     expect((await t.writes()).map((r) => [r.key, r.state])).toEqual([["press-1", "applied"], ["press-2", "pending"]]);
   });
 

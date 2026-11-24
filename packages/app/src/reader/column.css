@@ -19,6 +19,13 @@
   margin-top: var(--s4);
 }
 
+/* Keep the opening position reachable if the last letter gets shorter while it loads. */
+.rd-column [data-reading-scroll][data-manual-anchor] {
+  --oh-thread-landing-padding: calc(var(--oh-sheet-foot-room) + var(--oh-thread-landing-room, 0px));
+
+  padding-block-end: var(--oh-thread-landing-padding);
+}
+
 /* The reply lands clear of the action panel, including its last row of tools. */
 .rd-column [data-reading-scroll]:has(.rd-reply [data-reply]) {
   scroll-padding-block-end: var(--oh-sheet-foot-room);

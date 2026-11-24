@@ -275,6 +275,7 @@ h4.msg-h, h5.msg-h, h6.msg-h { font-size: 1em; }
    than the letter scales down and keeps its aspect ratio. It stays inline (a logo can sit
    mid-sentence); `vertical-align: bottom` closes the descender gap under one standing alone. */
 .msg-img { max-width: 100%; height: auto; vertical-align: bottom; border-radius: 2px; }
+.msg-img-placeholder { display: inline-block; background: var(--soft-sheet); }
 
 /* The real destination, said beside a link whose visible label names a different host — the
    framed path's anti-phishing marker, natively. Quiet, and part of the link so it travels

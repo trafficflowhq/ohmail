@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createHmac, randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { AddressInfo } from "node:net";
@@ -39,6 +40,7 @@ import { dirname, join } from "node:path";
  * against the real domains after the DNS flip.
  */
 const ENABLED = process.env.TF_PROXY_E2E === "1";
+const webClientIpSecret = randomBytes(32).toString("hex");
 
 const WEBAPP = fileURLToPath(new URL("..", import.meta.url));
 /** next's own CLI, resolved the way node resolves it from the web app: the package's own copy where
@@ -146,7 +148,7 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
 
     next = spawn(process.execPath, [NEXT_CLI, "start", "-p", String(appPort)], {
       cwd: WEBAPP,
-      env: { ...process.env, TF_API_ORIGIN: origin },
+      env: { ...process.env, TF_API_ORIGIN: origin, VERCEL: "1", TF_WEB_CLIENT_IP_SECRET: webClientIpSecret },
       stdio: "pipe",
     });
     await waitFor(`http://127.0.0.1:${appPort}/`);
@@ -256,6 +258,33 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     expect(r.headers.cookie).toBe("tf_session=sess-value; tf_csrf=csrf-value");
     expect(r.headers["x-csrf-token"]).toBe("csrf-value");
     expect(r.headers["idempotency-key"]).toBe("e2e-key");
+    expect(r.headers.origin).toBe("https://ohmail.app");
+  });
+
+  it("carries the signed client address with a browser POST over the external rewrite", async () => {
+    seen = [];
+    const client = "2001:db8::7";
+    const proofHeader = "x-ohmail-client-ip";
+    const body = JSON.stringify({ transport: "webpush" });
+    const response = await fetch(app("/api/push/subscriptions?test=1"), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://ohmail.app",
+        "x-vercel-forwarded-for": client,
+        [proofHeader]: "unverified",
+      },
+      body,
+    });
+    const r = last();
+    const [ip, seconds, signature] = String(r.headers[proofHeader] ?? "").split(";");
+    const expected = createHmac("sha256", webClientIpSecret).update(`${client};${seconds}`).digest("hex");
+    expect(ip === client && signature === expected).toBe(true);
+    expect(response.headers.has(proofHeader)).toBe(false);
+    expect(r.method).toBe("POST");
+    expect(r.url).toBe("/push/subscriptions?test=1");
+    expect(r.headers.host === `127.0.0.1:${upstreamPort}`).toBe(true);
+    expect(r.body).toBe(body);
     expect(r.headers.origin).toBe("https://ohmail.app");
   });
 

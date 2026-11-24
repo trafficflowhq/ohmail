@@ -53,7 +53,7 @@ import {
  *    can replace a request's header set; a config rewrite forwards the jar. Unarmed, they are
  *    served here exactly as before.
  *
- * `/api/*` authenticates the Vercel client address for the API rewrite. The waitlist keeps
+ * `/api/*` rewrites with proof of the Vercel client address when available. The waitlist keeps
  * its landing-zone routing. The refresh handlers and static assets are handled outside
  * middleware, with their security headers set by `next.config.mjs`.
  *
@@ -198,31 +198,50 @@ function clientKey(request: NextRequest): string {
 }
 
 const WEB_CLIENT_IP = "x-ohmail-client-ip";
+const HOP_BY_HOP_HEADERS = [
+  "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection",
+  "te", "trailer", "transfer-encoding", "upgrade",
+];
 
 function isApiPath(pathname: string): boolean {
   const lower = pathname.toLowerCase();
   return lower === API_BASE || lower.startsWith(`${API_BASE}/`);
 }
 
-/** Attach proof to the upstream request before the configured API rewrite. */
-async function forwardClientIp(request: NextRequest): Promise<NextResponse> {
-  const secret = !SELF_HOST_BUILD && API_ORIGIN && process.env.VERCEL === "1"
+/** Send the proof and the external destination in the same middleware rewrite. */
+async function forwardApi(request: NextRequest, routed: string): Promise<NextResponse> {
+  const secret = !SELF_HOST_BUILD && process.env.VERCEL === "1"
     ? process.env.TF_WEB_CLIENT_IP_SECRET?.trim()
     : undefined;
   const ip = request.headers.get("x-vercel-forwarded-for");
-  const fromEdge = secret && ip && /^[0-9a-fA-F:.]{1,45}$/.test(ip);
-  if (!fromEdge && !request.headers.has(WEB_CLIENT_IP)) return NextResponse.next();
-  const headers = new Headers(request.headers);
-  headers.delete(WEB_CLIENT_IP);
-  if (fromEdge) {
-    const bytes = new TextEncoder();
-    const key = await crypto.subtle.importKey("raw", bytes.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    const payload = `${ip};${Math.floor(Date.now() / 1000)}`;
-    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, bytes.encode(payload)));
-    const hex = Array.from(mac, (byte) => byte.toString(16).padStart(2, "0")).join("");
-    headers.set(WEB_CLIENT_IP, `${payload};${hex}`);
+  if (!API_ORIGIN || !secret || !ip || !/^[0-9a-fA-F:.]{1,45}$/.test(ip)) {
+    return nextWithScrubbedHeaders(request);
   }
-  return NextResponse.next({ request: { headers } });
+
+  const bytes = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", bytes.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const payload = `${ip};${Math.floor(Date.now() / 1000)}`;
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, bytes.encode(payload)));
+  const hex = Array.from(mac, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const headers = new Headers(request.headers);
+  // Let the rewrite set the upstream Host and manage the new connection.
+  const connectionOptions = (headers.get("connection") ?? "").toLowerCase().split(",").map((name) => name.trim());
+  for (const name of request.headers.keys()) {
+    if (name !== "content-length" && connectionOptions.includes(name)) headers.delete(name);
+  }
+  for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
+  headers.delete("host");
+  headers.set(WEB_CLIENT_IP, `${payload};${hex}`);
+
+  const { pathname, search } = request.nextUrl;
+  const destination = new URL(API_ORIGIN);
+  // Keep the original escapes in an API path. When only the decoded path matched, encode
+  // its segments again before assigning it. Assigning pathname keeps the origin fixed.
+  destination.pathname = isApiPath(pathname)
+    ? pathname.slice(API_BASE.length)
+    : routed.slice(API_BASE.length).split("/").map(encodeURIComponent).join("/");
+  destination.search = search;
+  return NextResponse.rewrite(destination, { request: { headers } });
 }
 
 /**
@@ -294,7 +313,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     }
     // Decided on the path the router serves, so `/%6cogin` or `/x/../approve` meets the same three headers.
     const routed = routedPath(pathname) ?? pathname;
-    if ((isApiPath(pathname) || isApiPath(routed)) && routed.toLowerCase() !== "/api/waitlist") return forwardClientIp(request);
+    if ((isApiPath(pathname) || isApiPath(routed)) && routed.toLowerCase() !== "/api/waitlist") return forwardApi(request, routed);
     if (
       routed === "/login" || routed === "/join" || routed === "/verify-email" ||
       routed === "/forgot-password" || routed === "/reset-password" ||

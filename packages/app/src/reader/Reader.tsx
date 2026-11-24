@@ -89,6 +89,7 @@ interface ConversationProps {
 
 function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyboard }: ConversationProps) {
   const text = useTextLookup();
+  const view = useConversationColumn(route, openId, keysHere, keyboard, phone);
   const {
     commands,
     host,
@@ -109,25 +110,21 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
     person,
     onPerson,
     closeCard,
-    screeningDialog,
-    canScreen,
-    screenSender,
-    screenByKey,
-    mailboxWord,
-    people,
-    columnRoot,
     scroller,
-    under,
-  } = useConversationColumn(route, openId, keysHere, keyboard, phone);
+  } = view;
   useHeadingStepBack(scroller, phone, opened !== null);
   const back = phone ? readerBack(from, text("reader")("back"), () => commands.open(null)) : undefined;
   const calendarAction = useCalendarAction(opened, host.features.calendar !== NONE);
   if (opened === null && state === "gone") return <GoneLetter back={back} />;
   if (opened === null) return <Sheet kind="reading" label={text("reader")("pane")} back={back} />;
-  const place = phone ? "top" : narrow ? "heading" : "column";
   const threaded = messages.length > 1;
   const squares = threaded && (
-    <Squares messages={messages} walk={walk} place={place} column={scroller.current} />
+    <Squares
+      messages={messages}
+      walk={walk}
+      place={phone ? "top" : narrow ? "heading" : "column"}
+      column={scroller.current}
+    />
   );
   const latest = newestFirst ? 0 : messages.length - 1;
   const eachSubject = readSubjectDisplay(host.session.scope) === "each";
@@ -136,7 +133,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
     <div
       className="rd-column"
       data-read-column=""
-      ref={columnRoot}
+      ref={view.columnRoot}
       onWheel={(event) => scrollConversation(event, scroller.current)}
       role={step ? "dialog" : undefined}
       aria-modal={step ? true : undefined}
@@ -151,16 +148,16 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
         label={text("reader")("pane")}
         back={back}
         top={phone ? squares : undefined}
-        gutter={place === "column" ? squares : undefined}
+        gutter={!phone && !narrow ? squares : undefined}
         head={
           <RunReadingHead
             run={step}
-            under={under}
+            under={view.under}
             squares={narrow ? squares : undefined}
             subject={eachSubject ? undefined : shownSubject}
-            {...facesOf(threaded ? people : [])}
+            {...facesOf(threaded ? view.people : [])}
             tags={opened.labels.length > 0 ? <Tags labels={opened.labels} /> : undefined}
-            mailbox={mailboxWord(opened.mailboxId) ?? undefined}
+            mailbox={view.mailboxWord(opened.mailboxId) ?? undefined}
           />
         }
         foot={
@@ -172,9 +169,9 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
             keys={keysHere ? opened : null}
             reply={replyVerbs}
             run={step}
-            onScreen={canScreen ? screenSender : undefined}
-            onScreenKey={canScreen ? screenByKey : undefined}
-            screeningDialog={screeningDialog}
+            onScreen={view.canScreen ? view.screenSender : undefined}
+            onScreenKey={view.canScreen ? view.screenByKey : undefined}
+            screeningDialog={view.screeningDialog}
             onCalendar={calendarAction}
           />
         }
@@ -184,6 +181,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
           <ConversationLetter
             key={m.id}
             message={m}
+            onBodyLayout={walk.refreshLayout}
             showSubject={eachSubject || (threaded && separateSubject(m, subject, phone && index === latest))}
             compactSubject={eachSubject}
             offMirrorBody={offMirrorRow?.body ?? storeBody?.body}

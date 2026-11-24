@@ -220,11 +220,14 @@ describe.skipIf(!AVAILABLE)("where a CalDAV password goes, turn after turn, on P
       const ended = await c.turn();
       seen[arm] = { ended, heard: heard(other), askedOfTheSealedServer: heard(typed, asked), stands: await c.stands(), kept: await c.titles() };
     }
-    // The other server hears no request at all. The sealed server is asked once where its calendars are, names
-    // its own host alone, and the connection says so and waits a day with its copy kept.
+    // The other server hears no request. Discovery follows the sealed server's own home once,
+    // where no redirect names the other server. The connection waits a day with its copy kept.
     const refused = {
       ended: "backed_off host_changed", heard: [], stands: REFUSED, kept: ["Kiln check"],
-      askedOfTheSealedServer: [`PROPFIND ${TYPED} /dav/ WITH THE PASSWORD`, `PROPFIND ${TYPED} /dav/principals/mila/ WITH THE PASSWORD`],
+      askedOfTheSealedServer: [
+        `PROPFIND ${TYPED} /dav/ WITH THE PASSWORD`, `PROPFIND ${TYPED} /dav/principals/mila/ WITH THE PASSWORD`,
+        `PROPFIND ${TYPED} /dav/calendars/mila/ WITH THE PASSWORD`,
+      ],
     };
     expect(seen).toEqual({ "a host beside the sealed one": refused, "another port of the sealed host": refused });
   }, 120_000);
@@ -315,10 +318,13 @@ describe.skipIf(!AVAILABLE)("where a CalDAV password goes, turn after turn, on P
       home.at = typed.paths.home;
       const [atTyped, atStore] = [typed.seen.length, store.seen.length];
       const ended = await c.turn();
-      // Asked once, in this turn, where the calendars are; the host beside hears nothing; nothing is asked a second time.
+      // The sealed server's own home is followed once. The host beside hears nothing.
       expect({ ended, heard: heard(store, atStore), askedOfTheSealedServer: heard(typed, atTyped), stands: await c.stands(), kept: await c.titles() }).toEqual({
         ended: "backed_off host_changed", heard: [], stands: REFUSED, kept: ["Kiln check"],
-        askedOfTheSealedServer: [`PROPFIND ${TYPED} /dav/ WITH THE PASSWORD`, `PROPFIND ${TYPED} /dav/principals/mila/ WITH THE PASSWORD`],
+        askedOfTheSealedServer: [
+          `PROPFIND ${TYPED} /dav/ WITH THE PASSWORD`, `PROPFIND ${TYPED} /dav/principals/mila/ WITH THE PASSWORD`,
+          `PROPFIND ${TYPED} /dav/calendars/mila/ WITH THE PASSWORD`,
+        ],
       });
       // And back: the refusal was the server's own word of this turn, not a spoiled row.
       home.at = at(BESIDE, store, store.paths.home);

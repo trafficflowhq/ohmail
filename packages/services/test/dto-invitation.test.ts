@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { accounts, invitationCalendarId, mailboxes, messageInvitations } from "@trafficflow/db";
+import { eq } from "drizzle-orm";
+import { accounts, invitationCalendarId, mailboxes, messageInvitations, messages } from "@trafficflow/db";
 import { materializeMessage, materializeMessages } from "../src/dto/materialize.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 
@@ -42,6 +43,28 @@ describe("MessageDTO.invitation", () => {
       method: "CANCEL", uid: "x@y.example", recurrenceId: "", sequence: 0, start: null, startsAt: null, organizer: null,
       invitedAddress: null, answer: null, answeredAt: null,
     });
+  });
+
+  it("finds the closest live revision when the preceding letter was deleted", async () => {
+    const { db, accountId, mailboxId } = await makeCtx();
+    const organizer = "organizer" + String.fromCharCode(64) + "fixture.invalid";
+    const starts = [
+      new Date("2026-12-01T10:00:00Z"),
+      new Date("2026-12-01T11:00:00Z"),
+      new Date("2026-12-01T12:00:00Z"),
+    ];
+    const ids: string[] = [];
+    for (const [sequence, startsAt] of starts.entries()) {
+      const messageId = await seedMessage(db, accountId, mailboxId, { from: organizer });
+      ids.push(messageId);
+      await db.insert(messageInvitations).values({
+        accountId, mailboxId, messageId, organizer, uid: "weekly", method: "REQUEST", sequence, startsAt,
+      });
+    }
+    await db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, ids[1]!));
+
+    const dto = await materializeMessage(db, accountId, ids[2]!);
+    expect(dto?.invitation?.previous).toEqual({ start: null, startsAt: starts[0]!.toISOString() });
   });
 
   it("one row per letter: the join does not repeat a letter, with its tags beside it", async () => {

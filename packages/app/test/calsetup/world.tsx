@@ -95,6 +95,7 @@ export function mirror(said: CalendarSettingsWire | null = null) {
   const kinds = new Map<string, Map<string, unknown>>();
   const heard = new Set<() => void>();
   let version = 0;
+  const stamps = new Map<string, number>();
   const entries = (type: string) => [...(kinds.get(type)?.values() ?? [])].map((entity) => ({ entity }));
   const subscribe = (listener: () => void) => {
     heard.add(listener);
@@ -102,10 +103,15 @@ export function mirror(said: CalendarSettingsWire | null = null) {
       heard.delete(listener);
     };
   };
+  const stampOf = (kind: string) => stamps.get(kind) ?? 0;
   const engine = {
-    store: { entries, get: (type: string, id: string) => kinds.get(type)?.get(id) },
+    store: { entries, stampOf, get: (type: string, id: string) => kinds.get(type)?.get(id) },
     subscribe,
-    read: () => ({ version: () => version, list: (kind: string) => [...(kinds.get(kind)?.values() ?? [])] }),
+    read: () => ({
+      version: () => version,
+      stampOf,
+      list: (kind: string) => [...(kinds.get(kind)?.values() ?? [])],
+    }),
   } as unknown as OhmailEngine;
   const port: CalendarPort = {
     newId: () => "new",
@@ -131,6 +137,7 @@ export function mirror(said: CalendarSettingsWire | null = null) {
     if (entity === null) kind.delete(id);
     else kind.set(id, entity);
     version += 1;
+    stamps.set(type, version);
     for (const listener of [...heard]) listener();
   };
   /** Everything the mirror holds, as text: what a probe for a typed value reads. */

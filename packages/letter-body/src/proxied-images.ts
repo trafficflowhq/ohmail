@@ -27,7 +27,7 @@ export const DEFERRED_STYLE_ATTR = "data-ohmail-style";
 export const DEFERRED_SHEET_ATTR = "data-ohmail-sheet";
 /** The proxied urls a parked style or sheet waits for, a JSON array. */
 export const DEFERRED_URLS_ATTR = "data-ohmail-css-src";
-/** A parked picture that declares no height: it waits flat, as one in flight does, not as a square. */
+/** A parked picture's temporary size: flat for an unknown height, or the declared ratio. */
 export const PARK_FLAT_ATTR = "data-ohmail-parkflat";
 /** Pictures in flight at once, per tab: what a browser allows one host over HTTP/1.1. */
 export const PROXIED_IMAGES_IN_FLIGHT = 6;

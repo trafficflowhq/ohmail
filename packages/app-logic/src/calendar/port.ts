@@ -69,6 +69,8 @@ export interface CalendarPort {
   /** Each event with its waiting writes laid over, as the engine's one selector makes them. */
   events(): readonly EventWithWrites[];
   settings(): Promise<CalendarSettingsWire>;
+  /** Changes when the account's settings record arrives through sync. */
+  settingsVersion?(): number;
   /** Change whether the account sees this suggestion, then reconcile through the mirror. */
   setSuggestionDismissed?(id: string, dismissed: boolean): Promise<void>;
   readonly setup?: CalendarSetupPort;

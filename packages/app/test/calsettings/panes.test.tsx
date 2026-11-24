@@ -4,13 +4,13 @@
  * `none` the page holds no control for it at all. Where it has one, one press is one call, and what is shown follows
  * the mirror with no press.
  */
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { CalendarSettingsWire } from "@ohmail/app-logic/calendar";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { calendarPortOf, type CalendarSettingsWire } from "@ohmail/app-logic/calendar";
 import type { CalendarSetupPort } from "@ohmail/app-logic/calendar/setup";
 import { calendarAccountsPane, calendarViewPane } from "../../src/calsettings/index.js";
 import { useCalendarPanes } from "../../src/calsettings/panes.js";
-import { CalendarSettingsScope } from "../../src/calsettings/settings-read.js";
+import { CalendarSettingsScope, useSharedCalendarSettings } from "../../src/calsettings/settings-read.js";
 import { SettingsMenu } from "../../src/settings/SettingsMenu.js";
 import settingsEn from "../../messages/settings.en.json" with { type: "json" };
 import type { ComponentType } from "react";
@@ -237,6 +237,83 @@ describe("Calendar accounts", () => {
 });
 
 describe("View", () => {
+  it("reads on mount and when a settings change lands, without re-reading for mail activity", async () => {
+    const w = mirror(SAID);
+    let current = SAID;
+    const settings = vi.fn(async () => current);
+    const unused = () => {
+      throw new Error("unexpected calendar operation");
+    };
+    const port = calendarPortOf({
+      engine: w.engine,
+      settings,
+      load: "none",
+      held: w.port.held,
+      clock: { now: Date.now, uuid: unused },
+      transport: { writeCalendar: unused, retryCalendarWrite: unused, dismissCalendarWrite: unused },
+    });
+    function Reading() {
+      const { said } = useSharedCalendarSettings()!;
+      return <output>{said?.weekNumbers ? "On" : "Off"}</output>;
+    }
+    render(
+      <CalendarSettingsScope port={port} setup="none">
+        <Reading />
+      </CalendarSettingsScope>,
+    );
+    await act(async () => undefined);
+    expect(settings).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      w.put("message_body", "letter", { state: "ready" });
+    });
+    expect(settings).toHaveBeenCalledTimes(1);
+
+    current = { ...SAID, weekNumbers: true };
+    await act(async () => {
+      w.put("settings", "account", { updatedAt: UPDATED });
+    });
+    expect(settings).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("On")).toBeTruthy();
+  });
+
+  it("recovers after a first calendar settings read fails with 503 db_busy", async () => {
+    const w = mirror(SAID);
+    const settings = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error("db_busy"), { status: 503 }))
+      .mockResolvedValue({ ...SAID, weekNumbers: true });
+    const unused = () => {
+      throw new Error("unexpected calendar operation");
+    };
+    const port = calendarPortOf({
+      engine: w.engine,
+      settings,
+      load: "none",
+      held: w.port.held,
+      clock: { now: Date.now, uuid: unused },
+      transport: { writeCalendar: unused, retryCalendarWrite: unused, dismissCalendarWrite: unused },
+    });
+    function Reading() {
+      const { said } = useSharedCalendarSettings()!;
+      return <output>{said?.weekNumbers ? "On" : "Off"}</output>;
+    }
+    render(
+      <CalendarSettingsScope port={port} setup="none">
+        <Reading />
+      </CalendarSettingsScope>,
+    );
+    await act(async () => undefined);
+    expect(settings).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("On")).toBeNull();
+    for (let index = 0; index < 5; index++) {
+      await act(async () => {
+        w.put("message_body", `letter-${index}`, { state: "ready" });
+      });
+    }
+    expect(screen.getByText("On")).toBeTruthy();
+    expect(settings).toHaveBeenCalledTimes(2);
+  });
+
   it("summarizes the saved view choices in Settings", async () => {
     const w = world();
     function Menu() {

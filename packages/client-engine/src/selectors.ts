@@ -1229,7 +1229,9 @@ export interface FeedPartition {
  * first completed sync (`FEED_SINCE_ID`). Neither fallback draws a line.
  */
 export function feedPartition(reader: EntityReader, view: FeedView): FeedPartition {
-  const all = messagesIn(reader, FOLDER_OF_VIEW[view]);
+  // A stored row without a message ID cannot be opened or sent as a glance.
+  const all = messagesIn(reader, FOLDER_OF_VIEW[view]).filter(({ id }) =>
+    typeof id === "string" && id !== "" && id !== "null" && id !== "undefined");
   const row = reader.get<WaterlineMeta>("view_meta", waterlineIdOf(view)) ?? null;
   const idx = row ? lineIndexOf(all, row) : -1;
   const cut = idx >= 0 ? idx : row ? sinceIndexOf(all, reader.get<FeedSinceMeta>("view_meta", FEED_SINCE_ID)) : -1;

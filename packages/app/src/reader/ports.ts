@@ -30,6 +30,7 @@ export interface LetterNotice {
 
 /** One letter's body as the reader mounts it. `html` and `text` are the engine's, never built or edited here. */
 export interface LetterProps extends LetterPictureInputs {
+  readonly onBodyLayout?: () => void;
   /** A closed card needs only the notice from its cached HTML. */
   readonly noticeOnly?: true;
   readonly messageId: string;

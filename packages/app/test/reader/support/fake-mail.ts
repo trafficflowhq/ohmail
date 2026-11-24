@@ -59,6 +59,7 @@ export interface FakeMail {
   readonly told: { readonly cutlines: unknown[]; readonly sentFolders: unknown[] };
   /** Change a letter, as a drain would. */
   readonly patch: (id: string, over: Partial<EngineMessage>) => void;
+  readonly putBody: (id: string, body: unknown) => void;
   /** A letter arrives, as a page of the mirror would bring it. */
   readonly add: (m: EngineMessage) => void;
   /** How often the Ohbox's visit mark was moved (`markOhboxVisit`). */
@@ -188,6 +189,10 @@ export function fakeMail(
     patch: (id, over) => {
       const m = rows.get(`message:${id}`) as EngineMessage;
       rows.set(`message:${id}`, { ...m, ...over });
+      tell();
+    },
+    putBody: (id, body) => {
+      rows.set(`message_body:${id}`, body);
       tell();
     },
     add: (m) => {

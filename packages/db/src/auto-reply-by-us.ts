@@ -22,24 +22,20 @@ export function autoReplyByUsWhere(d: Dialect, row: {
   /** The row's `message_id_header`. NULL never correlates, which is correct: no id, no identity. */
   messageIdHeader: SQL;
 }): SQL {
-  return sql`(
-    lower(${row.fromAddress}) in (
+  return sql`case when lower(${row.fromAddress}) in (
       select lower(mx.address) from ${mailboxes} mx where mx.account_id = ${row.accountId}
-    )
-    and (
+    ) then (
       exists (
         select 1 from ${awayReplies} ar
          where ar.account_id = ${row.accountId}
            and ar.minted_message_id is not null
            and trim(ar.minted_message_id, '<>') = ${row.messageIdHeader}
       )
-      or exists (
-        select 1 from ${messageBodies} mb
-         where mb.message_id = ${row.id}
-           and (${machineSentHeadersWhere(d, sql`mb.headers`)})
-      )
-    )
-  )`;
+      or coalesce((
+        select (${machineSentHeadersWhere(d, sql`mb.headers`)})
+          from ${messageBodies} mb where mb.message_id = ${row.id}
+      ), false)
+    ) else false end`;
 }
 
 /**

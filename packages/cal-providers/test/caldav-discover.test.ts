@@ -233,6 +233,60 @@ describe("whom the reader tells the password", () => {
       expect(asked(s, 5)).toEqual([...DISCOVERY, report]);
     });
 
+    it.each([false, true])("continues a paged read on a numbered host in a fresh turn (home alias: %s)", async (alias) => {
+      const home = "/dav/calendars/mila/";
+      const redirect: Record<string, string> = {};
+      const s = await server({
+        homeHref: (port) => alias ? "/calendar-home/" : `http://p01-caldav.example.test:${port}${home}`,
+        sendsOn: redirect,
+        truncateAt: 1,
+      });
+      if (alias) redirect["/calendar-home/"] = `http://p01-caldav.example.test:${s.port}${home}`;
+      s.addCalendar("work");
+      for (const uid of ["first", "second"]) {
+        s.put("work", `${uid}.ics`, [
+          "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//ohmail//test//EN", "BEGIN:VEVENT", `UID:${uid}`,
+          "DTSTAMP:20261113T120000Z", "DTSTART:20261119T090000Z", "DTEND:20261119T100000Z", "END:VEVENT", "END:VCALENDAR", "",
+        ].join("\r\n"));
+      }
+      const reader = ownNetworkByName();
+      const firstTurn = signIn(s, typedAt(s));
+      const listed = await reader.listCalendars(firstTurn, signal());
+      if (!listed.ok) throw new Error(listed.reason);
+      const [calendar] = listed.value;
+      if (!calendar) throw new Error("Missing calendar");
+      const first = await reader.readChanges(firstTurn, calendar, null, PAGE, signal());
+      if (!first.ok) throw new Error(first.reason);
+      expect(first.value.items).toHaveLength(1);
+      const cursor = first.value.cursor;
+      if (cursor.kind !== "more") throw new Error("Missing next page");
+
+      if (alias) {
+        // An ordinary poll starts at page one on the stored calendar, without listing first.
+        const pollAt = s.seen.length;
+        const poll = await reader.readChanges(signIn(s, typedAt(s)), calendar, null, PAGE, signal());
+        expect(poll).toMatchObject({ ok: true, value: { cursor: { kind: "more" }, items: [{ kind: "upsert", event: { uid: "first" } }] } });
+        expect(asked(s, pollAt).slice(0, 5)).toEqual([
+          ...DISCOVERY,
+          ["caldav.example.test", "PROPFIND", "/calendar-home/", true],
+          ["p01-caldav.example.test", "PROPFIND", home, true],
+        ]);
+      }
+      const nextTurn = signIn(s, typedAt(s));
+      const next = await reader.readChanges(nextTurn, calendar, null, { ...PAGE, cursor: cursor.value }, signal());
+      if (!next.ok) throw new Error(next.reason);
+      expect(next.value).toMatchObject({ cursor: { kind: "end" }, items: [{ kind: "upsert", event: { uid: "second" } }] });
+      expect(s.seen.slice(-2).map((r) => [r.host.startsWith("p01-"), r.signedIn])).toEqual([[true, true], [true, true]]);
+
+      for (const host of ["p02-caldav.example.test", "elsewhere.example.net"]) {
+        const unlisted = new URL(calendar.id);
+        unlisted.hostname = host;
+        expect(await reader.readChanges(signIn(s, typedAt(s)), { id: unlisted.href }, null, { ...PAGE, cursor: cursor.value }, signal()))
+          .toEqual({ ok: false, reason: "host_changed", retryAfterMs: null });
+        expect(s.seen.some((r) => r.host === unlisted.host)).toBe(false);
+      }
+    });
+
     it("on a host the server does not name it is not asked, at a name beside the typed one or at another port of the typed host; the server is asked about it once in the turn", async () => {
       const s = await server();
       s.addCalendar("work", { name: "Work" });
@@ -240,10 +294,11 @@ describe("whom the reader tells the password", () => {
       const turn = signIn(s, typedAt(s));
       const refused = { ok: false, reason: "host_changed", retryAfterMs: null };
       expect(await reader.readChanges(turn, beside(s), null, PAGE, signal())).toEqual(refused);
-      expect(asked(s)).toEqual(DISCOVERY);
+      const discoveryWithHome = [...DISCOVERY, ["caldav.example.test", "PROPFIND", "/dav/calendars/mila/", true]];
+      expect(asked(s)).toEqual(discoveryWithHome);
       expect(await reader.readChanges(turn, { id: "http://caldav.example.test:8443/dav/calendars/mila/work/" }, null, PAGE, signal())).toEqual(refused);
       expect(await reader.readChanges(turn, beside(s), null, PAGE, signal())).toEqual(refused);
-      expect(s.seen.length).toBe(DISCOVERY.length);
+      expect(asked(s)).toEqual(discoveryWithHome);
     });
 
     it("where the server could not be asked, the reading says that word and not that the host changed, and asks no second time in the turn", async () => {

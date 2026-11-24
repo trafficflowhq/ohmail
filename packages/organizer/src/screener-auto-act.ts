@@ -5,7 +5,7 @@ import {
   applyScreenerDecision, rerouteAdvisedLetter, rerouteUnconfirmedHeld, unconfirmedSql, recordChanges, fencedAccountWrite,
   AccountErasedError, OrganizedElsewhereError, MailboxErasedError, MailboxNotFoundError,
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type ScreenerActRefusal,
-  screenerSuggestionsBySender, automaticAiAdmits, resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
+  screenerSuggestionsBySender, automaticAiAdmits, resolveCutline, onServerPool, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
   notGoneSql, readGoneMailboxIds, readListAddressesLetIn,
   decisionCanBeApplied, readRequestEligibility,
   DECIDABLE_FOLDERS, SCREENER_FOLDER, SCREENER_ACT_TRIGGER_PREFIX,
@@ -626,7 +626,7 @@ async function selectWaitingSenders(
   // A removed mailbox's mail is the queue's no more; the identity and provider probes below still read it.
   const gone = await readGoneMailboxIds(db, opts.accountId);
 
-  const reps = db.select({
+  const held = db.select({
     messageId: messages.id,
     mailboxId: messages.mailboxId,
     fromAddress: messages.fromAddress,
@@ -649,8 +649,11 @@ async function selectWaitingSenders(
       // rule would be promoted over an empty re-route.
       isNull(messages.deletedAt),
       notGoneSql(d, messages.mailboxId, gone),
-    ))
-    .as("reps");
+    ));
+  const reps = held.as("reps");
+  const candidates = onServerPool(db) ? sql`
+    select lower(from_address) from (${held}) held
+    where rank = 1 and held_arrival = 0` : undefined;
 
   /* THE OUTER ROW'S ADDRESS, NAMED WITH ITS TABLE, for the two subqueries below. This select reads
      one table, and there the query builder writes a column inside a selected `sql` field without
@@ -713,7 +716,7 @@ async function selectWaitingSenders(
            and ${messages.deletedAt} is null
            and not ${automaticAiAdmits(messages)}
       )`,
-      sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone)})`,
+      sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone, { candidates })})`,
       sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
     ))
     .orderBy(asc(reps.createdAt), asc(reps.messageId))

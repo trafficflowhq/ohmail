@@ -110,6 +110,39 @@ describe.skipIf(!PG_UP)("baseline adoption", () => {
     return brandDialect(drizzle(client), "pg") as Db;
   }
 
+  it("makes stored CalDAV host backoffs due on upgrade", async () => {
+    const repair = readJournalOf(MAIL_JOURNAL).find(({ tag }) => tag.endsWith("_caldav_host_retry"));
+    if (repair === undefined) throw new Error("Missing CalDAV host retry migration");
+    const beforeRepair = journalThrough(MAIL_JOURNAL, repair.when - 1);
+    const db = await blank();
+    const config = { migrationsSchema: MAIL_JOURNAL.migrationsSchema };
+    try {
+      await migrate(db, { ...config, migrationsFolder: beforeRepair.spec.dir });
+    } finally {
+      beforeRepair.dispose();
+    }
+
+    const accountId = randomUUID();
+    await db.execute(sql`insert into accounts (id, name) values (${accountId}, 'Calendar')`);
+    await db.execute(sql`
+      insert into cal_connections (account_id, label, provider, status, error_code, next_poll_at) values
+        (${accountId}, 'affected', 'caldav', 'failing', 'host_changed', now() + interval '1 day'),
+        (${accountId}, 'other fault', 'caldav', 'failing', 'throttled', now() + interval '1 day'),
+        (${accountId}, 'other provider', 'microsoft', 'failing', 'host_changed', now() + interval '1 day'),
+        (${accountId}, 'stopped', 'caldav', 'reconnect', 'host_changed', now() + interval '1 day')`);
+
+    await migrate(db, { ...config, migrationsFolder: MAIL_JOURNAL.dir });
+    const rows = await db.execute(sql`
+      select label, status, error_code, next_poll_at is null as due
+      from cal_connections where account_id = ${accountId} order by label`);
+    expect([...rows]).toEqual([
+      { label: "affected", status: "failing", error_code: "host_changed", due: true },
+      { label: "other fault", status: "failing", error_code: "throttled", due: false },
+      { label: "other provider", status: "failing", error_code: "host_changed", due: false },
+      { label: "stopped", status: "reconnect", error_code: "host_changed", due: false },
+    ]);
+  }, 60_000);
+
   /**
    * A database in exactly the state production is in: the pre-split journal, applied.
    *

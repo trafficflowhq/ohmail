@@ -35,7 +35,7 @@ export interface Session {
    * are admitted: the word of an asking that failed, or `null`. No function in a session of that
    * asking itself ({@link finding}).
    */
-  readonly locate: (() => Promise<ProviderRefusal | null>) | null;
+  readonly locate: ((refused: string) => Promise<ProviderRefusal | null>) | null;
 }
 
 /**
@@ -63,7 +63,7 @@ export async function leave(s: Session, url: string, req: Pick<HttpRequest, "met
   const send = (): Promise<HttpAnswer> => s.deps.http.request(url, { ...req, auth: s.auth, validators: null, signal: s.signal });
   const answer = await send();
   if (answer.arrived || answer.reason !== "host_changed" || s.locate === null || !s.hosts.couldName(url)) return answer;
-  const failed = await s.locate();
+  const failed = await s.locate(url);
   return failed === null ? send() : { arrived: false, reason: failed };
 }
 

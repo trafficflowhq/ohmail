@@ -128,13 +128,21 @@ function mailboxOf(query: string): string | null {
   return named === "" ? null : named;
 }
 
+function hasLetterId(id: unknown): id is string {
+  return typeof id === "string" && id !== "" && id !== "null" && id !== "undefined";
+}
+
 /** A message tail names the chosen letter; a thread tail names any member of the conversation. */
 function cutTail(path: string): { path: string; open: string | null; wholeThread?: true } {
   const parts = path.split("/");
   const id = parts[parts.length - 1];
   const kind = parts[parts.length - 2];
   if (parts.length >= 3 && (kind === "m" || kind === "t") && id)
-    return { path: parts.slice(0, -2).join("/"), open: id, ...(kind === "t" ? { wholeThread: true } : {}) };
+    return {
+      path: parts.slice(0, -2).join("/"),
+      open: hasLetterId(id) ? id : null,
+      ...(kind === "t" && hasLetterId(id) ? { wholeThread: true } : {}),
+    };
   return { path, open: null };
 }
 
@@ -200,7 +208,7 @@ export function fragmentOf(to: Route): string {
     return `#/first-run${how === "again" || how === "add" ? `/${how}` : ""}${named(to.stage.words.mailbox)}`;
   }
   const tail =
-    to.open !== null && LISTS_LETTERS.has(to.place) ? `/${to.wholeThread ? "t" : "m"}/${to.open}` : "";
+    hasLetterId(to.open) && LISTS_LETTERS.has(to.place) ? `/${to.wholeThread ? "t" : "m"}/${to.open}` : "";
   const head = ADDRESS[to.place];
   switch (to.place) {
     case "search":

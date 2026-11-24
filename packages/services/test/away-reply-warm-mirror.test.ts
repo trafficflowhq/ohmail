@@ -1,5 +1,5 @@
 import type { EngineMessage } from "@ohmail/wire";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { awayReplies, messages } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
@@ -267,9 +267,11 @@ describe("the away-reply flag reaches a mirror that predates it", () => {
     const w = await verbWorld();
     for (let i = 0; i < 5; i++) await seedThread(w, "machine");
     await w.engine.syncOnce();
+    const read = vi.spyOn(w.db, "execute");
     const r = await awayReplyFlagRedeliverPass(w.db as never, {
       accountId: w.accountId, batch: 2, maxPages: 10,
     });
+    expect(read).toHaveBeenCalledTimes(1);
     expect(r.redelivered).toBe(5);
     expect(r.exhausted).toBe(true);
     expect(r.cursor).toBe(null);

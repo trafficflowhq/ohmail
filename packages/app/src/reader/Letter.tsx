@@ -55,6 +55,7 @@ const KEPT = {
 
 export interface LetterViewProps {
   readonly message: EngineMessage;
+  readonly onBodyLayout?: () => void;
   readonly offMirrorBody?: MessageBody;
   readonly retryBody?: () => void;
   readonly clip?: MessageClip;
@@ -85,6 +86,7 @@ export interface LetterViewProps {
 
 export function Letter({
   message,
+  onBodyLayout,
   offMirrorBody,
   retryBody,
   showSubject,
@@ -128,6 +130,7 @@ export function Letter({
   const text = (
     <Body
       {...letterPictures(message, body.loadedRemoteContent, parts.pictures, parts.files, reading, presented)}
+      onBodyLayout={onBodyLayout}
       messageId={message.id}
       text={renderedText}
       html={loaded ? loaded.html : body.html}
@@ -140,6 +143,14 @@ export function Letter({
   );
   const textState = (
     <TextState message={message} body={body} live={live} retry={retryBody} refillExpired={refillExpired} />
+  );
+  const files = (
+    <LetterFiles
+      messageId={message.id}
+      selection={previewSelection}
+      parts={parts}
+      omit={parts.invitationFile?.(message)}
+    />
   );
   return (
     <div
@@ -178,14 +189,7 @@ export function Letter({
           ) : undefined
         }
         after={invitation || history ? <LetterAfter invitation={invitation} history={history} /> : undefined}
-        files={
-          <LetterFiles
-            messageId={message.id}
-            selection={previewSelection}
-            parts={parts}
-            omit={parts.invitationFile?.(message)}
-          />
-        }
+        files={files}
       >
         <div data-read-body="">
           {kept ? null : textState}

@@ -223,7 +223,7 @@ describe("MessageBody — the fetch request and the frame", () => {
     await render({
       text: "This month at the atelier.",
       html: NEWSLETTER,
-      onCidImages: (cids) => asked.push(cids),
+      onCidImages: (cids) => { asked.push(cids); },
     });
     expect(host!.querySelector("iframe"), "the fixture must render framed to prove anything").not.toBeNull();
     // The SET form, `="1"` — the bare attribute name also appears in FRAME_CSS's dormant
@@ -237,7 +237,7 @@ describe("MessageBody — the fetch request and the frame", () => {
       text: "This month at the atelier.",
       html: NEWSLETTER,
       cidImages: new Map([["logo@corp", PNG_URI]]),
-      onCidImages: (cids) => asked.push(cids),
+      onCidImages: (cids) => { asked.push(cids); },
     });
     expect(srcdoc()).toContain(`src="${PNG_URI}"`);
     expect(srcdoc()).not.toContain('data-ohmail-embedded="1"');
@@ -256,7 +256,7 @@ describe("MessageBody — the fetch request and the frame", () => {
     await render({
       text: "Hello\n\n— Anna",
       html: `<p>Hello</p><img src="cid:logo@corp" alt="Corp logo"><p>— Anna</p>`,
-      onCidImages: (cids) => asked.push(cids),
+      onCidImages: (cids) => { asked.push(cids); },
     });
     expect(host!.querySelector("iframe"), "the fixture must render frameless to prove anything").toBeNull();
     expect(asked, "the frameless rendering can show these now, so it asks").toEqual([["logo@corp"]]);
@@ -268,7 +268,7 @@ describe("MessageBody — the fetch request and the frame", () => {
       text: "Hello\n\n— Anna",
       html: `<p>Hello</p><img src="cid:logo@corp" alt="Corp logo"><p>— Anna</p>`,
       cidImages: new Map([["logo@corp", PNG_URI]]),
-      onCidImages: (cids) => asked.push(cids),
+      onCidImages: (cids) => { asked.push(cids); },
     });
     expect(host!.querySelector("iframe")).toBeNull();
     const img = host!.querySelector<HTMLImageElement>(".msg-img");
@@ -302,7 +302,7 @@ describe("MessageBody — the fetch request and the frame", () => {
     await render({
       text: "the text part",
       html: overflow,
-      onCidImages: (cids) => asked.push(cids),
+      onCidImages: (cids) => { asked.push(cids); },
     });
     expect(host!.querySelector("iframe")).toBeNull();
     expect(asked, "bytes a rendering cannot show are pure spend").toEqual([]);

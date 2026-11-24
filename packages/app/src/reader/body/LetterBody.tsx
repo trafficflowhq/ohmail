@@ -16,11 +16,11 @@ export function LetterBody(props: LetterProps) {
   const bodyText = useText("bodyText");
   /* The body reads its sentences from a register at render: handed here, in render, before it draws. */
   setBodyWords({ locale, translatorOf: (namespace) => (namespace === "mailBody" ? mailBody : bodyText) });
-  const { noticeOnly, html, onNotice } = props;
+  const { noticeOnly, html, onNotice, onBodyLayout } = props;
   return noticeOnly ? (
     <PreviewNotice messageId={props.messageId} html={html} onNotice={onNotice} locale={locale} />
   ) : (
-    <MessageBody {...props} look="sheet" />
+    <MessageBody {...props} look={onBodyLayout ? "reader" : "sheet"} />
   );
 }
 

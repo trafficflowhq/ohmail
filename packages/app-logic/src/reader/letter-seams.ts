@@ -22,7 +22,7 @@ export interface PictureSeam {
 /** The embedded pictures' half of the file door. */
 export interface EmbeddedPictureSeam {
   readonly cidImagesOf: (messageId: string) => ReadonlyMap<string, string>;
-  readonly needCidImages: (messageId: string, contentIds: string[]) => void;
+  readonly needCidImages: (messageId: string, contentIds: string[]) => Promise<void> | void;
 }
 
 export interface LetterOfSeams {
@@ -54,7 +54,7 @@ export interface LetterPictureInputs {
   readonly resolvedRemoteImages?: ReadonlyMap<string, string>;
   readonly onRemoteImages?: (urls: string[]) => void;
   readonly cidImages?: ReadonlyMap<string, string>;
-  readonly onCidImages?: (contentIds: string[]) => void;
+  readonly onCidImages?: (contentIds: string[]) => Promise<void> | void;
 }
 
 /**

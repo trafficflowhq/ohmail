@@ -238,18 +238,27 @@ describe("the open", () => {
   it("the person's first key or press lets it go, and so does the ceiling", () => {
     for (const gesture of ["keydown", "pointerdown", "ceiling"] as const) {
       geo.tops = [0, 900, 1800];
-      geo.height = 3000;
-      mountReader({ letters: unreadFrom("c"), open: "c" });
+      geo.height = 2200;
+      const letters = unreadFrom("c").map((m) => (m.id === "c" ? { ...m, body: undefined } : m));
+      mountReader({ letters, open: "c" });
       const scroller = layOut();
       const held = scroller.scrollTop;
+      const visibleTop = topOf("c");
+      expect(held).toBe(1400);
       act(() => {
         if (gesture === "ceiling") vi.advanceTimersByTime(6000);
         else window.dispatchEvent(new Event(gesture));
       });
+      // Growth below the opened top would let the opening pull it up to the reading line.
+      geo.height = 3000;
+      grow();
+      expect(scroller.scrollTop).toBe(held);
+      // Growth above the same letter should move scrollTop by the same amount as the letter.
       geo.tops = [0, 1500, 2400];
       geo.height = 3600;
       grow();
-      expect(scroller.scrollTop).toBe(held);
+      expect(scroller.scrollTop).toBe(held + 600);
+      expect(topOf("c")).toBe(visibleTop);
       cleanup();
     }
   });
