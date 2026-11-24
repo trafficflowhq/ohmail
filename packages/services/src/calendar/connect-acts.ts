@@ -22,7 +22,7 @@ import { bridgeDb, bridgeTx, withAccountTx, type ServiceContext } from "../conte
 import { ServiceError } from "../errors.js";
 import {
   connectRefusal, connectionRecord, connectionSeen, hasControlCharacter, parseSignInAsk, placedAddress, sealCredential, serverSealedFor,
-  type CalendarConnectDoor,
+  typedCalDavCredential, type CalendarConnectDoor,
 } from "./connect.js";
 import { CALENDAR_BUILDERS } from "./feed.js";
 import { requireCalendarOn } from "./settings-service.js";
@@ -241,7 +241,7 @@ export async function signInCalendarAgain(
   const at = { accountId: ctx.accountId, connectionId: id };
   const credential: StoredCredential = ask.kind === "address"
     ? { kind: "address", url: ask.address }
-    : { kind: "basic", server: await serverOfSignInAgain(ctx, door, at, seen.serverUrl), user: ask.user, password: ask.password };
+    : typedCalDavCredential(await serverOfSignInAgain(ctx, door, at, seen.serverUrl), ask);
   const sealed = await sealCredential(door.keys, credential, at);
   return withAccountTx(ctx, async (tx) => {
     const t = bridgeTx(tx);
