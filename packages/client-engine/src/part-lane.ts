@@ -5,11 +5,19 @@
  * ask met the door's `mailbox_busy` and the picture read as failed. Here no mailbox is asked for
  * more than the door admits, a person's press never waits behind automatic work, and a busy answer
  * is a wait, not a failure. Pure: no engine import.
+ *
+ * THE LETTER ON SCREEN ({@link PartLane.show}) goes next after the presses: its automatic asks are
+ * taken ahead of every other letter's and may use both of the door's slots. A thread of five letters
+ * once drew the letter being read last, behind thirty pictures of the letters above it.
  */
 
 /** In flight per mailbox: the API door's own number (`MAX_IMAP_PER_MAILBOX`). */
 export const PART_FETCHES_PER_MAILBOX = 2;
-/** Of those, automatic (embedded pictures, invitations): one slot always stays free for a press. */
+/**
+ * Of those, automatic (embedded pictures, invitations): one slot stays free for a press, except for
+ * the letter on screen. A press still goes ahead of everything queued, and an ask waiting out a busy
+ * answer holds no slot at the door, so it does not keep a press waiting.
+ */
 export const AUTO_PART_FETCHES_PER_MAILBOX = 1;
 /** How long a mailbox may answer busy, from its first busy answer, before busy is final. */
 export const BUSY_PATIENCE_MS = 60_000;
@@ -40,6 +48,8 @@ interface Entry extends LaneTask {
 interface Line {
   running: number;
   runningAuto: number;
+  /** Of `running`, asks waiting out a busy answer: they hold no slot at the door. */
+  sleeping: number;
   presses: Entry[];
   autos: Entry[];
   /** The first busy answer of the current episode; null once a mailbox answered otherwise. */
@@ -56,6 +66,8 @@ function busyWait(err: unknown): number | null {
 
 export class PartLane {
   private readonly lines = new Map<string, Line>();
+  /** The letter the person is looking at, or null. */
+  private onScreen: string | null = null;
 
   run<T>(task: LaneTask, ask: () => Promise<T>): Promise<T | typeof LANE_DROPPED> {
     const line = this.lineOf(task.key);
@@ -83,8 +95,16 @@ export class PartLane {
     for (const [key, line] of this.lines) this.pump(key, line);
   }
 
+  /** The person is looking at this letter: its queued and later automatic asks go first. */
+  show(messageId: string): void {
+    if (this.onScreen === messageId) return;
+    this.onScreen = messageId;
+    for (const [key, line] of this.lines) this.pump(key, line);
+  }
+
   /** The letter was released: its queued asks are never made, a busy wait ends now. */
   drop(messageId: string): void {
+    if (this.onScreen === messageId) this.onScreen = null;
     for (const [key, line] of this.lines) {
       for (const queue of [line.presses, line.autos]) {
         for (let i = queue.length - 1; i >= 0; i--) {
@@ -112,16 +132,21 @@ export class PartLane {
   private lineOf(key: string): Line {
     let line = this.lines.get(key);
     if (!line) {
-      line = { running: 0, runningAuto: 0, presses: [], autos: [], busySince: null, active: new Set() };
+      line = { running: 0, runningAuto: 0, sleeping: 0, presses: [], autos: [], busySince: null, active: new Set() };
       this.lines.set(key, line);
     }
     return line;
   }
 
   private pump(key: string, line: Line): void {
-    while (line.running < PART_FETCHES_PER_MAILBOX) {
-      let entry = line.presses.shift();
-      if (!entry && line.runningAuto < AUTO_PART_FETCHES_PER_MAILBOX) entry = line.autos.shift();
+    for (;;) {
+      const free = line.running < PART_FETCHES_PER_MAILBOX;
+      let entry = line.running - line.sleeping < PART_FETCHES_PER_MAILBOX ? line.presses.shift() : undefined;
+      if (!entry && free) {
+        const mine = line.autos.findIndex((e) => e.messageId === this.onScreen);
+        if (mine >= 0) entry = line.autos.splice(mine, 1)[0];
+        else if (line.runningAuto < AUTO_PART_FETCHES_PER_MAILBOX) entry = line.autos.shift();
+      }
       if (!entry) break;
       line.running += 1;
       if (entry.kind === "auto") line.runningAuto += 1;
@@ -152,10 +177,16 @@ export class PartLane {
           line.busySince ??= now;
           if (now - line.busySince >= BUSY_PATIENCE_MS) throw err;
           if (entry.dropped) return LANE_DROPPED;
-          await new Promise<void>((r) => {
-            const t = setTimeout(r, wait);
-            entry.wake = () => { clearTimeout(t); r(); };
-          });
+          line.sleeping += 1;
+          this.pump(entry.key, line);
+          try {
+            await new Promise<void>((r) => {
+              const t = setTimeout(r, wait);
+              entry.wake = () => { clearTimeout(t); r(); };
+            });
+          } finally {
+            line.sleeping -= 1;
+          }
           entry.wake = undefined;
           if (entry.dropped) return LANE_DROPPED;
         }

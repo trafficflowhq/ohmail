@@ -22,7 +22,7 @@ export const CONNECT_FAULT_KEYS = {
   redirect_invalid: "fault.addressRefused",
   too_many_redirects: "fault.addressRefused",
   host_unresolved: "fault.hostUnknown",
-  host_changed: "fault.hostUnknown",
+  host_changed: "fault.hostMoved",
   throttled: "fault.unreachable",
   unavailable: "fault.unreachable",
   timeout: "fault.unreachable",

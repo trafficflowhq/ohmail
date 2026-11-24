@@ -15,5 +15,6 @@ export * from "./series.js";
 /** Microsoft's own address of its API: what a composing program names as the base unless it means another. */
 export { MS_GRAPH_BASE } from "./microsoft/index.js";
 export { alreadyHolds } from "./write-compare.js";
+export { calendarKey } from "./calendar-key.js";
 
 export { portableCalendarText } from "./portable.js";

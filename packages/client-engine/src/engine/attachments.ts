@@ -515,16 +515,23 @@ export abstract class EngineAttachments extends EngineHydration {
    * the document names these parts — a signature logo as a grey box in every mail from a colleague is the defect, not
    * thrift. Bounds: only `Content-ID`-referenced parts; only declared raster images within {@link
    * INLINE_IMAGE_MAX_BYTES}, at most {@link INLINE_IMAGE_MAX_PARTS} parts / {@link INLINE_IMAGE_MAX_TOTAL_BYTES} per
-   * message; fetched SEQUENTIALLY; a failed part stays failed, so a re-render cannot loop a connection-cost fetch.
+   * message; a failed part stays failed, so a re-render cannot loop a connection-cost fetch.
+   *
+   * HOW FAST: the parts are put in line together. `first` says the person is looking at this letter:
+   * its automatic asks go ahead of every other letter's and may use both of the mailbox's slots
+   * ({@link PartLane.show}); a letter not on screen fetches one part at a time. Where pictures are drawn
+   * from object URLs each is drawn the moment its bytes land; `data:` pictures (the phone) are drawn
+   * together when the pass ends, because every drawing rebuilds a document carrying all of them.
    */
 
   /**
    * Never rejects; single-flight per message — the pane is mounted twice and both mounts ask for the same document.
    */
-  async loadInlineImages(messageId: string, contentIds: readonly string[]): Promise<void> {
+  async loadInlineImages(messageId: string, contentIds: readonly string[], opts: { first?: boolean } = {}): Promise<void> {
     if (!this.attachmentsAvailable() || contentIds.length === 0) return;
     const asked = this.inlineImageAsks.get(messageId);
     this.inlineImageAsks.set(messageId, { cids: [...contentIds], reasks: asked?.reasks ?? new Map(), again: asked?.again ?? false });
+    if (opts.first === true) this.partLane.show(messageId);
     return this.runInlineImages(messageId, contentIds, NO_RETRY);
   }
 
@@ -673,11 +680,12 @@ export abstract class EngineAttachments extends EngineHydration {
       wanted.push(item);
     }
 
-    const minted: Array<[string, string]> = [];
-    for (const item of wanted) {
+    const late: Array<[string, string]> = [];
+    // ALL IN LINE AT ONCE: the lane decides how many run side by side.
+    await Promise.allSettled(wanted.map(async (item) => {
       // A STAGED PREVIEW STANDS: the overlay shows it, and `openAttachment` would fetch over it and
       // release it. The picture is drawn when the overlay closes ({@link releasePreviews}).
-      if (this.objectUrls.isAdopted(this.itemOf(messageId, item.id)?.objectUrl)) continue;
+      if (this.objectUrls.isAdopted(this.itemOf(messageId, item.id)?.objectUrl)) return;
       const part = `${messageId}:${item.id}`;
       this.inlinePassParts.add(part);
       try {
@@ -686,39 +694,42 @@ export abstract class EngineAttachments extends EngineHydration {
         this.inlinePassParts.delete(part);
       }
       const now = this.itemOf(messageId, item.id);
-      if (!now?.blob) continue;
+      if (!now?.blob) return;
       if (this.inlineImageUrls === "object") {
         // THE PART'S OWN URL, over these very bytes: no second carrier, the frame loads it by
-        // reference. Which URLs may be drawn from is decided once, after the walk.
-        if (now.objectUrl !== undefined && inlineImageBytesAdmitted(now.blob)) {
-          minted.push([item.contentId!, now.objectUrl]);
-        }
-        continue;
+        // reference. Drawn now.
+        if (now.objectUrl !== undefined && inlineImageBytesAdmitted(now.blob)) this.drawInlineImages(messageId, [[item.contentId!, now.objectUrl]]);
+        return;
       }
       // PER PART: a byte read that throws (a device FileReader refusal) costs that image its
       // blank box and nothing else — unguarded, one bad part killed the whole pass and every
       // image already minted in this walk was lost with it.
       try {
         const url = await mintInlineDataUrl(now.blob);
-        if (url) minted.push([item.contentId!, url]);
+        if (url) late.push([item.contentId!, url]);
       } catch {
-        /* this part stays the blank box it already was; the others still land below */
+        /* this part stays the blank box it already was; the others still land */
       }
-    }
+    }));
+    this.drawInlineImages(messageId, late);
+  }
+
+  /**
+   * PICTURES INTO THE LETTER'S MAP: ONE replacement and ONE notification, because every map identity
+   * change re-sanitizes and re-measures the letter downstream.
+   */
+  protected drawInlineImages(messageId: string, pictures: ReadonlyArray<readonly [string, string]>): void {
     // ONLY A URL THE LEDGER MINTED FOR THIS MESSAGE AND STILL HOLDS: never an adopted preview, and
     // never one revoked while the pass walked on (a fetch over its part).
-    const live = minted.filter(
+    const live = pictures.filter(
       ([, url]) => this.inlineImageUrls === "data" || this.objectUrls.mintedFor(messageId, url),
     );
     if (live.length === 0) return;
-
-    // Re-checked AFTER the awaits: a message released mid-pass (the reader moved on) must not
-    // have its map re-created to outlive the byte state it belongs with.
+    // A message released mid-pass (the reader moved on) must not have its map re-created to outlive
+    // the byte state it belongs with.
     if (this.attachmentLists.get(messageId)?.state !== "ready") return;
     const next = new Map(this.inlineImages.get(messageId) ?? NO_INLINE_IMAGES);
     for (const [cid, url] of live) next.set(cid, url);
-    // ONE replacement and ONE notification for the whole pass, not one per image: every map
-    // identity change re-sanitizes and re-measures the mail document downstream.
     this.inlineImages.set(messageId, next);
     this.notify();
   }

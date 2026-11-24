@@ -103,6 +103,7 @@
       "addressInvalid": "Von dieser Adresse kann kein Kalender gelesen werden.",
       "addressRefused": "Von dieser Adresse werden keine Kalender gelesen.",
       "hostUnknown": "Dieser Server wurde nicht gefunden.",
+      "hostMoved": "Der Server hat seine Kalender an eine andere Adresse verlegt. Es wird von selbst erneut versucht.",
       "unreachable": "Der Server hat nicht geantwortet. Es wird von selbst erneut versucht.",
       "unreadable": "Was der Server geschickt hat, konnte nicht gelesen werden.",
       "unknown": "Der Kalender konnte nicht verbunden werden."

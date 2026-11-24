@@ -22,7 +22,11 @@ export interface PictureSeam {
 /** The embedded pictures' half of the file door. */
 export interface EmbeddedPictureSeam {
   readonly cidImagesOf: (messageId: string) => ReadonlyMap<string, string>;
-  readonly needCidImages: (messageId: string, contentIds: string[]) => Promise<void> | void;
+  readonly needCidImages: (
+    messageId: string,
+    contentIds: string[],
+    opts?: { first?: boolean },
+  ) => Promise<void> | void;
 }
 
 export interface LetterOfSeams {
@@ -60,7 +64,8 @@ export interface LetterPictureInputs {
 /**
  * The picture inputs of ONE letter's body, as today's reader hands them. `reading` is false for a letter only
  * peeked at: it asks for no embedded picture (a mailbox connection each). `presented` is false where the letter was
- * not read off the presented mirror: the hold a list would show is unknown, so it loads nothing by itself.
+ * not read off the presented mirror: the hold a list would show is unknown, so it loads nothing by itself. `current`:
+ * the letter stands on screen, so its embedded pictures are asked ahead of the other letters'.
  */
 export function letterPictures(
   letter: LetterOfSeams,
@@ -69,6 +74,7 @@ export function letterPictures(
   embedded: EmbeddedPictureSeam | "none",
   reading: boolean,
   presented: boolean,
+  current = false,
 ): LetterPictureInputs {
   const id = letter.id;
   const cid =
@@ -77,7 +83,10 @@ export function letterPictures(
       : {
           cidImages: embedded.cidImagesOf(id),
           ...(reading
-            ? { onCidImages: (contentIds: string[]) => embedded.needCidImages(id, contentIds) }
+            ? {
+                onCidImages: (contentIds: string[]) =>
+                  embedded.needCidImages(id, contentIds, current ? { first: true } : undefined),
+              }
             : {}),
         };
   if (pictures === "none") {
