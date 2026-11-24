@@ -1839,6 +1839,7 @@
     "languageAria": "Language",
     "languageFailed": "Couldn't save that — try again.",
     "languageName": {
+      "system": "Phone",
       "en": "English",
       "de": "Deutsch"
     },
@@ -4788,6 +4789,7 @@
     "untilPast": "The end date passed on {date}. Nothing is sent.",
     "untilExpired": "Pick a date in the future, or turn the responder off.",
     "localNote": "Replies are sent while ohmail is open on this computer.",
+    "phoneNote": "Replies are sent while ohmail is open on this phone.",
     "hostNote": "Replies are sent while ohmail is open on {host}.",
     "save": "Save",
     "saving": "Saving…",
@@ -5322,6 +5324,7 @@
       "notACode": "Not an ohmail code."
     },
     "server": {
+      "cloud": "ohmail Cloud.",
       "say": "My server is at <blank></blank>.",
       "label": "Your server’s address",
       "blank": "its address",
@@ -5348,6 +5351,14 @@
       "scan": "Scan a code"
     },
     "terms": {
+      "folders": "Where your mail lives",
+      "inbox": "Ohbox shows mail from people you said yes to. History shows older mail. Both are views of your inbox.",
+      "folderScreener": "Mail from people you haven’t decided about waits in Screener.",
+      "folderNews": "Newsletters and things to read later.",
+      "folderReceipts": "Receipts, orders and tickets.",
+      "folderScreened": "Mail you screened out.",
+      "folderQuarantine": "Mail marked as spam.",
+      "folderOther": "Sent, Drafts, Trash, Junk and your own folders stay as they are.",
       "say": "Organize on this phone.",
       "while": {
         "android": "It organizes while its notification is shown. Dismiss the notification to stop.",
@@ -5360,6 +5371,13 @@
       "chooseOther": "Choose differently"
     },
     "form": {
+      "serverSettings": "Server settings",
+      "hostPorts": "Host and ports",
+      "passwordHelp": "Password help",
+      "pickAnother": "Pick another",
+      "later": "Later",
+      "provider": "My mail is with",
+      "providerChosen": "My mail is with {provider}.",
       "iAm": "I’m <address></address> with password <password></password>.",
       "iAmAppPassword": "I’m <address></address> with app password <password></password>.",
       "seenAs": "People see me as <name></name>.",
@@ -5376,6 +5394,7 @@
       "smtpHost": "Outgoing server (SMTP)",
       "smtpPort": "SMTP port",
       "tls": "Implicit TLS",
+      "tlsPorts": "Switches the incoming port between 993 and 143. Port 143 starts with STARTTLS.",
       "twoStep": "2-Step Verification on",
       "whereToMake": "Where to make one",
       "appOnlyNote": "Some work, school and Advanced Protection accounts cannot create App Passwords, and ohmail cannot connect those yet.",
@@ -5492,6 +5511,29 @@
     }
   },
   "phoneSettings": {
+    "legalTitle": "What happens to your mail",
+    "privacy": "Privacy",
+    "subprocessors": "Subprocessors",
+    "imprint": "Imprint",
+    "mailboxCount": "{count, number}",
+
+    "factorBrowser": "Use the same account in your browser to confirm with a passkey.",
+    "openBrowser": "Open in browser",
+    "invitesEmpty": "No invites",
+    "noAccount": "No account",
+    "accountLoading": "Loading your account.",
+    "plan": "Plan",
+    "status": "Status",
+    "storageEmpty": "No storage usage to show",
+    "subscriptionEmpty": "No plan yet",
+    "companion": {
+      "title": "Open ohmail",
+      "line": "You can get ohmail from this phone’s app store.",
+      "failed": "This phone could not open the app.",
+      "appStore": "Open the App Store",
+      "playStore": "Open Google Play",
+      "cancel": "Cancel"
+    },
     "thisPhone": {
       "title": "This phone",
       "tag": {
@@ -5929,6 +5971,7 @@
     "notDone": "Not done",
     "notCopied": "Not copied",
     "cancelled": "Cancelled",
+    "thisPhone": "This phone",
     "thisOne": "This browser"
   },
   "accountSubscription": {
@@ -5976,6 +6019,7 @@
     "none": "No invites"
   },
   "accountSecurity": {
+    "setupQr": "Authenticator setup QR code",
     "notRead": "Not read",
     "notDone": "Not done",
     "cancelled": "Cancelled",
@@ -5998,6 +6042,8 @@
     "self": "Your own server",
     "ownComputer": "This computer",
     "signedIn": "Signed in",
+    "thisPhone": "This phone",
+    "signOutOnPhone": "Opens Servers to confirm signing out from this phone.",
     "thisBrowser": "This browser",
     "changeLabel": "Password",
     "cancel": "Cancel",
@@ -6550,6 +6596,9 @@
     "title": "Invitations",
     "close": "Close",
     "unreadable": "The calendar cannot be read on this device.",
+    "position": "{group} · {index} of {count}",
+    "previous": "The one before",
+    "next": "The next",
     "noZone": "The invitations cannot be listed: this device does not know its time zone.",
     "group": {
       "toAnswer": "To answer",
@@ -6748,6 +6797,14 @@
       "title": "Calendar accounts"
     },
     "view": {
+      "opensIn": "Opens in",
+      "startsOn": "Week starts on",
+      "weekends": "Weekends",
+      "showDeclined": "Show declined events",
+      "deviceSummary": "{view} · {day}",
+      "opens": { "agenda": "Agenda", "day": "Day", "week": "Week", "month": "Month", "year": "Year" },
+      "starts": { "0": "Monday", "5": "Saturday", "6": "Sunday" },
+
       "newEvents": "New events go to",
       "noWritable": "No calendar to write to",
       "week": "Week",
@@ -6773,6 +6830,13 @@
     "group": "Calendar",
     "close": "Close Settings",
     "mail": {
+      "readForEvents": "Read for events",
+      "noMailbox": "No mailbox",
+      "phoneOfferNote": "Choose which mailboxes show calendar offers on this phone.",
+      "offered": "Offered",
+      "evidence": { "calendar": "Calendar invitations", "data": "Dates in structured mail" },
+      "onCalendar": "On the calendar",
+
       "title": "Mail and calendar",
       "fromMail": "From mail",
       "open": "Open"
@@ -7152,6 +7216,12 @@
     "found": "Something found in mail",
     "titles": "Titles",
     "showTitles": "Show titles in notifications",
+    "calendarOn": "On",
+    "calendarOff": "Off",
+    "calendarOnDevice": "On this device",
+    "calendarPhoneNoticeKinds": "This phone can post event reminders. Invitations, changes, replies and the daily summary are available in the app.",
+    "calendarPhonePrivacy": "Reminders and widgets show no event details.",
+    "widgetTitles": "Show titles on widgets",
     "thisDevice": "This device",
     "mail": "Mail",
     "onlyWhileOpen": "Only while ohmail is open",
@@ -7178,9 +7248,10 @@
     "where": "Where the model runs",
     "cloud": "ohmail Cloud",
     "working": "Working",
-    "draftReply": "Draft reply",
     "draftCost": "{credits, number} credits a draft",
+    "draftReply": "Draft reply",
     "budget": "AI budget left",
+    "creditsAmount": "{remaining, number} of {total, number}",
     "creditsLeft": "{remaining, number} of {total, number} left",
     "creditsDetail": "{remaining, number} of {total, number} credits",
     "creditsEmpty": "0 credits",

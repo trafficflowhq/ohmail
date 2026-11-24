@@ -104,7 +104,7 @@ describe("the non-hook copy tables and the catalogue say the same thing", () => 
     "pileOhbox", "pileReads", "pileReceipts", "pileScreener", "pileOhboxNote",
     "pileScreenerNote", "pilesNote", "never", "untilLabel", "untilNone",
     "untilPick", "untilClear", "untilOn", "untilPast", "untilExpired",
-    "localNote", "hostNote", "save", "saving", "saved",
+    "localNote", "phoneNote", "hostNote", "save", "saving", "saved",
     "asked", "applied", "changedElsewhere", "failed", "failedStillOn",
     "failedStillOff", "incomplete", "unreachable", "unsavedStillOff", "unsavedStillOn",
     "leaveAsk", "leaveDiscard", "leaveKeep", "notice", "noticePileOhbox",
