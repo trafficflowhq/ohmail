@@ -560,20 +560,19 @@ jobs:
             echo "this binary's CSP carries the Windows spelling of the command scheme" >&2
             exit 1
           fi
+          # See the Linux x64 job for the endpoint and URL splitting rules.
           echo "URLs in the binary:"
-          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
+          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" \
+            | awk '{ gsub(/https?:\/\//, "\n&"); print }' \
+            | sed -e 's|^https://ohmail\.app/forgot-passwordsetup$|https://ohmail.app/forgot-password|' \
+                  -e 's|^https://ohmail\.appohmail:$|https://ohmail.app|' \
+            | grep -E '^https?://' | sort -u)"
           printf '%s\n' "$ALL_URLS"
-          # Identical rule to the Windows job — the update feed by prefix, the
-          # Cloud API by equality, the browser link table page by page, and the
-          # scheme split that keeps adjacent Rust literals from being judged as
-          # one address; see the reasoning there.
           FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
           CLOUD_URL='https://api.ohmail.app'
-          SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
-            | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
           FIRST_PARTY="$(awk '{ h = $0; sub(/^https?:\/\//, "", h); sub(/[\/?#].*$/, "", h)
             if (tolower(h) ~ /ohmail|mailoh|trafficflow/ || $0 ~ /^https:\/\/github\.com\/trafficflowhq\//) print }' \
-            <<< "$SPLIT_URLS" | sort -u || true)"
+            <<< "$ALL_URLS" | sort -u || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
             exit 1
@@ -583,15 +582,6 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              # PREFIX, for the reason the comment above gives for the browser link
-              # table: these are Rust string literals with no terminator sitting next
-              # to each other in read-only data, so what comes back is whatever
-              # follows glued on. This was the one entry still matching exactly, and
-              # it held only while nothing happened to sit beside it — the first
-              # release build of 0.13.3 failed on
-              # `https://api.ohmail.appcloud-tokens.sealthe`, which is this URL with
-              # two unrelated literals stuck to its end. The re-split on the scheme
-              # above is what makes a prefix answer for exactly one address.
               "$CLOUD_URL"*) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
@@ -599,7 +589,9 @@ jobs:
               # in the sentence under it. It is caught here only because it contains
               # the product name, which is what makes it a good placeholder.
               'https://ohmail.example.com'*) : ;;
+              'https://ohmail.app') : ;; # Hosted origin used to open calendar settings.
               'https://ohmail.app/mailbox#/settings'*) : ;;
+              'https://ohmail.app/mailbox#/cal/cal-setup?step=signin&way=icloud') : ;;
               # The mailboxes pane hand-off: a hosted install manages mailbox
               # ceremonies on the web, and the Settings pane opens this address
               # through the same fixed link table as the entries around it.
@@ -614,6 +606,7 @@ jobs:
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
               'https://ohmail.app/join'*) : ;;
+              'https://ohmail.app/forgot-password') : ;;
               'https://ohmail.app/login?next=join'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac
@@ -1520,62 +1513,23 @@ jobs:
             echo "this binary's CSP carries the Linux and macOS spelling of the command scheme" >&2
             exit 1
           fi
+          # See the Linux x64 job for the endpoint and URL splitting rules.
           echo "URLs in the binary:"
-          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
+          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" \
+            | awk '{ gsub(/https?:\/\//, "\n&"); print }' \
+            | sed -e 's|^https://ohmail\.app/forgot-passwordsetup$|https://ohmail.app/forgot-password|' \
+                  -e 's|^https://ohmail\.appohmail:$|https://ohmail.app|' \
+            | grep -E '^https?://' | sort -u)"
           printf '%s\n' "$ALL_URLS"
-          # ── First-party endpoints: allow EXACTLY two, named one by one ─────
-          # Every URL naming ohmail or trafficflow must be one of the two
-          # endpoints below. A phone-home, a beacon or an analytics host still
-          # fails, because the list is spelled out rather than pattern-matched.
-          #
-          # 1 · THE UPDATE FEED. Prefix match, not equality: the endpoint is a
-          #   Rust string literal with no terminator in read-only data, so grep
-          #   can return it with adjacent rodata glued on. Host and path are
-          #   pinned by the prefix.
-          #
-          # 2 · THE CLOUD API. Added deliberately when the Cloud door shipped:
-          #   `src/doors.ts` holds `CLOUD_URL = "https://api.ohmail.app"`, and
-          #   the UI bundle is embedded uncompressed in the binary, so the host
-          #   is legitimately present in every engine-bearing build. It is an
-          #   endpoint the user opts into by signing in to the hosted service —
-          #   the app contacts it only after that, never on its own.
-          #
-          #   EQUALITY, not a prefix, and that is the point: this one comes out
-          #   of a JavaScript string literal, so the quote terminates it and the
-          #   extracted URL is exactly the host with nothing glued on. Matching
-          #   it exactly keeps `api.ohmail.app.example.com` a failure. If a real
-          #   path is ever appended in the bundle this check goes red and the new
-          #   endpoint gets named here too — which is the intended behaviour.
-          #
-          # 3 · THE BROWSER LINK TABLE. `engine.rs` holds the only addresses the
-          #   app may hand to the user's own browser, as a fixed table the window
-          #   selects from BY KEY — it can never name an address itself. Those
-          #   addresses are therefore compiled in, and each is listed here one by
-          #   one: a page added to that table without being named here fails the
-          #   build, which is the point of spelling them out.
-          #
-          #   Prefix match, for the same reason as the feed: they are Rust string
-          #   literals with no terminator, sitting next to each other in read-only
-          #   data, so grep returns whatever follows glued on.
-          #
-          # THE LIST IS RE-SPLIT ON THE SCHEME FIRST. Adjacent literals come back
-          # from grep as ONE match — `…/privacy` immediately followed by
-          # `https://…/subprocessors` — and a single glued string would be judged
-          # against the allow-list as though it were one address, so a page that
-          # is not on the list could ride in behind one that is. Splitting on
-          # `http` puts every address back on its own line before anything is
-          # judged, which makes the prefix match answer for exactly one URL.
           FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
           CLOUD_URL='https://api.ohmail.app'
-          SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
-            | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
           # FIRST-PARTY IS DECIDED BY THE HOST, not by the whole glued string: a
           # third-party address with one of our own literals stuck to its end
           # (`https://tailscale.com/download` followed by `OHMAIL_BUILD_COMMIT…`)
           # is not an endpoint of ours. The feed lives under our GitHub owner.
           FIRST_PARTY="$(awk '{ h = $0; sub(/^https?:\/\//, "", h); sub(/[\/?#].*$/, "", h)
             if (tolower(h) ~ /ohmail|mailoh|trafficflow/ || $0 ~ /^https:\/\/github\.com\/trafficflowhq\//) print }' \
-            <<< "$SPLIT_URLS" | sort -u || true)"
+            <<< "$ALL_URLS" | sort -u || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
             exit 1
@@ -1585,15 +1539,6 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              # PREFIX, for the reason the comment above gives for the browser link
-              # table: these are Rust string literals with no terminator sitting next
-              # to each other in read-only data, so what comes back is whatever
-              # follows glued on. This was the one entry still matching exactly, and
-              # it held only while nothing happened to sit beside it — the first
-              # release build of 0.13.3 failed on
-              # `https://api.ohmail.appcloud-tokens.sealthe`, which is this URL with
-              # two unrelated literals stuck to its end. The re-split on the scheme
-              # above is what makes a prefix answer for exactly one address.
               "$CLOUD_URL"*) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
@@ -1601,7 +1546,9 @@ jobs:
               # in the sentence under it. It is caught here only because it contains
               # the product name, which is what makes it a good placeholder.
               'https://ohmail.example.com'*) : ;;
+              'https://ohmail.app') : ;; # Hosted origin used to open calendar settings.
               'https://ohmail.app/mailbox#/settings'*) : ;;
+              'https://ohmail.app/mailbox#/cal/cal-setup?step=signin&way=icloud') : ;;
               # The mailboxes pane hand-off: a hosted install manages mailbox
               # ceremonies on the web, and the Settings pane opens this address
               # through the same fixed link table as the entries around it.
@@ -1616,6 +1563,7 @@ jobs:
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
               'https://ohmail.app/join'*) : ;;
+              'https://ohmail.app/forgot-password') : ;;
               'https://ohmail.app/login?next=join'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac
@@ -2404,20 +2352,32 @@ jobs:
             echo "this binary's CSP carries the Windows spelling of the command scheme" >&2
             exit 1
           fi
+          # The pinned update feed is the endpoint the app reaches on its own.
+          # The browser links are selected by key from engine.rs, with one arm
+          # per permitted page so adding a page requires naming it here too.
+          #
+          # The Cloud API is used when someone opts into the hosted service.
+          # The quote-terminated JavaScript literal in src/doors.ts allowed
+          # an exact match, which would reject a different host or added path.
+          # The Rust constant in config.rs can have adjacent bytes glued to
+          # its end, so the binary audit uses a prefix for the Cloud API.
+          #
+          # Re-split inside ALL_URLS at each scheme so an unlisted address
+          # glued to a listed one is checked on its own. The two substitutions
+          # separate known Rust suffixes from the password-reset URL and the
+          # hosted calendar settings origin.
           echo "URLs in the binary:"
-          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
+          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" \
+            | awk '{ gsub(/https?:\/\//, "\n&"); print }' \
+            | sed -e 's|^https://ohmail\.app/forgot-passwordsetup$|https://ohmail.app/forgot-password|' \
+                  -e 's|^https://ohmail\.appohmail:$|https://ohmail.app|' \
+            | grep -E '^https?://' | sort -u)"
           printf '%s\n' "$ALL_URLS"
-          # Identical rule to the Windows job — the update feed by prefix, the
-          # Cloud API by equality, the browser link table page by page, and the
-          # scheme split that keeps adjacent Rust literals from being judged as
-          # one address; see the reasoning there.
           FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
           CLOUD_URL='https://api.ohmail.app'
-          SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
-            | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
           FIRST_PARTY="$(awk '{ h = $0; sub(/^https?:\/\//, "", h); sub(/[\/?#].*$/, "", h)
             if (tolower(h) ~ /ohmail|mailoh|trafficflow/ || $0 ~ /^https:\/\/github\.com\/trafficflowhq\//) print }' \
-            <<< "$SPLIT_URLS" | sort -u || true)"
+            <<< "$ALL_URLS" | sort -u || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
             exit 1
@@ -2427,15 +2387,6 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              # PREFIX, for the reason the comment above gives for the browser link
-              # table: these are Rust string literals with no terminator sitting next
-              # to each other in read-only data, so what comes back is whatever
-              # follows glued on. This was the one entry still matching exactly, and
-              # it held only while nothing happened to sit beside it — the first
-              # release build of 0.13.3 failed on
-              # `https://api.ohmail.appcloud-tokens.sealthe`, which is this URL with
-              # two unrelated literals stuck to its end. The re-split on the scheme
-              # above is what makes a prefix answer for exactly one address.
               "$CLOUD_URL"*) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
@@ -2443,7 +2394,9 @@ jobs:
               # in the sentence under it. It is caught here only because it contains
               # the product name, which is what makes it a good placeholder.
               'https://ohmail.example.com'*) : ;;
+              'https://ohmail.app') : ;; # Hosted origin used to open calendar settings.
               'https://ohmail.app/mailbox#/settings'*) : ;;
+              'https://ohmail.app/mailbox#/cal/cal-setup?step=signin&way=icloud') : ;;
               # The mailboxes pane hand-off: a hosted install manages mailbox
               # ceremonies on the web, and the Settings pane opens this address
               # through the same fixed link table as the entries around it.
@@ -2458,6 +2411,7 @@ jobs:
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
               'https://ohmail.app/join'*) : ;;
+              'https://ohmail.app/forgot-password') : ;;
               'https://ohmail.app/login?next=join'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac
@@ -3581,26 +3535,19 @@ jobs:
             echo "this binary's CSP carries the Windows spelling of the command scheme" >&2
             exit 1
           fi
+          # See the Linux x64 job for the endpoint and URL splitting rules.
           echo "URLs in the binary:"
-          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
+          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" \
+            | awk '{ gsub(/https?:\/\//, "\n&"); print }' \
+            | sed -e 's|^https://ohmail\.app/forgot-passwordsetup$|https://ohmail.app/forgot-password|' \
+                  -e 's|^https://ohmail\.appohmail:$|https://ohmail.app|' \
+            | grep -E '^https?://' | sort -u)"
           printf '%s\n' "$ALL_URLS"
-          # Identical rule to the other two jobs — the update feed by prefix, the
-          # Cloud API by equality, the browser link table page by page, and the
-          # scheme split that keeps adjacent Rust literals from being judged as
-          # one address; the Windows job argues every clause of it.
-          #
-          # It is repeated rather than shared BECAUSE it is an audit of a
-          # different binary. The compiler is free to lay out read-only data
-          # differently for a different architecture, so an arm64 build that
-          # reached an address the x86_64 build does not is a thing this list has
-          # to be able to catch on its own.
           FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
           CLOUD_URL='https://api.ohmail.app'
-          SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
-            | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
           FIRST_PARTY="$(awk '{ h = $0; sub(/^https?:\/\//, "", h); sub(/[\/?#].*$/, "", h)
             if (tolower(h) ~ /ohmail|mailoh|trafficflow/ || $0 ~ /^https:\/\/github\.com\/trafficflowhq\//) print }' \
-            <<< "$SPLIT_URLS" | sort -u || true)"
+            <<< "$ALL_URLS" | sort -u || true)"
           if [ -z "$FIRST_PARTY" ]; then
             echo "the pinned update feed URL is missing from the binary" >&2
             exit 1
@@ -3610,15 +3557,6 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              # PREFIX, for the reason the comment above gives for the browser link
-              # table: these are Rust string literals with no terminator sitting next
-              # to each other in read-only data, so what comes back is whatever
-              # follows glued on. This was the one entry still matching exactly, and
-              # it held only while nothing happened to sit beside it — the first
-              # release build of 0.13.3 failed on
-              # `https://api.ohmail.appcloud-tokens.sealthe`, which is this URL with
-              # two unrelated literals stuck to its end. The re-split on the scheme
-              # above is what makes a prefix answer for exactly one address.
               "$CLOUD_URL"*) : ;;
               # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
               # reserved by IANA precisely so it can never resolve to anyone, and this
@@ -3626,7 +3564,9 @@ jobs:
               # in the sentence under it. It is caught here only because it contains
               # the product name, which is what makes it a good placeholder.
               'https://ohmail.example.com'*) : ;;
+              'https://ohmail.app') : ;; # Hosted origin used to open calendar settings.
               'https://ohmail.app/mailbox#/settings'*) : ;;
+              'https://ohmail.app/mailbox#/cal/cal-setup?step=signin&way=icloud') : ;;
               'https://ohmail.app/mailbox?settings=mailboxes#/settings'*) : ;;
               'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
               'https://ohmail.app/mailbox?settings=storage#/settings'*) : ;;
@@ -3635,6 +3575,7 @@ jobs:
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
               'https://ohmail.app/join'*) : ;;
+              'https://ohmail.app/forgot-password') : ;;
               'https://ohmail.app/login?next=join'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac

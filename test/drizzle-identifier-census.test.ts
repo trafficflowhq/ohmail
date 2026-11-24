@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { bracketSpan, lineOf, withoutComments, withoutCommentsAndLiterals } from "../scripts/lib/source-scan.mjs";
 import { assertIdentifierKeys } from "../packages/services/src/dto/materialize.js";
+import { PASS_ROSTERS } from "../packages/db/src/row-security/policies.js";
 
 /**
  * EVERY DRIZZLE IDENTIFIER IS CODE-CHOSEN. drizzle-orm 0.36.4 wraps an identifier in quotes without
@@ -22,6 +23,9 @@ const REGISTRY: ReadonlyArray<{ file: string; arg: string; bound: string }> = [
   { file: "packages/services/src/dto/materialize.ts", arg: "`p_${k}`", bound: "the same key, the same guard" },
   { file: "packages/services/src/dto/materialize.ts", arg: "`${prefix}_${column.name}`", bound: "prefixed(): a literal prefix (checked below) and a schema column" },
   { file: "packages/services/src/message-service.ts", arg: "from", bound: "ownedMessages's parameter, typed as a literal union (checked below)" },
+  { file: "packages/db/src/roster-db.ts", arg: "table", bound: "passRosterFor's table is a key of PASS_ROSTERS" },
+  { file: "packages/db/src/roster-db.ts", arg: "roster.account", bound: "the account column in the selected PASS_ROSTERS entry" },
+  { file: "packages/db/src/roster-db.ts", arg: "roster.id", bound: "the row ID column in the selected PASS_ROSTERS entry" },
 ];
 
 export type SiteClass = "literal" | "column.name" | "query" | "registry" | "unclassified";
@@ -81,6 +85,13 @@ describe("every drizzle identifier is code-chosen", () => {
     expect(() => assertIdentifierKeys(["score", "t", "n0", "sn1", "k"])).not.toThrow();
     expect(() => assertIdentifierKeys(['score" from x; --'])).toThrow(/not an identifier/);
     expect(() => assertIdentifierKeys(["Score"])).toThrow(/not an identifier/);
+
+    const rosterDb = withoutCommentsAndLiterals(readFileSync("packages/db/src/roster-db.ts", "utf8"));
+    const policies = withoutCommentsAndLiterals(readFileSync("packages/db/src/row-security/policies.ts", "utf8"));
+    expect(rosterDb).toMatch(/function passRosterFor\(db: object, table: PassRosterTable\)/);
+    expect(rosterDb).toMatch(/const roster = PASS_ROSTERS\[table\]/);
+    expect(policies).toMatch(/type PassRosterTable = keyof typeof PASS_ROSTERS/);
+    assertIdentifierKeys(Object.entries(PASS_ROSTERS).flatMap(([table, { account, id }]) => [table, account, id]));
   });
 
   it("refuses a request value as an identifier; admits the code-chosen forms", () => {

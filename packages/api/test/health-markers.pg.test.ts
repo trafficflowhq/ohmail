@@ -56,6 +56,16 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
     expect(probe.kind === "probed" && probe.schemaOk).toBe(true);
   });
 
+  it("an auth throttle without the password reset notice recipient column is one short", async () => {
+    const healthy = found(await hosted(door()));
+    const missing = await rolledBack(async (db) => {
+      await db.execute(sql.raw(`alter table "auth_throttle" drop column "notice_account_id"`));
+      return hosted(db);
+    });
+    expect(found(missing)).toBe(healthy - 1);
+    expect(missing.kind === "probed" && missing.schemaOk).toBe(false);
+  });
+
   it("a SAME-NAMED index over other columns is one short — mail 0080's IF NOT EXISTS", async () => {
     const healthy = found(await hosted(door()));
     const wrong = await rolledBack(async (db) => {

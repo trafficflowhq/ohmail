@@ -513,6 +513,8 @@ const ALLOWLIST: Record<string, string> = {
   // ── Before any session exists ──────────────────────────────────────────────────────────────
   "packages/services/src/auth/auth-service.ts insert users":
     "account creation: there is no account to fence against until this row exists",
+  "packages/services/src/auth/auth-service.ts insert accountSettings":
+    "initial settings share the account's creation transaction; erasure cannot stamp the new account before commit",
   "packages/services/src/auth/auth-service.ts insert webauthnChallenges":
     "a sign-in ceremony, started by an unauthenticated caller and keyed by a challenge, not by " +
     "an account; an erased account has no users left to finish one",

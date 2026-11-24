@@ -5,14 +5,16 @@ import { chromium, type Browser, type Page } from "@playwright/test";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import RootLayout from "../../app/(product)/layout";
+import { CloudShell } from "../../app/(product)/mailbox/CloudShell";
+import { ResumeRoute } from "../../app/(product)/resume/ResumeRoute";
 import en from "../../messages/en.json";
 
-const request = vi.hoisted(() => ({ firstPage: null as "now" | "wait" | null }));
+const request = vi.hoisted(() => ({ firstPage: null as "now" | "wait" | "resume" | null, cookie: "tf_owner=reader" }));
 
 vi.mock("next/headers", () => ({
   headers: () => new Headers({
     "x-nonce": "browser-test",
-    ...(request.firstPage ? { "x-ohmail-first-page": request.firstPage, cookie: "tf_owner=reader" } : {}),
+    ...(request.firstPage ? { "x-ohmail-first-page": request.firstPage, cookie: request.cookie } : {}),
     ...(request.firstPage === "now" ? { "x-ohmail-first-page-owner": "reader" } : {}),
   }),
 }));
@@ -157,23 +159,45 @@ const looks = [
   { name: "a wait document with a saved face and no confirmed owner",
     key: null, face: "paper", theme: "dark", system: "light", platform: "Linux x86_64",
     ground: "rgb(14, 13, 12)", owner: "reader", deviceFace: null, firstPage: "wait" },
+  { name: "the saved oh face while the session resumes",
+    key: "ohmail.face.account", face: "paper", theme: "dark", system: "light", platform: "Linux x86_64",
+    ground: "rgb(14, 13, 12)", owner: "reader", deviceFace: "ohmarchy", firstPage: "resume", openingGround: "rgb(14, 13, 12)" },
+  { name: "the saved oh face while the mailbox checks the session",
+    key: "ohmail.face.account", face: "paper", theme: "dark", system: "light", platform: "Linux x86_64",
+    ground: "rgb(14, 13, 12)", owner: "reader", deviceFace: "ohmarchy", firstPage: "wait", openingGround: "rgb(14, 13, 12)", requestOwner: "reader" },
+  { name: "the saved ohmarchy face while the session resumes",
+    key: "ohmail.face.account", face: "ohmarchy", theme: "dark", system: "light", platform: "Linux x86_64",
+    ground: "rgb(19, 20, 28)", owner: "reader", deviceFace: "paper", firstPage: "resume", openingGround: "rgb(26, 27, 38)" },
+  { name: "paper when the browser switched accounts after the resume document was requested",
+    key: null, face: "paper", theme: "dark", system: "light", platform: "Linux x86_64",
+    ground: "rgb(14, 13, 12)", owner: "reader", deviceFace: null, firstPage: "resume", openingGround: "rgb(14, 13, 12)", requestOwner: "previous-reader" },
 ] as const;
 
 describe("the web document's first paint", () => {
   for (const look of looks) {
     it(look.name, async () => {
       const signedIn = "owner" in look;
+      const opening = "openingGround" in look;
       let rendered = documentHtml;
       if (signedIn) {
         request.firstPage = "firstPage" in look ? look.firstPage : "now";
+        if (opening) {
+          request.cookie = "tf_resume=present" + ("requestOwner" in look ? `; tf_owner=${look.requestOwner}` : "");
+        }
         try {
-          rendered = "<!doctype html>" + renderToString(await RootLayout({ children: null }));
+          const children = opening
+            ? (look.firstPage === "resume" ? <ResumeRoute /> : <CloudShell demo={false} drawMail="wait" />)
+            : null;
+          rendered = "<!doctype html>" + renderToString(await RootLayout({ children }));
         } finally {
           request.firstPage = null;
+          request.cookie = "tf_owner=reader";
         }
       }
       const html = withHead(`<style>${css}</style>`, rendered);
-      const boundary = html.indexOf(">", html.indexOf("<body")) + 1;
+      const boundary = opening
+        ? html.indexOf("</main>") + "</main>".length
+        : html.indexOf(">", html.indexOf("<body")) + 1;
       const page = await browser.newPage({ colorScheme: look.system });
       const server = createServer((request, response) => {
         if (request.url !== "/") {
@@ -211,6 +235,11 @@ describe("the web document's first paint", () => {
           ground: getComputedStyle(document.body).backgroundColor,
           zoom: Number(getComputedStyle(document.documentElement).zoom),
         }));
+        if (opening) {
+          const main = page.getByRole("main");
+          expect(await page.locator("html").getAttribute("data-face")).toBe(look.face === "paper" ? null : look.face);
+          expect(await main.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(look.openingGround);
+        }
         expect(first).toEqual({
           face: look.face, scheme: look.theme ?? look.system, theme: look.theme, ground: look.ground, zoom: signedIn && !look.key ? 1.25 : 1,
         });

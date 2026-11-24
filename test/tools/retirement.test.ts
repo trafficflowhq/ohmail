@@ -317,6 +317,11 @@ describe("the check's reader of the base, on a repository of its own", () => {
         stdio: "ignore",
       },
     );
+  const check = (root: string, base: string) =>
+    spawnSync(process.execPath, [CHECK, "--root", root, "--retirement", "--base", base], {
+      encoding: "utf8",
+    });
+
   /** Two commits: a shell file and a behaviour test, then the test deleted, its row proving it by `proof`. */
   const deletedWith = (proof: string, shellAfter = "export const AppShell = () => <RailNav />;\n") => {
     const root = mkdtempSync(path.join(os.tmpdir(), "ohmail-retirement-"));
@@ -339,9 +344,7 @@ describe("the check's reader of the base, on a repository of its own", () => {
     );
     git(root, "add", "-A");
     git(root, "commit", "-q", "-m", "two");
-    return spawnSync(process.execPath, [CHECK, "--root", root, "--retirement", "--base", "HEAD~1"], {
-      encoding: "utf8",
-    });
+    return check(root, "HEAD~1");
   };
 
   it("refuses gone: a folder that still stands, alone and with a piece", () => {
@@ -356,6 +359,81 @@ describe("the check's reader of the base, on a repository of its own", () => {
     const run = deletedWith("gone:app/shell/AppShell.tsx#<RailNav", "export const AppShell = () => null;\n");
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);
+  });
+
+  it.each(["present", "unavailable"])(
+    "refuses an unproved deletion on a shallow checkout of next with the remote ref %s",
+    (remoteRef) => {
+      const root = mkdtempSync(path.join(os.tmpdir(), "ohmail-dispatch-"));
+      made.push(root);
+      const origin = path.join(root, "origin");
+      const checkout = path.join(root, "checkout");
+      mkdirSync(path.join(origin, "tools"), { recursive: true });
+      mkdirSync(path.join(origin, "test"));
+      writeFileSync(path.join(origin, "tools/retirement.tsv"), `${RETIREMENT_HEADER}\n`);
+      writeFileSync(path.join(origin, "test/old.test.ts"), "it('draws the rail', () => {});\n");
+      git(origin, "init", "-q", "-b", "next");
+      git(origin, "add", "-A");
+      git(origin, "commit", "-qm", "add the test");
+      git(origin, "rm", "-q", "test/old.test.ts");
+      git(origin, "commit", "-qm", "delete the test without a row");
+      git(root, "clone", "-q", "--no-local", "--depth=2", "--branch", "next", origin, checkout);
+      if (remoteRef === "unavailable") {
+        git(checkout, "update-ref", "-d", "refs/remotes/origin/next");
+        git(checkout, "remote", "set-url", "origin", path.join(root, "missing"));
+      }
+
+      const dispatch = check(checkout, "HEAD^1");
+      expect(dispatch.stderr).toContain("test/old.test.ts is deleted without a row that carries a proof");
+      expect(dispatch.status).toBe(1);
+    },
+  );
+
+  it("fetches next in a shallow promotion checkout and uses it only for the matching tree", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "ohmail-promotion-"));
+    made.push(root);
+    const origin = path.join(root, "origin");
+    const checkout = path.join(root, "checkout");
+    mkdirSync(path.join(origin, "tools"), { recursive: true });
+    mkdirSync(path.join(origin, "test"));
+    const ledger = path.join(origin, "tools/retirement.tsv");
+    const oldTest = path.join(origin, "test/old.test.ts");
+    const oldView = path.join(origin, "old-view.ts");
+    writeFileSync(ledger, `${RETIREMENT_HEADER}\n`);
+    writeFileSync(oldTest, "it('draws the rail', () => {});\n");
+    git(origin, "init", "-q", "-b", "promotion");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "previous release");
+    git(origin, "switch", "-qc", "next");
+    writeFileSync(oldView, "export const oldView = true;\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "add the old view");
+    rmSync(oldTest);
+    rmSync(oldView);
+    writeFileSync(
+      ledger,
+      renderRetirement([
+        row("test/old.test.ts", { kind: "behaviour", home: "none", verdict: "gone:old-view.ts" }),
+      ]),
+    );
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "retire the old view");
+    git(origin, "switch", "-q", "promotion");
+    git(origin, "read-tree", "--reset", "-u", "next");
+    git(origin, "commit", "-qm", "promote next");
+    git(root, "clone", "-q", "--no-local", "--depth=2", "--branch", "promotion", origin, checkout);
+
+    const promotion = check(checkout, "HEAD^1");
+    expect(promotion.stderr).toBe("");
+    expect(promotion.status).toBe(0);
+
+    git(checkout, "switch", "-qc", "normal", "HEAD^1");
+    rmSync(path.join(checkout, "test/old.test.ts"));
+    git(checkout, "add", "-A");
+    git(checkout, "commit", "-qm", "delete the test without a row");
+    const normal = check(checkout, "HEAD^1");
+    expect(normal.stderr).toContain("test/old.test.ts is deleted without a row that carries a proof");
+    expect(normal.status).toBe(1);
   });
 });
 

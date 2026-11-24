@@ -122,7 +122,8 @@ const FIRST_PAGE_UNASKED = firstPageUnasked(process.env.OHMAIL_FIRST_PAGE_NO_PRO
 
 /**
  * The page's word for its first frame (`(product)/mailbox/page.tsx`): `now` after a probe that named a full session,
- * `wait` after none. Set only by {@link strict}, which first deletes any the client sent.
+ * `wait` after none, and `resume` for the session renewal screen. Set only by {@link strict},
+ * which first deletes any the client sent.
  */
 const FIRST_PAGE_HEADER = "x-ohmail-first-page";
 
@@ -422,11 +423,11 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return response;
   }
 
-  const rewrite = (target: string, word?: "now" | "wait", account?: string): NextResponse =>
+  const rewrite = (target: string, word?: "now" | "wait" | "resume", account?: string): NextResponse =>
     strict(request, (init) => NextResponse.rewrite(withPathname(request, target), init), word, account);
   const response = answerFor(surface, {
     marketing: () => (zone !== null ? zoneRewrite(request, zone, bypass, "/") : nextWithScrubbedHeaders(request)),
-    resume: () => rewrite(RESUME_ROUTE),
+    resume: () => rewrite(RESUME_ROUTE, "resume"),
     demo: () => rewrite(APP_ROUTE),
     app: () => owner === null ? rewrite(APP_ROUTE, "wait") : rewrite(APP_ROUTE, "now", owner),
     "app-unasked": () => rewrite(APP_ROUTE, "wait"),
@@ -509,7 +510,7 @@ function holdPendingSignOut(request: NextRequest, response: NextResponse): NextR
 function strict(
   request: NextRequest,
   make: (init: { request: { headers: Headers } }) => NextResponse,
-  firstPage?: "now" | "wait",
+  firstPage?: "now" | "wait" | "resume",
   account?: string,
 ): NextResponse {
   const nonce = newNonce();

@@ -1274,6 +1274,7 @@ packages/db/test/migration-0166-account-storage-facts.test.ts	data	reads data fi
 packages/db/test/migration-0166-staff-grant.pg.test.ts	data	reads data files (json)	none	services-proof	
 packages/db/test/migration-0181-reconcile-pending-queue.test.ts	data	mail 0181's account copy on the reconcile queues' pending rows (mail 0201 removes it; the row carries its account); read data files (sql)	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
 packages/db/test/migration-allowance-0120.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-allowance-cloud-0106.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/migration-breakpoints.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/migration-cloud-0056.roundtrip.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/migration-idempotent-forms.test.ts	data	reads data files (sql)	none	services-proof	

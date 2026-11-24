@@ -30,6 +30,9 @@ const SERVER_UP = ON_DEVICE_STORE ? serviceUp("greenmail", `${HOST}:${PORT}`).up
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
+// The live press must stop waiting before the scripted AUTH reply or the server's attempt ceiling.
+const LATE_ANSWER_DEADLINE_MS = 10_000;
+
 /** The app's mirror in a FILE, so a relaunched app opens the outbox the killed one left. */
 function mirrorExecutor(file: string): SqlExecutor & { close(): void } {
   const db = new sqlite.DatabaseSync(file);
@@ -86,12 +89,18 @@ async function delivered(recipient: string, subject: string): Promise<number> {
 }
 
 /** The app's client over the phone engine's door, on a mirror file. */
-async function appOver(phone: Phone, mirrorFile: string) {
+async function appOver(phone: Phone, mirrorFile: string, outboxReplayDeadlineMs?: number) {
   const uuid = (): string => randomUUID();
   const mirrors: Array<{ close(): void }> = [];
   const boot = await bootEngine(
     { openExecutor: () => { const m = mirrorExecutor(mirrorFile); mirrors.push(m); return m; }, deleteDatabase: async () => undefined, uuid },
-    { origin: LOCAL_ENGINE_ORIGIN, accountId: phone.engine.accountId, localEngine: phone.engine, network: networkNow },
+    {
+      origin: LOCAL_ENGINE_ORIGIN,
+      accountId: phone.engine.accountId,
+      localEngine: phone.engine,
+      network: networkNow,
+      outboxReplayDeadlineMs,
+    },
   );
   if (boot.kind !== "ready") throw new Error("the app's client did not boot over the engine's door");
   await boot.engine.start();
@@ -174,7 +183,7 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone send is one row", () => {
     await sink.open();
     sinks.push(sink);
     const { phone } = await organizedPhone({ smtp: sink });
-    const app = await appOver(phone, ":memory:");
+    const app = await appOver(phone, ":memory:", LATE_ANSWER_DEADLINE_MS);
     const subject = `refused late ${randomUUID()}`;
 
     const res = await app.actions.sendNew(seedMailboxId(phone), [{ name: "R", address: "r@trafficflow.test" }], subject, "Hello.");
@@ -203,7 +212,7 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone send is one row", () => {
     await sink.open();
     sinks.push(sink);
     const { phone } = await organizedPhone({ smtp: sink });
-    const app = await appOver(phone, ":memory:");
+    const app = await appOver(phone, ":memory:", LATE_ANSWER_DEADLINE_MS);
     const subject = `accepted ${randomUUID()}`;
 
     const res = await app.actions.sendNew(seedMailboxId(phone), [{ name: "R", address: "r@trafficflow.test" }], subject, "Slow server.");
@@ -230,7 +239,7 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone send is one row", () => {
     const subject = `the invoice ${randomUUID()}`;
     await deliver(user, "ada@stranger.example", subject);
     expect(await untilIngested(phone, subject, 60_000), "the letter never reached the engine").not.toBeNull();
-    const app = await appOver(phone, ":memory:");
+    const app = await appOver(phone, ":memory:", LATE_ANSWER_DEADLINE_MS);
     const parent = app.boot.engine.read().list<{ id: string; subject?: string }>("message").find((m) => m.subject === subject);
     expect(parent, "the app's mirror does not hold the letter").toBeDefined();
     const net = network([imap]);
@@ -264,7 +273,7 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone send is one row", () => {
     const subject = `the invoice ${randomUUID()}`;
     await deliver(user, "ada@stranger.example", subject);
     expect(await untilIngested(phone, subject, 60_000), "the letter never reached the engine").not.toBeNull();
-    const app = await appOver(phone, ":memory:");
+    const app = await appOver(phone, ":memory:", LATE_ANSWER_DEADLINE_MS);
     const parent = app.boot.engine.read().list<{ id: string; subject?: string }>("message").find((m) => m.subject === subject);
     const net = network([imap]);
     installNetworkReader(net.reader);

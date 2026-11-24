@@ -47,7 +47,8 @@ const WORKFLOW = join(ROOT, publicRel("github/workflows/build.yml"));
 const README = join(ROOT, "apps/desktop/README.md");
 
 /** The one host the three lists are keyed on. See `engineTableUrls` for why that is asserted. */
-const HOST_PREFIX = "https://ohmail.app/";
+const HOST_ORIGIN = "https://ohmail.app";
+const HOST_PREFIX = `${HOST_ORIGIN}/`;
 
 /**
  * The distinct addresses in the Rust `LINKS` table, in first-appearance order.
@@ -94,9 +95,9 @@ function engineTableUrls(): string[] {
  * the nearest preceding top-level `jobs:` key, so a failure below names the job whose list is
  * wrong rather than a line number in a file thousands of lines long.
  */
-function workflowAllowLists(): Map<string, string[]> {
+function workflowAllowLists(): Map<string, { url: string; wildcard: boolean }[]> {
   const lines = readFileSync(WORKFLOW, "utf8").split("\n");
-  const found = new Map<string, string[]>();
+  const found = new Map<string, { url: string; wildcard: boolean }[]>();
   let job: string | null = null;
 
   for (let i = 0; i < lines.length; i++) {
@@ -110,11 +111,12 @@ function workflowAllowLists(): Map<string, string[]> {
     if (!block.some((l) => l.includes("unexpected first-party URL"))) continue;
     if (job === null) throw new Error(`build.yml:${i + 1}: an allow-list outside any job`);
 
-    const urls = block
-      .map((l) => /^\s*'([^']+)'\*\) : ;;\s*$/.exec(l)?.[1])
-      .filter((u): u is string => u !== undefined && u.startsWith(HOST_PREFIX));
+    const arms = block.flatMap((line) => {
+      const arm = /^\s*'([^']+)'(\*)?\) : ;;\s*(?:#.*)?$/.exec(line);
+      return arm ? [{ url: arm[1], wildcard: arm[2] === "*" }] : [];
+    });
     if (found.has(job)) throw new Error(`build.yml: job ${job} carries two first-party allow-lists`);
-    found.set(job, urls);
+    found.set(job, arms);
   }
   return found;
 }
@@ -140,6 +142,7 @@ function readmeEnumeratedUrls(): string[] {
 const engine = engineTableUrls();
 const allowLists = workflowAllowLists();
 const readme = readmeEnumeratedUrls();
+const jobs = ["linux", "linux-arm64", "macos", "windows"];
 
 describe("the desktop's first-party addresses are written down identically in four places", () => {
   // ── The parsers found something, asserted before anything is compared ──────────────────────
@@ -155,13 +158,13 @@ describe("the desktop's first-party addresses are written down identically in fo
   });
 
   it("every job that inspects an artifact carries a first-party allow-list", () => {
-    expect([...allowLists.keys()].sort()).toEqual(["linux", "linux-arm64", "macos", "windows"]);
+    expect([...allowLists.keys()].sort()).toEqual(jobs);
   });
 
   // ── The comparison, one case per job so a red names the job ─────────────────────────────────
-  for (const job of ["windows", "linux", "linux-arm64"]) {
+  for (const job of jobs) {
     it(`the ${job} job's allow-list is exactly the Rust link table`, () => {
-      const urls = allowLists.get(job);
+      const urls = allowLists.get(job)?.map(({ url }) => url).filter((url) => url.startsWith(HOST_PREFIX));
       expect(urls, `build.yml has no first-party allow-list in the ${job} job`).toBeDefined();
       expect([...(urls ?? [])].sort(), `the ${job} job's allow-list has drifted from engine.rs`) //
         .toEqual([...engine].sort());
@@ -173,5 +176,19 @@ describe("the desktop's first-party addresses are written down identically in fo
   // sit among unrelated ones and their order carries nothing, so those are compared as sets.
   it("the README enumeration is exactly the Rust link table, in the table's order", () => {
     expect(readme).toEqual(engine);
+  });
+
+  it("lists the hosted origin used for calendar settings exactly in each job and the README", () => {
+    const usedInEngine = readFileSync(ENGINE_RS, "utf8").includes(`"${HOST_ORIGIN}"`);
+    for (const job of jobs) {
+      const arms = allowLists.get(job)?.filter(({ url }) => url === HOST_ORIGIN);
+      expect(arms, `build.yml hosted origin in the ${job} job`).toEqual(
+        usedInEngine ? [{ url: HOST_ORIGIN, wildcard: false }] : [],
+      );
+    }
+    const rows = readFileSync(README, "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith(`| \`${HOST_ORIGIN}\` |`));
+    expect(rows, "README.md hosted origin row").toHaveLength(usedInEngine ? 1 : 0);
   });
 });
