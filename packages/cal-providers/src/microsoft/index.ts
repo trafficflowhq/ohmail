@@ -7,4 +7,11 @@ export const provider = "microsoft" as const;
 export { graphAuthorization, makeReader, type MicrosoftDeps } from "./reader.js";
 export { makeWriter } from "./writer.js";
 export { makeNotices } from "./notices.js";
+export {
+  makeExchangeInvitations,
+  restIdOf,
+  type ExchangeAnswer,
+  type ExchangeInvitationEvent,
+  type ExchangeInvitations,
+} from "./invitation.js";
 export { MS_GRAPH_BASE, MS_GRAPH_CALENDAR_SCOPE, MS_SIGN_IN_HOST, microsoftHosts } from "./graph.js";

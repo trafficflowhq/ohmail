@@ -67,7 +67,8 @@ export function ReaderInvitation({ messageId, message, invitationWithoutEvent, t
     });
   return (
     <>
-      <InvitationNote message={{ invitationWithoutEvent }} text={text} full={full} className="rd-invitation-note" />
+      {/* A letter whose event is known (from its calendar part, or looked up for an Outlook Web App link) shows its card instead. */}
+      {!activeInvitation && <InvitationNote message={{ invitationWithoutEvent }} text={text} full={full} className="rd-invitation-note" />}
       {message && invitation && activeInvitation && <InvitationLetterCard key={messageId}
         message={message} invitation={invitation} title={action?.event.summary || message.subject}
         when={action ? formatWhen(action.event.start, action.event.end) : null} place={action?.event.location ?? null}

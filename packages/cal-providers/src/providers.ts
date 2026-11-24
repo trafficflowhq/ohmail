@@ -16,7 +16,10 @@ import { SsrfRefusal, assertPublicHttpUrlShape, type HostResolver } from "@traff
 import { makeReader as caldavReader, makeWriter as caldavWriter } from "./caldav/index.js";
 import { GOOGLE_HOSTS, makeNotices as googleNotices, makeReader as googleReader, makeWriter as googleWriter } from "./google/index.js";
 import { makeReader as icsReader } from "./ics/index.js";
-import { makeNotices as microsoftNotices, makeReader as microsoftReader, makeWriter as microsoftWriter, microsoftHosts } from "./microsoft/index.js";
+import {
+  makeExchangeInvitations, makeNotices as microsoftNotices, makeReader as microsoftReader, makeWriter as microsoftWriter, microsoftHosts,
+  type ExchangeInvitations,
+} from "./microsoft/index.js";
 import type { CalendarNotices, CalendarReader, CalendarWriter, Clock, ProviderWord } from "./port.js";
 import { fixedHostRequest, namedHostRequest, type AdapterDeps, type AddressPolicy, type HttpPort } from "./request/index.js";
 
@@ -58,6 +61,11 @@ export interface CalendarProvider {
   readonly notices: CalendarNotices | null;
   /** The request port the provider is reached through. Its sign-in's trades leave through it too. */
   readonly http: HttpPort;
+  /**
+   * Microsoft alone: the event a meeting invitation's Outlook Web App link names, looked up in the
+   * connection's own calendar. Absent for every other provider.
+   */
+  readonly invitations?: ExchangeInvitations;
 }
 
 export interface CalendarProviders {
@@ -111,6 +119,7 @@ export function makeCalendarProviders(deps: ProviderDeps): CalendarProviders {
         made.set(word, {
           reader: microsoftReader({ ...adapter(http), graphBase }), writer: deps.writes ? microsoftWriter({ ...adapter(http), graphBase }) : null,
           notices: deps.writes ? microsoftNotices({ ...adapter(http), graphBase }) : null, http,
+          invitations: makeExchangeInvitations({ ...adapter(http), graphBase }),
         });
         break;
       }

@@ -34,6 +34,8 @@ export interface ListTouchProps {
   readonly off?: boolean;
   /** The list's pull, or none: then the layer has no pull and no room for one. */
   readonly pull: ListPull | None;
+  /** The end of the run below the rows, the glass's inset (the Ohbox's); a list that ends on its own sheet says no. */
+  readonly run?: boolean;
   readonly children: ReactNode;
 }
 
