@@ -85,7 +85,12 @@ export function calendarWriteMayRetry(error: MutationRejectedError): boolean {
   return error.retryable || (error.status === 402 && error.code === "subscription_required");
 }
 
+const inPressOrder = (a: CalendarOutboxRecord, b: CalendarOutboxRecord) =>
+  a.at - b.at || a.n - b.n || (a.key < b.key ? -1 : 1);
+
 export class CalendarWriteQueue {
+  // These are the queue's current insertions. The sender reads only durable rows.
+  private readonly inserting = new Map<string, CalendarOutboxRecord>();
   private readonly settlements = new Map<string, { claim: number | undefined; receipt: CalendarSettlement }>();
   private readonly keys = new CalendarActKeys();
   private readonly refused = new Map<string, CalendarReason | CalendarWriteFault>();
@@ -114,7 +119,7 @@ export class CalendarWriteQueue {
   /** What this device still owes, in the order it was pressed. */
   owed(): CalendarOutboxRecord[] {
     return this.store.entries<unknown>(CALENDAR_OUTBOX_TYPE).map((e) => e.entity).filter(isRecord)
-      .sort((a, b) => a.at - b.at || a.n - b.n || (a.key < b.key ? -1 : 1));
+      .sort(inPressOrder);
   }
 
   result(key: string): CalendarResult | null {
@@ -128,7 +133,13 @@ export class CalendarWriteQueue {
 
   /** The acts on events this device still owes, for the overlay. */
   deviceActs(): DeviceAct[] {
-    return this.owed().flatMap((r) => (r.act.kind === "calendar_write_retry" || r.act.kind === "calendar_write_dismiss" || isProposal(r.act) ? [] : [{ key: r.key, act: r.act }]));
+    const rows = new Map(this.owed().map((row) => [row.key, row] as const));
+    for (const row of this.inserting.values()) {
+      if (!rows.has(row.key)) rows.set(row.key, row);
+    }
+    return [...rows.values()].sort(inPressOrder).flatMap((r) =>
+      r.act.kind === "calendar_write_retry" || r.act.kind === "calendar_write_dismiss" || isProposal(r.act)
+        ? [] : [{ key: r.key, act: r.act }]);
   }
 
   /** Every event the mirror holds, with what waits for it and where. */
@@ -215,14 +226,22 @@ export class CalendarWriteQueue {
       ...(delay === undefined ? { v: CALENDAR_OUTBOX_VERSION } :
         { v: DEFERRED_ACT_VERSION, notBefore: at + delay }),
     };
+    const showNow = delay === undefined && (stamped.kind === "calendar_event_create" ||
+      stamped.kind === "calendar_event_update" || stamped.kind === "calendar_event_answer");
+    if (showNow) {
+      this.inserting.set(key, record);
+      this.opts.onChange?.();
+    }
     try {
       await this.store.commitLocal([{ type: CALENDAR_OUTBOX_TYPE, id: key, entity: record }], []);
+      if (eventId !== null) this.refused.delete(eventId);
     } catch (err) {
       if (eventId !== null) this.keys.forget(eventId, key);
       throw err;
+    } finally {
+      this.inserting.delete(key);
+      this.opts.onChange?.();
     }
-    if (eventId !== null) this.refused.delete(eventId);
-    this.opts.onChange?.();
     this.followDisk();
     return record;
   }

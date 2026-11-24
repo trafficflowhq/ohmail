@@ -682,6 +682,18 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     expect(await titles()).toEqual(["Glaze firing", "Theirs"]);
   });
 
+  it.each(["google", "microsoft", "caldav"] as const)("keeps an unproven recurring meeting from reaching %s", async word => {
+    const a = await account(word);
+    const made = create(a);
+    const rule = "FREQ=WEEKLY;INTERVAL=3;BYDAY=TU,TH;COUNT=4";
+    await press(a.accountId, "chosen-meeting", { ...made,
+      event: { ...made.event, start: { kind: "date", value: "20261117" }, end: { kind: "date", value: "20261118" }, repeat: rule } });
+    const writer = scriptedWriter(word);
+    await run(a, writer, { word });
+    expect(writer.calls).toEqual([]);
+    expect((await rows(a)).map(row => row.refusal)).toEqual(["repeat_unsupported"]);
+  });
+
   it("sends a new series only in a shape its provider was proven to keep, from a start the rule names, and refuses every other, sending nothing", async () => {
     const zoned = (value: string) => ({ kind: "zoned", value, zone: "Europe/Zurich" });
     const series = (a: Account, title: string, repeat: string, start: unknown = zoned("20261123T090000"), end: unknown = zoned("20261123T100000")) => ({

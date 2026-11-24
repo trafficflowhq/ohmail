@@ -15,7 +15,7 @@ import type {
 import type { Db } from "../context.js";
 import { CALENDAR_EVENT_MAX_BYTES } from "../sync-page-byte-budget.js";
 import { changedSeriesAudience } from "@trafficflow/db/calendar";
-import { proofPlaceOf, PROVEN_REPEATS, repeatDeleteScopes, type RepeatShape } from "@ohmail/cal-providers/repeat-shapes";
+import { proofPlaceOf, PROVEN_REPEATS, repeatDeleteScopes, repeatShapesForDraft, type RepeatShape } from "@ohmail/cal-providers/repeat-shapes";
 import { eventTimeOf, parseRRule } from "@ohmail/cal-core";
 import { intlZones } from "@ohmail/cal-core/time/zones";
 import { personalSeriesOf, cloudDeleteMembers, seriesDeleteMembers, storedObjectFacts } from "@ohmail/cal-providers/series";
@@ -66,6 +66,13 @@ function canEditPersonalSeries(provider: string, serverUrl: string | null): bool
   return !!proven && PERSONAL_SERIES_SHAPES.every((shape) => proven.includes(shape));
 }
 
+function repeatCapability(provider: CalendarProvider, serverUrl: string | null, sourceHost: string | null) {
+  // The managed desktop copy carries the host, while the connection URL stays on its server.
+  const place = proofPlaceOf(provider, serverUrl) ?? (sourceHost ? `caldav:${sourceHost}` : null);
+  const shapes = repeatShapesForDraft(place);
+  return shapes.length ? { repeatShapes: shapes } : {};
+}
+
 async function buildConnections(db: Db, accountId: string, ids: readonly string[]): Promise<Map<string, CalendarConnectionRecord>> {
   if (ids.length === 0) return new Map();
   const rows = await db.select({
@@ -81,6 +88,7 @@ async function buildConnections(db: Db, accountId: string, ids: readonly string[
     status: isCalendarConnectionStatus(r.status) ? r.status : "failing",
     errorCode: r.errorCode === null ? null : asCalendarSyncFault(r.errorCode),
     grantMailboxId: r.mailboxId,
+    ...repeatCapability(r.provider as CalendarProvider, r.serverUrl, r.sourceHost),
     // A subscription's host is kept apart from its sealed address; a CalDAV server's is read off its
     // address, or kept beside it where only the host is held (a desktop's copy).
     serverHost: r.provider === "ics" || r.provider === "caldav" ? (r.sourceHost ?? hostOf(r.serverUrl)) : null,

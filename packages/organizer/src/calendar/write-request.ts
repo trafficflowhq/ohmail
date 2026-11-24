@@ -14,7 +14,7 @@ import {
   type ContinuedField,
 } from "@trafficflow/db/calendar";
 import { personalSeriesOf, confirmedDeleteAudience } from "@ohmail/cal-providers/series";
-import { seriesEditShape } from "@ohmail/cal-providers/repeat-shapes";
+import { draftRepeatSupported, seriesEditShape } from "@ohmail/cal-providers/repeat-shapes";
 import { timeOfKey } from "./map.js";
 
 type Act = CalendarWritePayload["act"];
@@ -262,7 +262,10 @@ export function writeCallOf(o: {
   if (act.kind === "calendar_event_create") {
     const draft = draftOf(act.event, o.organizer);
     if (draft === null) return { kind: "refuse", reason: "content_refused" };
-    if (unproven(draft.rule, draft.start)) return { kind: "refuse", reason: "repeat_unsupported" };
+    const unsupported = act.repeatSelected && draft.rule !== null && o.continuation === undefined
+      ? !draftRepeatSupported(o.place, draft.rule, draft.start, o.zones, o.now)
+      : unproven(draft.rule, draft.start);
+    if (unsupported) return { kind: "refuse", reason: "repeat_unsupported" };
     if (o.continuation === undefined) return { kind: "create", draft };
     const { from, source } = o.continuation;
     if (source === null) return { kind: "refuse", reason: "event_gone" };
@@ -307,10 +310,11 @@ export function writeCallOf(o: {
   }
   if (writeRowOf(o.event) === "series") {
     const cloud = o.place === "google" || o.place === "microsoft";
-    const checkingStoredCloudSeries = cloud && (act.kind === "calendar_event_answer" || ((act.kind === "calendar_event_delete" || act.kind === "calendar_event_move") && act.audience !== undefined));
-    if (stored === null || first === null || (checkingStoredCloudSeries
+    const checkingStoredCloudSeries = cloud && (act.kind === "calendar_event_answer" || (act.kind === "calendar_event_move" && act.audience !== undefined));
+    const reviewedDelete = act.kind === "calendar_event_delete" && act.audience !== undefined;
+    if (stored === null || first === null || (!reviewedDelete && (checkingStoredCloudSeries
       ? !seriesEditShape(o.place, stored, first, o.zones, o.now)
-      : unproven(stored, first))) return { kind: "refuse", reason: "repeat_unsupported" };
+      : unproven(stored, first)))) return { kind: "refuse", reason: "repeat_unsupported" };
     if (act.kind === "calendar_event_delete" &&
       !repeatDeleteScopes(o.place, stored, first, o.zones, o.now, o.proven).includes(act.scope.kind))
       return { kind: "refuse", reason: "repeat_unsupported" };

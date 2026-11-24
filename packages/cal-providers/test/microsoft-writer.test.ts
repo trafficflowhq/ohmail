@@ -2,7 +2,7 @@
  * Microsoft's calendar, written, against the bench's double of Graph (Microsoft's pages, call by
  * call; blind where the pages are). Built, tried against the double, not proven at Microsoft itself.
  */
-import { intlZones, parseRRule, wall, zoned, floating } from "@ohmail/cal-core";
+import { formatRRule, intlZones, parseRRule, wall, zoned, floating } from "@ohmail/cal-core";
 import type { HostResolver } from "@trafficflow/core/net";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { makeReader, makeWriter, microsoftHosts } from "../src/microsoft/index.js";
@@ -12,6 +12,9 @@ import { Secret } from "./support/calendar-test-accounts.ts";
 import { MsDoubleClient } from "./support/ms-double-client.ts";
 // @ts-expect-error a plain module
 import { startMsDouble } from "./support/ms-double.mjs";
+
+import { draftRepeatSupported, recurrenceFor } from "../src/repeat-shapes.js";
+import { caseText, coreDays, DRAFT_PROOF_CASES, PROOF_NOW } from "./support/repeat-proof.js";
 
 const NOW = Date.UTC(2026, 10, 15, 9, 0, 0);
 const KEY = "0123456789abcdef0123456789abcdef";
@@ -197,7 +200,7 @@ describe("Microsoft's writer, at the double", () => {
 
   it("writes nothing Graph would not keep as written, and asks nothing for it", async () => {
     for (const [over, expected] of [
-      [{ rule: parseRRule("FREQ=WEEKLY")! }, "repeat_unsupported"],
+      [{ rule: parseRRule("FREQ=HOURLY")! }, "repeat_unsupported"],
       [{ url: "https://call.example.test/room" }, "field_unwritable"],
       [{ alarms: [5, 15] }, "field_unwritable"],
       [{ start: floating(wall(2026, 11, 26, 9)), end: floating(wall(2026, 11, 26, 10)) }, "field_unwritable"],
@@ -245,5 +248,111 @@ describe("Microsoft's writer, at the double", () => {
     ];
     expect(answers.map(word)).toEqual(Array(5).fill("repeat_unsupported"));
     expect(sent).toEqual([]);
+  });
+
+  it("refuses a recurring invitation Microsoft would silently clamp", async () => {
+    const rule = parseRRule("FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6")!;
+    const guest = ["tess", "example.com"].join("@");
+    const made = await writer.create(
+      signedIn(),
+      studio,
+      {
+        key: { hex: KEY },
+        event: draft({
+          rule,
+          organizer: ["organiser", "example.com"].join("@"),
+          attendees: [{ email: guest, name: "Tess Vale", optional: false }],
+        }),
+      },
+      never,
+    );
+    expect(word(made)).toBe("repeat_unsupported");
+    expect(sent).toEqual([]);
+  });
+});
+
+it("hands Graph the guest and a numbered last Friday and reads the repeat back", async () => {
+  const guest = ["fern", "example.com"].join("@");
+  const made = await writer.create(
+    signedIn(),
+    studio,
+    {
+      key: { hex: KEY },
+      event: draft({
+        start: zoned(wall(2026, 10, 30, 9), "Europe/Zurich"),
+        end: zoned(wall(2026, 10, 30, 10), "Europe/Zurich"),
+        rule: parseRRule("FREQ=MONTHLY;BYDAY=-1FR;COUNT=5")!,
+        attendees: [{ email: guest, name: "Fern Pike", optional: false }],
+      }),
+    },
+    never,
+  );
+  expect(word(made)).toBe("ok");
+  expect(sent[0]?.body).toMatchObject({
+    attendees: [{ emailAddress: { address: guest } }],
+    recurrence: {
+      pattern: { type: "relativeMonthly", index: "last", daysOfWeek: ["friday"] },
+      range: { type: "numbered", numberOfOccurrences: 5 },
+    },
+  });
+  const item = made.ok && made.items[0];
+  if (!item || item.kind !== "upsert") throw new Error("The new series did not read back");
+  expect(formatRRule(item.event.rules[0]!.rule!)).toBe("FREQ=MONTHLY;COUNT=5;BYDAY=-1FR");
+  const days = await ms.graph("GET", `/me/events/${item.id}/instances`, {
+    query: { startDateTime: "2026-10-01T00:00:00Z", endDateTime: "2027-04-01T00:00:00Z" },
+  });
+  expect(days.status).toBe(200);
+  const instances = days.json.value as { start: { dateTime: string } }[];
+  expect(instances.map(({ start }) => start.dateTime.slice(0, 10))).toEqual([
+    "2026-10-30",
+    "2026-11-27",
+    "2026-12-25",
+    "2027-01-29",
+    "2027-02-26",
+  ]);
+});
+
+it.each(DRAFT_PROOF_CASES)("round-trips Graph recurrence or refuses clamping: $name", async (c) => {
+  const event = c.draft;
+  const clamped = /from the 31st|on the 31st|on the 29th|29 February/.test(c.name);
+  expect(draftRepeatSupported("microsoft", event.rule!, event.start, zones, PROOF_NOW)).toBe(!clamped);
+  const made = await writer.create(signedIn(), studio, { key: { hex: KEY }, event }, never);
+  if (clamped) {
+    expect(word(made)).toBe("repeat_unsupported");
+    expect(sent).toEqual([]);
+    return;
+  }
+  expect(word(made)).toBe("ok");
+  expect(sent[0]?.body?.recurrence).toEqual(recurrenceFor(event.rule!, event.start, zones));
+  const item = made.ok && made.items[0];
+  if (!item || item.kind !== "upsert") throw new Error("The new series did not read back");
+  expect(item.event.start).toEqual(event.start);
+  expect(item.event.end).toEqual(event.end);
+  const back = { ...c, draft: { ...event, rule: item.event.rules[0]!.rule } };
+  expect(coreDays(c, caseText(back, "read-back"))).toEqual(coreDays(c, caseText(c, "sent")));
+});
+
+it("reads a timed last Friday with an indexed weekday and UTC ending", async () => {
+  const made = await writer.create(
+    signedIn(),
+    studio,
+    {
+      key: { hex: KEY },
+      event: draft({
+        start: zoned(wall(2026, 11, 27, 9), "Europe/Zurich"),
+        end: zoned(wall(2026, 11, 27, 10), "Europe/Zurich"),
+        rule: parseRRule("FREQ=MONTHLY;BYDAY=-1FR;UNTIL=20270430T070000Z")!,
+      }),
+    },
+    never,
+  );
+  const item = made.ok && made.items[0];
+  if (!item || item.kind !== "upsert") throw new Error("The new series did not read back");
+  const rule = item.event.rules[0]!.rule!;
+  expect(rule.byDay).toEqual([{ weekday: "FR", ordinal: -1 }]);
+  expect(rule.bySetPos).toEqual([]);
+  expect(rule.until).toMatchObject({ kind: "instant" });
+  expect(recurrenceFor(rule, item.event.start!, zones)).toMatchObject({
+    range: { type: "endDate", endDate: "2027-04-30" },
   });
 });

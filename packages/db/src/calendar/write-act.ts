@@ -269,12 +269,14 @@ export function parseCalendarAct(v: unknown): CalendarEventAct | null {
   if (!isObject(v) || typeof v.kind !== "string") return null;
   switch (v.kind) {
     case "calendar_event_create": {
-      if (!closed(v, ["kind", "eventId", "calendarId", "event"], ["invitationMessageId"]) || !isWriteUuid(v.eventId) || !isWriteUuid(v.calendarId)) return null;
+      if (!closed(v, ["kind", "eventId", "calendarId", "event"], ["invitationMessageId", "repeatSelected"]) || !isWriteUuid(v.eventId) || !isWriteUuid(v.calendarId)) return null;
       const event = fieldsOf(v.event, true);
       const invitation = v.invitationMessageId;
       if (invitation !== undefined && (!isWriteUuid(invitation) || event?.invitees.length)) return null;
+      if (v.repeatSelected !== undefined && (v.repeatSelected !== true || invitation !== undefined || !event?.repeat)) return null;
       return event === null ? null : { kind: v.kind, eventId: v.eventId, calendarId: v.calendarId, event,
-        ...(typeof invitation === "string" && { invitationMessageId: invitation }) };
+        ...(typeof invitation === "string" && { invitationMessageId: invitation }),
+        ...(v.repeatSelected === true && { repeatSelected: true }) };
     }
     case "calendar_event_update": {
       const scope = changeScopeOf(v.scope);

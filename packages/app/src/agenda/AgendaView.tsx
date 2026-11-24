@@ -307,6 +307,8 @@ function Row({
       ref={open ? openRow : undefined}
       mark={{ kind: "calendar", tone: e.tone }}
       title={e.title}
+      recordId={e.ref.event}
+      saving={!!e.status && !e.status.failed}
       time={words}
       second={[e.second, ...e.people].filter(Boolean).join(" · ") || undefined}
       now={now}

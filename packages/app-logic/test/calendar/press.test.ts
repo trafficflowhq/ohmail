@@ -12,8 +12,14 @@ import {
 } from "@ohmail/client-engine";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import type { CalendarWriteTransport } from "@ohmail/client-engine/calendar-writes";
-import type { CalendarAct, CalendarWriteAnswer } from "@ohmail/wire";
-import { calendarPortOf, calendarRefusalSentence, pressAndHear } from "../../src/calendar/index.js";
+import type { CalendarAct, CalendarWriteAnswer, CalendarWriteMark } from "@ohmail/wire";
+import {
+  calendarPortOf,
+  calendarRefusalSentence,
+  occurrencesIn,
+  pressAndHear,
+  readerZones,
+} from "../../src/calendar/index.js";
 
 const PRESSED_AT = Date.UTC(2026, 10, 16, 9);
 type Answer = { answer: CalendarWriteAnswer; seq: number | null };
@@ -22,6 +28,7 @@ function portOver(
   door: (key: string) => Promise<Answer>,
   store: MirrorStore = new MemoryMirrorStore(),
   now: () => number = () => PRESSED_AT,
+  subscribe: (listener: () => void) => () => void = () => () => undefined,
 ) {
   let n = 0;
   const transport: CalendarWriteTransport = {
@@ -30,7 +37,7 @@ function portOver(
     dismissCalendarWrite: (_id, key) => door(key),
   };
   return calendarPortOf({
-    engine: { store, subscribe: () => () => undefined, read: () => ({ version: () => 0 }) } as never,
+    engine: { store, subscribe, read: () => ({ version: () => 0 }) } as never,
     transport,
     clock: { uuid: () => `key-${++n}`, now },
     settings: async () => ({
@@ -303,4 +310,195 @@ it("reconciles two peer settlements in the pressing tab once per original key", 
     sendingStore.close();
     vi.unstubAllGlobals();
   }
+});
+
+it.each(["applied", "refused"] as const)(
+  "follows the queued create into a provider read that is %s",
+  async (outcome) => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const listeners = new Set<() => void>();
+    const port = portOver(
+      async (key) => ({
+        answer: { write: { id: "write", key, state: "pending", reason: null }, events: [] },
+        seq: null,
+      }),
+      store,
+      undefined,
+      (listener) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    );
+    const pressed = port.press(create);
+    const local = port.events()[0]!.record;
+    const { key } = await pressed;
+    await port.flush();
+    const refused = vi.fn();
+    port.watchCreate(local.id, key, refused);
+    const mark: CalendarWriteMark = {
+      id: "write",
+      key,
+      state: "pending",
+      act: create,
+      part: null,
+      reason: null,
+      at: local.updatedAt,
+    };
+    async function receive(uid: string, writes: CalendarWriteMark[]) {
+      await store.commitLocal(
+        [{ type: "calendar_event", id: local.id, entity: { ...local, uid, writes } }],
+        [],
+      );
+      for (const listener of [...listeners]) listener();
+    }
+    await receive("pending:write", [mark]);
+    expect(port.events()).toMatchObject([{ record: { id: local.id }, waiting: "provider" }]);
+    if (outcome === "applied") {
+      await receive("provider-event", []);
+      expect(port.events()).toMatchObject([{ record: { id: local.id }, waiting: null }]);
+      expect(refused).not.toHaveBeenCalled();
+    } else {
+      await receive("pending:write", [{ ...mark, state: "refused", reason: "read_only" }]);
+      expect(port.events()).toEqual([]);
+      expect(refused).toHaveBeenCalledTimes(1);
+      expect(refused).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "refused", word: "read_only" }),
+        "write",
+      );
+    }
+    expect(listeners.size).toBe(0);
+  },
+);
+
+it("draws only the changed occurrence while a generated occurrence edit is pending", async () => {
+  const store = new MemoryMirrorStore();
+  await store.load();
+  const listeners = new Set<() => void>();
+  const port = portOver(
+    async (key) => ({
+      answer: { write: { id: "write", key, state: "pending", reason: null }, events: [] },
+      seq: null,
+    }),
+    store,
+    undefined,
+    (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  );
+  const { eventId, calendarId } = create;
+  const start = { kind: "zoned" as const, value: "20261117T090000", zone: "Europe/Zurich" };
+  const end = { ...start, value: "20261117T100000" };
+  const master = {
+    id: eventId,
+    calendarId,
+    uid: "series",
+    recurrenceId: "",
+    thisAndFuture: false,
+    sequence: 0,
+    status: "confirmed" as const,
+    title: "Glaze firing",
+    notes: null,
+    place: null,
+    callLink: null,
+    start,
+    end,
+    duration: null,
+    startsAt: "2026-11-17T08:00:00.000Z",
+    endsAt: null,
+    occurrenceAt: null,
+    repeat: { rules: ["FREQ=DAILY;COUNT=3"], added: [], excluded: [] },
+    busy: true,
+    private: false,
+    organizer: null,
+    myAnswer: null,
+    heldBack: false,
+    invitees: [],
+    alarms: [],
+    cut: false,
+    writes: [],
+    updatedAt: new Date(PRESSED_AT).toISOString(),
+  };
+  const edit: CalendarAct = {
+    kind: "calendar_event_update",
+    eventId,
+    base: master.updatedAt,
+    scope: { kind: "occurrence", at: String(Date.UTC(2026, 10, 18, 8)) },
+    change: {
+      title: "Glaze check",
+      start: { ...start, value: "20261118T093000" },
+      end: { ...end, value: "20261118T103000" },
+    },
+  };
+  const view = () =>
+    occurrencesIn({
+      events: port.events(),
+      calendars: [
+        {
+          id: calendarId,
+          connectionId: "connection",
+          name: "Studio",
+          color: null,
+          access: "owner",
+          shown: true,
+          timeZone: null,
+          window: null,
+          defaultAlarms: [],
+          lastSyncedAt: null,
+          errorCode: null,
+          updatedAt: master.updatedAt,
+        },
+      ],
+      query: { from: { year: 2026, month: 11, day: 17 }, to: { year: 2026, month: 11, day: 19 } },
+      zone: "Europe/Zurich",
+      zones: readerZones(),
+    }).shown.map(({ record, occurrence, writes }) => [
+      record.title,
+      occurrence.start.kind === "zoned" && occurrence.start.wall.minute,
+      writes.waiting,
+    ]);
+  const receive = async (writes: CalendarWriteMark[] = []) => {
+    await store.commitLocal([{ type: "calendar_event", id: eventId, entity: { ...master, writes } }], []);
+    for (const listener of [...listeners]) listener();
+  };
+  await receive();
+  const pressed = port.press(edit);
+  expect(view()).toEqual([
+    ["Glaze firing", 0, null],
+    ["Glaze check", 30, "device"],
+    ["Glaze firing", 0, null],
+  ]);
+  const { key } = await pressed;
+  const refused = vi.fn();
+  port.watchEdit(eventId, key, refused);
+  const mark: CalendarWriteMark = {
+    id: "write",
+    key,
+    state: "pending",
+    act: edit,
+    part: null,
+    reason: null,
+    at: master.updatedAt,
+  };
+  await receive([mark]);
+  await port.flush();
+  expect(view()).toEqual([
+    ["Glaze firing", 0, null],
+    ["Glaze check", 30, "provider"],
+    ["Glaze firing", 0, null],
+  ]);
+  await receive([{ ...mark, state: "refused", reason: "read_only" }]);
+  expect(view()).toEqual(Array.from({ length: 3 }, () => ["Glaze firing", 0, null]));
+  expect(refused).toHaveBeenCalledTimes(1);
+  expect(refused).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "refused", word: "read_only" }),
+    "write",
+  );
+  expect(listeners.size).toBe(0);
+  port.suspendWrites();
 });

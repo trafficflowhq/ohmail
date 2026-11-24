@@ -10,8 +10,7 @@
  * geocoder. What this keeps, all in the program's memory: the answers for ten
  * minutes, each for the account that asked it alone (no account can tell what another asked), how
  * fast each account and the whole server ask, and how long the geocoder asked to be left alone.
- * Never a retry: a question that failed is answered by its state, and the person's next keystroke
- * is the next question.
+ * A transient upstream failure gets one retry under the same deadline and server-wide call limit.
  */
 import { createHash } from "node:crypto";
 import type { PlaceLanguage, PlaceSuggestAnswer, PlaceSuggestBody, PlaceSuggestion, PlaceSuggestState, UntrustedBody } from "@ohmail/wire";
@@ -316,6 +315,8 @@ export function makePlaceSuggester(cfg: PlaceSuggesterConfig, deps: PlaceSuggest
     if (q.near !== null) {
       url.searchParams.set("lat", q.near.lat.toFixed(1));
       url.searchParams.set("lon", q.near.lon.toFixed(1));
+      url.searchParams.set("zoom", "10");
+      url.searchParams.set("location_bias_scale", "0.2");
     }
     const headers: Record<string, string> = {
       "user-agent": USER_AGENT, accept: "application/json", "accept-encoding": "identity",
@@ -333,9 +334,19 @@ export function makePlaceSuggester(cfg: PlaceSuggesterConfig, deps: PlaceSuggest
         ac.signal,
       );
       if (pin === null || pin.length === 0) return held("down", HOLD_DOWN_MS, "not_private", log);
-      const res = await whileAsked(pinnedHttpRequest(url.href, { method: "GET", headers, pin, signal: ac.signal }), ac.signal);
-      const body = await whileAsked(jsonOf(res.stream, res.headers["content-length"]), ac.signal);
-      return judged(res.status, res.headers["retry-after"], body, q, key, log);
+      const fetchAnswer = async () => {
+        const res = await whileAsked(pinnedHttpRequest(url.href, { method: "GET", headers, pin, signal: ac.signal }), ac.signal);
+        const body = await whileAsked(jsonOf(res.stream, res.headers["content-length"]), ac.signal);
+        return { status: res.status, retryAfter: res.headers["retry-after"], body };
+      };
+      let answer = await fetchAnswer().catch((error: unknown) => {
+        if (ac.signal.aborted || !callable(now())) throw error;
+        return null;
+      });
+      if (answer === null || (answer.status === 500 && answer.retryAfter === undefined && !ac.signal.aborted && callable(now()))) {
+        answer = await fetchAnswer();
+      }
+      return judged(answer.status, answer.retryAfter, answer.body, q, key, log);
     } catch {
       // The person left: nothing to hold against the geocoder, and nobody reads this answer.
       if (left?.aborted) return none("down");

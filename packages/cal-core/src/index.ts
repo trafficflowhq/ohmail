@@ -10,6 +10,7 @@ export * from "./time/duration.js";
 export * from "./time/windows-zones.js";
 export * from "./time/zones.js";
 export * from "./recur/rrule.js";
+export * from "./recur/repeat-shapes.js";
 export * from "./recur/expand.js";
 export * from "./recur/key.js";
 export * from "./recur/series.js";

@@ -21,6 +21,8 @@ import "./event-chip.css";
 export type EventChipState = "plain" | "to-answer" | "from-mail" | "draft" | "maybe" | "off";
 
 interface EventChipCommon {
+  recordId?: string;
+  saving?: boolean;
   title: string;
   /** Whose it is; `null` while it is on no calendar. */
   tone: CalendarTone;
@@ -122,6 +124,8 @@ function shared(p: EventChipProps, style: CSSProperties | undefined) {
     "data-open": p.open ? "" : undefined,
     "data-fresh": p.fresh ? "" : undefined,
     "data-drag": p.drag,
+    "data-record": p.recordId,
+    "aria-busy": p.saving || undefined,
     "aria-hidden": p.drag === "copy" || undefined,
     tabIndex: p.drag === "copy" ? -1 : undefined,
     "aria-label": p.label,

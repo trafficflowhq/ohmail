@@ -3,11 +3,12 @@
  * not at all, the stored key never worked out again, an invitation not yet shown and a hidden calendar left out, and
  * the edge of what the device holds measured against what it holds.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { intlZones, type PlainDate } from "@ohmail/cal-core";
 import type { EventWithWrites } from "@ohmail/client-engine/calendar-acts";
 import type { CalendarEventRecord, CalendarRecord } from "@ohmail/wire";
 import { edgeOf, keyTimeOf, occurrencesIn } from "../../src/calendar/index.js";
+import * as records from "../../src/calendar/records.js";
 
 const zones = intlZones();
 const ZURICH = "Europe/Zurich";
@@ -97,6 +98,68 @@ const daysOf = (events: readonly CalendarEventRecord[], calendars = [calendar("c
   occurrencesIn({ events: events.map(held), calendars, query: NOVEMBER, zone: ZURICH, zones }).shown.map(
     (o) => [o.day, o.record.title, o.key !== null] as const,
   );
+
+it("draws the pending edit on the later part of a split series", () => {
+  const before = event("before", {
+    uid: "",
+    repeat: { rules: ["FREQ=WEEKLY;COUNT=2"], excluded: [], added: [] },
+  });
+  const after = event("after", {
+    uid: "",
+    start: { kind: "zoned", value: "20261116T090000", zone: ZURICH },
+    end: { kind: "zoned", value: "20261116T103000", zone: ZURICH },
+    title: "Long standup",
+    repeat: before.repeat,
+  });
+  const { shown } = occurrencesIn({
+    events: [
+      held(before),
+      {
+        ...held(after),
+        occurrenceEdits: [
+          { at: mondayAtNine("2026-11-23"), change: { title: "Planning" }, waiting: "provider" },
+        ],
+      },
+    ],
+    calendars: [calendar("cal-1")],
+    query: NOVEMBER,
+    zone: ZURICH,
+    zones,
+  });
+  expect(shown.map(({ record, writes }) => [record.title, writes.waiting])).toEqual([
+    ["Standup", null],
+    ["Standup", null],
+    ["Long standup", null],
+    ["Planning", "provider"],
+  ]);
+});
+
+it("skips a pending edit when there is no series to expand", () => {
+  const build = vi.spyOn(records, "seriesOfRecords").mockReturnValueOnce(records.seriesOfRecords([]));
+  try {
+    const master = event("standup");
+    const input = { calendars: [calendar("cal-1")], query: NOVEMBER, zone: ZURICH, zones };
+    const { shown } = occurrencesIn({
+      ...input,
+      events: [
+        {
+          ...held(master),
+          occurrenceEdits: [
+            { at: mondayAtNine("2026-11-09"), change: { title: "Planning" }, waiting: "device" },
+          ],
+        },
+      ],
+    });
+    expect(shown.map(({ day, record, writes }) => [day, record.title, writes.waiting])).toEqual([
+      ["2026-11-02", "Standup", null],
+      ["2026-11-09", "Standup", null],
+      ["2026-11-16", "Standup", null],
+      ["2026-11-23", "Standup", null],
+    ]);
+  } finally {
+    build.mockRestore();
+  }
+});
 
 describe("a series as the device holds it", () => {
   it("draws a changed day once, in its new place, and a cancelled day not at all", () => {

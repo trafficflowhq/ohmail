@@ -7,6 +7,9 @@ import { editGuestUpdate, eventUpdate, type GuestUpdate } from "./guest-update.j
 import { reportCalendarUpdate, useSentUpdateLabel } from "./update-report.js";
 import { useText } from "../text/index.js";
 import { patchOnScope } from "./edit-draft.js";
+import { useRefusedDraft } from "./draft-undo.js";
+import type { EventDraft } from "./event-draft.js";
+import { repeatRefusal } from "./repeat.js";
 import { editBase, editSchedule, editVersions, type EditableEvent } from "./editable-event.js";
 
 type Choice = "save" | "mine" | "theirs";
@@ -26,8 +29,10 @@ function useEditQuestions(
   occurrence: string | null,
   fail: (message: string) => void,
   schedule: string | null,
+  shown: CalendarEventRecord,
 ) {
   const e = useText("event");
+  const t = useText("calendar");
   const [scopeChoice, askScope] = useState<{ choice: Choice; version: string } | null>(null);
   const [question, ask] = useState<Consent | null>(null);
   const clear = () => {
@@ -42,7 +47,11 @@ function useEditQuestions(
     scope?: CalendarChangeScope,
     scopeVersion?: string,
   ) => {
-    if (schedule !== null && (change.start || change.end) && editSchedule(current) !== schedule) {
+    if (
+      schedule !== null &&
+      (change.start || change.end || change.repeat !== undefined) &&
+      editSchedule(current) !== schedule
+    ) {
       clear();
       fail(e("refusal.changed"));
       return false;
@@ -57,6 +66,23 @@ function useEditQuestions(
       return false;
     }
     askScope(null);
+    const refusal =
+      scope?.kind !== "occurrence" &&
+      (change.repeat !== undefined ||
+        (change.start !== undefined && current.connection?.repeatShapes?.length))
+        ? repeatRefusal(
+            change.repeat === undefined ? current.record.repeat?.rules[0] : change.repeat,
+            change.start ?? (scope?.kind === "following" ? shown.start : current.record.start),
+            current.connection?.repeatShapes,
+            t,
+            true,
+          )
+        : null;
+    if (refusal) {
+      ask(null);
+      fail(refusal);
+      return false;
+    }
     const update = editGuestUpdate(current, change, scope);
     if (needsConfirmation(update, approved)) {
       ask({ choice, update, scope, scopeVersion });
@@ -68,10 +94,17 @@ function useEditQuestions(
   return { scopeChoice, question, clear, review };
 }
 
+function refusedWriteId(details: unknown): string | null {
+  return details && typeof details === "object" && "id" in details && typeof details.id === "string"
+    ? details.id
+    : null;
+}
+
 function useEventSave(
   port: CalendarPort,
   original: CalendarEventRecord,
   shown: CalendarEventRecord,
+  draft: EventDraft,
   current: () => EditableEvent | null,
   patch: Partial<CalendarEventFields> | null,
   occurrence: string | null,
@@ -80,9 +113,10 @@ function useEventSave(
   const e = useText("event");
   const report = useReport();
   const sentLabel = useSentUpdateLabel();
+  const recover = useRefusedDraft(port);
   const [failure, fail] = useState<string | null>(null);
   const initial = { record: original, exception: shown.recurrenceId ? shown : null };
-  const questions = useEditQuestions(occurrence, fail, original.repeat ? editSchedule(initial) : null);
+  const questions = useEditQuestions(occurrence, fail, original.repeat ? editSchedule(initial) : null, shown);
   const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
   const ticket = useRef<symbol | null>(null);
@@ -139,44 +173,42 @@ function useEventSave(
       if (!questions.review(latest, change, choice, approved, scope, scopeVersion)) return;
       const update = editGuestUpdate(latest, change, scope);
       if (choice === "mine") base.current = latest.record.updatedAt;
-      const target = latest.exception ?? latest.record;
-      const before = { ...latest.record };
-      const heard = await pressAndHear(
-        port,
-        eventUpdate(
-          target,
-          scopeVersion ? editBase(latest, scope) : base.current,
-          change,
-          scope ?? { kind: "record" },
-          update,
-        ),
+      const act = eventUpdate(
+        latest.exception ?? latest.record,
+        scopeVersion ? editBase(latest, scope) : base.current,
+        change,
+        scope ?? { kind: "record" },
+        update,
       );
+      const watch = scope?.kind === "following" ? undefined : port.watchEdit;
+      const heard = await pressAndHear(port, act, !watch);
       if (ticket.current !== request) return;
       if (heard.verdict?.kind === "refused") {
         if (heard.verdict.word === "version_stale") {
-          const details = heard.verdict.details;
-          refusedId.current =
-            details && typeof details === "object" && "id" in details && typeof details.id === "string"
-              ? details.id
-              : null;
+          refusedId.current = refusedWriteId(heard.verdict.details);
           setConflict(true);
         }
         fail(e(heard.say!));
         return;
       }
       if (heard.say) {
-        const sent = heard.verdict?.kind === "taken" ? sentLabel(before, change, update) : undefined;
+        const sent = heard.verdict?.kind === "taken" ? sentLabel(latest.record, change, update) : undefined;
         reportCalendarUpdate(
           report,
           sent ?? e(heard.say),
           port,
-          before,
+          latest.record,
           change,
           () => current()?.record ?? null,
           e,
         );
       }
       finish();
+      if (!heard.verdict || heard.verdict.write?.state === "pending") {
+        watch?.(latest.record.id, heard.key, (verdict, id) =>
+          recover({ kind: "edit", draft, original: shownException ? shown : original }, act, verdict, id),
+        );
+      }
     } catch {
       if (ticket.current === request) fail(e("refusal.unknown"));
     } finally {
@@ -193,18 +225,18 @@ export function useEditLeave(
   port: CalendarPort,
   original: CalendarEventRecord,
   shown: CalendarEventRecord,
+  draft: EventDraft,
   current: () => EditableEvent | null,
   patch: Partial<CalendarEventFields> | null,
   occurrence: string | null,
-  dirty: boolean,
-  finish: () => void,
-  onLeave: () => void,
+  { dirty, finish, onLeave }: { dirty: boolean; finish: () => void; onLeave: () => void },
 ) {
   const { host, route } = useFrame();
   const { busy, failure, conflict, scopeChoice, question, clear, fail, ticket, save } = useEventSave(
     port,
     original,
     shown,
+    draft,
     current,
     patch,
     occurrence,

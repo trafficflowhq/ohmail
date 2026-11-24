@@ -167,3 +167,11 @@
 :root[data-device="phone"] .cal-event-panel[data-proposal] {
   position: static;
 }
+
+.cal-detail-guest {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  max-width: 100%;
+  min-width: 0;
+}
