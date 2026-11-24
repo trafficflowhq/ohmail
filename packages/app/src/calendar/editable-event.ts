@@ -42,9 +42,8 @@ export function movePending(record: CalendarEventRecord) {
 function writableRecord(
   record: CalendarEventRecord,
   own: readonly string[] | null,
-  series?: CalendarEventRecord,
+  access: CalendarRecord["access"],
 ) {
-  const organizer = record.organizer?.address.trim().toLowerCase();
   return (
     !movePending(record) &&
     !record.heldBack &&
@@ -52,9 +51,7 @@ function writableRecord(
     record.status !== "cancelled" &&
     (record.invitees.length === 0 || record.organizer !== null) &&
     (eventOwned(record, own) ||
-      (series?.personalSeries === true &&
-        Boolean(organizer) &&
-        organizer === series.organizer?.address.trim().toLowerCase()))
+      (record.myAnswer === null && access === "writer" && (own !== null || record.invitees.length === 0)))
   );
 }
 
@@ -73,16 +70,18 @@ export function canEditRecord(
   record: CalendarEventRecord,
   connection: CalendarConnectionRecord | undefined,
   own: readonly string[] | null,
+  access: CalendarRecord["access"],
   series?: CalendarEventRecord | null,
 ) {
-  if (record.recurrenceId === "") return writableRecord(record, own) && editableSeries(record, connection);
+  if (record.recurrenceId === "")
+    return writableRecord(record, own, access) && editableSeries(record, connection);
   return (
     !!series?.repeat &&
     !record.thisAndFuture &&
     record.uid === series.uid &&
     record.calendarId === series.calendarId &&
-    writableRecord(record, own, series) &&
-    writableRecord(series, own) &&
+    writableRecord(record, own, access) &&
+    writableRecord(series, own, access) &&
     editableSeries(series, connection)
   );
 }
@@ -95,9 +94,9 @@ export function writableEvent(
   own: readonly string[] | null,
 ) {
   const record = port.events().find((item) => item.record.id === id)?.record;
-  if (!record || record.recurrenceId !== "" || !writableRecord(record, own)) return null;
+  if (!record || record.recurrenceId !== "") return null;
   const calendar = calendarRecord<CalendarRecord>(host, "calendar", record.calendarId);
-  if (!calendar?.shown) return null;
+  if (!calendar?.shown || !writableRecord(record, own, calendar.access)) return null;
   const connection = calendarRecord<CalendarConnectionRecord>(
     host,
     "calendar_connection",
@@ -135,13 +134,7 @@ export function removableEvent(
       key,
       zones,
     );
-    if (
-      !changed ||
-      changed.id !== face.recordId ||
-      changed.status === "cancelled" ||
-      changed.cut ||
-      !eventOwned(changed, own)
-    )
+    if (!changed || changed.id !== face.recordId || !writableRecord(changed, own, current.calendar.access))
       return null;
   } else if (face.recordId !== record.id || face.ref.occurrence !== null) return null;
   return current;
@@ -163,7 +156,7 @@ export function editableEvent(
   if (
     exception === undefined ||
     (exception && exception.recurrenceId !== face.ref.occurrence) ||
-    !canEditRecord(exception ?? record, connection, own, record)
+    !canEditRecord(exception ?? record, connection, own, current.calendar.access, record)
   )
     return null;
   return { ...current, exception };

@@ -3,6 +3,7 @@
  * stands above every pane makes the row's one call and provides it here; a place reads it with `useConsent()` and
  * never calls for it.
  */
+import { SCREENER_ACKNOWLEDGEMENTS, type ScreenerAcknowledgement } from "@trafficflow/core/screener-acknowledgements";
 import { createContext, useContext, useMemo, type Context } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type { StorageScope } from "../storage/scope.js";
@@ -90,4 +91,14 @@ export function useConsentRow({
   }, [engine, derived]);
   const windowOwners = useMemo(() => windowOwnersOf(facts), [facts]); // the roles; a promotion re-asks (R20-02)
   return useConsentState(active, scope, transport, settingsStamp, windowOwners);
+}
+
+/** The current account's remembered Screener confirmations. */
+export function useScreenerAcknowledgements() {
+  const { screenerAcknowledgements, acknowledgeScreener } = useConsent();
+  return {
+    has: (kind: ScreenerAcknowledgement) =>
+      (screenerAcknowledgements & SCREENER_ACKNOWLEDGEMENTS[kind]) !== 0,
+    remember: acknowledgeScreener,
+  };
 }

@@ -2,7 +2,7 @@ import type { ScreenerState } from "@ohmail/app-logic/screener";
 import { createRoot } from "react-dom/client";
 import { Frame } from "../../../packages/app/src/frame/index.js";
 import { ScreenerAbove, screenerPlace } from "../../../packages/app/src/screener/index.js";
-import { BESIDE, inWords, modelOf, screenerEngine, sender } from "../../../packages/app/test/screener/screener-world.js";
+import { BESIDE, inWords, modelOf, screenerEngine, sender, TestConsent } from "../../../packages/app/test/screener/screener-world.js";
 import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
 import { fakeAddress, fakeAppearance, fakeWindow } from "../../../packages/app/test/support/fake-window.js";
 
@@ -24,8 +24,9 @@ const bodies = Object.fromEntries(screenedOut.flatMap((entry) => entry.held.map(
     .repeat(letter.id === "offer-0-0" ? 120 : 10), html: null },
 ])));
 const query = new URLSearchParams(location.search);
+const scope = "acct-1";
 const { host } = fakeHost({
-  engine: screenerEngine(bodies).engine, service: "self", scope: "acct-1",
+  engine: screenerEngine(bodies).engine, service: "self", scope,
   places: { screener: screenerPlace }, window: screen, address: fakeAddress("#/screener/screened"),
   appearance: fakeAppearance({
     face: query.get("face") === "ohmarchy" ? "ohmarchy" : "paper",
@@ -33,7 +34,9 @@ const { host } = fakeHost({
   }),
 });
 createRoot(document.getElementById("root")!).render(inWords(
-  <ScreenerAbove model={model} beside={BESIDE}>
-    <Frame host={host} />
-  </ScreenerAbove>,
+  <TestConsent scope={scope} transport="none">
+    <ScreenerAbove model={model} beside={BESIDE}>
+      <Frame host={host} />
+    </ScreenerAbove>
+  </TestConsent>,
 ));

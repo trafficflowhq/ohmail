@@ -118,7 +118,7 @@ function Listed(
 
   return (
     <div className="mbx-pane" role="group" aria-label={say({ key: filerKey("heading", filer) })}>
-      <PaneLines model={model} />
+      <PaneLines model={model} microsoftApproval={signIn === NONE ? undefined : signIn.microsoftApproval} />
       {groups.map(({ shown, superseded }) => (
         <Row
           key={shown.id}

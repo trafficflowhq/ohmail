@@ -102,28 +102,31 @@ it.each([
   },
 );
 
-it.each(["version_stale", "expired"] as const)("uses the read layout for a %s write", async (refusal) => {
-  const world = eventWorld(meeting());
-  const events = world.port.events();
-  world.port.events = () => events.map((event) => ({ ...event, refusal, refusedWriteId: "failed-write" }));
-  const press = vi.fn(async () => ({ key: "retry" }));
-  world.port.press = press;
-  mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE, { words: invitationsEn });
-  const card = within(screen.getByRole("dialog", { name: "Kiln check" }));
-  if (refusal === "version_stale") {
-    expect(card.getByText("changed elsewhere").hasAttribute("data-hot")).toBe(true);
-    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-  } else {
-    expect(card.getByText("Not saved")).toBeTruthy();
-    const toolbar = within(screen.getByRole("toolbar", { name: "Event actions" }));
-    const primary = toolbar.getByRole("button", { name: "Try again" });
-    expect(toolbar.getAllByRole("button")[0]).toBe(primary);
-    expect(toolbar.getByRole("button", { name: "Edit" })).toBeTruthy();
-    fireEvent.click(primary);
-    expect(press.mock.calls).toEqual([[{ kind: "calendar_write_retry", writeId: "failed-write" }]]);
-    await act(async () => {});
-  }
-});
+it.each(["version_stale", "expired", "read_only"] as const)(
+  "uses the read layout for a %s write",
+  async (refusal) => {
+    const world = eventWorld(meeting());
+    const events = world.port.events();
+    world.port.events = () => events.map((event) => ({ ...event, refusal, refusedWriteId: "failed-write" }));
+    const press = vi.fn(async () => ({ key: "retry" }));
+    world.port.press = press;
+    mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE, { words: invitationsEn });
+    const card = within(screen.getByRole("dialog", { name: "Kiln check" }));
+    if (refusal === "version_stale") {
+      expect(card.getByText("changed elsewhere").hasAttribute("data-hot")).toBe(true);
+      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    } else {
+      expect(card.getByText("Not saved")).toBeTruthy();
+      const toolbar = within(screen.getByRole("toolbar", { name: "Event actions" }));
+      const primary = toolbar.getByRole("button", { name: "Try again" });
+      expect(toolbar.getAllByRole("button")[0]).toBe(primary);
+      expect(toolbar.getByRole("button", { name: "Edit" })).toBeTruthy();
+      fireEvent.click(primary);
+      expect(press.mock.calls).toEqual([[{ kind: "calendar_write_retry", writeId: "failed-write" }]]);
+      await act(async () => {});
+    }
+  },
+);
 
 it("offers Duplicate and moves Hide this calendar under More for a read-only event", async () => {
   const world = eventWorld(meeting());
@@ -346,6 +349,19 @@ const guest = {
 function mailbox(address: string) {
   return { id: address, address, addressIsOwn: true, status: "connected" };
 }
+
+it.each(["google", "microsoft", "caldav"] as const)(
+  "offers Edit for a meeting the account organized and attends on %s",
+  async (provider) => {
+    const me = { ...guest, ...organizer };
+    const record = meeting({ organizer, invitees: [me, guest], myAnswer: "accepted" });
+    const world = openWithMailboxes(record, async () => [mailbox(organizer.address)]);
+    act(() => world.put("calendar_connection", "conn-1", connectionRecord({ provider })));
+    const card = within(await screen.findByRole("dialog", { name: record.title }));
+    fireEvent.click(await card.findByRole("button", { name: "Edit" }));
+    expect(screen.getByRole("dialog", { name: "Edit event" })).toBeTruthy();
+  },
+);
 
 it("keeps a shared event read-only when its organizer cannot be identified as this account", async () => {
   const read = vi.fn(async () => [mailbox(organizer.address)]);
@@ -920,6 +936,104 @@ it("moves an opened event by fifteen minutes with Shift and an arrow", async () 
     }),
   );
 });
+
+it.each(["caldav", "google", "microsoft"] as const)(
+  "opens editing and moves an event on a shared writable %s calendar",
+  async (provider) => {
+    const record = meeting({
+      organizer: { address: ["sharer", "example.test"].join("@"), name: "Other organizer" },
+    });
+    const world = eventWorld(record);
+    world.put("calendar_connection", "conn-1", connectionRecord({ provider }));
+    world.put("calendar", "cal-1", calendarRecord({ access: "writer" }));
+    const press = vi.fn(async () => ({ key: "move" }));
+    world.port.press = press;
+    mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE, { words: calmail });
+    const card = within(await screen.findByRole("dialog", { name: record.title }));
+    expect(card.getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(card.queryByText("View only")).toBeNull();
+    const close = card.getByRole("button", { name: "Close" });
+    close.focus();
+    fireEvent.keyDown(close, { key: "ArrowDown", shiftKey: true });
+    await act(async () => {});
+    expect(press).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "calendar_event_update",
+        eventId: record.id,
+        change: {
+          start: { ...record.start, value: "20261116T091500" },
+          end: { ...record.end, value: "20261116T101500" },
+        },
+      }),
+    );
+  },
+);
+
+it.each(["owner", "writer", "reader"] as const)(
+  "shows editing controls according to %s access when the invitation address is unknown",
+  async (access) => {
+    const record = meeting({ organizer, invitees: [guest] });
+    const world = openWithMailboxes(record, async () => []);
+    await act(async () => world.put("calendar", "cal-1", calendarRecord({ access })));
+    const press = vi.fn(async () => ({ key: "move" }));
+    world.port.press = press;
+    const card = within(await screen.findByRole("dialog", { name: record.title }));
+    const edit = card.queryByRole("button", { name: "Edit" });
+    if (access === "writer") {
+      expect(edit).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Cancel event" })).toBeTruthy();
+    } else {
+      expect(edit).toBeNull();
+      expect(screen.queryByRole("button", { name: /^(Delete|Cancel event)$/ })).toBeNull();
+      const close = card.getByRole("button", { name: "Close" });
+      close.focus();
+      fireEvent.keyDown(close, { key: "ArrowDown", shiftKey: true });
+      await act(async () => {});
+      expect(press).not.toHaveBeenCalled();
+    }
+  },
+);
+
+it("keeps the answer controls on an invitation on a writable shared calendar", async () => {
+  const record = meeting({ organizer, invitees: [guest], myAnswer: "none" });
+  const world = openWithMailboxes(record, async () => [mailbox(guest.address)]);
+  await act(async () => world.put("calendar", "cal-1", calendarRecord({ access: "writer" })));
+  const card = within(await screen.findByRole("dialog", { name: record.title }));
+  expect(screen.getByRole("button", { name: "Yes" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "No" })).toBeTruthy();
+  expect(card.queryByRole("button", { name: "Edit" })).toBeNull();
+});
+
+it.each(["caldav", "google", "microsoft"] as const)(
+  "offers Delete on a writable shared %s series occurrence once the feed serves its scopes",
+  async (provider) => {
+    const at = Date.UTC(2026, 10, 16, 8);
+    const record = meeting({
+      organizer,
+      repeat: { rules: ["FREQ=WEEKLY;COUNT=10"], added: [], excluded: [] },
+      deleteScopes: undefined,
+      deleteMembers: undefined,
+    });
+    const world = eventWorld(record);
+    world.put("calendar_connection", "conn-1", connectionRecord({ provider }));
+    world.put("calendar", "cal-1", calendarRecord({ access: "reader" }));
+    mountFrame(`#/cal/week/2026-11-16/e/firing@${at}`, world, NONE, { words: calmail });
+    await screen.findByRole("dialog", { name: record.title });
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    await act(async () => {
+      world.put("calendar", "cal-1", calendarRecord({ access: "writer" }));
+      world.put("calendar_event", record.id, {
+        ...record,
+        deleteScopes: ["record"],
+        deleteMembers: [{ at: null, range: false, organizer: organizer.address, guests: [] }],
+      });
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    expect(
+      within(screen.getByRole("dialog", { name: /^Delete / })).getByRole("menuitem", { name: "All events" }),
+    ).toBeTruthy();
+  },
+);
 
 it.each(["week", "day", "guest confirmation", "invitee", "escape", "changed occurrence"])(
   "keeps a calendar drag usable with another event selected: %s",

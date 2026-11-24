@@ -90,6 +90,8 @@ describe("the screens read these decisions", () => {
     expect(ohbox).toMatch(/knockSlotOf\(w\.mailboxes\.known \? noneOrganizedWhy\(w\.mailboxes\.rows\) : null, strip !== null\)/);
     expect(ohbox).toMatch(/knock\.k === "knock" \? <Doorbell /);
     expect(ohbox.match(/<Doorbell /g), "a second, unconditional knock").toHaveLength(1);
+    expect(ohbox).toContain("bell={t.mail ? bell : undefined}");
+    expect(ohbox).toMatch(/knock\.k === "state" \? <StateKnock [^\n]+\s*: t\.mail \? null : bell/);
   });
 
   it("a paired session draws the gap offer its server counted", () => {

@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScreenerJunk, ScreenerJunkItem } from "../../src/screener/index.js";
-import { BESIDE, modelOf, mountPlace, sender, WORDS, type Asked } from "./screener-world.js";
+import { BESIDE, TestConsent, modelOf, mountPlace, sender, WORDS, type Asked } from "./screener-world.js";
 
 import { QuarantineMove } from "../../src/screener/list/QuarantineMove.js";
 import { TextProvider } from "../../src/text/index.js";
@@ -359,17 +359,19 @@ describe("Junk on one column", () => {
 it("closes the Quarantine confirmation when a fresh preview arrives for the same count", () => {
   const request = vi.fn();
   const view = (confirmation: string, confirmationRequired = false) => (
-    <TextProvider locale="en" timeZone="UTC" messages={WORDS.en}>
-      <QuarantineMove
-        sweep={{
-          phase: "offer",
-          preview: { mailboxes: [], movable: 2, pending: false, confirmation, confirmationRequired },
-          requesting: false,
-          request,
-          dismiss: () => {},
-        }}
-      />
-    </TextProvider>
+    <TestConsent scope="acct-1" transport="none">
+      <TextProvider locale="en" timeZone="UTC" messages={WORDS.en}>
+        <QuarantineMove
+          sweep={{
+            phase: "offer",
+            preview: { mailboxes: [], movable: 2, pending: false, confirmation, confirmationRequired },
+            requesting: false,
+            request,
+            dismiss: () => {},
+          }}
+        />
+      </TextProvider>
+    </TestConsent>
   );
   const { rerender } = render(view("old-preview"));
   fireEvent.click(screen.getByRole("button", { name: "Move to Junk" }));

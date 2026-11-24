@@ -1,3 +1,5 @@
+import { CONSENT_SETTINGS_PATH } from "@ohmail/app-logic/consent/consent-wire";
+import { screenerAcknowledgementsOf, type ScreenerAcknowledgement } from "@ohmail/app-logic/consent/screener-acknowledgements";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { faceOf, type FaceName } from "../theme/face.js";
 import type { ConnectedSession } from "./pairing.js";
@@ -39,6 +41,7 @@ export interface ScreeningAnswer {
 /** The fields this app reads off `GET /consent` today. */
 export interface FoldersConsent {
   draftReplies?: boolean;
+  screenerAcknowledgements?: number;
   on: boolean;
   /**
    * CAN THE PAIRED DOOR STORE THE FLAG AT ALL — whether the answer CARRIES the folders axis, not
@@ -212,6 +215,9 @@ export async function readFoldersEnabled(session: ConnectedSession): Promise<Fol
       // the axis and reads identically to an absent field otherwise.
       storable: "foldersEnabledAt" in body,
       ...(typeof body.draftReplies === "boolean" ? { draftReplies: body.draftReplies } : {}),
+      ...(body.screenerAcknowledgements === undefined ? {} : {
+        screenerAcknowledgements: screenerAcknowledgementsOf(body.screenerAcknowledgements),
+      }),
       screening: screeningOf(body),
       ...signatureFactsOf(body),
       // A value this build does not know (a future face, a malformed field) reads as "no
@@ -278,6 +284,19 @@ export async function writeSignature(
   const body = (await res.json()) as Record<string, unknown>;
   if (!("signatures" in body)) throw new Error("signature write stored nothing: no such setting here");
   return signatureFactsOf(body);
+}
+
+export async function writeScreenerAcknowledgement(
+  session: ConnectedSession, acknowledgeScreener: ScreenerAcknowledgement,
+): Promise<number> {
+  const res = await session.fetch(`${requestBase(session)}${CONSENT_SETTINGS_PATH}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ acknowledgeScreener }),
+  });
+  if (!res.ok) throw new Error(`consent write refused (${res.status})`);
+  const body = (await res.json()) as { screenerAcknowledgements?: unknown };
+  return screenerAcknowledgementsOf(body.screenerAcknowledgements);
 }
 
 /**

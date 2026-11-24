@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { canonicalDestination } from "@trafficflow/core/folder-name";
+import { canonicalDestination, CONSENTING_DESTINATIONS } from "@trafficflow/core/destinations";
 import { ruleMatchKey, SCREENER_RELEASE_MOVE_MAX } from "@trafficflow/core/rule-order";
 import { dialect } from "@trafficflow/db/dialect";
 import { folderState, lockAccountMailboxes, lockAccountRuleKeys, messages, readIdempotencyKey, ruleMatchKeySql, rules } from "@trafficflow/db";
@@ -9,7 +9,7 @@ import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import type { MessageService } from "./message-service.js";
 
 const HOLDING = new Set(["ohmail/Screened", "ohmail/Quarantine"]);
-const FILED = new Set(["INBOX", "ohmail/News", "ohmail/Receipts"]);
+const FILED = new Set(CONSENTING_DESTINATIONS.map(canonicalDestination));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function readRelease(raw: unknown): ScreenerRuleRelease {

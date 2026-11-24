@@ -617,7 +617,8 @@ export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
     "/forgot-password", "/reset-password",
-    "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/account/delete", "/de", "/privacy", "/imprint",
+    "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/microsoft-approval", "/account/delete",
+    "/de", "/privacy", "/imprint",
     "/subprocessors", "/support", "/delete-account", "/ohcal", "/flathub-verification", "/.well-known/org.flathub.VerifiedApps.txt",
     "/api/waitlist", "/api/:path*",
     "/site-assets/:path*", "/landing/:path*",

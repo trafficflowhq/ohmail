@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { within } from "@testing-library/react";
 import messages from "../messages/en.json";
 import type { MailboxDTO } from "../app/api-client";
@@ -29,6 +29,8 @@ import {
 const copy: Record<string, string> = messages.mailboxes;
 const microsoft = "/api/mailboxes/oauth/microsoft";
 const authorize = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?x=1";
+let mockApprovalFailure: boolean;
+const approvalUrl = "https://login.microsoftonline.com/organizations/adminconsent?client_id=fixture-app";
 const startRefusal = "Connecting a Microsoft mailbox is not available on this deployment yet.";
 
 let mockStartCalls: Array<{ mailboxId?: string; returnTo?: string }>;
@@ -54,6 +56,7 @@ const dto = (over: Partial<MailboxDTO> = {}): MailboxDTO => ({
 beforeAll(warmCloudShell);
 
 beforeEach(() => {
+  mockApprovalFailure = false;
   mockStartCalls = [];
   mockCompleteCalls = [];
   mockStartRefused = false;
@@ -130,7 +133,13 @@ async function mount(items: MailboxDTO[], search = "", isolated = false): Promis
         });
         await availability;
       }
-      return Response.json({ available: mockAvailable, device: mockDeviceAvailable });
+      const approval = new URL(String(input), window.location.origin).searchParams.has("approval");
+      if (approval && mockApprovalFailure) return new Response(null, { status: 503 });
+      return Response.json({
+        available: mockAvailable,
+        device: mockDeviceAvailable,
+        ...(approval ? { adminApprovalUrl: approvalUrl } : {}),
+      }, { headers: { "X-Ohmail-Account": ACCOUNT } });
     }
     if (path === `${microsoft}/start` && method === "POST") {
       mockStartCalls.push(JSON.parse(String(init?.body)));
@@ -394,14 +403,28 @@ describe("the Microsoft PROVIDER TILE reaches the consent flow, not the app-pass
 });
 
 describe("coming back from Microsoft", () => {
-  it("an ADMIN-CONSENT refusal names both causes and reads as an alert", async () => {
+  it("an ADMIN-CONSENT refusal asks for one approval and offers the link to copy", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const clipboard = Object.getOwnPropertyDescriptor(window.navigator, "clipboard");
+    Object.defineProperty(window.navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      const el = await mount([], "?oauth=error&reason=admin_consent_required");
+      expect(mockCompleteCalls).toHaveLength(0);
+      expect(pane(el).getByRole("alert").textContent).toBe("Your organisation’s administrator needs to approve ohmail once.");
+      expect(pane(el).getByText("Your administrator opens this link once and approves ohmail for the organisation.")).toBeTruthy();
+      await click(pane(el).getByRole("button", { name: "Copy" }));
+      expect(writeText).toHaveBeenCalledWith(approvalUrl);
+    } finally {
+      if (clipboard) Object.defineProperty(window.navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(window.navigator, "clipboard");
+    }
+  });
+
+  it("asks for approval in Microsoft Entra when the approval link read fails", async () => {
+    mockApprovalFailure = true;
     const el = await mount([], "?oauth=error&reason=admin_consent_required");
-    expect(mockCompleteCalls).toHaveLength(0);
-    const alert = pane(el).getByRole("alert");
-    expect(alert?.textContent).toContain("administrator");
-    // We cannot reliably tell "never consented" from "this tenant does not let people consent" —
-    // Microsoft signals both the same way — so the copy names both and the remedy they share.
-    expect(alert?.textContent).toContain("approve apps themselves");
+    expect(pane(el).getByRole("status").textContent).toBe("Ask your administrator to approve ohmail in Microsoft Entra");
+    expect(pane(el).queryByRole("button", { name: "Copy" })).toBeNull();
   });
 
   it("a DECLINED consent is a status, not an alert — the person said no", async () => {

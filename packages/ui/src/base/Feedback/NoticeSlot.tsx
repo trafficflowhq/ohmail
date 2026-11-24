@@ -21,7 +21,7 @@ export interface NoticeSlotProps {
   front?: string;
   onFront: (id: string) => void;
   /** The line behind which the others stand, for their number: what it shows and what it is called. */
-  more: { label: string; name: string };
+  more: { label: string; name: string; collapse?: string };
   /** Whether the others are listed, and the press that lists or hides them. */
   open: boolean;
   onOpen: (open: boolean) => void;
@@ -78,6 +78,7 @@ export function NoticeSlot({ place, notices, front, onFront, more, open, onOpen 
                 {n.title}
               </MenuItem>
             ))}
+            {more.collapse ? <MenuItem onPress={() => onOpen(false)}>{more.collapse}</MenuItem> : null}
           </Menu>
         </>
       ) : null}

@@ -66,7 +66,7 @@ import { ConfirmBrowserFaceOwner } from "../confirm-browser-face-owner";
  */
 pendApiOwner(readOwner());
 beginOAuthReturn();
-let calendarOAuthReturn = readCalendarOAuthReturn();
+let calendarOAuthReturnRead = false;
 
 /** What the demo says of itself when `?demo=1` boots through this page: this build's service and send ceiling. */
 /** The staged attachment ceiling supported by this deployment. */
@@ -176,11 +176,15 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
       window.history.replaceState(window.history.state, "", destination.href);
     }
     setAccount({ id: accountId, address: address ?? null, displayName });
-    if (calendarOAuthReturn !== null) {
-      const back = calendarOAuthReturn;
-      calendarOAuthReturn = null;
-      const stillCurrent = () => boundApiOwner() === accountId && apiOwnerHolds("/calendar/connect");
-      void completeCalendarOAuth(back, accountId, stillCurrent);
+    // Read the return after hydration. Next commits its initial URL during hydration and can
+    // restore the original fragment over a module-time rewrite.
+    if (!calendarOAuthReturnRead) {
+      calendarOAuthReturnRead = true;
+      const back = readCalendarOAuthReturn();
+      if (back !== null) {
+        const stillCurrent = () => boundApiOwner() === accountId && apiOwnerHolds("/calendar/connect");
+        void completeCalendarOAuth(back, accountId, stillCurrent);
+      }
     }
   }, [confirmFaceOwner, listenFor, wakeSession]);
   /**

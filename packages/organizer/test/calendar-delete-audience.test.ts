@@ -78,6 +78,7 @@ function remove(
     place,
     organizer,
     owners: new Set([organizer]),
+    access: "owner",
     to: null,
     zones,
     now: Date.UTC(2026, 10, 15),

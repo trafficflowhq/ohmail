@@ -21,7 +21,7 @@ import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calWr
 import { fenceErased, fencedAccountOf, recordCalendarChanges, invitationCalendarId, invitationStanding, sameAddress, storedAuthScreens, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
   CALENDAR_WRITE_LIMITS, CONTINUED_FIELDS, CalendarConnectionGone, asCalendarWriteFault, changedDaysOf, exceptionBaseOf, holdCalendarConnection, isWriteKey, ownOrganizerAddresses,
-  parseCalendarAct, parseWritePayload, someoneElses, writeActRefusal, writePayloadOf, writeRowOf, type CalendarWriteException, type CalendarWritePayload, type ContinuedField,
+  parseCalendarAct, parseWritePayload, isAttendeeCopy, writeActRefusal, writePayloadOf, writeRowOf, type CalendarWriteException, type CalendarWritePayload, type ContinuedField,
 } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 import { formatRRule, parseRRule } from "@ohmail/cal-core/recur/rrule";
@@ -565,7 +565,7 @@ async function recordOnEvent(
   let exception: CalendarWriteException | undefined;
   if (exceptionEdit || answerException) {
     const unavailable = selected.partial || selected.status === "cancelled" || selected.heldBack;
-    const invited = someoneElses(selected, own);
+    const invited = isAttendeeCopy(selected, own, cal.access);
     if (unavailable || (answerException ? !invited || selected.myAnswer === null : invited)) throw readOnly("this occurrence is view only");
     if (selected.thisAndFuture || !selected.versionTag || act.after !== undefined ||
       (act.scope.kind !== "record" && act.scope.at !== selected.recurrenceId) ||
@@ -574,7 +574,7 @@ async function recordOnEvent(
     const master = await holdEventCopy(tx, accountId, cal.id, and(eq(calEvents.uid, selected.uid), eq(calEvents.recurrenceId, "")));
     if (!master || writeRowOf(master) !== "series" || master.partial || !master.versionTag || master.status === "cancelled" ||
       (cal.provider === "caldav" && (master.providerId !== selected.providerId || master.versionTag !== selected.versionTag))) throw readOnly("this occurrence has no writable series");
-    if (answerException && (master.organizer !== selected.organizer || master.myAnswer === null || !someoneElses(master, own)))
+    if (answerException && (master.organizer !== selected.organizer || master.myAnswer === null || !isAttendeeCopy(master, own, cal.access)))
       throw readOnly("this occurrence belongs to another invitation");
     await refuseWhileMoving(tx, accountId, master.id);
     event = master;
@@ -583,7 +583,7 @@ async function recordOnEvent(
     throw invalid("only a changed occurrence names two reviewed copies");
   }
 
-  // Someone else's event takes the account's answer and nothing else; a series is written as a whole or by the days it names.
+  // An attendee copy takes only the account's answer. A series is written as a whole or by the days it names.
   // The drain asks the same rule of what it sends, so what it would not send is not recorded.
   if (act.kind === "calendar_event_update" && act.personalSeries) {
     const [guest] = await tx.select({ id: calAttendees.eventId }).from(calAttendees)
@@ -601,7 +601,7 @@ async function recordOnEvent(
     const changed = await holdEventCopy(tx, accountId, cal.id, and(eq(calEvents.uid, event.uid), eq(calEvents.recurrenceId, act.scope.at)));
     if (changed) throw readOnly("this occurrence has its own copy to review");
   }
-  const why = writeActRefusal(event, act, days, own, exception !== undefined);
+  const why = writeActRefusal(event, act, days, own, cal.access, exception !== undefined);
   if (why !== null) throw why.word === "read_only" ? readOnly(why.why) : invalid(why.why);
   if (!exception && seriesEdit && act.scope.kind === "following" && cal.provider !== "caldav" &&
     (days > 0 || excludedOf(event).length > 0)) {

@@ -11,6 +11,7 @@ import {
   type CalendarSetupPort,
   type CalendarWay,
 } from "@ohmail/app-logic/calendar/setup";
+import { MicrosoftApproval } from "../mailboxes/connect/MicrosoftApproval.js";
 import { useText } from "../text/index.js";
 
 export interface WayStepProps {
@@ -22,6 +23,7 @@ export interface WayStepProps {
   readonly oauthInBrowser?: boolean;
   readonly via?: CalendarOAuthProvider;
   readonly status?: string;
+  readonly microsoftApproval?: CalendarSetupPort["microsoftApproval"];
   readonly busy?: boolean;
 }
 
@@ -33,6 +35,7 @@ export function WayStep({
   oauthInBrowser,
   via,
   status,
+  microsoftApproval,
   busy = false,
 }: WayStepProps) {
   const t = useText("calsetup");
@@ -57,6 +60,12 @@ export function WayStep({
     }
   };
   const result = startResult === null ? status : t(`oauth.${startResult}`);
+  const outcome = result ? (
+    <>
+      <span role="status">{result}</span>
+      {startResult === null && microsoftApproval ? <MicrosoftApproval read={microsoftApproval} /> : null}
+    </>
+  ) : undefined;
   const input = typed ?? (via && offered?.includes(via) ? via : "");
   const words = input.trim().toLowerCase();
   const fits = (way: CalendarWay) =>
@@ -68,7 +77,7 @@ export function WayStep({
   const shown = (offered ?? []).filter(fits);
   if (offered !== null && offered.length === 0) {
     return (
-      <Page acts={leave} afterLine={result ? <span role="status">{result}</span> : undefined}>
+      <Page acts={leave} afterLine={outcome}>
         <Sentence size="xl" level={1}>
           <EndDot kind="ink" product="cal">
             {t("way.none")}
@@ -81,7 +90,7 @@ export function WayStep({
   return (
     <Page
       acts={leave}
-      afterLine={result ? <span role="status">{result}</span> : undefined}
+      afterLine={outcome}
       stack
       material={
         offered === null ? undefined : (

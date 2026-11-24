@@ -594,6 +594,16 @@ describe("POST /waitlist", () => {
     expect(await db.select().from(waitlist)).toHaveLength(0);
   });
 
+  it("refuses reserved credential keys before joining the waitlist", async () => {
+    const { db, deps, mailer } = await makeDeps();
+    const email = " OHMAIL:signup" + "@" + "test.example ";
+    const res = await H(req("POST", "/waitlist", { body: JSON.stringify({ email }) }), deps);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("validation_failed");
+    expect(await db.select().from(waitlist)).toHaveLength(0);
+    expect(mailer.sent).toHaveLength(0);
+  });
+
   it("is a PUBLIC route, and `withRequestGuard` still fences it", async () => {
     const { deps } = await makeDeps();
     // A cross-site form post: the one shape a browser can send to another origin with a

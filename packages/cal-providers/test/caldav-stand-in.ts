@@ -38,6 +38,11 @@ export interface StandInCalendar {
   /** Whether the collection keeps a sync token. */
   sync: boolean;
   privileges: readonly string[] | null;
+  homePrivileges: readonly string[] | null | undefined;
+  accessProbeStatus: number | undefined;
+  homeShareAccess: StandInCalendar["shareAccess"] | undefined;
+  owner: string | null;
+  shareAccess: "read" | "read-write" | null;
   timezoneId: string | null;
   /** The calendar's zone as a definition in calendar text (RFC 4791 section 5.2.2). */
   timezone: string | null;
@@ -180,7 +185,9 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
     return Number(m[3]);
   };
 
-  const collectionProps = (c: Held, asked: (name: string) => boolean): string => {
+  const collectionProps = (c: Held, asked: (name: string) => boolean, atHome = false): string => {
+    const shareAccess = atHome && c.homeShareAccess !== undefined ? c.homeShareAccess : c.shareAccess;
+    const privileges = atHome && c.homePrivileges !== undefined ? c.homePrivileges : c.privileges;
     const type = c.kind === "calendar" ? "<collection/><C:calendar/>" : c.kind === "inbox" ? "<collection/><C:schedule-inbox/>" : "<collection/>";
     let ok = "";
     let missing = "";
@@ -195,8 +202,10 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
     put("getctag", c.tagged ? `<CS:getctag>${ctagOf(c)}</CS:getctag>` : null, "<CS:getctag/>");
     put("sync-token", c.sync ? `<sync-token>${tokenOf(c)}</sync-token>` : null, "<sync-token/>");
     put("calendar-color", c.color === null ? null : `<A:calendar-color>${esc(c.color)}</A:calendar-color>`, "<A:calendar-color/>");
-    if (given.nativeMove) put("owner", `<owner><href>${esc(principal)}</href></owner>`, "<owner/>");
-    put("current-user-privilege-set", c.privileges === null ? null : `<current-user-privilege-set>${c.privileges.map((p) => `<privilege><${p}/></privilege>`).join("")}</current-user-privilege-set>`, "<current-user-privilege-set/>");
+    const owner = c.owner ?? (given.nativeMove ? principal : null);
+    if (owner !== null) put("owner", `<owner><href>${esc(owner)}</href></owner>`, "<owner/>");
+    put("share-access", shareAccess === null ? null : `<share-access><${shareAccess}/></share-access>`, "<share-access/>");
+    put("current-user-privilege-set", privileges === null ? null : `<current-user-privilege-set>${privileges.map((p) => `<privilege><${p}/></privilege>`).join("")}</current-user-privilege-set>`, "<current-user-privilege-set/>");
     put("calendar-timezone-id", c.timezoneId === null ? null : `<C:calendar-timezone-id>${esc(c.timezoneId)}</C:calendar-timezone-id>`, "<C:calendar-timezone-id/>");
     put("calendar-timezone", c.timezone === null ? null : `<C:calendar-timezone>${esc(c.timezone)}</C:calendar-timezone>`, "<C:calendar-timezone/>");
     put("getetag", `<getetag>"collection-${c.slug}-${c.rev}"</getetag>`, "");
@@ -226,11 +235,13 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
     }
     if (path === home) {
       const own = response(home, propstat(asked("resourcetype") ? "<resourcetype><collection/></resourcetype>" : ""));
-      const children = depth === "1" ? [...calendars.values()].map((c) => response(paths.collection(c.slug), collectionProps(c, asked))).join("") : "";
+      const children = depth === "1" ? [...calendars.values()].map((c) => response(paths.collection(c.slug), collectionProps(c, asked, true))).join("") : "";
       return { status: 207, body: multistatus(own + children) };
     }
     for (const c of calendars.values()) {
       if (path !== paths.collection(c.slug)) continue;
+      if (depth === "0" && asked("current-user-privilege-set") && c.accessProbeStatus !== undefined)
+        return { status: c.accessProbeStatus, body: "" };
       const members = depth === "1" ? [...c.members].map(([name, m]) => response(listed(c.slug, name), memberProps(m, (n) => n === "getetag" && asked(n)))).join("") : "";
       return { status: 207, body: multistatus(response(path, collectionProps(c, asked)) + members) };
     }
@@ -396,6 +407,11 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
         components: init.components === undefined ? ["VEVENT"] : init.components,
         sync: init.sync ?? true,
         privileges: init.privileges === undefined ? ["read", "write-content", "bind", "unbind"] : init.privileges,
+        homePrivileges: init.homePrivileges,
+        accessProbeStatus: init.accessProbeStatus,
+        homeShareAccess: init.homeShareAccess,
+        owner: init.owner ?? null,
+        shareAccess: init.shareAccess ?? null,
         timezoneId: init.timezoneId ?? null,
         timezone: init.timezone ?? null,
         tagged: init.tagged ?? true,

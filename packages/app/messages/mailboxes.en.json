@@ -81,7 +81,7 @@
     "oauthFinishing": "Finishing the Microsoft connection…",
     "oauthConnected": "{address} is connected. The first sync starts on the next pass.",
     "oauthReconnected": "{address} is reconnected. Syncing resumes on the next pass.",
-    "oauth_admin_consent_required": "Your organisation has to approve ohmail before this mailbox can be connected. An administrator can grant it — either because ohmail has not been approved for your tenant yet, or because your tenant does not let people approve apps themselves.",
+    "oauth_admin_consent_required": "Your organisation’s administrator needs to approve ohmail once.",
     "oauth_consent_declined": "The Microsoft sign-in was cancelled, so nothing was connected.",
     "oauth_consent_failed": "Microsoft could not complete the sign-in. Try connecting again.",
     "oauth_state_invalid": "That Outlook connection link is no longer valid. Start again from here.",

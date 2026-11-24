@@ -55,6 +55,7 @@ export interface ScreenerItem {
     spam: boolean;
     confidence: number;           // 0..1
     rationale: string;
+    failed?: true;
     /**
      * WHICH FACT OHMAIL CHECKED DECIDED THIS — absent for every suggestion the model's own answer
      * stands unchanged for, which is nearly all of them. A closed set (`SenderReasonCode`), so a
@@ -94,6 +95,7 @@ export interface ScreenerSuggestionDTO {
   destination: Folder;
   spam: boolean;
   confidence: number;
+  failed?: true;
   reasonCode?: SenderReasonCode;
   reasonBrand?: string;
   reasonCount?: number;
@@ -126,6 +128,7 @@ export interface ScreenerSuggestionEntity {
   destination: string;
   spam: boolean;
   confidence: number;
+  failed?: true;
   reasonCode?: string;
   reasonBrand?: string;
   reasonCount?: number;

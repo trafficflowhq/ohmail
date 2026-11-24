@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { within } from "@testing-library/react";
 import { Frame } from "@ohmail/app/frame";
 import { ScreenerAbove, screenerPlace } from "@ohmail/app/screener";
-import { BESIDE, inWords, screenerEngine } from "../../../packages/app/test/screener/screener-world";
+import { BESIDE, TestConsent, inWords, screenerEngine } from "../../../packages/app/test/screener/screener-world";
 import { fakeHost } from "../../../packages/app/test/support/fake-host";
 import { fakeAddress, fakeWindow } from "../../../packages/app/test/support/fake-window";
 import { useScreenerWords } from "../../../packages/app/src/screener/words";
@@ -74,9 +74,11 @@ function Seat({ state, segment, owed, storeImportOpen }: ViewProps & { state: Sc
     window: fakeWindow("desktop"),
   }).host);
   return (
-    <ScreenerAbove model={state} beside={{ ...BESIDE, facts: { ...BESIDE.facts, owed, storeImportOpen } }}>
-      <Frame host={frame} />
-    </ScreenerAbove>
+    <TestConsent scope="acct" transport="none">
+      <ScreenerAbove model={state} beside={{ ...BESIDE, facts: { ...BESIDE.facts, owed, storeImportOpen } }}>
+        <Frame host={frame} />
+      </ScreenerAbove>
+    </TestConsent>
   );
 }
 

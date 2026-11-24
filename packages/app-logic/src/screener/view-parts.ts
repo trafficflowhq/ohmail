@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import { BODY_FETCH_TIMEOUT_MS, domainOfAddress, senderKey } from "@ohmail/client-engine";
 import { useEngineOrNull } from "../engine/context.js";
 import { isNothingOrganizes, type OrganizerRefusal } from "../press/organizer-refusal.js";
-import { localStorageDoor } from "../storage/durable.js";
+import type { ScreenerAcknowledgement } from "@trafficflow/core/screener-acknowledgements";
+import { useScreenerAcknowledgements } from "../consent/consent-row.js";
 import { scopeMayMount, type StorageScope } from "../storage/scope.js";
 import type { DecisionDestination, DecisionScope } from "./decision.js";
 import type { KeySegment } from "./keys.js";
@@ -25,6 +26,11 @@ export const refused = (
 ) => r.takeoverAsked !== true && (r.mode === "blocked" || isNothingOrganizes(r.pressRefusal));
 
 type BulkKind = "allSpam" | "applySuggestions" | "picked";
+const bulkAcknowledgement: Record<BulkKind, ScreenerAcknowledgement> = {
+  allSpam: "bulkSpamUnsubscribe",
+  applySuggestions: "applySuggestions",
+  picked: "bulkScreenOutUnsubscribe",
+};
 
 const unsubscribeCount = (senders: ConfirmedSenders): number =>
   new Set([...senders.values()].flatMap((entry) => entry.unsubscribeIds)).size;
@@ -64,6 +70,7 @@ export function useBulkAsk(
   simulated: boolean,
 ) {
   const engine = useEngineOrNull();
+  const acknowledgements = useScreenerAcknowledgements();
   const [draft, setDraft] = useState<{
     engine: typeof engine;
     account: ScreenerState["accountScope"];
@@ -80,6 +87,7 @@ export function useBulkAsk(
     ]),
   );
   const remaining = stillWaiting(current?.senders, rowIds);
+  const requests = unsubscribeCount(remaining);
   const reconcileDraft = () => {
     if (!draft) return;
     if (!current || !remaining.size) {
@@ -136,8 +144,10 @@ export function useBulkAsk(
       }),
     );
     if (!senders.size) return;
+    const sendsRequests = unsubscribeCount(senders) > 0;
     if (
-      (kind === "applySuggestions" && unsubscribeCount(senders) === 0) ||
+      (sendsRequests && acknowledgements.has(bulkAcknowledgement[kind])) ||
+      (kind === "applySuggestions" && !sendsRequests) ||
       (picked && picked.dest !== "screened")
     )
       file(kind, senders);
@@ -149,7 +159,7 @@ export function useBulkAsk(
         ? {
             kind: current.kind,
             senders: waiting.filter((row) => remaining.has(senderKey(row.from.address))),
-            unsubscribeCount: unsubscribeCount(remaining),
+            unsubscribeCount: requests,
           }
         : null,
     close: () => setDraft(null),
@@ -158,7 +168,11 @@ export function useBulkAsk(
       begin("picked", { ids, dest }),
     answer: (yes: boolean) => {
       setDraft(null);
-      if (yes && current && remaining.size) file(current.kind, remaining);
+      if (yes && current && remaining.size) {
+        if (requests > 0 && !refused(state.role))
+          acknowledgements.remember?.(bulkAcknowledgement[current.kind]);
+        file(current.kind, remaining);
+      }
     },
   };
 }
@@ -200,7 +214,6 @@ export function useShown(openId: string | null, segment: KeySegment) {
 }
 
 export interface DecideInput {
-  readonly disclosureOwner?: string | null;
   readonly state: ScreenerState;
   readonly segment: KeySegment;
   readonly openId: string | null;
@@ -217,12 +230,14 @@ export interface DecideInput {
   readonly closeShown: () => void;
 }
 
-const unsubscribeDisclosures = localStorageDoor("screener.unsubscribeSeen");
-
+/** The old browser key is still swept when an account is erased. */
 export function unsubscribeSeenKey(scope: StorageScope): string {
   if (!scopeMayMount(scope)) throw new Error("Unsubscribe disclosure has no owner");
   return "ohmail.screener.unsubscribeSeen." + scope;
 }
+
+const unsubscribeKind = (dest: DecisionDestination): ScreenerAcknowledgement =>
+  dest === "spam" ? "spamUnsubscribe" : "screenOutUnsubscribe";
 
 /**
  * THE ONE WAY A DECISION LEAVES: the model's `decide`, once any question before it has its yes. Screen out and Spam
@@ -232,17 +247,18 @@ export function unsubscribeSeenKey(scope: StorageScope): string {
 export function useDecide(input: DecideInput) {
   const { state, openWaiting, scopeOf } = input;
   const [decisionMotion, setDecisionMotion] = useState(0);
-  const [unsub, setUnsub] = useState<Extract<ScreenerAsk, { kind: "unsub" }> | null>(null);
   const engine = useEngineOrNull();
   const account = state.accountScope;
-  const disclosureOwner = input.disclosureOwner ?? account;
-  const seenKey =
-    disclosureOwner !== undefined && scopeMayMount(disclosureOwner)
-      ? unsubscribeSeenKey(disclosureOwner)
-      : null;
-  const seenInView = useRef<string | null>(null);
+  const acknowledgements = useScreenerAcknowledgements();
+  const [draft, setUnsub] = useState<{
+    engine: typeof engine;
+    account: typeof account;
+    ask: Extract<ScreenerAsk, { kind: "unsub" }>;
+  } | null>(null);
+  const unsub =
+    input.segment === "waiting" && draft?.engine === engine && draft.account === account ? draft.ask : null;
   const openSender = openWaiting === null ? null : senderKey(openWaiting.from.address);
-  useEffect(() => setUnsub(null), [input.segment, openSender, engine, account, disclosureOwner]);
+  useEffect(() => setUnsub(null), [input.segment, openSender, engine, account]);
   /* `stay`: a row's own press on a sender that is not the open one leaves the selection where it is. */
   const leave = (
     sender: ScreenerSenderDTO,
@@ -263,16 +279,23 @@ export function useDecide(input: DecideInput) {
     input.left(next);
     if (next !== null) setDecisionMotion((n) => n + 1);
   };
-  const askUnsubscribe = (
+  const decideOrAsk = (
     sender: ScreenerSenderDTO,
     dest: DecisionDestination,
     read: boolean,
     scope: DecisionScope,
+    stay: boolean,
     applyRetro?: boolean,
-  ): boolean => {
-    if ((dest !== "screened" && dest !== "spam") || input.simulated || refused(state.role)) return false;
+  ) => {
+    if ((dest !== "screened" && dest !== "spam") || input.simulated || refused(state.role)) {
+      leave(sender, dest, read, scope, stay, applyRetro);
+      return;
+    }
     const claim = state.unsubClaimOf(sender, scope);
-    if (claim === "none") return false;
+    if (claim === "none") {
+      leave(sender, dest, read, scope, stay, applyRetro);
+      return;
+    }
     const domain = domainOfAddress(senderKey(sender.from.address));
     const rows = [
       sender,
@@ -286,41 +309,42 @@ export function useDecide(input: DecideInput) {
     ];
     const ids = [...new Set(rows.flatMap((row) => row.held.map((letter) => letter.id)))];
     const unsubscribeIds = state.bulkUnsubscribeIds?.(sender, scope, ids) ?? ids;
+    if (acknowledgements.has(unsubscribeKind(dest))) {
+      leave(sender, dest, read, scope, stay, applyRetro, unsubscribeIds);
+      return;
+    }
     input.closeShown();
     setUnsub({
-      kind: "unsub",
-      sender,
-      dest,
-      read,
-      scope,
-      applyRetro,
-      claim,
-      unsubscribeIds,
-      explain:
-        seenKey === null || (seenInView.current !== seenKey && unsubscribeDisclosures.get(seenKey) !== "1"),
-      senders: rows.length,
+      engine,
+      account,
+      ask: {
+        kind: "unsub",
+        sender,
+        dest,
+        read,
+        scope,
+        applyRetro,
+        claim,
+        unsubscribeIds,
+        senders: rows.length,
+      },
     });
-    return true;
   };
   const decide = (dest: DecisionDestination, read: boolean, applyRetro?: boolean) => {
     if (openWaiting === null) return;
     const scope = scopeOf(openWaiting);
-    if (!askUnsubscribe(openWaiting, dest, read, scope, applyRetro))
-      leave(openWaiting, dest, read, scope, false, applyRetro);
+    decideOrAsk(openWaiting, dest, read, scope, false, applyRetro);
   };
   const decideRow = (sender: ScreenerSenderDTO, dest: DecisionDestination) => {
     if (sender.id === input.openId) return decide(dest, false);
     const scope = scopeOf(sender);
-    if (!askUnsubscribe(sender, dest, false, scope)) leave(sender, dest, false, scope, true);
+    decideOrAsk(sender, dest, false, scope, true);
   };
   const answerUnsub = (yes: boolean) => {
     const asked = unsub;
     setUnsub(null);
     if (yes && asked !== null) {
-      if (asked.explain && seenKey !== null) {
-        seenInView.current = seenKey;
-        unsubscribeDisclosures.set(seenKey, "1");
-      }
+      if (!refused(state.role)) acknowledgements.remember?.(unsubscribeKind(asked.dest));
       leave(
         asked.sender,
         asked.dest,

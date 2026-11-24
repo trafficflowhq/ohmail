@@ -2804,8 +2804,8 @@ export const accountSettings = pgTable("account_settings", {
    */
   subjectHeading: text("subject_heading"),
   subjectHeadingAt: timestamp("subject_heading_at", { withTimezone: true }),
-  // LAST: ADD COLUMN appends to the migrated table.
   draftReplies: boolean("draft_replies").notNull().default(true),
+  screenerAcknowledgements: integer("screener_acknowledgements").notNull().default(0),
 });
 
 // ──────────────────────────────────────────────────────────────────────────────────────────────
