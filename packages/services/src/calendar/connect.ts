@@ -193,7 +193,7 @@ export function typedCalDavCredential(
 ): Extract<StoredCredential, { kind: "basic" }> {
   const host = canonicalHost(new URL(server).hostname);
   if (/^(?:p[0-9]{1,3}-)?caldav\.icloud\.com$/.test(host)) {
-    const letters = password.reveal().replace(/[ -]/g, "");
+    const letters = password.reveal().replace(/[\s\u00a0\u2007\u202f-]/g, "");
     if (/^[A-Za-z]{16}$/.test(letters)) {
       password = new Secret(letters.toLowerCase().replace(/(.{4})(?=.)/g, "$1-"));
     }
