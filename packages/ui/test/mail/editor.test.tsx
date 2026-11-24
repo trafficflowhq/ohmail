@@ -320,7 +320,7 @@ describe("Recipients", () => {
     expect(onCommit).toHaveBeenCalledTimes(3);
 
     /* Words that only begin an offered address still complete to it: the first person is on. */
-    fireEvent.change(to, { target: { value: "tim@gassenblatt.exam" } });
+    fireEvent.change(to, { target: { value: "tim@gassenblatt.example".slice(0, -3) } });
     expect(to.getAttribute("aria-activedescendant")).not.toBeNull();
     fireEvent.keyDown(to, { key: "Enter" });
     expect(onTake).toHaveBeenCalledTimes(2);

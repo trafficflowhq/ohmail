@@ -506,7 +506,7 @@ describe("#116 — an active-undecided INBOX sender commits a rule, not a dead d
     await pressOhbox(s, address);
     expect(s.writes).toEqual([{
       method: "POST", path: "/api/rules",
-      body: { kind: "sender", match: address, destination: "INBOX", applyRetro: false },
+      body: { kind: "sender", match: address, destination: "INBOX", applyRetro: false, screenerMessageId: CAROLINE[1]!.id },
     }]);
   });
 

@@ -146,6 +146,8 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0221: consent and sync read this column for the Screener's one-time confirmations.
   ["account_settings", "screener_acknowledgements"],
   ["screener_learning", "data"],
+  // Suggestion writes and learning reads use the topic on the recorded decision.
+  ["routing_decisions", "screener_topic"],
   ["account_settings", "seed_confirmed_at"],
   // mail 0037_draft_html — the rich half of a draft. One nullable column on `drafts`, with a
   // second consumer that makes it sharper than the `mailboxes` entries: `materializeDraft`

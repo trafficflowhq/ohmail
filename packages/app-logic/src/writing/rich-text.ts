@@ -24,7 +24,7 @@ export interface RichValue {
 
 export const EMPTY_RICH: RichValue = { text: "", html: "" };
 
-export { AUTHORED_CODE_STYLE, hasEditedQuotedHistory, QUOTED_HISTORY_ATTRIBUTE } from "@trafficflow/core/outbound-text";
+export { AUTHORED_CODE_STYLE, AUTHORED_PARAGRAPH_STYLE, hasEditedQuotedHistory, QUOTED_HISTORY_ATTRIBUTE } from "@trafficflow/core/outbound-text";
 
 /**
  * Is there anything here to send, or to keep?

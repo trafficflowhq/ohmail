@@ -52,6 +52,12 @@
       "node": "./dist/time/duration.js",
       "default": "./src/time/duration.ts"
     },
+    "./recur/repeat-shapes": {
+      "types": "./src/recur/repeat-shapes.ts",
+      "ohmail-source": "./src/recur/repeat-shapes.ts",
+      "node": "./dist/recur/repeat-shapes.js",
+      "default": "./src/recur/repeat-shapes.ts"
+    },
     "./recur/rrule": {
       "types": "./src/recur/rrule.ts",
       "ohmail-source": "./src/recur/rrule.ts",

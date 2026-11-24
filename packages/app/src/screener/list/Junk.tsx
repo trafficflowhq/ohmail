@@ -1,3 +1,4 @@
+import { useFrame } from "../../frame/commands.js";
 import { MailRow } from "../../place-list/MailRowMenu.js";
 /**
  * JUNK, the third section where the shell hands its window: the mail server's own Junk folder, read when the section
@@ -43,6 +44,7 @@ function JunkRow({
   const key = junkKey(item);
   const who = junkWho(item);
   const open = view.openKey === key;
+  const { plan } = useFrame();
   return (
     <MailRow
       who={who}
@@ -51,7 +53,7 @@ function JunkRow({
       subject={item.subject}
       when={stamp(item).short}
       where={t(junkLabelOf(item))}
-      open={open}
+      open={open && plan.device !== "phone"}
       cursor={open}
       listing={{ name: item.subject ? `${who}: ${item.subject}` : who, selected: open, stop: open }}
       mark={{ id: key }}

@@ -45,6 +45,11 @@
   margin-block-start: var(--s2);
 }
 
+/* The body supplies the count on blocks following blank lines. */
+[data-read-body] :is(.msg-plain, .msg-pre-wrap) {
+  --blank-lines: 0;
+}
+
 /* Plain text uses a new block at each blank line. */
 [data-read-body] .msg-plain {
   font-size: var(--t-read);

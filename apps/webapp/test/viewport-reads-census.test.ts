@@ -47,6 +47,10 @@ const ADMITTED: Record<string, { count: number; why: string }> = {
     count: 4,
     why: "the lift's slop: two pointer reads compared, the hand's own travel; the ghost, the caret and the hit test go through cssPoint and cssRect",
   },
+  "packages/letter-body/src/proxied-images.ts": {
+    count: 1,
+    why: "picture priority reads the position inside the mail frame's viewport, which does not inherit the shell zoom",
+  },
   "packages/letter-body/src/MessageBody.tsx": {
     count: 1,
     why: "the message frame's own window height minus its root client height measures the horizontal scrollbar strip inside that unzoomed document",

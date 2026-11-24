@@ -213,7 +213,7 @@ describe.each([1280, 390] as const)("the Screener card at %i says the unsubscrib
     await tick(COMMIT_MS + 800);
     expect(writes).toContainEqual({
       path: "/api/rules",
-      body: { kind: "sender", match: ONE_CLICK, destination: "ohmail/Screened", applyRetro: false },
+      body: { kind: "sender", match: ONE_CLICK, destination: "ohmail/Screened", applyRetro: false, screenerMessageId: "p1" },
     });
     expect(writes.some(({ path }) => path.startsWith("/api/screener/") || path.endsWith("/unsubscribe"))).toBe(false);
     expect(report()).not.toContain("unsubscrib");

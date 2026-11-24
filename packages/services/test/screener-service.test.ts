@@ -31,12 +31,13 @@ describe("ScreenerService — first-contact queue (derived) + decide", () => {
     // the LIST does not generate. A wired classifier changes nothing here.
     expect(alice.aiSuggestion).toBeNull();
 
-    await svc.suggest(ctx, { senders: ["alice@ex.example"] });
+    const offered = await svc.suggest(ctx, { senders: ["alice@ex.example"] });
+    expect(offered.suggestions[0]?.id).toEqual(expect.any(String));
     const after = await svc.list(ctx, {});
     expect(after.items.find((i) => i.sender.address === "alice@ex.example")!.aiSuggestion)
       .toEqual({
         decision: "yes", destination: "INBOX", spam: false,
-        confidence: 0.92, rationale: "looks like a real person",
+        confidence: 0.92, rationale: "looks like a real person", id: offered.suggestions[0]!.id,
       });
     // …and bob, whom nobody asked about, still has none.
     expect(after.items.find((i) => i.sender.address === "bob@ex.example")!.aiSuggestion).toBeNull();

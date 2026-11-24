@@ -71,12 +71,12 @@ const GENERIC_NAME_WORDS = new Set(tokens([
   "Konto Sicherheit Schule Familie Gesundheit Bank Behörde Abo Verein Arbeit Post Hilfe Laden",
 ].join(" ")));
 
-function identifiesMail(text: string, references: readonly ScreenerRewriteReference[]): boolean {
+function identifiesMail(text: string, mailEvidence: readonly ScreenerRewriteReference[]): boolean {
   const normalized = text.normalize("NFKC");
   const emailOrLink = /@|\b(?:[a-z][a-z0-9+.-]*:\/\/|mailto:)|[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?[.\u3002\uff61](?:[\p{L}]{2}[\p{L}\p{N}-]*|\d{1,3}(?:\.\d{1,3}){2})(?![\p{L}\p{N}-])/iu;
   if (emailOrLink.test(normalized) || /[\p{Cf}\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(normalized)) return true;
   const words = ` ${tokens(normalized).join(" ")} `;
-  return references.some(({ senderName, subject }) => {
+  return mailEvidence.some(({ senderName, subject }) => {
     const name = tokens(senderName ?? "");
     if (name.length && (name.length > 1 || !GENERIC_NAME_WORDS.has(name[0]!))
       && words.includes(` ${name.join(" ")} `)) return true;
@@ -88,7 +88,7 @@ function identifiesMail(text: string, references: readonly ScreenerRewriteRefere
 
 export async function askScreenerRewrite(
   rewrite: ScreenerRewriter, input: ScreenerRewriteInput, beforeDispatch: () => Promise<void>,
-  call?: AiCallOptions, references: readonly ScreenerRewriteReference[] = [],
+  call?: AiCallOptions, mailEvidence: readonly ScreenerRewriteReference[] = [],
 ): Promise<string> {
   const payload = { ...input, maxWords: WORD_LIMIT, maxBytes: BYTE_LIMIT };
   if (boundedScreenerInputSize(SYSTEM, payload, SCHEMA) > SCREENER_INPUT_LIMIT) throw new ScreenerInputBudgetError();
@@ -97,7 +97,7 @@ export async function askScreenerRewrite(
   if (!raw || typeof raw !== "object" || Array.isArray(raw) || Object.keys(raw).length !== 1
     || !("text" in raw) || typeof raw.text !== "string") throw new Error("Invalid Screener note");
   const text = raw.text.trim();
-  if (new TextEncoder().encode(text).length > BYTE_LIMIT || tokens(text).length > WORD_LIMIT || identifiesMail(text, references)) {
+  if (new TextEncoder().encode(text).length > BYTE_LIMIT || tokens(text).length > WORD_LIMIT || identifiesMail(text, mailEvidence)) {
     throw new Error("Invalid Screener note");
   }
   return text;

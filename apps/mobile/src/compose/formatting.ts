@@ -1,3 +1,5 @@
+import { AUTHORED_PARAGRAPH_STYLE } from "@ohmail/app-logic/writing/rich-text";
+
 const MARKS = ["strong", "em", "u"] as const;
 export type Mark = (typeof MARKS)[number];
 export interface Run { text: string; marks: readonly Mark[] }
@@ -74,8 +76,10 @@ export function markupOf(runs: readonly Run[]): string | undefined {
 
 /** Only open markup the phone can put back whole. Other drafts stay readable through the existing draft view. */
 export function runsOf(body: string, html: string): Run[] | null {
-  if (!html.startsWith("<p>") || !html.endsWith("</p>")) return null;
-  const inner = html.slice(3, -4);
+  const storedParagraph = `<p style="${AUTHORED_PARAGRAPH_STYLE}">`;
+  const open = html.startsWith(storedParagraph) ? storedParagraph : "<p>";
+  if (!html.startsWith(open) || !html.endsWith("</p>")) return null;
+  const inner = html.slice(open.length, -4);
   const parts = inner.match(/<\/?(?:strong|em|u)>|<br\s*\/?>|[^<]+/g) ?? [];
   if (parts.join("") !== inner) return null;
   const stack: Mark[] = [];

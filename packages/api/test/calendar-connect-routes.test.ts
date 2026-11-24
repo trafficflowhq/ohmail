@@ -524,7 +524,9 @@ describe("the routes that name a connection or a calendar", () => {
     expect(await (await r.ask("GET", "/calendar/connect", undefined, {}, o)).json()).toEqual({ ways: ["icloud", "caldav", "ics"], connections: [theirs] });
     const stored = (await connectionsOf(r.db, r.s.accountId)).find((row) => row.id === first.id);
     expect(first.nextPollAt).toBe(stored?.nextPollAt?.toISOString());
-    // A record is what the feed sends of a connection: its host, and nothing that signs in.
+    // The feed includes the host, next check and repeat capabilities without sign-in data.
+    expect(first.repeatShapes).toContain("weekly/never");
+    expect(second).not.toHaveProperty("repeatShapes");
     expect(Object.keys(first).sort()).toEqual([
       "consentedAt", "createdAt", "errorCode", "grantMailboxId", "id", "label", "lastSyncedAt", "nextPollAt", "provider", "repeatShapes", "serverHost", "status", "updatedAt",
     ]);

@@ -150,7 +150,7 @@ export async function drainScreenerLearning(
       const messageIds = [
         ...new Set(state.lessons.flatMap((lesson) => (lesson.messageId ? [lesson.messageId] : []))),
       ];
-      const references: ScreenerRewriteReference[] = messageIds.length
+      const mailEvidence: ScreenerRewriteReference[] = messageIds.length
         ? await db
             .select({
               senderName: messages.fromName,
@@ -178,7 +178,7 @@ export async function drainScreenerLearning(
           ...call,
           beforeDispatch: allowDispatch,
         },
-        references,
+        mailEvidence,
       );
     } catch (error) {
       if (!(error instanceof ModelConsentWithdrawn)) {

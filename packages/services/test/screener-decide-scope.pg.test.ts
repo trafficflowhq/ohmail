@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import {
-  accounts, mailboxes, messages, folderState, changeLog, organizerRequests, rules,
+  accounts, mailboxes, messages, folderState, changeLog, organizerRequests, rules, screenerMessageRef,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
@@ -152,9 +152,10 @@ describe.skipIf(!PG_UP)("decide covers the sender account-wide", () => {
     expect(row?.state).toBe("pending");
     expect(row?.mailboxId).toBe(w.m2);
     expect(row?.kind).toBe("screener.decide");
+    const [pressed] = await db.select({ dedupKey: messages.dedupKey }).from(messages).where(eq(messages.id, w.held.m1[0]!));
     expect(row?.payload).toEqual({
       scope: "sender", address: SENDER, appliedFolder: "INBOX", decision: "yes",
-      match: SENDER, applyRetro: true,
+      match: SENDER, applyRetro: true, learningMessage: screenerMessageRef(pressed!.dedupKey),
     });
   });
 
