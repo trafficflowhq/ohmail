@@ -5,7 +5,9 @@
  * and the page's own: `lang`, `size` (the text size), `pick` (a state no picture draws, by its record and name).
  * The comparison's subjects open it at their keys (`account-open.ts`); what the frame and the menu draw is theirs.
  */
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { Frame } from "../../src/frame/Frame.js";
 import { TextProvider } from "../../src/text/index.js";
 import { accountFrameHost } from "./account-frame.js";
@@ -34,14 +36,17 @@ createRoot(document.getElementById("root")!).render(
   drawn === null ? (
     <p>{`no such state: ${location.search}`}</p>
   ) : (
-    <TextProvider locale={lang} messages={ACCOUNT_WORDS[lang]} timeZone="Europe/Zurich">
-      <Frame
-        host={accountFrameHost(drawn, slotsFor(words, lang), {
-          device: words.get("device"),
-          look,
-          lang,
-        })}
-      />
-    </TextProvider>
+    /* The portal renderer every shell's entry gives: a dialog stands over the window here as it does for people. */
+    <portalRenderer.Provider value={createPortal}>
+      <TextProvider locale={lang} messages={ACCOUNT_WORDS[lang]} timeZone="Europe/Zurich">
+        <Frame
+          host={accountFrameHost(drawn, slotsFor(words, lang), {
+            device: words.get("device"),
+            look,
+            lang,
+          })}
+        />
+      </TextProvider>
+    </portalRenderer.Provider>
   ),
 );

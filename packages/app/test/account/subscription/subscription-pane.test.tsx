@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { createTranslator } from "use-intl/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { dayStamp } from "@ohmail/app-logic/text/format";
 import { accountBodies } from "../../../src/account/bodies.js";
 import { ACCOUNT_REFUSALS, type CatalogueKey } from "../../../src/account/contract.js";
 import type {
@@ -11,7 +12,10 @@ import type {
 } from "../../../src/account/subscription/model.js";
 import { SUBSCRIPTION_NAMESPACE } from "../../../src/account/subscription/namespace.js";
 import { subscriptionStates } from "../../../src/account/subscription/states.js";
-import { SubscriptionPane } from "../../../src/account/subscription/SubscriptionPane.js";
+import {
+  SubscriptionPane,
+  type SubscriptionPaneProps,
+} from "../../../src/account/subscription/SubscriptionPane.js";
 import { useSubscription } from "../../../src/account/subscription/use-subscription.js";
 import type { HostContract } from "../../../src/host/index.js";
 import { fillOver, TextProvider, type Messages } from "../../../src/text/index.js";
@@ -22,16 +26,18 @@ import ownDe from "../../../messages/account-subscription.de.json" with { type: 
 import ownEn from "../../../messages/account-subscription.en.json" with { type: "json" };
 import settingsDe from "../../../messages/settings.de.json" with { type: "json" };
 import settingsEn from "../../../messages/settings.en.json" with { type: "json" };
+import aiDe from "../../../messages/settings-ai.de.json" with { type: "json" };
+import aiEn from "../../../messages/settings-ai.en.json" with { type: "json" };
 /** The states the comparison registers, by address. */
 import registry from "../../../../../test/compare/registry.json" with { type: "json" };
 import { fakeSubscriptionDoor, READS, TRIAL } from "./fake-door.js";
 
 afterEach(cleanup);
 
-const EN: Messages = { ...settingsEn, ...accountEn, ...ownEn };
+const EN: Messages = { ...settingsEn, ...accountEn, ...ownEn, ...aiEn };
 const WORDS: Readonly<Record<"en" | "de", Messages>> = {
   en: EN,
-  de: fillOver(EN, { ...settingsDe, ...accountDe, ...ownDe }),
+  de: fillOver(EN, { ...settingsDe, ...accountDe, ...ownDe, ...aiDe }),
 };
 /** The card the pictures draw: the test's own amounts, never the app's. */
 const STATES = subscriptionStates(READS.card.value);
@@ -66,16 +72,26 @@ function drawn(
     toStorage = null as (() => void) | null,
     lang = "en" as "en" | "de",
     addStorage,
+    addMailbox,
+    connectedCount,
   }: {
     toStorage?: (() => void) | null;
     lang?: "en" | "de";
     addStorage?: () => void;
+    addMailbox?: SubscriptionPaneProps["addMailbox"];
+    connectedCount?: number;
   } = {},
 ) {
   const storage = { addStorage: addStorage && { press: addStorage, busy: false } };
   return render(
     <TextProvider locale={lang} messages={WORDS[lang]} timeZone="Europe/Zurich">
-      <SubscriptionPane model={model} toStorage={toStorage} {...storage} />
+      <SubscriptionPane
+        model={model}
+        toStorage={toStorage}
+        {...storage}
+        addMailbox={addMailbox}
+        connectedCount={connectedCount}
+      />
     </TextProvider>,
   );
 }
@@ -93,6 +109,113 @@ it("opens the offered storage purchase directly from Subscription", () => {
   expect(addStorage).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Add storage" }));
   expect(addStorage).toHaveBeenCalledOnce();
+});
+
+const ai = (key: string, values: Record<string, string | number> = {}, lang: "en" | "de" = "en") =>
+  said({ namespace: "settingsAi", key }, values, lang);
+const withCredits = (
+  aiCredits: NonNullable<SubscriptionModel["status"]>["aiCredits"],
+  standing: Standing = { state: "active" },
+): SubscriptionModel => ({ ...TODAY.trial.model, status: { ...TRIAL, standing, aiCredits } });
+
+describe("the AI credits: the month's allowance, and the screening credits as their own line", () => {
+  const until = "2027-02-01T12:00:00.000Z";
+  const day = (lang: "en" | "de") => dayStamp(until, lang, "Europe/Zurich");
+
+  it("says the month's credits against its allowance, and the screening credits apart: what they pay for and their last day", () => {
+    drawn(withCredits({ remaining: 2_885, total: 4_000, setup: { remaining: 16_000, expiresAt: until } }));
+    expect(line(ai("budget")).textContent).toContain(ai("creditsMonth", { remaining: 2_885, total: 4_000 }));
+    expect(line("Screening credits").textContent).toContain("16,000 left");
+    expect(text()).toContain(
+      `Spent on Screener suggestions before your plan’s budget. Usable until ${day("en")}.`,
+    );
+    expect(text()).not.toContain("18,885");
+  });
+
+  it("a new account reads its whole allowance, the setup credits apart, and never more than its allowance for the month", () => {
+    drawn(withCredits({ remaining: 4_000, total: 4_000, setup: { remaining: 12_000, expiresAt: null } }));
+    expect(line(ai("budget")).textContent).toContain("4,000 of 4,000 this month");
+    expect(line("Screening credits").textContent).toContain("12,000 left");
+    expect(text()).toContain("Spent on Screener suggestions before your plan’s budget.");
+    expect(text()).not.toContain("Usable until");
+    expect(screen.queryByRole("group", { name: ai("creditsExtra") })).toBeNull();
+    cleanup();
+    drawn(withCredits({ remaining: 18_885, total: 4_000 }));
+    expect(line(ai("budget")).textContent).toContain("4,000 of 4,000 this month");
+    expect(line(ai("creditsExtra")).textContent).toContain(ai("creditsExtraLeft", { count: 14_885 }));
+    expect(screen.queryByRole("group", { name: ai("setupCredits") })).toBeNull();
+    expect(text()).not.toContain("18,885");
+  });
+
+  it("a trial's credits are its pot, not a month's", () => {
+    drawn(withCredits({ remaining: 400, total: 500, trial: true }, { state: "trial", ends: "Nov 18, 2026" }));
+    expect(line(ai("budget")).textContent).toContain(ai("creditsLeft", { remaining: 400, total: 500 }));
+    expect(line(ai("budget")).textContent).not.toContain(ai("creditsMonth", { remaining: 400, total: 500 }));
+  });
+
+  it("says it in German", () => {
+    drawn(withCredits({ remaining: 2_885, total: 4_000, setup: { remaining: 16_000, expiresAt: until } }), {
+      lang: "de",
+    });
+    expect(text()).toContain(ai("creditsMonth", { remaining: 2_885, total: 4_000 }, "de"));
+    expect(line("Screening-Credits").textContent).toContain("Noch 16.000");
+    expect(text()).toContain(
+      `Werden für Screener-Vorschläge vor dem Budget deines Tarifs verbraucht. Nutzbar bis ${day("de")}.`,
+    );
+  });
+});
+
+/** What a line says under it: the notes it names as its description. */
+const noteOf = (group: HTMLElement) =>
+  (group.getAttribute("aria-describedby") ?? "")
+    .split(" ")
+    .map((id) => document.getElementById(id)?.textContent ?? "")
+    .join(" ");
+
+describe("a mailbox added at any time, on the Mailboxes line", () => {
+  const offer = (over: Partial<NonNullable<SubscriptionPaneProps["addMailbox"]>> = {}) => ({
+    press: vi.fn(),
+    busy: false,
+    price: "$3/month",
+    most: 10,
+    atLimit: false,
+    ...over,
+  });
+
+  it("offers one more mailbox with its price below the limit, and the press goes the add-on's way", () => {
+    const addMailbox = offer();
+    drawn(withStanding({ state: "active" }), { addMailbox, connectedCount: 3 });
+    const mailboxes = line(settings("mailboxes"));
+    expect(noteOf(mailboxes)).toContain(said("mailboxAddonOffer", { price: "$3/month" }));
+    /* Its words are a purchase's, never the words of connecting a mailbox. */
+    expect(within(mailboxes).getByRole("button", { name: "Add an extra mailbox" })).toBeTruthy();
+    fireEvent.click(within(mailboxes).getByRole("button", { name: said("addMailbox") }));
+    expect(addMailbox.press).toHaveBeenCalledOnce();
+  });
+
+  it("is off while the change is on its way", () => {
+    drawn(withStanding({ state: "active" }), { addMailbox: offer({ busy: true }) });
+    expect(
+      (
+        within(line(settings("mailboxes"))).getByRole("button", {
+          name: said("addMailbox"),
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+  });
+
+  it("says so when every extra mailbox the plan allows is added, and offers none", () => {
+    drawn(withStanding({ state: "active" }), { addMailbox: offer({ atLimit: true }) });
+    const mailboxes = line(settings("mailboxes"));
+    expect(noteOf(mailboxes)).toContain(said("mailboxAddonMost", { count: 10 }));
+    expect(within(mailboxes).queryByRole("button", { name: said("addMailbox") })).toBeNull();
+  });
+
+  it("says it in German", () => {
+    drawn(withStanding({ state: "active" }), { addMailbox: offer({ price: "3 $/Monat" }), lang: "de" });
+    expect(screen.getByRole("button", { name: "Zusätzliches Postfach hinzufügen" })).toBeTruthy();
+    expect(text()).toContain(said("mailboxAddonOffer", { price: "3 $/Monat" }, "de"));
+  });
 });
 
 describe("where the account stands, from the access answer alone", () => {

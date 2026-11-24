@@ -38,6 +38,7 @@ import { AboutSection } from "./AboutSection";
 import { AiSection } from "./AiSection";
 import { WebGeneralPane } from "./WebGeneralPane";
 import { AwaySettings } from "@ohmail/app/settings/away";
+import { useAiBudgetSummary } from "@ohmail/app/settings/ai";
 import { useDevicesDoor, useDevicesWatch } from "./devices-door";
 import { useStorageDoor } from "./storage-door";
 import { useInvitesDoor } from "./invites-door";
@@ -120,14 +121,7 @@ function WebSubscriptionPane({ sheet }: Pick<PaneBodyProps, "sheet">) {
 }
 
 function useWebAiSummary() {
-  const credits = accessAiCredits(useWebAccess());
-  const t = useText("settingsAi");
-  return credits ? {
-    detail: t(credits.total === undefined ? "creditsBalance" : "creditsDetail", {
-      remaining: credits.remaining, total: credits.total ?? 0,
-    }),
-    hot: credits.remaining === 0,
-  } : null;
+  return useAiBudgetSummary(accessAiCredits(useWebAccess()));
 }
 
 function WebAiPane() {

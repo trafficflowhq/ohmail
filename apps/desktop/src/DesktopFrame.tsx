@@ -51,7 +51,7 @@ import { bridgeFetch, desktopCalendarSetup, desktopCalendarWrites, readDesktopCa
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { useDefaultMailNotice } from "./DesktopDefaultMail.js";
 import { DesktopAbout } from "./DesktopAbout.js";
-import type { AiCredits } from "@ohmail/app/settings/ai";
+import { useAiBudgetSummary, type AiCredits } from "@ohmail/app/settings/ai";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { DesktopPairingDevices } from "./DesktopDevices.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
@@ -228,6 +228,12 @@ function DesktopAiPane() {
   return ai === NONE ? null : ai.render();
 }
 
+/* The account's AI credits, for the AI entry in the Settings list: said the way the web's list and the panes say it. */
+const DesktopAiCreditsContext = createContext<AiCredits | null | undefined>(null);
+function useDesktopAiSummary() {
+  return useAiBudgetSummary(useContext(DesktopAiCreditsContext));
+}
+
 function DesktopDevicesPane() {
   const { host } = useFrame();
   return host.capabilities.pairing === "hostMode" ? <DesktopPairingDevices /> : <BrowserDevicesPane />;
@@ -297,6 +303,7 @@ const DESKTOP_PANE_PARTS = {
   away: AwaySettings,
   screener: DesktopScreeningPane,
   ai: DesktopAiPane,
+  useAiSummary: useDesktopAiSummary,
   devices: DesktopDevicesPane,
   billing: DesktopBillingPane,
   storage: DesktopStoragePane,
@@ -605,7 +612,9 @@ export function DesktopFrame(p: DesktopFrameProps) {
     <DesktopServerSettings.Provider value={openServerPane}>
       <DesktopInstallContext.Provider value={install}>
       <DesktopMailboxContext.Provider value={mailboxPane}>
+      <DesktopAiCreditsContext.Provider value={p.aiCredits}>
         <MailFrame host={host} />
+      </DesktopAiCreditsContext.Provider>
       </DesktopMailboxContext.Provider>
     </DesktopInstallContext.Provider>
     </DesktopServerSettings.Provider>

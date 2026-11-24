@@ -31,6 +31,9 @@
     "then": "Then",
     "price": "Price",
     "organizingUntil": "Organizing until {date}.",
-    "mailboxesConnected": "{used, number} of {count, number}"
+    "mailboxesConnected": "{used, number} of {count, number}",
+    "addMailbox": "Add an extra mailbox",
+    "mailboxAddonOffer": "+1 mailbox · {price}",
+    "mailboxAddonMost": "All {count, number} extra mailboxes added"
   }
 }

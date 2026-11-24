@@ -118,6 +118,12 @@ export interface StorageFigures {
       readonly most: number;
       readonly price: string | null;
     } | null;
+    /** One extra mailbox at its monthly price, and whether every extra mailbox the plan allows is added. */
+    readonly mailboxAddon?: {
+      readonly price: string | null;
+      readonly most: number;
+      readonly atLimit: boolean;
+    };
     /** The server offered a change and this account may change. */
     readonly mayChange: boolean;
   } | null;

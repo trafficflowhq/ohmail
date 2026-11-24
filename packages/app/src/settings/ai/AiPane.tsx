@@ -4,6 +4,7 @@ import { useText } from "../../text/index.js";
 import { AI_NAMESPACE } from "./namespace.js";
 import "./ai-credits.css";
 import type { AiCredits } from "./budget.js";
+import { CreditLines } from "./credit-words.js";
 import type { AiModel } from "./model.js";
 
 export interface AiPaneProps {
@@ -72,25 +73,21 @@ export function AiPane({
           />
         ) : null}
         {credits ? (
-          <>
-            <SettingLine
-              label={own("budget")}
-              value={own(
-                credits.total === undefined ? "creditsBalance" : phone ? "creditsAmount" : "creditsLeft",
-                { remaining: credits.remaining, total: credits.total ?? 0 },
-              )}
-              off={model.enabled === false}
-            />
-            {credits.total !== undefined && credits.total > 0 ? (
-              <progress
-                className="ai-credits-meter"
-                data-phone={phone ? "" : undefined}
-                aria-hidden="true"
-                value={Math.min(credits.remaining, credits.total)}
-                max={credits.total}
-              />
-            ) : null}
-          </>
+          <CreditLines
+            credits={credits}
+            off={model.enabled === false}
+            meter={
+              credits.total !== undefined && credits.total > 0 ? (
+                <progress
+                  className="ai-credits-meter"
+                  data-phone={phone ? "" : undefined}
+                  aria-hidden="true"
+                  value={Math.min(credits.remaining, credits.total)}
+                  max={credits.total}
+                />
+              ) : null
+            }
+          />
         ) : null}
       </SettingsSheet>
       {cloudModel ? (

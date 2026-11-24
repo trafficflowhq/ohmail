@@ -110,10 +110,10 @@ describe("the switch reads and writes the account's flag", () => {
   it("shows the server's AI balance, including an empty allowance, and leaves an unknown balance blank", async () => {
     const { AiSection } = await import("../app/(product)/mailbox/AiSection");
     await mount(h(AiSection, { credits: { remaining: 1200, total: 2000 } }));
-    expect(text()).toContain("1,200 of 2,000 left");
+    expect(text()).toContain("1,200 of 2,000 this month");
     await mount(h(AiSection, { credits: { remaining: 0, total: 2000 } }));
     expect(text()).toContain("0 credits");
-    expect(text()).toContain("0 of 2,000 left");
+    expect(text()).toContain("0 of 2,000 this month");
     await mount(h(AiSection));
     expect(text()).not.toContain("AI budget left");
   });
@@ -122,7 +122,7 @@ describe("the switch reads and writes the account's flag", () => {
     { supplied: { remaining: 1200 }, label: "1,200 credits left", meter: false },
     { supplied: { remaining: 1200, total: 0 }, label: "1,200 credits left", meter: false },
     { supplied: { remaining: 1200, total: -1 }, label: "1,200 credits left", meter: false },
-    { supplied: { remaining: 1200, total: 2000 }, label: "1,200 of 2,000 left", meter: true },
+    { supplied: { remaining: 1200, total: 2000 }, label: "1,200 of 2,000 this month", meter: true },
   ])("draws the account's credits as $label", async ({ supplied, label, meter }) => {
     const { accessAiCredits } = await import("../app/api-client");
     const { AiSection } = await import("../app/(product)/mailbox/AiSection");

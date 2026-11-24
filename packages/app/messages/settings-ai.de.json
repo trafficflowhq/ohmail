@@ -12,11 +12,16 @@
     "draftCost": "{credits, number} Credits pro Entwurf",
     "draftReply": "Antwort entwerfen",
     "budget": "Verbleibendes KI-Budget",
-    "creditsAmount": "{remaining, number} von {total, number}",
     "creditsLeft": "Noch {remaining, number} von {total, number}",
-    "creditsDetail": "{remaining, number} von {total, number} Credits",
     "creditsEmpty": "0 Credits",
     "plans": "Tarife",
-    "creditsBalance": "Noch {remaining, number} Credits"
+    "creditsBalance": "Noch {remaining, number} Credits",
+    "creditsMonth": "Noch {remaining, number} von {total, number} diesen Monat",
+    "creditsExtra": "Zusätzliche Credits",
+    "creditsExtraLeft": "Noch {count, number}",
+    "setupCredits": "Screening-Credits",
+    "setupCreditsLeft": "Noch {count, number}",
+    "setupCreditsNote": "Werden für Screener-Vorschläge vor dem Budget deines Tarifs verbraucht.",
+    "setupCreditsNoteUntil": "Werden für Screener-Vorschläge vor dem Budget deines Tarifs verbraucht. Nutzbar bis {date}."
   }
 }

@@ -2,7 +2,7 @@ import { and, asc, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   folderState, messageInstances, messages,
-  resolveCutline, onServerPool, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
+  resolveCutline, onServerPool, senderIsActiveSql, heldSenderKeysSql, heldArrivedInsideSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
   notGoneSql, readGoneMailboxIds,
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, automaticAiAdmits, screenerSuggestionExhausted,
@@ -616,9 +616,7 @@ async function selectCandidates(
   // Both query shapes include retries the person already approved before automatic suggestions began.
   const afterWatermark = sql`(${reps.createdAt} > ${d.ts(opts.watermark)}
     or ${screenerSuggestionRetryDue(opts.accountId, sql`${reps.messageId}`)})`;
-  const candidates = onServerPool(db) ? sql`
-    select lower(${reps.fromAddress}) from ${reps}
-    where ${reps.rank} = 1 and ${reps.heldArrival} = 0 and ${afterWatermark}` : undefined;
+  const candidates = onServerPool(db) ? heldSenderKeysSql(d, opts.accountId, gone) : undefined;
 
   const rows = await db.select({
     messageId: reps.messageId,
@@ -668,8 +666,10 @@ async function selectCandidates(
       // (8) A COPY ON RECORD — the server held the letter at the last read. The reaper tombstones one
       // left without only after a read saw it go, or hourly; the row on screen is still this letter,
       // so the test sits outside the window and its sender waits for the reaper.
+      // Asked per representative by its id (`is true` keeps it from becoming a join the planner
+      // runs as a scan of every copy per representative).
       sql`exists (select 1 from ${messageInstances} cr
-        where cr.message_id = ${sql.identifier("reps")}.${sql.identifier(messages.id.name)})`,
+        where cr.message_id = ${sql.identifier("reps")}.${sql.identifier(messages.id.name)}) is true`,
     ))
     .orderBy(asc(reps.createdAt), asc(reps.messageId))
     .limit(opts.limit);

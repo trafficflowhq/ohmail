@@ -1,7 +1,9 @@
 /** @vitest-environment jsdom */
 import { createHash } from "node:crypto";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { createPortal } from "react-dom";
 import { createTranslator } from "use-intl/core";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FactorSlot, GatedAsk, QrSlot } from "../../../src/account/contract.js";
 import { DevicesPane } from "../../../src/account/devices/DevicesPane.js";
@@ -329,6 +331,22 @@ describe("the presses", () => {
     press(within(dialog).getByRole("button", { name: dev("remove") }));
     expect(confirm).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["asked", "askedWeb"] as const)(
+    "the %s question stands over the whole window, outside the pane that holds it, so the pane can neither clip nor move it",
+    (state) => {
+      const { container } = render(
+        <portalRenderer.Provider value={createPortal}>
+          <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
+            <DevicesPane model={STATES[state].model} factor={noFactor} qr={qr} />
+          </TextProvider>
+        </portalRenderer.Provider>,
+      );
+      const dialog = screen.getByRole("dialog");
+      expect(container.contains(dialog)).toBe(false);
+      expect(dialog.closest(".oh-over")?.parentElement).toBe(document.body);
+    },
+  );
 
   it("the group's sign-out is asked with its count and what it does", () => {
     const confirm = vi.fn();

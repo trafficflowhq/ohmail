@@ -15,7 +15,10 @@ export interface DialogProps {
   dismissOnScrim?: boolean;
   /** A decision that must be made before the requested action can continue. */
   alert?: boolean;
-  /** Keep the question in its host layer and make the surrounding document inert. */
+  /**
+   * Keep the question in its host layer and make the surrounding document inert. Left out, it stands over the whole
+   * window wherever it is mounted: a pane's scroll, clip or motion never holds it.
+   */
   inline?: boolean;
   /** A press that may have lost focus while its answer was pending. */
   returnFocus?: () => HTMLElement | null;
@@ -173,8 +176,8 @@ export function Dialog(props: DialogProps) {
       {under ? <div className="oh-dialog-under">{under}</div> : null}
     </Overlay>
   );
-  // An interrupting question must receive clicks above every column, including its opener's siblings.
-  return props.alert && !props.inline && open && typeof document !== "undefined"
+  // A question must receive clicks above every column, including its opener's siblings and the pane that holds it.
+  return !props.inline && open && typeof document !== "undefined"
     ? renderPortal(dialog, document.body)
     : dialog;
 }

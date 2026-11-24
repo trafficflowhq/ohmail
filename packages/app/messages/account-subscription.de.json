@@ -31,6 +31,9 @@
     "then": "Danach",
     "price": "Preis",
     "organizingUntil": "Organisiert bis {date}.",
-    "mailboxesConnected": "{used, number} von {count, number}"
+    "mailboxesConnected": "{used, number} von {count, number}",
+    "addMailbox": "Zusätzliches Postfach hinzufügen",
+    "mailboxAddonOffer": "+1 Postfach · {price}",
+    "mailboxAddonMost": "Alle {count, number} zusätzlichen Postfächer hinzugefügt"
   }
 }
