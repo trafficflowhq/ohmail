@@ -31,7 +31,7 @@ export function cardKeys({
       (key.ctrlKey && !key.altKey) ||
       key.metaKey ||
       key.repeat ||
-      target.closest("input, textarea, select, [contenteditable]")
+      target.closest("input, textarea, select, [contenteditable], a[href]")
     )
       return;
     const pressed = key.key;

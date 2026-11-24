@@ -20,7 +20,12 @@ function peopleRows(
   const invitees = record.invitees.filter(
     ({ address }) => address.toLowerCase() !== organizer?.address.toLowerCase(),
   );
-  if (organizer && own && !own.some((address) => address.toLowerCase() === organizer.address.toLowerCase())) {
+  if (
+    organizer &&
+    !record.ownOrganizer &&
+    own &&
+    !own.some((address) => address.toLowerCase() === organizer.address.toLowerCase())
+  ) {
     rows.push({ label: t("edit.from"), text: organizer.name || organizer.address });
   }
   if (!invitees.length) return rows;

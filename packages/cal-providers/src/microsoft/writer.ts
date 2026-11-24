@@ -57,7 +57,12 @@ import {
   type Precondition,
 } from "../request/index.js";
 import { clockOf, sameTime } from "../series.js";
-import { alreadyHolds, sameAudience, sameCancellationAudience } from "../write-compare.js";
+import {
+  alreadyHolds,
+  ordinarySharedChange,
+  sameAudience,
+  sameCancellationAudience,
+} from "../write-compare.js";
 import { dayOfSeries, recordOf, ruleOfRecurrence, seriesOfRecord, type SeriesClock } from "./convert.js";
 import { graphBaseOf, insideBase } from "./graph.js";
 import { graphAuthorization, stamp, type MicrosoftDeps } from "./reader.js";
@@ -1275,7 +1280,7 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
     notes: boolean,
     signal: AbortSignal,
   ): Promise<Precondition | Refusal> {
-    if (!target.audience && sendableTag(target.version) && !notes)
+    if (!target.sharedCopy && !target.audience && sendableTag(target.version) && !notes)
       return { kind: "unchanged", tag: target.version };
     const now = await read(token, id, signal);
     if ("ok" in now) return now;
@@ -1283,6 +1288,14 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
     const held = itemOf(now);
     if (held === null || held.item === null || held.item.kind !== "upsert") return refused("version_unknown");
     if (held.item.version !== target.version) return refused("version_stale");
+    if (
+      target.sharedCopy &&
+      (held.item.audienceIncomplete ||
+        held.raw.type !== "singleInstance" ||
+        !Array.isArray(held.raw.attendees) ||
+        held.raw.attendees.length)
+    )
+      return refused("read_only");
     if (target.audience) {
       if (held.item.audienceIncomplete || !sameAudience(target.audience, held.item.event))
         return refused("version_stale");
@@ -1401,6 +1414,8 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
     },
 
     async change(c, _cal, target, change, signal) {
+      if (target.sharedCopy && (target.recurringSeries || target.occurrence || !ordinarySharedChange(change)))
+        return refused("read_only");
       if (!target.recurringSeries && target.occurrence !== null) return refused("repeat_unsupported");
       const id = segment(target.id);
       if (id === null) return refused("not_found");

@@ -34,6 +34,12 @@
     flex-direction: column;
     gap: 0;
   }
+  .oh-calrail-caption[data-account-action] {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--s1);
+  }
   .oh-calrail-caption {
     --oh-calrail-caption-pad: 0 var(--s2) 4px var(--s3);
     display: flex;

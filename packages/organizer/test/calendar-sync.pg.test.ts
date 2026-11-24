@@ -61,6 +61,29 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     await w.db.update(calConnections).set({ nextPollAt: null }).where(eq(calConnections.accountId, accountId));
   }
 
+  it("keeps the authenticated CalDAV organizer addresses of the connection and replaces them on discovery", async () => {
+    const seeded = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
+    const reader = scriptedReader("caldav", { readings: new Map([["", [{ items: [] }]]]) });
+    const first = ["second-principal", "example.test"].join("@");
+    const next = ["new-principal", "example.test"].join("@");
+    let addresses = [first.toUpperCase(), first];
+    reader.checkSignIn = async () => ({ ok: true, value: { principal: "/principal", addresses } });
+    const providers = providersOf({ caldav: { reader, http: silentHttp() } });
+    const read = async () => (await w.db.select({ addresses: calConnections.organizerAddresses }).from(calConnections)
+      .where(eq(calConnections.id, seeded.due.id)))[0]?.addresses;
+    const run = () => calendarSyncPass(depsFor(w, providers), seeded.due, never);
+    expect(await run()).toMatchObject({ kind: "synced" });
+    expect(await read()).toEqual([first]);
+    addresses = [next];
+    await makeDue(seeded.due.accountId);
+    expect(await run()).toMatchObject({ kind: "synced" });
+    expect(await read()).toEqual([next]);
+    reader.checkSignIn = async () => ({ ok: false, reason: "unreadable", retryAfterMs: null });
+    await makeDue(seeded.due.accountId);
+    expect(await run()).toMatchObject({ kind: "backed_off", word: "unreadable" });
+    expect(await read()).toEqual([]);
+  });
+
   /** Turns until a turn ends with nothing more to read. */
   async function turnsUntilDone(deps: Parameters<typeof calendarSyncPass>[0], due: Parameters<typeof calendarSyncPass>[1]): Promise<CalendarSyncOutcome[]> {
     const out: CalendarSyncOutcome[] = [];
@@ -1005,6 +1028,29 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect((await connectionOf(w, unserved.accountId, unserved.connectionId)).errorCode).toBe("provider_off");
     expect({ opened, lists: reader.lists, reads: reader.calls.length }).toEqual({ opened: 0, lists: 0, reads: 0 });
   }, 60_000);
+
+  it("publishes existing event records when a calendar leaves and regains owner access", async () => {
+    const t = await caldavWorld(new Map([["", eventsInPages("e", 2, 2)]]), () => "unchanged");
+    let owned = true;
+    t.reader.listCalendars = async () => ({ ok: true, value: [
+      { id: "cal-1", name: "Studio", color: null, writable: true, owned, byToken: true, zone: null },
+    ] });
+    const relist = async () => {
+      t.deps.memory.listedAt.clear();
+      await makeDue(t.accountId);
+      expect(await calendarSyncPass(t.deps, t.due, never)).toMatchObject({ kind: "synced" });
+      return await changesOf(w, t.accountId);
+    };
+    const first = await relist();
+    const count = (await eventsOf(w, t.accountId)).length;
+    expect(count).toBeGreaterThan(0);
+    owned = false;
+    const shared = await relist();
+    expect(shared["calendar_event:update"] ?? 0).toBe((first["calendar_event:update"] ?? 0) + count);
+    owned = true;
+    const regained = await relist();
+    expect(regained["calendar_event:update"]).toBe(shared["calendar_event:update"]! + count);
+  });
 
   it("a calendar the listing stops naming goes at the second listing in a row; a listing that names none removes nothing", async () => {
     const two = [

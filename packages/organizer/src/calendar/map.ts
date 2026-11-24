@@ -18,7 +18,7 @@ import {
 import type { ChangeItem } from "@ohmail/cal-providers";
 import {
   CALENDAR_ADDRESS_MAX_BYTES, CALENDAR_OCCURRENCE_KEY_MAX_BYTES, CALENDAR_PROVIDER_ID_MAX_BYTES,
-  CALENDAR_UID_MAX_BYTES, fitsCalendarBytes,
+  CALENDAR_UID_MAX_BYTES, connectedAttendee, fitsCalendarBytes,
 } from "@trafficflow/db/calendar";
 import { storableKey, wholePairs } from "./storable.js";
 
@@ -102,6 +102,7 @@ export interface MapContext {
   readonly zones: ZoneSource;
   /** The account's own addresses in lower case: its mailboxes' and the connection's principal where that is one. */
   readonly ownAddresses: ReadonlySet<string>;
+  readonly principal?: string | null;
 }
 
 /** The key a store keeps an occurrence under: the core's one form, `''` for a series or a single event. */
@@ -239,7 +240,12 @@ function rowOf(item: Upsert, ctx: MapContext, original: string | null): MappedRo
   const range = derivedRange({ start, end, duration, rules, added, recurrenceId }, ctx.zones);
   if (range === null) return "no_range";
   const invitees = inviteesOf(e.attendees);
-  const mine = e.attendees.find((a) => a.email !== null && ctx.ownAddresses.has(a.email));
+  const attendees = e.attendees.filter((a) => a.email !== null &&
+    (a.role === null || a.role === "REQ-PARTICIPANT" || a.role === "OPT-PARTICIPANT"));
+  const verified = connectedAttendee(attendees.flatMap((a) => a.email === null ? [] : [a.email]),
+    ctx.principal, ctx.ownAddresses);
+  const mine = verified === null || (item.selfAttendee !== undefined && item.selfAttendee !== verified)
+    ? undefined : attendees.find((a) => a.email?.toLowerCase() === verified);
   const row: MappedRow = {
     values: {
       providerId: item.id,

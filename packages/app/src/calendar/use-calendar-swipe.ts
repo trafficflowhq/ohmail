@@ -18,7 +18,12 @@ export function useCalendarSwipe(step?: (direction: -1 | 1) => void, fold?: (fol
     onPointerUp(event: PointerEvent<HTMLElement>) {
       const began = start.current;
       start.current = null;
-      if (!began || event.pointerId !== began.id) return;
+      if (
+        !began ||
+        event.pointerId !== began.id ||
+        (event.target instanceof Element && event.target.closest("[data-cal-range-held]"))
+      )
+        return;
       const x = event.clientX - began.x;
       const y = event.clientY - began.y;
       if (Math.abs(x) >= 40 && Math.abs(x) > Math.abs(y)) {

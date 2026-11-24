@@ -54,6 +54,7 @@ export interface MiniMonthProps {
   busyDots?: boolean;
   /** One for each row, where the setting is on; `null` leaves a row without. */
   weekNumbers?: ({ number: number; label: string } | null)[];
+  onDayPointerDown?: (id: string, event: React.PointerEvent<HTMLButtonElement>) => void;
   onDayPress?: (id: string) => void;
   /** A press on a week's number, by its row from 0. */
   onWeekPress?: (row: number) => void;
@@ -74,6 +75,7 @@ export function MiniMonth({
   label,
   weekNumbers,
   onDayPress,
+  onDayPointerDown,
   onWeekPress,
   takesKeys,
   compactDays,
@@ -137,6 +139,9 @@ export function MiniMonth({
                     aria-current={d.today ? "date" : undefined}
                     tabIndex={d.id === stopId ? 0 : -1}
                     onFocus={() => hold(d.id)}
+                    data-cal-drop-day={onDayPointerDown ? d.id : undefined}
+                    data-cal-drop-kind={onDayPointerDown ? "month" : undefined}
+                    onPointerDown={onDayPointerDown ? (e) => onDayPointerDown(d.id, e) : undefined}
                     onClick={onDayPress ? () => onDayPress(d.id) : undefined}
                   >
                     {d.run ? (

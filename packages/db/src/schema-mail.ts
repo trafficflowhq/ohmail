@@ -2854,6 +2854,7 @@ export const calConnections = pgTable("cal_connections", {
   /** CalDAV: the server's origin and path, never a user part, a query or a fragment. */
   serverUrl: text("server_url"),
   principal: text("principal"),
+  organizerAddresses: jsonb("organizer_addresses").$type<readonly string[]>(),
   /**
    * A subscription: its address's host and nothing else, lower case; the address is sealed. A
    * desktop's copy of a Cloud account, which holds no address, keeps a CalDAV server's host here too.
@@ -2904,6 +2905,7 @@ export const calCalendars = pgTable("cal_calendars", {
   providerId: text("provider_id").notNull(),
   name: text("name").notNull().default(""),
   color: text("color"),
+  localColor: text("local_color"),
   access: text("access").notNull().default("reader"),
   nativeMove: boolean("native_move").notNull().default(false),
   shown: boolean("shown").notNull().default(true),
@@ -2971,7 +2973,7 @@ export const calEvents = pgTable("cal_events", {
   organizer: text("organizer"),
   organizerName: text("organizer_name"),
   myAnswer: text("my_answer"),
-  removedOccurrences: jsonb("removed_occurrences").$type<string[]>(),
+  removedOccurrences: jsonb("removed_occurrences").$type<(string | { hide: string; attendee: string; organizer: string; uid: string; calendarId: string })[]>(),
   heldBack: boolean("held_back").notNull().default(false),
   /** A desktop's copy received this event cut to fit the feed: no notes, no invitees. */
   partial: boolean("partial").notNull().default(false),

@@ -10,7 +10,7 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { expect } from "vitest";
-import { chromium } from "@playwright/test";
+import { chromium, expect as browserExpect } from "@playwright/test";
 import { apiRoutes, createApp, csrfTokenFor, matchRoute, normalizePathname, type ApiDeps } from "@trafficflow/api";
 import { calendarRoutes } from "@trafficflow/api/calendar";
 import { calSettings } from "@trafficflow/db/mail";
@@ -18,10 +18,10 @@ import { calendarFeed } from "@trafficflow/services/calendar";
 import { refreshTokens, sessions, users } from "@trafficflow/db";
 import { generateToken, hashToken, type Db } from "@trafficflow/services";
 import { makeDeps, seedSession, seedSessionFor } from "../../../packages/api/test/helpers.js";
-import { language } from "../vocabulary/catalogue.js";
+import { language, say } from "../vocabulary/catalogue.js";
 import { apiPlanter, fixturesPlanter } from "../vocabulary/world.js";
 import { fenced, PlaywrightPerson, shown } from "./dom-playwright.js";
-import { benchOf, type Account, type Bench, type DoorFault, type Heard, type Setting, type Size } from "./seam.js";
+import { benchOf, type Account, type Bench, type DoorFault, type Heard, type Person, type Setting, type Size } from "./seam.js";
 
 /** The jar as a completed sign-in leaves it for `a` on this bench's own name: its six cookies. */
 function signedIn(a: Account) {
@@ -282,6 +282,27 @@ async function waitFor(url: string, log: () => string): Promise<void> {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${url}\n${log().slice(-2000)}`);
     await new Promise((r) => setTimeout(r, 200));
   }
+}
+
+/** Exercise the calendar's native context-menu gesture against the production web build. */
+export async function calendarDayMenu(person: Person, title: string, compact: boolean) {
+  if (!(person instanceof PlaywrightPerson)) throw new Error("the calendar menu journey uses a web window");
+  const page = person.page;
+  const chip = page.getByRole("button", { name: new RegExp(title) });
+  if (compact) {
+    await chip.click();
+    await browserExpect(page.getByRole("dialog", { name: title })).toBeVisible();
+    return;
+  }
+  await chip.click({ button: "right" });
+  const action = page.getByRole("menuitem", { name: say("calendar.openEvent", {}, person.lang) });
+  await browserExpect(action).toBeFocused();
+  await action.press("Escape");
+  await browserExpect(chip).toBeFocused();
+  await chip.press("ContextMenu");
+  await browserExpect(action).toBeFocused();
+  await action.press("Enter");
+  await browserExpect(page.getByRole("dialog", { name: title })).toBeVisible();
 }
 
 export async function startBench(f: Flavour, recordAs = "bench", features: ApiFeatures = {}, size: Size = "expanded"): Promise<Bench> {

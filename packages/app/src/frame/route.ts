@@ -306,7 +306,8 @@ function calendarRouteOf(whole: string): Route | null {
   const panel = query.get("panel");
   if (panel !== null && CALENDAR_PANELS.has(panel)) words.panel = panel;
   const slot = query.get("slot");
-  if (panel === "new" && slot !== null && /^\d{1,4}-\d{1,4}$/.test(slot)) words.slot = slot;
+  if (panel === "new" && slot !== null && /^(?:\d{1,4}-\d{1,10}|date-\d{4}-\d{2}-\d{2})$/.test(slot))
+    words.slot = slot;
   const invitation = query.get("invitation");
   if (place === "day" && invitation && invitation.length < 100) words.invitation = invitation;
   const q = query.get("q");

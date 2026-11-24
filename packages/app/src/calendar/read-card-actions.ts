@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { pressAndHear, type CalendarEventRecord, type CalendarPort } from "@ohmail/app-logic/calendar";
+import type { InvitationActions } from "../invitations/EventAnswers.js";
 import type { PanelVerb } from "@ohmail/ui/mail";
 import { useCalendarMirror, useSetupPort } from "../calsetup/index.js";
 import { useFrame, useReport } from "../frame/commands.js";
@@ -19,6 +20,7 @@ export function useReadCardActions(
   event: CalendarEventFace,
   current: ReturnType<typeof editableEvent>,
   enabled: boolean,
+  reply?: InvitationActions,
 ) {
   const t = useText("calendar");
   const settings = useText("calsettings");
@@ -33,7 +35,7 @@ export function useReadCardActions(
   const calendar = mirror?.calendars.find((item) => item.id === record?.calendarId);
   const visible = enabled && calendar?.shown && calendar.access !== "busy" ? record : undefined;
   const mail = useCalendarEventMail(visible, event);
-  const removal = useEventRemoval(port, event, visible);
+  const removal = useEventRemoval(port, event, visible, reply);
   const canCopy =
     enabled &&
     (event.viewOnly || record?.myAnswer != null) &&

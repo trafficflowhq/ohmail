@@ -1061,8 +1061,11 @@ export class HttpAdapter implements EngineAdapter {
     return { removed: (await this.readAnswer<"DELETE /calendar/connections/:id">(res)).removed === true, seq: this.noteSeq(res) };
   }
 
-  async checkCalendarConnection(connectionId: string): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
-    const res = await this.call("POST /calendar/connections/:id/check", { params: { id: connectionId } });
+  async checkCalendarConnection(connectionId: string, calendarId?: string): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
+    const res = await this.call("POST /calendar/connections/:id/check", {
+      params: { id: connectionId },
+      ...(calendarId === undefined ? {} : { query: new URLSearchParams({ calendarId }) }),
+    });
     if (!res.ok) throw await this.rejectionOf(res);
     return { connection: await this.readAnswer<"POST /calendar/connections/:id/check">(res), seq: this.noteSeq(res) };
   }

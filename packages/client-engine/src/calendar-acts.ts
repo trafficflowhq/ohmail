@@ -92,6 +92,12 @@ function made(act: Extract<CalendarEventAct, { kind: "calendar_event_create" }>)
   return withCalendarFields(blank, act.event);
 }
 
+function sameAttendeeCopy(record: CalendarEventRecord, act: Extract<CalendarEventAct, {
+  kind: "calendar_event_delete" | "calendar_event_answer";
+}>): boolean {
+  return act.copy?.calendarId === record.calendarId && act.copy.attendee === record.hideAttendee;
+}
+
 /**
  * THE ONE OVERLAY: `acts` laid over `records` in order. A new event appears; a change is written onto
  * the record whole; a removal takes it out; a move gives it its new calendar; an answer is the
@@ -106,6 +112,30 @@ export function applyCalendarActs(records: readonly CalendarEventRecord[], acts:
     }
     const r = byId.get(act.eventId);
     if (!r) continue;
+    if (act.kind === "calendar_event_delete" && act.hide) {
+      if (!sameAttendeeCopy(r, act) || r.thisAndFuture || r.heldBack || r.status === "cancelled" || r.myAnswer === "declined") continue;
+      const [base, seriesBase] = act.base.split("/");
+      const at = act.scope.kind === "record" ? "" : act.scope.at;
+      if (base !== r.updatedAt) continue;
+      let target = r;
+      if (r.recurrenceId) {
+        if (act.scope.kind !== "occurrence" || act.scope.at !== r.recurrenceId || !seriesBase) continue;
+        const series = [...byId.values()].find((candidate) =>
+            candidate.calendarId === r.calendarId && candidate.uid === r.uid && !candidate.recurrenceId &&
+            candidate.repeat && candidate.updatedAt === seriesBase && candidate.hideAttendee === r.hideAttendee &&
+            candidate.organizer?.address === r.organizer?.address);
+        if (!series) continue;
+        target = series;
+      } else if (seriesBase || act.scope.kind === "following" ||
+        act.scope.kind === "occurrence" && records.some((candidate) =>
+          candidate.calendarId === r.calendarId && candidate.uid === r.uid && candidate.recurrenceId === at)) continue;
+      const prior = target.hiddenOccurrences ?? [];
+      if (!prior.includes("") && !prior.includes(at)) {
+        byId.set(target.id, { ...target, hiddenOccurrences: at ? [...prior, at] : [""] });
+      }
+      continue;
+    }
+    if (act.kind === "calendar_event_answer" && act.copy && !sameAttendeeCopy(r, act)) continue;
     if (act.kind === "calendar_event_update" && r.recurrenceId !== "") {
       if (act.scope.kind === "occurrence" && act.scope.at === r.recurrenceId)
         byId.set(r.id, withCalendarFields(r, act.change));
@@ -167,7 +197,7 @@ function dayAnswerOf(
   act: CalendarEventAct | null,
 ): Pick<DayAnswer, "at" | "answer"> | null {
   return act?.kind === "calendar_event_answer" && act.scope.kind === "occurrence" &&
-    act.eventId === record?.id && record.recurrenceId === ""
+    act.eventId === record?.id && record.recurrenceId === "" && (!act.copy || sameAttendeeCopy(record, act))
     ? { at: act.scope.at, answer: act.answer }
     : null;
 }
@@ -223,7 +253,7 @@ export function eventsWithWrites(
   const shown = applyCalendarActs(base, local);
   const hidden = new Map<string, CalendarRemoveScope[]>();
   for (const act of [...pending, ...local]) {
-    if (act.kind !== "calendar_event_delete" || act.scope.kind === "record") continue;
+    if (act.kind !== "calendar_event_delete" || act.hide || act.scope.kind === "record") continue;
     const scopes = hidden.get(act.eventId);
     if (scopes) scopes.push(act.scope);
     else hidden.set(act.eventId, [act.scope]);
@@ -290,6 +320,7 @@ export class CalendarActKeys {
 
   /** The act as it is pressed: `after` set where this session acted on the event before. */
   stamp(act: CalendarEventAct, key: string): CalendarEventAct {
+    if (act.kind === "calendar_event_delete" && act.hide) return act;
     const eventId = act.eventId;
     const prior = this.last.get(eventId);
     this.last.set(eventId, key);

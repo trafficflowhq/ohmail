@@ -21,6 +21,7 @@ export function answerOf(
     base: record.updatedAt,
     scope: record.recurrenceId === "" ? { kind: "record" } : { kind: "occurrence", at: record.recurrenceId },
     answer,
+    ...(record.hideAttendee && { copy: { calendarId: record.calendarId, attendee: record.hideAttendee } }),
   };
 }
 

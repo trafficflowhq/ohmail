@@ -169,10 +169,10 @@ export async function applyListing(
             .where(and(eq(calCalendars.id, was.id), eq(calCalendars.accountId, ctx.key.accountId)));
           changes.push({ kind: "calendar", id: was.id, op: "update" });
           if (was.access !== now.access) {
-            // The feed derives series deletion details from current access. Leaving busy access also restores event details.
+            // The feed derives Hide and series deletion details from access. Leaving busy restores event details.
             const events = await tx.select({ id: calEvents.id }).from(calEvents).where(and(
               eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, was.id),
-              was.access === "busy" ? undefined : and(eq(calEvents.recurrenceId, ""), isNotNull(calEvents.repeatRule)),
+              was.access === "busy" || was.access === "owner" || now.access === "owner" ? undefined : and(eq(calEvents.recurrenceId, ""), isNotNull(calEvents.repeatRule)),
             ));
             for (const event of events) changes.push({ kind: "calendar_event", id: event.id, op: "update" });
           }

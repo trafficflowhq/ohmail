@@ -70,6 +70,7 @@ export function EditEvent({
   finish,
 }: Props) {
   const provider = connection?.provider;
+  const ordinaryOnly = allowed()?.sharedCopy === true;
   const { commands, plan } = useFrame();
   const t = useText("calendar");
   const zone = useTimeZone();
@@ -107,6 +108,7 @@ export function EditEvent({
       close={() => commands.event(null)}
       duplicate={() => duplicate(draftForDuplicate(shown, face, zone), calendar.id)}
       blocked={blocked}
+      ordinaryOnly={ordinaryOnly}
       timeZone={
         initial.timeEditable && !original.repeat && !draft.allDay
           ? (draft.zone ?? sourceZone ?? zone)
@@ -151,6 +153,7 @@ export function EditEvent({
               blocked,
               saving,
               allowed,
+              ordinaryOnly,
             }}
             zone={draft.zone ?? sourceZone ?? zone}
             timeEditable={initial.timeEditable}
@@ -181,6 +184,7 @@ function EditorContents({
   saving,
   shown,
   allowed,
+  ordinaryOnly,
   zone,
   timeEditable,
   issue,
@@ -194,6 +198,7 @@ function EditorContents({
   saving: ReturnType<typeof useEditLeave>;
   shown: CalendarEventRecord;
   allowed: Props["allowed"];
+  ordinaryOnly: boolean;
   zone: string;
   timeEditable: boolean;
   issue: ReturnType<typeof draftTimes>["issue"];
@@ -212,6 +217,7 @@ function EditorContents({
         <DraftFields
           {...{ draft, today, calendar, tone, change }}
           choices={[]}
+          ordinaryOnly={ordinaryOnly}
           repeatShapes={connection?.repeatShapes}
           placeSource={original.id}
           cancel={{ label: t("edit.cancel"), onPress: cancelEdit }}
@@ -221,6 +227,7 @@ function EditorContents({
           edit={{
             sentGuests: sentInvitees(host.engine.store.get<CalendarEventRecord>("calendar_event", shown.id)),
             canInvite:
+              !ordinaryOnly &&
               !original.repeat &&
               original.invitees.every(
                 ({ address, role }) =>
@@ -228,9 +235,9 @@ function EditorContents({
                   role === "optional" ||
                   role === "required",
               ),
-            canAddAlert: original.alarms.every(({ method }) => method === "notice"),
-            canAddSecondAlert: provider !== "microsoft" && !draft.allDay,
-            showCall: provider === "caldav",
+            canAddAlert: !ordinaryOnly && original.alarms.every(({ method }) => method === "notice"),
+            canAddSecondAlert: !ordinaryOnly && provider !== "microsoft" && !draft.allDay,
+            showCall: !ordinaryOnly && provider === "caldav",
           }}
         />
       </div>

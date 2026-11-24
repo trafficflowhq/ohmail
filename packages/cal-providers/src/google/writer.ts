@@ -50,8 +50,13 @@ import {
   type Precondition,
 } from "../request/index.js";
 import { clockOf, endBefore, isDayOf } from "../series.js";
-import { alreadyHolds, sameAudience, sameCancellationAudience } from "../write-compare.js";
-import { convertEvent, googleTimeOf } from "./convert.js";
+import {
+  alreadyHolds,
+  ordinarySharedChange,
+  sameAudience,
+  sameCancellationAudience,
+} from "../write-compare.js";
+import { convertEvent, googleSelfAttendee, googleTimeOf } from "./convert.js";
 import { GOOGLE_CALENDAR_BASE } from "./hosts.js";
 import { googleAuthorization } from "./reader.js";
 
@@ -287,13 +292,24 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     target: WriteTarget,
     signal: AbortSignal,
   ): Promise<Precondition | Refusal> {
-    if (!target.audience && sendableTag(target.version)) return { kind: "unchanged", tag: target.version };
+    if (!target.sharedCopy && !target.audience && sendableTag(target.version))
+      return { kind: "unchanged", tag: target.version };
     const now = await read(token, events, id, signal);
     if ("ok" in now) return now;
     if (now.status !== 200) return refusalOf(now, "event_gone");
     const held = itemOf(now);
     if (held === null || held.item === null || held.item.kind !== "upsert") return refused("version_unknown");
     if (held.item.version !== target.version) return refused("version_stale");
+    if (
+      target.sharedCopy &&
+      (held.item.audienceIncomplete ||
+        held.raw.attendeesOmitted === true ||
+        held.item.event.recurrenceId ||
+        held.item.event.rules.length ||
+        held.item.event.added.length ||
+        (held.raw.attendees != null && (!Array.isArray(held.raw.attendees) || held.raw.attendees.length)))
+    )
+      return refused("read_only");
     if (target.audience) {
       if (held.item.audienceIncomplete || !sameAudience(target.audience, held.item.event))
         return refused("version_stale");
@@ -1145,10 +1161,12 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
   function linesOf(raw: Json, as: string): { readonly people: Json[]; readonly own: number } {
     const people = Array.isArray(raw.attendees) ? raw.attendees.filter(isRecord) : [];
     const wanted = as.toLowerCase();
-    const own = people.findIndex(
-      (p) => p.self === true || (typeof p.email === "string" && p.email.toLowerCase() === wanted),
+    const self = googleSelfAttendee(people);
+    if (self !== undefined && self !== wanted) return { people, own: -1 };
+    const matching = people.flatMap((p, i) =>
+      typeof p.email === "string" && p.email.toLowerCase() === wanted ? [i] : [],
     );
-    return { people, own };
+    return { people, own: matching.length === 1 ? matching[0]! : -1 };
   }
 
   /** An answer refused for its version: done where the account's line already says it (an earlier attempt landed); else another copy. */
@@ -1212,6 +1230,8 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     },
 
     async change(c, cal, target, change, signal) {
+      if (target.sharedCopy && (target.recurringSeries || target.occurrence || !ordinarySharedChange(change)))
+        return refused("read_only");
       if (target.occurrence !== null && !target.recurringSeries) return refused("repeat_unsupported");
       const events = eventsOf(cal);
       const id = segment(target.id);
@@ -1226,7 +1246,8 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       if (!signedIn.ok) return signedIn;
       const pre = await precondition(signedIn.token, events, id, target, signal);
       if ("ok" in pre) return pre;
-      const res = await send(signedIn.token, "PATCH", `${events}/${id}?${NOTIFY}`, body, signal, pre);
+      const notifications = target.sharedCopy ? "sendUpdates=none" : NOTIFY;
+      const res = await send(signedIn.token, "PATCH", `${events}/${id}?${notifications}`, body, signal, pre);
       if ("ok" in res) return res;
       if (res.status === 412) return afterStale(signedIn.token, events, id, change, signal);
       if (res.status !== 200) return refusalOf(res, "event_gone");
@@ -1349,7 +1370,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       const tag = typeof held.raw.etag === "string" ? held.raw.etag : "";
       if (!sendableTag(tag)) return refused("version_unknown");
       const { people, own } = linesOf(held.raw, req.as);
-      if (own < 0) return refused("not_found");
+      if (own < 0) return refused(googleSelfAttendee(people) === undefined ? "not_found" : "version_stale");
       const attendees = people.map((p, i) => (i === own ? { ...p, responseStatus: status } : p));
       const res = await send(signedIn.token, "PATCH", `${events}/${id}?${NOTIFY}`, { attendees }, signal, {
         kind: "unchanged",

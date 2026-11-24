@@ -262,6 +262,7 @@ export function useFaces(
     const occurrences = occurrencesIn({ ...sources, query: { from, to }, zone, zones });
     return {
       capped: occurrences.capped,
+      hiddenBusy: occurrences.hiddenBusy,
       events: occurrences.shown
         .filter((o) => showDeclined || o.record.myAnswer !== "declined")
         .map((o): CalendarEventFace =>

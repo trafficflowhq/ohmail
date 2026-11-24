@@ -27,6 +27,9 @@ import {
   type GridItem,
 } from "../../src/calendar/grid/index.js";
 
+import { occurrencesIn } from "../../src/calendar/window.js";
+import { calendarOf, invitation } from "./invitations/fixtures.js";
+
 const zones = intlZones();
 const ZURICH = "Europe/Zurich";
 const item = (id: string, start: EventTime, end: EventTime): GridItem => ({ id, start, end });
@@ -374,4 +377,58 @@ describe("the grid's writing", () => {
     expect([clockOf(0), clockOf(450), clockOf(1440)]).toEqual(["00:00", "07:30", "24:00"]);
     expect(hourLabels(22, 24)).toEqual(["22:00", "23:00", "24:00"]);
   });
+});
+
+it("hides the moved occurrence at its original key while leaving the surrounding days", () => {
+  const organizer = { address: ["host", "example.test"].join("@"), name: "Organizer" };
+  const hideAttendee = ["guest", "example.test"].join("@");
+  const originalKey = String(Date.UTC(2026, 10, 17, 9));
+  const source = invitation("series", "20261116", {
+    organizer,
+    hideAttendee,
+    myAnswer: "accepted",
+    uid: "workshop",
+    start: { kind: "instant", value: "20261116T090000Z" },
+    end: { kind: "instant", value: "20261116T100000Z" },
+    repeat: { rules: ["FREQ=DAILY;COUNT=3"], added: [], excluded: [] },
+    removedOccurrences: [""],
+  });
+  const moved = invitation("moved", "20261117", {
+    organizer,
+    hideAttendee,
+    myAnswer: "accepted",
+    uid: source.uid,
+    recurrenceId: originalKey,
+    start: { kind: "instant", value: "20261117T110000Z" },
+    end: { kind: "instant", value: "20261117T120000Z" },
+  });
+  const expanded = (hidden: boolean) =>
+    occurrencesIn({
+      events: [source, { ...moved, busy: true, ...(hidden && { hiddenOccurrences: [originalKey] }) }].map(
+        (record) => ({
+          record,
+          waiting: null,
+          refusal: null,
+          refusedWriteId: null,
+        }),
+      ),
+      calendars: [calendarOf()],
+      query: { from: day(2026, 11, 16), to: day(2026, 11, 18) },
+      zone: ZURICH,
+      zones,
+    });
+  const shown = (hidden: boolean) => expanded(hidden).shown.map((item) => [item.day, item.record.id]);
+  expect(shown(false)).toEqual([
+    ["2026-11-16", source.id],
+    ["2026-11-17", moved.id],
+    ["2026-11-18", source.id],
+  ]);
+  const shownMoved = expanded(false).shown.find((item) => item.record.id === moved.id)!;
+  expect(expanded(true)).toHaveProperty("hiddenBusy", [
+    { id: moved.id, start: shownMoved.occurrence.start, end: shownMoved.occurrence.end },
+  ]);
+  expect(shown(true)).toEqual([
+    ["2026-11-16", source.id],
+    ["2026-11-18", source.id],
+  ]);
 });

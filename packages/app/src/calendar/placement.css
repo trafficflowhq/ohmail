@@ -175,3 +175,19 @@
   max-width: 100%;
   min-width: 0;
 }
+
+.cal-event-letter-history {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s1);
+}
+.cal-event-letter-history > * {
+  display: block;
+  justify-self: start;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+}

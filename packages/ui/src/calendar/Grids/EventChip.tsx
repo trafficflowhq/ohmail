@@ -41,6 +41,7 @@ interface EventChipCommon {
   label?: string;
   onPress?: MouseEventHandler<HTMLButtonElement>;
   onContextMenu?: MouseEventHandler<HTMLButtonElement>;
+  onKeyDown?: import("react").KeyboardEventHandler<HTMLButtonElement>;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
   dayEdges?: { start?: string; end?: string };
   drag?: "lifted" | "copy";
@@ -134,6 +135,7 @@ function shared(p: EventChipProps, style: CSSProperties | undefined) {
     style: { ...toneStyle(p.tone), ...style },
     onClick: p.onPress,
     onContextMenu: p.onContextMenu,
+    onKeyDown: p.onKeyDown,
     onPointerDown: p.onPointerDown,
   };
 }
@@ -162,7 +164,10 @@ function Block(p: EventBlockProps) {
               .join(" ")
           : undefined
       }
-      onKeyDown={p.onResizeKey}
+      onKeyDown={(event) => {
+        p.onKeyDown?.(event);
+        if (!event.defaultPrevented) p.onResizeKey?.(event);
+      }}
       data-failed={p.status?.failed ? "" : undefined}
     >
       <span className="oh-ev-t">

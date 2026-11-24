@@ -21,7 +21,7 @@ export async function commitAction(
     if (!current()) return;
     const remaining = held.remainingMs();
     report(
-      e("taken.delete"),
+      e(act.hide ? "taken.hide" : "taken.delete"),
       remaining > 0
         ? {
             action: e("undoDelete"),
@@ -47,6 +47,8 @@ export async function commitAction(
   if (!current()) return;
   if (heard.verdict?.kind === "refused" && heard.verdict.word === "version_stale")
     report(e("refusal.changed"));
+  else if (heard.verdict?.kind === "taken" && act.kind === "calendar_event_delete" && act.hide)
+    report(e("taken.hide"));
   else if (heard.verdict?.kind === "taken" && act.kind === "calendar_event_delete" && guests.length)
     report(e("taken.deleteAudience", { guests: new Intl.ListFormat(locale).format(guests) }));
   else if (heard.verdict?.kind === "taken" && act.kind === "calendar_event_update" && updated) updated(act);

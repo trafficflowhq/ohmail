@@ -3,9 +3,12 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dayShort, type CalendarEventRecord, type CalendarPort } from "@ohmail/app-logic/calendar";
 import calendarDe from "../../messages/calendar.de.json" with { type: "json" };
+import readerInvitationEn from "../../messages/reader-invitation.en.json" with { type: "json" };
+import dayEn from "../../messages/day.en.json" with { type: "json" };
 import calmail from "../../messages/calmail.en.json" with { type: "json" };
 import invitationsEn from "../../messages/invitations.en.json" with { type: "json" };
 import { calendar } from "../../src/calendar/entry.js";
+import { InvitationLetterCard } from "../../src/reader/InvitationLetterCard.js";
 import { fakeMail, mountReader, WORDS as readerWords } from "../reader/support/mail.js";
 import type { EngineMessage, MessageDTO } from "@ohmail/wire";
 import { letter } from "../reader/support/fake-mail.js";
@@ -150,6 +153,148 @@ it("offers Duplicate and moves Hide this calendar under More for a read-only eve
   expect(press).not.toHaveBeenCalled();
 });
 
+it("opens the selected event from the Day context menu without writing", () => {
+  const world = eventWorld(meeting());
+  const press = vi.fn();
+  world.port.press = press;
+  mountFrame("#/cal/day/2026-11-16", world, NONE);
+  const event = screen.getByRole("button", { name: /Kiln check/ });
+  fireEvent.contextMenu(event, { clientX: 200, clientY: 180 });
+  const menu = within(screen.getByRole("menu", { name: "Event actions" }));
+  fireEvent.click(menu.getByRole("menuitem", { name: "Open event" }));
+  expect(screen.getByRole("dialog", { name: "Kiln check" })).toBeTruthy();
+  expect(press).not.toHaveBeenCalled();
+});
+
+it("opens calendar row actions by pointer and keyboard and applies them only to that calendar", async () => {
+  const world = eventWorld(meeting());
+  world.put("calendar", "cal-1", calendarRecord({ name: "Workshop" }));
+  world.put("calendar", "neighbour", calendarRecord({ id: "neighbour", name: "Neighbour" }));
+  const setup = setupPort(async () => []);
+  mountFrame("#/cal/day/2026-11-16", world, setup);
+  fireEvent.click(screen.getByRole("button", { name: "Calendars", exact: true }));
+  const row = screen.getByRole("button", { name: "Workshop", exact: true });
+  fireEvent.contextMenu(row, { clientX: 110, clientY: 320 });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Check now" }));
+  expect(setup.check).toHaveBeenCalledWith("conn-1", "cal-1");
+  row.focus();
+  fireEvent.keyDown(row, { shiftKey: true, key: "F10" });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Colour" }));
+  const palette = screen.getByRole("menu", { name: "Colour" });
+  fireEvent.click(within(palette).getByRole("menuitemradio", { name: "Violet" }));
+  expect(setup.setCalendar).toHaveBeenCalledWith("cal-1", { color: expect.stringMatching(/^#[0-9a-f]{6}$/) });
+  fireEvent.keyDown(row, { key: "ContextMenu" });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Show only this calendar" }));
+  expect(setup.setCalendar).toHaveBeenCalledWith("neighbour", { shown: false });
+  await act(async () => {});
+});
+
+it.each(["month", "agenda"])("opens the focused %s event menu and restores the opener", (view) => {
+  const world = eventWorld(meeting());
+  mountFrame(`#/cal/${view}/2026-11-16`, world, NONE);
+  const opener = screen.getByRole("button", { name: /Kiln check/ });
+  opener.focus();
+  fireEvent.keyDown(opener, { key: "ContextMenu" });
+  const first = screen.getByRole("menuitem", { name: "Open event" });
+  expect(document.activeElement).toBe(first);
+  fireEvent.keyDown(first, { key: "Escape" });
+  expect(document.activeElement).toBe(opener);
+  expect(screen.queryByRole("menu", { name: "Event actions" })).toBeNull();
+});
+
+it("opens a side Agenda event outside the Day window and clears its menu on navigation", () => {
+  const world = eventWorld(meeting());
+  const next = meeting({
+    id: "future",
+    uid: "future",
+    title: "Next workshop",
+    start: { kind: "instant", value: "20261121T100000Z" },
+    end: { kind: "instant", value: "20261121T110000Z" },
+  });
+  world.put("calendar_event", next.id, next);
+  const { address } = mountFrame("#/cal/day/2026-11-16?panel=agenda", world, NONE);
+  const row = screen.getByRole("button", { name: /Next workshop/ });
+  fireEvent.contextMenu(row);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open event" }));
+  expect(address.read()).toContain("future");
+  expect(screen.getByRole("dialog", { name: next.title })).toBeTruthy();
+  expect(screen.queryByRole("menu", { name: "Event actions" })).toBeNull();
+});
+
+it.each(["owner", "reader"] as const)("honors focused Day chip Delete on %s access", (access) => {
+  const world = eventWorld(meeting());
+  world.put("calendar", "cal-1", calendarRecord({ access }));
+  const hold = vi.fn(async () => ({
+    key: "held",
+    deadline: 1000,
+    remainingMs: () => 1000,
+    undo: async () => true,
+  }));
+  world.port.holdDelete = hold;
+  mountFrame("#/cal/day/2026-11-16", world, NONE);
+  const chip = screen.getByRole("button", { name: /Kiln check/ });
+  chip.focus();
+  fireEvent.keyDown(chip, { key: "Delete" });
+  expect(hold).toHaveBeenCalledTimes(access === "owner" ? 1 : 0);
+});
+
+it("offers the focused Day event's editor and verified call link, then drops the stale menu on navigation", () => {
+  const link = "https://meet.google.com/abc-defg-hij";
+  const world = eventWorld(meeting({ callLink: link }));
+  const { address } = mountFrame("#/cal/day/2026-11-16", world, NONE);
+  const chip = screen.getByRole("button", { name: /Kiln check/ });
+  fireEvent.contextMenu(chip);
+  const menu = within(screen.getByRole("menu", { name: "Event actions" }));
+  expect(menu.getByRole("menuitem", { name: "Edit" })).toBeTruthy();
+  expect(menu.getByRole("menuitem", { name: /Join/ }).getAttribute("href")).toBe(link);
+  act(() => address.visit("#/cal/day/2026-11-17"));
+  expect(screen.queryByRole("menu", { name: "Event actions" })).toBeNull();
+});
+
+it("clears an open calendar menu when the engine changes on the same route", () => {
+  const world = eventWorld(meeting());
+  const other = eventWorld(meeting({ title: "Another account's event" }));
+  const mounted = mountReader({
+    letters: [],
+    open: null,
+    host: {
+      engine: { ...fakeMail([]).engine, ...world.engine },
+      products: "both",
+      calendar,
+      wires: { calendar: world.port },
+      address: fakeAddress("#/cal/day/2026-11-16"),
+    },
+    words: calendarWords.en,
+  });
+  fireEvent.contextMenu(screen.getByRole("button", { name: /Kiln check/ }));
+  expect(screen.getByRole("menu", { name: "Event actions" })).toBeTruthy();
+  act(() => mounted.replaceEngine({ ...fakeMail([]).engine, ...other.engine }));
+  expect(screen.queryByRole("menu", { name: "Event actions" })).toBeNull();
+});
+
+it("offers only navigation from a Week slot on a read-only calendar", () => {
+  const world = eventWorld(meeting());
+  world.put("calendar", "cal-1", calendarRecord({ access: "reader" }));
+  mountFrame("#/cal/week/2026-11-16", world, NONE);
+  const tuesday = screen.getByRole("group", { name: /Tuesday, November 17/ });
+  vi.spyOn(tuesday, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 100, 90, 1440));
+  fireEvent.contextMenu(tuesday, { clientX: 45, clientY: 687 });
+  expect(screen.getByRole("menuitem", { name: "Go to this day" })).toBeTruthy();
+  expect(screen.queryByRole("menuitem", { name: "New event" })).toBeNull();
+});
+
+it("opens the Day menu for an all-day event", () => {
+  const world = eventWorld(
+    meeting({
+      start: { kind: "date", value: "20261116" },
+      end: { kind: "date", value: "20261117" },
+    }),
+  );
+  mountFrame("#/cal/day/2026-11-16", world, NONE);
+  fireEvent.contextMenu(screen.getByRole("button", { name: /Kiln check/ }));
+  expect(screen.getByRole("menuitem", { name: "Open event" })).toBeTruthy();
+});
+
 it("opens the event selected from the Week context menu", () => {
   const world = eventWorld(meeting());
   mountFrame("#/cal/week/2026-11-16", world, NONE);
@@ -213,7 +358,7 @@ it("goes to the day selected from the Week grid context menu", () => {
   const friday = screen.getByRole("group", { name: /Friday, November 20/ });
   vi.spyOn(friday, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 100, 90, 1440));
   fireEvent.contextMenu(friday, { clientX: 45, clientY: 687 });
-  fireEvent.click(screen.getByRole("menuitem", { name: "Day" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Go to this day" }));
   expect(address.read()).toBe("#/cal/day/2026-11-20");
 });
 
@@ -832,7 +977,7 @@ it("offers a guest-free event another provider’s owned calendar", async () => 
     );
   });
   const toolbar = within(await screen.findByRole("toolbar", { name: "Event actions" }));
-  fireEvent.click(await toolbar.findByRole("button", { name: "Move to" }));
+  fireEvent.click(await toolbar.findByRole("button", { name: "Move to another calendar" }));
   expect(screen.getByRole("menuitem", { name: "Personal" })).toBeTruthy();
 });
 
@@ -851,7 +996,7 @@ it("explains why fields that cannot be copied keep an event in its original cale
     );
   });
   const toolbar = within(await screen.findByRole("toolbar", { name: "Event actions" }));
-  expect(toolbar.queryByRole("button", { name: "Move to" })).toBeNull();
+  expect(toolbar.queryByRole("button", { name: "Move to another calendar" })).toBeNull();
   fireEvent.click(toolbar.getByRole("button", { name: "More" }));
   expect(screen.getByText("This event has details that another calendar can’t keep")).toBeTruthy();
 });
@@ -879,8 +1024,19 @@ it("explains why guests cannot move to a calendar on another connection", async 
   expect(screen.queryByRole("menuitem", { name: "Personal" })).toBeNull();
 });
 
+it("withholds a Google native move when the shared event has no verified organizer", async () => {
+  const { world } = open(meeting());
+  act(() => {
+    world.put("calendar_connection", "conn-1", connectionRecord({ provider: "google" }));
+    world.put("calendar", "cal-1", calendarRecord({ access: "writer" }));
+    world.put("calendar", "other", calendarRecord({ id: "other", name: "Other work" }));
+  });
+  const toolbar = within(await screen.findByRole("toolbar", { name: "Event actions" }));
+  expect(toolbar.queryByRole("button", { name: "Move to another calendar" })).toBeNull();
+});
+
 it("moves an event to another writable calendar of its Google connection", async () => {
-  const record = meeting();
+  const record = meeting({ organizer, ownOrganizer: true });
   const { world } = open(record);
   const press = vi.fn(async () => ({ key: "move" }));
   world.port.press = press;
@@ -900,10 +1056,10 @@ it("moves an event to another writable calendar of its Google connection", async
     );
   });
   await screen.findByRole("dialog", { name: record.title });
-  const move = screen.getByRole("button", { name: "Move to" });
+  const move = screen.getByRole("button", { name: "Move to another calendar" });
   move.focus();
   fireEvent.keyDown(move, { key: "m" });
-  const menu = within(screen.getByRole("menu", { name: "Move to" }));
+  const menu = within(screen.getByRole("menu", { name: "Move to another calendar" }));
   expect(menu.queryByRole("menuitem", { name: "Read only" })).toBeNull();
   expect(menu.queryByRole("menuitem", { name: "Other account" })).toBeNull();
   fireEvent.click(menu.getByRole("menuitem", { name: "Other work" }));
@@ -968,6 +1124,41 @@ it.each(["caldav", "google", "microsoft"] as const)(
     );
   },
 );
+
+it("edits and reschedules a shared CalDAV event with guests and no organizer", async () => {
+  const record = meeting({ organizer: null, invitees: [guest], sharedWithoutOrganizer: true });
+  const world = eventWorld(record);
+  world.put("calendar_connection", "conn-1", connectionRecord({ provider: "caldav" }));
+  world.put("calendar", "cal-1", calendarRecord({ access: "writer" }));
+  const press = vi.fn(async () => ({ key: "move" }));
+  world.port.press = press;
+  mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE, { words: calmail });
+  const card = within(await screen.findByRole("dialog", { name: record.title }));
+  expect(card.getByRole("button", { name: "Edit" })).toBeTruthy();
+  fireEvent.click(card.getByRole("button", { name: "Edit" }));
+  const editor = within(await screen.findByRole("dialog", { name: "Edit event" }));
+  expect(editor.getByText(guest.name!)).toBeTruthy();
+  expect(editor.queryByRole("button", { name: guest.name! })).toBeNull();
+  expect(editor.queryByRole("button", { name: /add invitees|remove .*guest/i })).toBeNull();
+  fireEvent.click(editor.getByRole("button", { name: "Cancel", exact: true }));
+  const close = within(screen.getByRole("dialog", { name: record.title })).getByRole("button", {
+    name: "Close",
+  });
+  close.focus();
+  fireEvent.keyDown(close, { key: "ArrowDown", shiftKey: true });
+  await act(async () => {});
+  expect(screen.queryByRole("button", { name: "Send update", exact: true })).toBeNull();
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "calendar_event_update",
+      eventId: record.id,
+      change: {
+        start: { ...record.start, value: "20261116T091500" },
+        end: { ...record.end, value: "20261116T101500" },
+      },
+    }),
+  );
+});
 
 it.each(["owner", "writer", "reader"] as const)(
   "shows editing controls according to %s access when the invitation address is unknown",
@@ -1336,7 +1527,7 @@ it("keeps read-only events and invitations free of destructive shortcuts", async
   const card = within(await screen.findByRole("dialog", { name: record.title }));
   const close = card.getByRole("button", { name: "Close" });
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Move to" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Move to another calendar" })).toBeNull();
   fireEvent.keyDown(close, { key: "Backspace" });
   fireEvent.keyDown(close, { key: "ArrowRight", shiftKey: true });
   act(() => {
@@ -2281,6 +2472,27 @@ function proposalLetter() {
   return letter("proposal-letter", fields);
 }
 
+it("shows the newest two invitation letters and opens the rest on demand", async () => {
+  const invitation = proposalLetter().invitation;
+  const letters = [1, 4, 2, 3].map((day) =>
+    letter(`notice-${day}`, {
+      subject: `Workshop notice ${day}`,
+      sortAt: new Date(Date.UTC(2026, 10, day, 12)).toISOString(),
+      invitation,
+    }),
+  );
+  const record = meeting({ organizer, invitees: [guest], myAnswer: "none" });
+  openWithMailboxes(record, async () => [mailbox(guest.address)], undefined, letters);
+  const card = within(await screen.findByRole("dialog", { name: record.title }));
+  expect(
+    card.getAllByRole("button", { name: /^Workshop notice/ }).map((button) => button.textContent),
+  ).toEqual(["Workshop notice 4", "Workshop notice 3"]);
+  fireEvent.click(card.getByText("2 more", { exact: true }));
+  expect(
+    card.getAllByRole("button", { name: /^Workshop notice/ }).map((button) => button.textContent),
+  ).toEqual(["Workshop notice 4", "Workshop notice 3", "Workshop notice 2", "Workshop notice 1"]);
+});
+
 it("lets the organizer accept a proposal through the guest-update question", async () => {
   const world = openWithMailboxes(
     meeting({ organizer, invitees: [guest] }),
@@ -2442,6 +2654,91 @@ it("calls a whole series with guests on a changed occurrence Cancel event", asyn
   );
 });
 
+describe.each(["day", "week", "month", "agenda"])("the %s event menu", (view) => {
+  it.each(["invitation", "repeating invitation", "own event", "shared event", "read-only event"] as const)(
+    "offers the eligible actions for a %s",
+    async (kind) => {
+      const invited = kind === "invitation" || kind === "repeating invitation";
+      const isWriter = kind === "shared event";
+      const readOnly = kind === "read-only event";
+      const record = meeting({
+        start: { kind: "zoned", value: "20261117T090000", zone: ZURICH },
+        end: { kind: "zoned", value: "20261117T100000", zone: ZURICH },
+        startsAt: "2026-11-17T08:00:00.000Z",
+        endsAt: kind === "repeating invitation" ? "2026-11-20T09:00:00.000Z" : "2026-11-17T09:00:00.000Z",
+        callLink: "https://call.example.test/workshop",
+        ...(invited
+          ? { organizer, invitees: [guest], myAnswer: "accepted", hideAttendee: guest.address }
+          : {}),
+        ...(kind === "repeating invitation"
+          ? { repeat: { rules: ["FREQ=DAILY;COUNT=4"], added: [], excluded: [] } }
+          : {}),
+      });
+      const world = openWithMailboxes(
+        record,
+        async () => [mailbox(guest.address)],
+        `#/cal/${view}/2026-11-17`,
+        [proposalLetter()],
+      );
+      await act(async () => {
+        world.put(
+          "calendar",
+          "cal-1",
+          calendarRecord({ access: readOnly ? "reader" : isWriter ? "writer" : "owner" }),
+        );
+        world.port.holdProposal = vi.fn();
+        world.port.holdDelete = vi.fn();
+      });
+      const [event] = await screen.findAllByRole("button", { name: /Kiln check/ });
+      fireEvent.contextMenu(event!);
+      const menu = within(await screen.findByRole("menu", { name: "Event actions" }));
+      expect(menu.getByRole("menuitem", { name: "Open event" })).toBeTruthy();
+      expect(menu.getByRole("menuitem", { name: "Join" })).toBeTruthy();
+      if (invited) {
+        expect(menu.getByRole("menuitemradio", { name: "Yes" }).getAttribute("aria-checked")).toBe("true");
+        expect(menu.getByRole("menuitemradio", { name: "No" })).toBeTruthy();
+        expect(menu.getByRole("menuitemradio", { name: "Maybe" })).toBeTruthy();
+        expect(menu.getByRole("menuitem", { name: "Propose a new time" })).toBeTruthy();
+        expect(menu.getByRole("menuitem", { name: "Open the letter" })).toBeTruthy();
+        expect(menu.getByRole("menuitem", { name: "Remove from my calendar" })).toBeTruthy();
+        expect(menu.queryByRole("menuitem", { name: "Edit" })).toBeNull();
+      } else {
+        expect(menu.queryByRole("menuitemradio", { name: "Yes" })).toBeNull();
+        expect(!!menu.queryByRole("menuitem", { name: "Edit" })).toBe(!readOnly);
+        expect(!!menu.queryByRole("menuitem", { name: "Delete" })).toBe(!readOnly);
+      }
+    },
+  );
+});
+
+it("offers scoped answers and marks the current response in the context menu of a repeating invitation", async () => {
+  const record = meeting({
+    organizer,
+    invitees: [guest],
+    myAnswer: "accepted",
+    repeat: { rules: ["FREQ=DAILY;COUNT=4"], added: [], excluded: [] },
+  });
+  const world = openWithMailboxes(record, async () => [mailbox(guest.address)], "#/cal/day/2026-11-16");
+  const press = vi.fn(async () => ({ key: "answer" }));
+  world.port.press = press;
+  const event = await screen.findByRole("button", { name: /Kiln check/ });
+  fireEvent.contextMenu(event, { clientX: 240, clientY: 300 });
+  expect((await screen.findByRole("menuitemradio", { name: "Yes" })).getAttribute("aria-checked")).toBe(
+    "true",
+  );
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "Maybe" }));
+  expect(press).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole("menuitem", { name: /All events/ }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "calendar_event_answer",
+      eventId: record.id,
+      scope: { kind: "record" },
+      answer: "tentative",
+    }),
+  );
+});
+
 it("opens the composer for the guests of an event", async () => {
   openWithMailboxes(meeting({ organizer, invitees: [guest] }), async () => [mailbox(organizer.address)]);
   fireEvent.click(await screen.findByRole("button", { name: "Write to invitees" }));
@@ -2459,6 +2756,234 @@ it("offers the organizer's mail action in More for a read-only event", async () 
   expect(await screen.findByText("the place that writes")).toBeTruthy();
 });
 
+it("keeps the same free stretches in Day after hiding a busy invitation", () => {
+  const busy = meeting({
+    organizer,
+    invitees: [guest],
+    hideAttendee: guest.address,
+    myAnswer: "accepted",
+    start: { kind: "zoned", value: "20261116T120000", zone: ZURICH },
+    end: { kind: "zoned", value: "20261116T130000", zone: ZURICH },
+  });
+  const world = eventWorld(busy);
+  for (const [id, start, end] of [
+    ["early", "090000", "100000"],
+    ["late", "150000", "160000"],
+  ]) {
+    world.put(
+      "calendar_event",
+      id!,
+      meeting({
+        id,
+        uid: id,
+        title: id,
+        start: { kind: "zoned", value: `20261116T${start}`, zone: ZURICH },
+        end: { kind: "zoned", value: `20261116T${end}`, zone: ZURICH },
+      }),
+    );
+  }
+  mountFrame("#/cal/day/2026-11-16", world, NONE, { words: dayEn });
+  expect(screen.getAllByText("2 h")).toHaveLength(2);
+  expect(screen.getByRole("button", { name: /Kiln check/ })).toBeTruthy();
+  act(() => world.put("calendar_event", busy.id, { ...busy, hiddenOccurrences: [""] }));
+  expect(screen.queryByRole("button", { name: /Kiln check/ })).toBeNull();
+  expect(screen.getAllByText("2 h")).toHaveLength(2);
+  expect(screen.queryByText("5 h")).toBeNull();
+});
+
+it("keeps a moved invitation letter from showing a series hidden in ohcal", async () => {
+  const occurrence = String(Date.UTC(2026, 10, 16, 8));
+  const master = meeting({
+    organizer,
+    invitees: [guest],
+    hideAttendee: guest.address,
+    myAnswer: "accepted",
+    repeat: { rules: ["FREQ=DAILY;COUNT=3"], added: [], excluded: [] },
+  });
+  const moved = {
+    ...master,
+    id: "moved",
+    repeat: null,
+    recurrenceId: occurrence,
+    start: { kind: "instant", value: "20261116T110000Z" } as const,
+    end: { kind: "instant", value: "20261116T120000Z" } as const,
+  };
+  const invitation = letter("moved-letter", {
+    from: organizer,
+    invitation: {
+      method: "REQUEST",
+      uid: master.uid,
+      calendarEventId: moved.id,
+      recurrenceId: occurrence,
+      organizer: organizer.address,
+      invitedAddress: guest.address,
+      sequence: 0,
+      start: moved.start.value,
+      startsAt: "2026-11-16T11:00:00Z",
+      answer: "accepted",
+      answeredAt: UPDATED,
+    },
+  });
+  const conflict = meeting({
+    id: "conflict",
+    uid: "conflict",
+    title: "Other appointment",
+    organizer,
+    invitees: [guest],
+    hideAttendee: guest.address,
+    myAnswer: "accepted",
+    start: moved.start,
+    end: moved.end,
+  });
+  const world = eventWorld(master);
+  world.put("calendar_event", conflict.id, conflict);
+  world.put("calendar_event", moved.id, moved);
+  mountReader({
+    letters: [invitation],
+    open: invitation.id,
+    parts: {
+      invitation: () => (
+        <InvitationLetterCard
+          message={invitation}
+          invitation={invitation.invitation!}
+          title={moved.title}
+          start={moved.start}
+          end={moved.end}
+          when={null}
+          place={null}
+          from={null}
+          repeat={null}
+          copyable={false}
+          reply={vi.fn()}
+        />
+      ),
+    },
+    host: {
+      engine: Object.assign(fakeMail([invitation]).engine, { store: world.engine.store }),
+      calendar,
+      products: "both",
+      wires: { calendar: world.port },
+    },
+    words: { ...readerWords.en, ...calendarWords.en, ...calmail, ...invitationsEn, ...readerInvitationEn },
+  });
+  const show = () => screen.queryByRole("button", { name: /Show in calendar/ });
+  expect(await screen.findByRole("button", { name: /Show in calendar/ })).toBeTruthy();
+  expect(screen.getByText(/Other appointment/)).toBeTruthy();
+  act(() => world.put("calendar_event", conflict.id, { ...conflict, hiddenOccurrences: [""] }));
+  expect(screen.getByText("Busy")).toBeTruthy();
+  expect(screen.queryByText(/Other appointment/)).toBeNull();
+  act(() => world.put("calendar_event", master.id, { ...master, hiddenOccurrences: [""] }));
+  expect(show()).toBeNull();
+  act(() => world.put("calendar_event", moved.id, null));
+  expect(show()).toBeNull();
+});
+
+it("hides an active invitation from the Day menu and offers Undo", async () => {
+  const record = meeting({ organizer, invitees: [guest], myAnswer: "accepted", hideAttendee: guest.address });
+  const world = openWithMailboxes(record, async () => [mailbox(guest.address)], "#/cal/day/2026-11-16");
+  const undo = vi.fn(async () => true);
+  const hold = vi.fn(async () => ({
+    key: "held",
+    deadline: Date.now() + 4000,
+    remainingMs: () => 4000,
+    undo,
+  }));
+  world.port.holdDelete = hold;
+  const press = vi.fn();
+  world.port.press = press;
+  fireEvent.contextMenu(screen.getByRole("button", { name: /Kiln check/ }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Remove from my calendar" }));
+  const question = within(screen.getByRole("dialog", { name: "Remove from my calendar" }));
+  expect(
+    within(question.getByRole("menuitem", { name: "Hide in ohcal" })).getByText(
+      "The event is hidden in ohcal and your answer stays the same",
+    ),
+  ).toBeTruthy();
+  expect(
+    within(question.getByRole("menuitem", { name: "Decline and notify organizer" })).getByText(
+      "The organizer is told you are not coming",
+    ),
+  ).toBeTruthy();
+  fireEvent.click(question.getByRole("menuitem", { name: "Hide in ohcal" }));
+  expect(hold).toHaveBeenCalledWith(
+    {
+      kind: "calendar_event_delete",
+      eventId: record.id,
+      base: record.updatedAt,
+      scope: { kind: "record" },
+      localOnly: true,
+      hide: true,
+      copy: { calendarId: record.calendarId, attendee: guest.address },
+    },
+    expect.any(Number),
+  );
+  const undoButton = await screen.findByRole("button", { name: "Undo" });
+  expect(undoButton.closest(".oh-report")?.textContent).toContain("Event hidden");
+  fireEvent.click(undoButton);
+  expect(undo).toHaveBeenCalledOnce();
+  expect(press).not.toHaveBeenCalled();
+});
+
+it.each(["This event", "All events"] as const)("holds Hide for %s from the Day event menu", async (label) => {
+  const record = meeting({
+    organizer,
+    invitees: [guest],
+    myAnswer: "accepted",
+    hideAttendee: guest.address,
+    repeat: { rules: ["FREQ=DAILY;COUNT=3"], added: [], excluded: [] },
+  });
+  const world = openWithMailboxes(record, async () => [mailbox(guest.address)], "#/cal/day/2026-11-16");
+  const hold = vi.fn(async () => ({
+    key: "held",
+    deadline: Date.now() + 4000,
+    remainingMs: () => 4000,
+    undo: async () => true,
+  }));
+  world.port.holdDelete = hold;
+  fireEvent.contextMenu(screen.getByRole("button", { name: /Kiln check/ }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Remove from my calendar" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Hide in ohcal" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: label }));
+  expect(hold).toHaveBeenCalledOnce();
+  expect(hold).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "calendar_event_delete",
+      eventId: record.id,
+      copy: { calendarId: record.calendarId, attendee: guest.address },
+      scope:
+        label === "All events"
+          ? { kind: "record" }
+          : { kind: "occurrence", at: String(Date.UTC(2026, 10, 16, 8)) },
+    }),
+    expect.any(Number),
+  );
+  const undo = await screen.findByRole("button", { name: "Undo" });
+  expect(undo.closest(".oh-report")?.textContent).toContain("Event hidden");
+});
+
+it("offers removal after a decline is confirmed by the calendar mirror", async () => {
+  const record = meeting({ organizer, invitees: [guest], myAnswer: "accepted", hideAttendee: guest.address });
+  const world = openWithMailboxes(record, async () => [mailbox(guest.address)]);
+  const press = vi.fn(async () => ({ key: "decline" }));
+  world.port.press = press;
+  const toolbar = within(await screen.findByRole("toolbar", { name: "Event actions" }));
+  fireEvent.click(await toolbar.findByRole("button", { name: "More" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Remove from my calendar" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Decline and notify organizer" }));
+  expect(press).toHaveBeenCalledWith({
+    kind: "calendar_event_answer",
+    eventId: record.id,
+    base: record.updatedAt,
+    scope: { kind: "record" },
+    answer: "declined",
+    copy: { calendarId: record.calendarId, attendee: guest.address },
+  });
+  expect(screen.queryByText("Remove declined event")).toBeNull();
+  act(() => world.put("calendar_event", record.id, { ...record, myAnswer: "declined" }));
+  fireEvent.click(await toolbar.findByRole("button", { name: "More" }));
+  expect(await screen.findByRole("menuitem", { name: "Remove declined event" })).toBeTruthy();
+});
+
 it("removes a declined invitation without sending another reply", async () => {
   const record = meeting({ organizer, invitees: [guest], myAnswer: "declined" });
   const world = openWithMailboxes(record, async () => [mailbox(guest.address)]);
@@ -2466,7 +2991,7 @@ it("removes a declined invitation without sending another reply", async () => {
   world.port.press = press;
   const toolbar = within(await screen.findByRole("toolbar", { name: "Event actions" }));
   fireEvent.click(await toolbar.findByRole("button", { name: "More" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Remove from my calendar" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Remove declined event" }));
   await waitFor(() =>
     expect(press).toHaveBeenCalledWith({
       kind: "calendar_event_delete",
@@ -2566,6 +3091,26 @@ describe("an invitation already answered", () => {
     expect(scope?.textContent).toContain("Change your answer to Maybe");
   });
 
+  it.each(["Yes", "Maybe"])("withholds a single answer of %s on a changed occurrence", async (answer) => {
+    const series = daily({ myAnswer: "none" });
+    const world = openDay(series);
+    const changed = meeting({
+      id: "changed-day",
+      recurrenceId: String(at),
+      repeat: null,
+      organizer,
+      invitees: [guest],
+      myAnswer: "none",
+      occurrenceAt: new Date(at).toISOString(),
+      startsAt: new Date(at + 3_600_000).toISOString(),
+      endsAt: new Date(at + 7_200_000).toISOString(),
+    });
+    act(() => world.put("calendar_event", changed.id, changed));
+    fireEvent.click(await screen.findByRole("button", { name: answer }));
+    expect(await screen.findByRole("menuitem", { name: "All events" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "This event" })).toBeNull();
+  });
+
   it("shows an answer to one day on that day while it waits, and the other days as the series stands", async () => {
     openDay(daily({ myAnswer: "none" }), dayAnswer("pending"));
     const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
@@ -2652,7 +3197,141 @@ it("shows a pending portable move and withholds actions that would change the so
   expect(read.getByText("Moving event")).toBeTruthy();
   expect(read.queryByRole("button", { name: "Edit" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete", exact: true })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Move to", exact: true })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Move to another calendar", exact: true })).toBeNull();
+});
+
+it("shows each invited person's full address and counts only guests' replies", async () => {
+  const host = { name: "Finch Hall", address: ["host", "example.com"].join("@") };
+  const visitor = { ...guest, name: "Ivy Beck", address: ["ivy", "example.com"].join("@") };
+  openWithMailboxes(
+    meeting({ organizer: host, invitees: [visitor, { ...guest, ...host, answer: "none" }] }),
+    async () => [mailbox(host.address)],
+  );
+  const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
+  expect.soft(card.queryByText(visitor.address)).toBeTruthy();
+  expect(card.queryByText(/no answer/)).toBeNull();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const chip = screen.getByRole("button", { name: /^Ivy Beck/ });
+  expect(chip.textContent).toContain(visitor.address);
+  expect(chip.textContent).toContain("yes");
+});
+
+it.each(["google", "microsoft", "caldav"] as const)(
+  "refuses a Friday-only rule on a Tuesday master in the %s editor",
+  async (provider) => {
+    const record = meeting({
+      start: { kind: "date", value: "20261117" },
+      end: { kind: "date", value: "20261118" },
+      startsAt: "2026-11-17T00:00:00Z",
+      repeat: { rules: ["FREQ=WEEKLY;BYDAY=TU,FR"], added: [], excluded: [] },
+    });
+    const world = eventWorld(record);
+    world.put(
+      "calendar_connection",
+      "conn-1",
+      connectionRecord({ provider, repeatShapes: ["weekly/never"] }),
+    );
+    const press = vi.fn(async () => ({ key: "edit" }));
+    world.port.press = press;
+    mountFrame(`#/cal/week/2026-11-20/e/firing@${Date.UTC(2026, 10, 20)}`, world, NONE);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const form = within(screen.getByRole("dialog", { name: "Edit event" }));
+    fireEvent.click(form.getByRole("button", { name: "Repeat" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Every week on Friday" }));
+    fireEvent.click(form.getByRole("button", { name: "Save" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /All events/ }));
+    await act(async () => {});
+    expect(form.getByText("This calendar cannot keep this repeat rule.")).toBeTruthy();
+    expect(press).not.toHaveBeenCalled();
+  },
+);
+
+it("changes only the ending in Custom on a read-back last-Friday rule", async () => {
+  const record = meeting({
+    start: { kind: "zoned", value: "20261127T090000", zone: ZURICH },
+    end: { kind: "zoned", value: "20261127T100000", zone: ZURICH },
+    startsAt: "2026-11-27T08:00:00Z",
+    repeat: { rules: ["FREQ=MONTHLY;UNTIL=20270226;BYDAY=FR;BYSETPOS=-1"], added: [], excluded: [] },
+  });
+  const world = eventWorld(record);
+  world.put(
+    "calendar_connection",
+    "conn-1",
+    connectionRecord({
+      provider: "microsoft",
+      repeatShapes: ["monthly_last_weekday/until"],
+    }),
+  );
+  const press = vi.fn(async () => ({ key: "edit" }));
+  world.port.press = press;
+  mountFrame(`#/cal/week/2026-11-27/e/firing@${Date.UTC(2026, 10, 27, 8)}`, world, NONE);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const form = within(screen.getByRole("dialog", { name: "Edit event" }));
+  fireEvent.click(form.getByRole("button", { name: "Repeat" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Custom…" }));
+  fireEvent.change(screen.getByLabelText("On date"), { target: { value: "2027-04-30" } });
+  const done = screen.getByRole<HTMLButtonElement>("button", { name: "Done" });
+  expect(done.disabled).toBe(false);
+  fireEvent.click(done);
+  fireEvent.click(form.getByRole("button", { name: "Save" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /All events/ }));
+  await vi.waitFor(() =>
+    expect(press).toHaveBeenCalledWith(
+      expect.objectContaining({
+        change: { repeat: expect.stringMatching(/BYDAY=-1FR;UNTIL=20270430T070000Z/) },
+      }),
+    ),
+  );
+});
+
+it("shows the confirmed acceptance and no reply for an invitee being added", async () => {
+  const newGuest = {
+    ...guest,
+    name: "Fern Pike",
+    address: ["fern", "example.test"].join("@"),
+    answer: "none" as const,
+  };
+  const record = meeting({ invitees: [guest] });
+  const world = eventWorld(record);
+  const base = world.port.events()[0]!;
+  world.port.events = () => [
+    {
+      ...base,
+      waiting: "provider",
+      record: { ...record, invitees: [{ ...guest, answer: "none" }, newGuest] },
+    },
+  ];
+  mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE, { words: calmail });
+  const form = within(await screen.findByRole("dialog", { name: record.title }));
+  expect(form.getByText("yes", { exact: true })).toBeTruthy();
+  expect(form.getByText(newGuest.name)).toBeTruthy();
+  expect(form.queryByText(/no answer/i)).toBeNull();
+});
+
+it("reopens the refused edit of a generated occurrence with the changed words and times", async () => {
+  const at = String(Date.UTC(2026, 10, 17, 8));
+  const record = meeting({
+    startsAt: "2026-11-16T08:00:00Z",
+    repeat: { rules: ["FREQ=DAILY;COUNT=4"], added: [], excluded: [] },
+  });
+  const world = eventWorld(record);
+  const watch = vi.fn();
+  Object.assign(world.port, { watchEdit: watch });
+  world.port.press = vi.fn(async () => ({ key: "edit" }));
+  mountFrame(`#/cal/week/2026-11-17/e/firing@${at}`, world, NONE, { words: calmail });
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const form = within(screen.getByRole("dialog", { name: "Edit event" }));
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Glaze check" } });
+  fireEvent.change(form.getByRole("textbox", { name: "Start time" }), { target: { value: "09:15" } });
+  fireEvent.click(form.getByRole("button", { name: "Save" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /This event/ }));
+  await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(1));
+  const refuse = watch.mock.calls[0]![2];
+  act(() => refuse({ kind: "refused", word: "read_only", details: null }, "write-id"));
+  fireEvent.click(await screen.findByRole("button", { name: "Reopen draft" }));
+  const reopened = within(await screen.findByRole("dialog", { name: "Edit event" }));
+  expect(reopened.getByRole("textbox", { name: "Event title" })).toHaveProperty("value", "Glaze check");
+  expect(reopened.getByRole("textbox", { name: "Start time" })).toHaveProperty("value", "09:15");
 });
 
 it("shows each invited person's full address and counts only guests' replies", async () => {

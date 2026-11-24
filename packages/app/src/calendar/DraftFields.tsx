@@ -6,7 +6,7 @@ import { EventForm, type CalendarTone, type EventFormProps, type EventFormRow } 
 import { addDays, clockOf, dayShort, readQuickEntry, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import { useLocale, useText, type Text } from "../text/index.js";
 import { ShowAsMenu } from "./ShowAsMenu.js";
-import { DraftCalendarMenu } from "./DraftCalendarMenu.js";
+import { calendarRow, DraftCalendarMenu } from "./DraftCalendarMenu.js";
 import { ZoneMenu } from "./ZoneMenu.js";
 import { useEditorRows, type EditorRows } from "./use-editor-rows.js";
 import { zoneForCity, zoneName } from "./zone-names.js";
@@ -24,6 +24,7 @@ interface Props {
   readonly edit?: EditorRows;
   readonly proposedGuest?: { name: string; take: () => void };
   readonly fixedTime?: string;
+  readonly ordinaryOnly?: boolean;
   readonly timeZone?: string;
   readonly placeSource?: string;
   readonly change: (edit: Partial<EventDraft>) => void;
@@ -168,6 +169,7 @@ export function DraftFields({
   submit,
   cancel,
   fixedTime,
+  ordinaryOnly,
   timeZone,
   edit,
   proposedGuest,
@@ -192,43 +194,24 @@ export function DraftFields({
   const openRepeat = (event: MouseEvent<HTMLButtonElement>) =>
     setMenu({ kind: "repeat", anchor: event.currentTarget });
   const repeat = repeatRow(draft, t, locale, menu?.kind === "repeat", openRepeat, timeZone);
-  if (repeat) rows.push(repeat);
+  if (repeat && !ordinaryOnly) rows.push(repeat);
   rows.push(...inviteeRows(details.beforePlace, proposedGuest, t), ...place.rows, ...details.afterPlace);
-  rows.push({
-    id: "calendar",
-    mark: tone,
-    items: [
-      choose
-        ? {
-            kind: "slot",
-            label: t("create.calendar"),
-            value: calendar?.name ?? t("create.choose"),
-            expanded: menu?.kind === "calendar",
-            onPress: (event) => setMenu({ kind: "calendar", anchor: event.currentTarget }),
-          }
-        : {
-            kind: "slot",
-            state: "done",
-            disabled: true,
-            label: t("create.calendar"),
-            value: calendar?.name ?? "",
-          },
+  rows.push(
+    calendarRow(
       {
-        kind: "slot",
-        label: t("create.showAs"),
-        value: t(draft.busy ? "create.busy" : "create.free"),
-        expanded: menu?.kind === "busy",
-        onPress: (event) => setMenu({ kind: "busy", anchor: event.currentTarget }),
+        calendar,
+        tone,
+        draft,
+        change,
+        ordinaryOnly,
+        edit: !!edit,
+        choose: choose ? (anchor) => setMenu({ kind: "calendar", anchor }) : undefined,
+        showAs: (anchor) => setMenu({ kind: "busy", anchor }),
+        active: menu?.kind,
       },
-      {
-        kind: "toggle",
-        label: t("create.private"),
-        icon: edit && !choose ? "lock" : undefined,
-        on: draft.private,
-        onChange: (value) => change({ private: value }),
-      },
-    ],
-  });
+      t,
+    ),
+  );
   rows.push(...notesRow(draft, change, t));
   return (
     <>
@@ -236,7 +219,7 @@ export function DraftFields({
         rows={rows}
         adds={[
           ...details.adds,
-          ...(!draft.repeat
+          ...(!ordinaryOnly && !draft.repeat
             ? [{ id: "repeat", word: t("edit.repeatLabel"), icon: "repeat" as const, onPress: openRepeat }]
             : []),
           ...(draft.place === null

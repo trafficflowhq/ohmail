@@ -39,6 +39,7 @@
       "unknown": "The change was not saved."
     },
     "taken": {
+      "hide": "Event hidden",
       "deleteAudience": "Cancellation sent to {guests}",
       "create": "Event added",
       "update": "Changed",

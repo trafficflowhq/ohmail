@@ -46,7 +46,12 @@ export function useInvitationAnswer(port: CalendarPort) {
   const answer = async (
     recordId: string,
     value: InvitationAnswer,
-    reviewed?: { base: string; seriesBase?: string; occurrence: string | null },
+    reviewed?: {
+      base: string;
+      seriesBase?: string;
+      occurrence: string | null;
+      copy?: { calendarId: string; attendee: string };
+    },
   ) => {
     const current = invitation(recordId);
     if (pending.current.has(recordId) || !current?.myAnswer || current.myAnswer === value) return;
@@ -65,6 +70,7 @@ export function useInvitationAnswer(port: CalendarPort) {
               eventId: recordId,
               base: reviewed.seriesBase ? `${reviewed.base}/${reviewed.seriesBase}` : reviewed.base,
               answer: value,
+              ...(reviewed.copy && { copy: reviewed.copy }),
               scope:
                 reviewed.occurrence === null
                   ? { kind: "record" }
@@ -95,62 +101,74 @@ export function EventAnswers({
   event: CalendarEventFace;
   propose?: AnswerSwitchProps["propose"];
 }) {
+  const response = useEventResponse(reply, event);
+  return response.answer ? (
+    <>
+      <AnswerChoices on="sheet" answer={response.answer} propose={propose} onAnswer={response.choose} />
+      {response.question}
+    </>
+  ) : null;
+}
+
+export function useEventResponse(reply: InvitationActions, event: CalendarEventFace, done?: () => void) {
   const t = useText("calendar");
   const report = useReport();
   const e = useText("event");
-  const [question, setQuestion] = useState<{
+  const [review, setReview] = useState<{
     anchor: HTMLElement;
     answer: InvitationAnswer;
     base: string;
     seriesBase: string;
+    copy?: { calendarId: string; attendee: string };
   } | null>(null);
   const words = useText("invitations");
   const record = reply.invitation(event.recordId);
-  if (!record?.myAnswer) return null;
   const series = event.ref.occurrence !== null ? reply.invitation(event.ref.event) : null;
-  // The day's own answer: a day of a series can carry one the series' record does not (one waiting for that day alone).
-  const answer = event.said?.answer ?? record.myAnswer;
-  return (
-    <>
-      <AnswerChoices
-        on="sheet"
-        answer={answer}
-        propose={propose}
-        onAnswer={(value, anchor) => {
-          if (series)
-            setQuestion({ anchor, answer: value, base: record.updatedAt, seriesBase: series.updatedAt });
-          else if (!event.ref.occurrence) void reply.answer(event.recordId, value);
-        }}
-      />
-      {question && series && (
-        <CalendarRecordScope
-          anchor={question.anchor}
-          question={
-            answer === "none"
-              ? t("actions.answerScope", { title: event.title })
-              : t("actions.changeAnswer", { answer: words(`answer.${question.answer}`) })
-          }
-          occurrence={!record.thisAndFuture}
-          onClose={() => setQuestion(null)}
-          onChoose={(scope) => {
-            setQuestion(null);
-            if (question.base !== record.updatedAt) {
-              report(e("refusal.changed"));
-              return;
-            }
-            if (series.updatedAt !== question.seriesBase) {
-              report(e("refusal.changed"));
-              return;
-            }
-            const changed = scope === "occurrence" && record.id !== series.id;
-            void reply.answer(changed ? record.id : series.id, question.answer, {
-              base: changed ? question.base : question.seriesBase,
-              seriesBase: changed ? question.seriesBase : undefined,
-              occurrence: scope === "record" ? null : event.ref.occurrence,
-            });
-          }}
-        />
-      )}
-    </>
+  const answer = record?.myAnswer ? (event.said?.answer ?? record.myAnswer) : null;
+  const close = () => {
+    setReview(null);
+    done?.();
+  };
+  const choose = (value: InvitationAnswer, anchor: HTMLElement) => {
+    if (!record?.myAnswer) return;
+    if (series) {
+      setReview({
+        anchor,
+        answer: value,
+        base: record.updatedAt,
+        seriesBase: series.updatedAt,
+        copy: series.hideAttendee
+          ? { calendarId: series.calendarId, attendee: series.hideAttendee }
+          : undefined,
+      });
+    } else {
+      done?.();
+      if (event.ref.occurrence === null) void reply.answer(event.recordId, value);
+    }
+  };
+  const question = review && record && series && (
+    <CalendarRecordScope
+      anchor={review.anchor}
+      question={
+        answer === "none"
+          ? t("actions.answerScope", { title: event.title })
+          : t("actions.changeAnswer", { answer: words(`answer.${review.answer}`) })
+      }
+      occurrence={!record.thisAndFuture && record.id === series.id}
+      onClose={close}
+      onChoose={(scope) => {
+        close();
+        if (review.base !== record.updatedAt || series.updatedAt !== review.seriesBase) {
+          report(e("refusal.changed"));
+          return;
+        }
+        void reply.answer(series.id, review.answer, {
+          base: review.seriesBase,
+          occurrence: scope === "record" ? null : event.ref.occurrence,
+          copy: review.copy,
+        });
+      }}
+    />
   );
+  return { answer, choose, question, reviewing: review !== null };
 }

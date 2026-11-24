@@ -451,6 +451,12 @@
   .oh-ev[data-drag="copy"][data-state="draft"] {
     box-shadow: none;
   }
+  .oh-ev[data-drag="copy"][data-state="draft"][data-size="block"] {
+    z-index: 0;
+  }
+  .oh-ev[data-drag="copy"][data-state="draft"][data-size="line"] {
+    background: var(--oh-ev-under);
+  }
   .oh-ev[data-drag="copy"][data-size="line"] {
     border: var(--oh-hair) dashed var(--oh-cal-mark, var(--ink));
   }

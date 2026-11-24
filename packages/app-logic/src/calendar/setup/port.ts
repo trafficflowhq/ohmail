@@ -38,6 +38,7 @@ export type ConnectAnswer =
 export interface CalendarChange {
   readonly shown?: boolean;
   readonly name?: string;
+  readonly color?: string | null;
 }
 
 export interface CalendarSetupPort {
@@ -64,7 +65,7 @@ export interface CalendarSetupPort {
   readonly signInAgain: ((ask: TypedConnectAsk) => Promise<ConnectAnswer>) | "none";
   readonly remove: ((connectionId: string) => Promise<void>) | "none";
   /** Reads the connection now. */
-  readonly check: ((connectionId: string) => Promise<void>) | "none";
+  readonly check: ((connectionId: string, calendarId?: string) => Promise<void>) | "none";
   readonly setCalendar: ((calendarId: string, change: CalendarChange) => Promise<void>) | "none";
   readonly saveSettings: ((body: CalendarSettingsBody) => Promise<CalendarSettingsWire>) | "none";
 }

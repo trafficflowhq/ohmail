@@ -5,46 +5,33 @@ import {
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { addDays, clockOf, dayLong, isoOfDay, resizeSlot } from "@ohmail/app-logic/calendar";
+import {
+  addDays,
+  clockOf,
+  dayLong,
+  daySpanOf,
+  isoOfDay,
+  wallSpanOf,
+  type ZoneSource,
+} from "@ohmail/app-logic/calendar";
 import { EventChip } from "@ohmail/ui/calendar";
 import type { CalendarEventFace } from "./faces.js";
-import { resizedDays, type EventChange } from "./event-time-change.js";
+import { canStartTimeChange, resizedDays, resizeTimedRange, type EventChange } from "./event-time-change.js";
 import type { EventActions } from "./use-event-actions.js";
 import type { DayEdge, TimedSegment } from "./view.js";
+import { dayDelta, dayTarget, DROP, listenDrag, scrollDrag } from "./calendar-drag-target.js";
+import { slotOnDay } from "./use-slot-draft.js";
 import { useLocale, useText } from "../text/index.js";
 
-const DAY_MS = 86_400_000;
 const DAY_MINUTES = 24 * 60;
-const DROP = "[data-cal-drop-day]";
 const DRAG_DISTANCE = 4;
 const HOLD_MS = 420;
-
-function dayTarget(element: HTMLElement, point: PointerEvent, kind?: string) {
-  const doc = element.ownerDocument;
-  const hits = doc.elementsFromPoint?.(point.clientX, point.clientY) ?? [
-    doc.elementFromPoint?.(point.clientX, point.clientY),
-  ];
-  const view = element.closest(".cal-body-view");
-  for (const hit of hits) {
-    const target = hit?.closest<HTMLElement>(DROP);
-    if (target && (!kind || target.dataset.calDropKind === kind) && view?.contains(target)) return target;
-    const lane = hit?.closest("[data-cal-all-day-lane]");
-    if (lane && (!kind || kind === "all-day") && view?.contains(lane)) {
-      for (const column of lane.querySelectorAll<HTMLElement>(DROP)) {
-        const rect = column.getBoundingClientRect();
-        if (rect.left <= point.clientX && point.clientX < rect.right) return column;
-      }
-    }
-  }
-  return null;
-}
 
 interface Ghost {
   day: string;
   face: CalendarEventFace;
-  top: number;
-  height: number;
   minute: number;
+  length: number;
 }
 
 interface RangeGhost {
@@ -56,7 +43,10 @@ interface RangeGhost {
 }
 
 interface DragCallbacks {
-  moveTime: (delta: number) => DragTime | null;
+  moveTime: (delta: number, days: number) => DragTime | null;
+  timedSpan: ReturnType<typeof daySpanOf>;
+  stepWeek?: (direction: -1 | 1) => void;
+  canResizeTime: (minutes: number) => boolean;
   preview: (ghost: Ghost | null) => void;
   range: (preview: RangeGhost | null) => void;
   done: () => void;
@@ -64,11 +54,7 @@ interface DragCallbacks {
   commit: (days: number, minutes: number) => void;
 }
 
-type DragTime = { minute: number; minutes: number; length: number };
-
-function dayDelta(from: string, to: string): number {
-  return (Date.parse(to) - Date.parse(from)) / DAY_MS;
-}
+type DragTime = { minute: number; minutes: number; length: number; day?: string };
 
 /** A drop moves the grabbed segment by this many days. The start can be a different segment. */
 function dragDestination(
@@ -89,20 +75,9 @@ function dragDestination(
   if (!start.height || !end.height) return null;
   const time = moveTime(
     ((point.clientY - end.top) / end.height - (down.clientY - start.top) / start.height) * DAY_MINUTES,
+    days,
   );
   return time && { day, days, time };
-}
-
-function timePreview(
-  target: HTMLElement,
-  day: string,
-  time: DragTime,
-  face: CalendarEventFace,
-): Ghost | null {
-  const scale = target.clientHeight / DAY_MINUTES;
-  if (!scale) return null;
-  const { minute, length } = time;
-  return { day, face, minute, top: minute * scale, height: Math.min(length, DAY_MINUTES - minute) * scale };
 }
 
 function trackDrag(
@@ -110,19 +85,25 @@ function trackDrag(
   down: PointerEvent,
   face: CalendarEventFace,
   edge: DayEdge | undefined,
-  { preview, range, absorbClick, done, commit, moveTime }: DragCallbacks,
+  { preview, range, absorbClick, done, commit, moveTime, timedSpan, stepWeek, canResizeTime }: DragCallbacks,
 ) {
-  const source = chip.closest<HTMLElement>(DROP) ?? dayTarget(chip, down);
+  const view = chip.closest<HTMLElement>(".cal-body-view");
+  if (!view) return null;
+  const source = chip.closest<HTMLElement>(DROP) ?? dayTarget(view, down);
+  const kind = source?.dataset.calDropKind;
+  const monthResize = edge && kind === "month" && timedSpan && !timedSpan.allDay;
   const sourceDay =
-    edge && face.start.kind === "date" && face.end.kind === "date"
+    edge && timedSpan && (timedSpan.allDay || monthResize)
       ? edge === "start"
-        ? isoOfDay(face.start)
-        : addDays(isoOfDay(face.end), -1)
+        ? timedSpan.first
+        : timedSpan.last
       : source?.dataset.calDropDay;
   if (!source || !sourceDay) return null;
-  const kind = source.dataset.calDropKind;
   const timedResize = edge !== undefined && kind === "time";
   const start = source.getBoundingClientRect();
+  const sourceBox = chip.getBoundingClientRect();
+  const origin = (kind === "month" ? chip.parentElement : view)?.getBoundingClientRect();
+  const rowOffset = sourceBox.top - (origin?.top ?? sourceBox.top);
   const doc = chip.ownerDocument;
   const touch = down.pointerType === "touch";
   const holdToMove = touch && !timedResize;
@@ -133,12 +114,15 @@ function trackDrag(
     held = true;
     chip.setPointerCapture?.(down.pointerId);
     chip.dataset.drag = "lifted";
+    view.dataset.calRangeHeld = "";
   };
   const timer = holdToMove ? setTimeout(activate, HOLD_MS) : null;
 
   const cleanup = () => {
     if (timer !== null) clearTimeout(timer);
     delete chip.dataset.drag;
+    delete view.dataset.calRangeHeld;
+    scroller?.stop();
     preview(null);
     range(null);
     if (target) delete target.dataset.calDropActive;
@@ -148,6 +132,20 @@ function trackDrag(
   const destinationAt = (point: PointerEvent, target: HTMLElement) =>
     dragDestination(down, point, start, sourceDay, target, face, moveTime);
 
+  const draw = (point: PointerEvent) => {
+    if (target) delete target.dataset.calDropActive;
+    target = dayTarget(view, point, kind);
+    const drop = target && destinationAt(point, target);
+    const days = drop && daysAt(face, edge, drop.days, monthResize ? timedSpan : null, canResizeTime);
+    if (target && kind !== "time" && !monthResize && !days) target.dataset.calDropActive = "";
+    range(target && days ? rangePreview(view, face, target, days, rowOffset, sourceBox.height) : null);
+    preview(ghostAt(face, drop, timedResize ? canResizeTime : undefined));
+  };
+
+  const scroller =
+    kind === "time" || kind === "month"
+      ? scrollDrag(view, kind, draw, timedResize ? stepWeek : undefined)
+      : null;
   const move = (point: PointerEvent) => {
     if (point.pointerId !== down.pointerId || aborted) return;
     if (point.altKey) {
@@ -162,39 +160,17 @@ function trackDrag(
     }
     if (!held) activate();
     point.preventDefault();
-    if (target) delete target.dataset.calDropActive;
-    target = timedResize ? source : dayTarget(chip, point, kind);
-    if (target && face.start.kind === "date" && face.end.kind === "date") {
-      const drop = destinationAt(point, target);
-      const days =
-        drop &&
-        (edge
-          ? resizedDays(face.start, face.end, edge, drop.days)
-          : {
-              first: addDays(isoOfDay(face.start), drop.days),
-              last: addDays(isoOfDay(face.end), drop.days - 1),
-            });
-      range(days ? rangePreview(chip, face, target, days) : null);
-      return;
-    }
-    if (!target || kind !== "time") {
-      if (target) target.dataset.calDropActive = "";
-      preview(null);
-      range(null);
-      return;
-    }
-    const drop = destinationAt(point, target);
-    preview(drop?.time ? timePreview(target, timedResize ? sourceDay : drop.day, drop.time, face) : null);
+    if (scroller) scroller.move(point);
+    else draw(point);
   };
   const end = (point: PointerEvent) => {
     if (point.pointerId !== down.pointerId) return;
-    const destination =
-      held && !aborted && !point.altKey ? (timedResize ? source : dayTarget(chip, point, kind)) : null;
+    const destination = held && !aborted && !point.altKey ? dayTarget(view, point, kind) : null;
     cleanup();
     if (held) absorbClick();
-    if (!destination || !chip.isConnected) return;
+    if (!destination || (!edge && !chip.isConnected)) return;
     const drop = destinationAt(point, destination);
-    if (drop) commit(drop.days, drop.time?.minutes ?? 0);
+    if (drop) commit(drop.days, monthResize ? drop.days * DAY_MINUTES : (drop.time?.minutes ?? 0));
   };
   const keepTouch = (point: TouchEvent) => {
     if (held && !aborted && point.cancelable) point.preventDefault();
@@ -204,6 +180,7 @@ function trackDrag(
   };
   const abort = () => {
     aborted = true;
+    scroller?.stop();
     delete chip.dataset.drag;
     preview(null);
     range(null);
@@ -217,39 +194,45 @@ function trackDrag(
     abort();
   };
 
-  const detach = listen(doc, touch ? keepTouch : null, { move, end, cancel, escape, cleanup });
+  const detach = listenDrag(doc, touch ? keepTouch : null, { move, end, cancel, escape, cleanup });
   return cleanup;
 }
 
-function listen(
-  doc: Document,
-  touchmove: ((event: TouchEvent) => void) | null,
-  listeners: {
-    move: (event: PointerEvent) => void;
-    end: (event: PointerEvent) => void;
-    cancel: (event: PointerEvent) => void;
-    escape: (event: KeyboardEvent) => void;
-    cleanup: () => void;
-  },
-) {
-  const { move, end, cancel, escape, cleanup } = listeners;
-  doc.addEventListener("pointermove", move, { passive: false });
-  doc.addEventListener("pointerup", end);
-  doc.addEventListener("pointercancel", cancel);
-  if (touchmove) doc.addEventListener("touchmove", touchmove, { passive: false });
-  doc.addEventListener("keydown", escape, true);
-  doc.defaultView?.addEventListener("blur", cleanup);
-  return () => {
-    doc.removeEventListener("pointermove", move);
-    doc.removeEventListener("pointerup", end);
-    doc.removeEventListener("pointercancel", cancel);
-    if (touchmove) doc.removeEventListener("touchmove", touchmove);
-    doc.removeEventListener("keydown", escape, true);
-    doc.defaultView?.removeEventListener("blur", cleanup);
-  };
+function ghostAt(
+  face: CalendarEventFace,
+  drop: ReturnType<typeof dragDestination>,
+  canResizeTime?: (minutes: number) => boolean,
+): Ghost | null {
+  const time = drop?.time;
+  if (!time || (time.minutes && canResizeTime && !canResizeTime(time.minutes))) return null;
+  return { day: time.day ?? drop.day, face, minute: time.minute, length: time.length };
 }
 
-export function useEventDrag(actions: EventActions, page: string) {
+function daysAt(
+  face: CalendarEventFace,
+  edge: DayEdge | undefined,
+  days: number,
+  monthSpan: ReturnType<typeof daySpanOf>,
+  canResizeTime: (minutes: number) => boolean,
+) {
+  if (face.start.kind === "date" && face.end.kind === "date") {
+    return edge
+      ? resizedDays(face.start, face.end, edge, days)
+      : { first: addDays(isoOfDay(face.start), days), last: addDays(isoOfDay(face.end), days - 1) };
+  }
+  if (!monthSpan || (days && !canResizeTime(days * DAY_MINUTES))) return null;
+  const first = edge === "start" ? addDays(monthSpan.first, days) : monthSpan.first;
+  const last = edge === "end" ? addDays(monthSpan.last, days) : monthSpan.last;
+  return first <= last ? { first, last } : null;
+}
+
+export function useEventDrag(
+  actions: EventActions,
+  page: string,
+  zone: string,
+  zones: ZoneSource,
+  stepWeek?: (direction: -1 | 1) => void,
+) {
   const t = useText("calendar");
   const locale = useLocale();
   const [range, showRange] = useState<RangeGhost | null>(null);
@@ -258,6 +241,8 @@ export function useEventDrag(actions: EventActions, page: string) {
   const suppress = useRef<HTMLButtonElement | null>(null);
   const latest = useRef(actions);
   latest.current = actions;
+  const step = useRef(stepWeek);
+  step.current = stepWeek;
   useLayoutEffect(() => () => stop.current?.(), [page]);
 
   function drag(
@@ -272,12 +257,21 @@ export function useEventDrag(actions: EventActions, page: string) {
     const chip = press.currentTarget;
     const edge = (press.target as HTMLElement).closest<HTMLElement>("[data-cal-resize]")?.dataset.calResize;
     const resize: DayEdge | undefined = edge === "start" || edge === "end" ? edge : undefined;
-    const timed = resize && segment ? { edge: resize, ...segment } : null;
+    const timedSpan = daySpanOf(face, zone, zones);
+    const timed = resize && timedSpan && !timedSpan.allDay;
+    const timeRange = timed && segment && wallSpanOf(face, zone, zones);
     stop.current = trackDrag(chip, press.nativeEvent, face, resize, {
-      moveTime: (delta) => (timed ? resizeSlot(timed, delta) : actions.moveTime(face, delta, true)),
+      timedSpan,
+      stepWeek: stepWeek && ((direction) => step.current?.(direction)),
+      canResizeTime: (minutes) =>
+        !!resize && canStartTimeChange(face, { kind: "resize-time", edge: resize, minutes }, zone, zones),
+      moveTime: (delta, days) =>
+        timed && segment && timeRange
+          ? resizeTimedRange(timedSpan.first, timeRange, resize, segment, delta, days)
+          : actions.moveTime(face, delta, true),
       preview: (next) =>
         showGhost((was) =>
-          was?.day === next?.day && was?.top === next?.top && was?.height === next?.height ? was : next,
+          was?.day === next?.day && was?.minute === next?.minute && was?.length === next?.length ? was : next,
         ),
       range: showRange,
       done: () => {
@@ -291,7 +285,7 @@ export function useEventDrag(actions: EventActions, page: string) {
       },
       commit: (days, minutes) => {
         const change: EventChange = timed
-          ? { kind: "resize-time", edge: timed.edge, minutes }
+          ? { kind: "resize-time", edge: resize, minutes }
           : resize
             ? { kind: "resize", edge: resize, days }
             : { kind: "time", days, minutes };
@@ -318,18 +312,26 @@ export function useEventDrag(actions: EventActions, page: string) {
       </div>
     )),
     preview: ghost
-      ? {
-          day: ghost.day,
-          chip: (
-            <EventChip
-              size="block"
-              drag="copy"
-              title={ghost.face.title}
-              tone={ghost.face.tone}
-              second={clockOf(ghost.minute)}
-              place={{ top: ghost.top, height: ghost.height }}
-            />
-          ),
+      ? (day: string, hourHeight: number) => {
+          const part = slotOnDay(
+            { day: ghost.day, from: ghost.minute, to: ghost.minute + ghost.length },
+            day,
+          );
+          return (
+            part && (
+              <EventChip
+                size="block"
+                drag="copy"
+                title={ghost.face.title}
+                tone={ghost.face.tone}
+                second={clockOf(part.from)}
+                place={{
+                  top: (part.from * hourHeight) / 60,
+                  height: ((part.to - part.from) * hourHeight) / 60,
+                }}
+              />
+            )
+          );
         }
       : null,
     suppressClick: (event: MouseEvent) => {
@@ -342,25 +344,23 @@ export function useEventDrag(actions: EventActions, page: string) {
 }
 
 function rangePreview(
-  chip: HTMLElement,
+  view: HTMLElement,
   face: CalendarEventFace,
   target: HTMLElement,
   days: { first: string; last: string },
-): RangeGhost | null {
-  const view = chip.closest(".cal-body-view");
-  if (!view) return null;
+  rowOffset: number,
+  height: number,
+): RangeGhost {
   const kind = target.dataset.calDropKind;
   const month = kind === "month";
   const origin = view.getBoundingClientRect();
-  const source = chip.getBoundingClientRect();
-  const sourceWeek = month ? chip.parentElement?.getBoundingClientRect() : null;
-  const rowOffset = source.top - (sourceWeek?.top ?? origin.top);
+  const viewport = (month ? view.querySelector(".oh-mo-weeks") : view)?.getBoundingClientRect() ?? origin;
   const rows = new Map<number, { left: number; right: number }>();
   for (const cell of view.querySelectorAll<HTMLElement>(DROP)) {
     const day = cell.dataset.calDropDay;
     if (!day || day < days.first || day > days.last || cell.dataset.calDropKind !== kind) continue;
     const rect = cell.getBoundingClientRect();
-    if (!rect.width || rect.bottom <= origin.top || rect.top >= origin.bottom) continue;
+    if (!rect.width || rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue;
     const top = month ? (cell.parentElement?.getBoundingClientRect().top ?? rect.top) : origin.top;
     const row = rows.get(top);
     rows.set(top, {
@@ -376,7 +376,7 @@ function rangePreview(
       left: left - origin.left,
       top: top - origin.top + rowOffset,
       width: right - left,
-      height: source.height,
+      height,
     })),
   };
 }

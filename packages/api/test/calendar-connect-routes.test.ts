@@ -566,6 +566,23 @@ describe("the routes that name a connection or a calendar", () => {
     expect((await r.ask("DELETE", `/calendar/connections/${their.id}`, undefined, {}, theirs)).status).toBe(200);
   });
 
+  it("checks the named calendar without moving its neighbour's next poll", async () => {
+    const r = await rig();
+    const connection = await connect(r, caldav("https://dav.studio.example.test/"));
+    const { calendar } = await planted(r, r.s.accountId, connection.id);
+    const future = new Date("2030-01-01T00:00:00Z");
+    await r.db.update(calCalendars).set({ nextPollAt: future }).where(eq(calCalendars.id, calendar));
+    const [other] = await r.db.insert(calCalendars).values({
+      accountId: r.s.accountId, connectionId: connection.id, providerId: "other-calendar", nextPollAt: future,
+    }).returning({ id: calCalendars.id });
+    const checked = await r.ask("POST", `/calendar/connections/${connection.id}/check?calendarId=${calendar}`);
+    expect(checked.status).toBe(202);
+    const rows = await r.db.select({ id: calCalendars.id, next: calCalendars.nextPollAt }).from(calCalendars)
+      .where(eq(calCalendars.connectionId, connection.id));
+    expect(rows.find(({ id }) => id === calendar)?.next).toBeNull();
+    expect(rows.find(({ id }) => id === other!.id)?.next).toEqual(future);
+  });
+
   it("checks a connection once a minute: the first is taken and makes it due, a second inside the minute is refused", async () => {
     const r = await rig();
     const c = await connect(r, caldav("https://dav.studio.example.test/"));
@@ -865,6 +882,22 @@ describe("the routes that name a connection or a calendar", () => {
     expect(await statusOf()).toBeNull();
     expect(await r.db.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, r.s.accountId))).toEqual([]);
     expect(await r.db.select({ id: calEvents.id }).from(calEvents).where(eq(calEvents.accountId, r.s.accountId))).toEqual([]);
+  });
+
+  it("keeps a calendar colour preference across changes to the provider colour", async () => {
+    const r = await rig();
+    const dav = await connect(r, caldav("https://dav.studio.example.test/"));
+    const { calendar } = await planted(r, r.s.accountId, dav.id);
+    await r.db.update(calCalendars).set({ color: "#442299" }).where(eq(calCalendars.id, calendar));
+    const changed = await r.ask("PATCH", `/calendar/calendars/${calendar}`, { color: "#446699" });
+    expect(changed.status).toBe(200);
+    expect(await changed.json()).toMatchObject({ color: "#446699" });
+    await r.db.update(calCalendars).set({ color: "#227744" }).where(eq(calCalendars.id, calendar));
+    const same = await r.ask("PATCH", `/calendar/calendars/${calendar}`, { color: "#446699" });
+    expect(same.headers.get("x-sync-seq")).toBe(null);
+    expect(await same.json()).toMatchObject({ color: "#446699" });
+    const reset = await r.ask("PATCH", `/calendar/calendars/${calendar}`, { color: null });
+    expect(await reset.json()).toMatchObject({ color: "#227744" });
   });
 
   it("sets what is the person's own of a calendar: shown always, a name and a colour on a subscription's calendar only", async () => {

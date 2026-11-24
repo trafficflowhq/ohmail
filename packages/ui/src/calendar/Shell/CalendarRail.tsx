@@ -25,6 +25,7 @@ export interface CalendarRailProps {
     accounts: readonly {
       id?: string;
       name: string;
+      action?: ReactNode;
       calendars: readonly (CalendarRowProps & { id: string })[];
     }[];
   };
@@ -87,8 +88,13 @@ export function CalendarRail({
               role="group"
               aria-labelledby={`${id}-${n}`}
             >
-              <p id={`${id}-${n}`} className="oh-text oh-calrail-caption">
+              <p
+                id={`${id}-${n}`}
+                className="oh-text oh-calrail-caption"
+                data-account-action={account.action ? "" : undefined}
+              >
                 {account.name}
+                {account.action}
               </p>
               {account.calendars.map(({ id: key, ...row }) => (
                 <CalendarRow key={key} quiet {...row} />

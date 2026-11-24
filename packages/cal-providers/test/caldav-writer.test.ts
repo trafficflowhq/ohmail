@@ -1305,6 +1305,64 @@ describe("CalDAV's writer", () => {
     expect(word(await b.writer.remove(b.connection, b.cal, old, never))).toBe("version_stale");
   });
 
+  it.each([false, true])(
+    "moves only the versioned organizerless copy with guests (scheduling advertised: %s)",
+    async (autoSchedule) => {
+      const b = await bench({ autoSchedule });
+      const guestLines = [
+        "ATTENDEE;CN=Guest;PARTSTAT=ACCEPTED:mailto:guest@example.test",
+        "ATTENDEE;ROLE=OPT-PARTICIPANT:mailto:other@example.test",
+      ];
+      const original = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:pottery",
+        "DTSTAMP:20261101T000000Z",
+        "DTSTART:20261118T090000Z",
+        "DTEND:20261118T100000Z",
+        "SUMMARY:Kiln check",
+        ...guestLines,
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+      ].join("\r\n");
+      b.dav.addCalendar("other");
+      b.dav.put("other", "same.ics", original, '"another-copy"');
+      b.dav.put("studio", "same.ics", original, '"reviewed"');
+      const target = {
+        id: b.member("same.ics"),
+        version: '"reviewed"',
+        occurrence: null,
+        text: original,
+        sharedCopy: true as const,
+      };
+      const times = { start: instant(Date.UTC(2026, 10, 18, 10)), end: instant(Date.UTC(2026, 10, 18, 11)) };
+      const reply = await b.writer.change(b.connection, b.cal, target, times, never);
+      expect(word(reply)).toBe("ok");
+      const [put, ...others] = b.writes();
+      expect(others).toEqual([]);
+      expect(put).toMatchObject({ path: b.dav.paths.member("studio", "same.ics") });
+      expect(put?.headers["if-match"]).toBe('"reviewed"');
+      expect(put?.body.split("\r\n").filter((line) => /^(ORGANIZER|ATTENDEE)/.test(line))).toEqual(
+        guestLines,
+      );
+      expect(put?.body).toContain("DTSTART:20261118T100000Z");
+      const read = b.dav.seen.findIndex(
+        ({ method, body }) =>
+          method === "REPORT" && body.includes(put!.path) && body.includes("calendar-multiget"),
+      );
+      expect(read).toBeGreaterThanOrEqual(0);
+      expect(read).toBeLessThan(b.dav.seen.indexOf(put!));
+      const stale = await b.writer.change(b.connection, b.cal, target, times, never);
+      expect(word(stale)).toBe("version_stale");
+      expect(b.writes()).toHaveLength(1);
+      expect(
+        b.dav.seen.some(({ method, body }) => method === "POST" || body.includes("<D:resourcetype/>")),
+      ).toBe(false);
+    },
+  );
+
   it("writes invitees only where the server sends invitations itself", async () => {
     const people = [{ email: "giulia@example.test", name: "Giulia", optional: false }];
     const plain = await bench();
@@ -1652,4 +1710,14 @@ it.each(DRAFT_PROOF_CASES)("round-trips CalDAV RRULE: $name", async ({ draft: ev
   );
   const item = made.ok && made.items[0];
   expect(item && item.kind === "upsert" && item.event.rules[0]?.rule).toEqual(event.rule);
+});
+
+it("sends a multi-day selection with an exclusive DATE end in CalDAV", async () => {
+  const b = await bench();
+  const event = draft({ start: plainDate(2026, 10, 24), end: plainDate(2026, 10, 27) });
+  const made = await b.writer.create(b.connection, b.cal, { key: { hex: KEY }, event }, never);
+  expect(word(made)).toBe("ok");
+  const text = b.writes().find(({ method }) => method === "PUT")?.body;
+  expect(text).toContain("DTSTART;VALUE=DATE:20261024");
+  expect(text).toContain("DTEND;VALUE=DATE:20261027");
 });

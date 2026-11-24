@@ -24,6 +24,7 @@ import {
 import { withCalendarFields, type EventWithWrites } from "@ohmail/client-engine/calendar-acts";
 import type { CalendarEventRecord, CalendarRecord, CalendarWindow } from "@ohmail/wire";
 import type { HeldSpan } from "./port.js";
+import type { GridItem } from "./grid/place.js";
 import { seriesOfRecords } from "./records.js";
 
 export interface SpanQuery {
@@ -50,6 +51,7 @@ export interface ShownOccurrence {
 
 export interface SpanOccurrences {
   readonly shown: readonly ShownOccurrence[];
+  readonly hiddenBusy: readonly GridItem[];
   readonly capped: boolean;
   readonly stoppedBy: readonly ExpansionStop[];
 }
@@ -74,6 +76,27 @@ export function windowOf(query: SpanQuery): { startMs: number; endMs: number } {
   };
 }
 
+/** Explicit Hide belongs to one attendee copy, including its replaced occurrence. */
+export function explicitlyHidden(
+  record: CalendarEventRecord,
+  series: CalendarEventRecord | null | undefined,
+  key: string | null,
+  access: CalendarRecord["access"] | undefined,
+): boolean {
+  if (access !== "owner" || !record.hideAttendee) return false;
+  const hiddenAt = (source: CalendarEventRecord) =>
+    source.hiddenOccurrences?.some((at) => at === "" || at === key) === true;
+  return (
+    hiddenAt(record) ||
+    (!!series &&
+      series.calendarId === record.calendarId &&
+      series.uid === record.uid &&
+      series.hideAttendee === record.hideAttendee &&
+      series.organizer?.address === record.organizer?.address &&
+      hiddenAt(series))
+  );
+}
+
 export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
   const calendars = new Map(input.calendars.filter((c) => c.shown).map((c) => [c.id, c] as const));
   const held = input.events.filter((e) => !e.record.heldBack && calendars.has(e.record.calendarId));
@@ -83,6 +106,7 @@ export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
   const { startMs, endMs } = windowOf(input.query);
   const expansion = expandAll(made.series, { startMs, endMs, viewerZone: input.zone }, input.zones);
   const shown: ShownOccurrence[] = [];
+  const hiddenBusy: GridItem[] = [];
   for (const occurrence of expansion.occurrences) {
     const record = made.recordOf(occurrence.event);
     const writes = record === undefined ? undefined : byRecord.get(record);
@@ -106,6 +130,10 @@ export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
         : occurrence.source === "override" && !record.thisAndFuture
           ? record.recurrenceId
           : recurrenceKeyString(occurrence.key);
+    if (explicitlyHidden(record, series, key, calendar.access)) {
+      if (record.busy) hiddenBusy.push({ id: record.id, start, end: occurrence.end });
+      continue;
+    }
     if (
       (record.status === "cancelled" || record.myAnswer === "declined") &&
       [record, series].some((source) => source?.removedOccurrences?.some((at) => at === "" || at === key))
@@ -138,7 +166,7 @@ export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
       calendar,
     });
   }
-  return { shown, capped: expansion.capped, stoppedBy: expansion.stoppedBy };
+  return { shown, hiddenBusy, capped: expansion.capped, stoppedBy: expansion.stoppedBy };
 }
 
 /** Lay queued edits over the same recurrence keys the provider uses for its confirmed overrides. */

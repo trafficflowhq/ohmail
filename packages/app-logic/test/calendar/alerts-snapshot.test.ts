@@ -58,6 +58,20 @@ const listed = (s: CalendarSnapshot) =>
   s.days.map((d) => [d.date.dom, d.events.map((e) => e.eventId), d.more]);
 
 describe("the phone's snapshot", () => {
+  it("omits the explicitly hidden invitation from both alerts and the widget", () => {
+    const active = invitation("appointment", "20261116", {
+      start: zurich("20261116", "120000"),
+      end: zurich("20261116", "130000"),
+      myAnswer: "accepted",
+      alarms: [{ minutesBefore: 10, method: "notice" }],
+    });
+    expect(snapshotOf([active]).alerts).toHaveLength(1);
+    const hidden = { ...active, hideAttendee: ["guest", "example.test"].join("@"), hiddenOccurrences: [""] };
+    const shown = snapshotOf([hidden]);
+    expect(shown.alerts).toEqual([]);
+    expect(shown.days[0]!.events).toEqual([]);
+  });
+
   it("lays the days and the month out on the reader's clock: a whole day and a clock with no zone stay on their day", () => {
     const records = [
       event("zoned", "20261118"),

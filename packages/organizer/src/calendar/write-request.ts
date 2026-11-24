@@ -10,7 +10,7 @@ import {
   type ProvenRepeats, type ProviderRefusal, type WriteRefusal, type WriteReply, type WriteTarget,
 } from "@ohmail/cal-providers";
 import {
-  CONTINUED_FIELDS, isAttendeeCopy, writeActRefusal, writeRowOf, type CalendarWriteContinuation, type CalendarWritePayload, type CalendarWriteRowFacts,
+  CONTINUED_FIELDS, isAttendeeCopy, sharedCopyNeedsProtection, verifiedOrganizer, writeActRefusal, writeRowOf, type CalendarWriteContinuation, type CalendarWritePayload, type CalendarWriteRowFacts,
   type ContinuedField,
 } from "@trafficflow/db/calendar";
 import { personalSeriesOf, confirmedDeleteAudience } from "@ohmail/cal-providers/series";
@@ -271,7 +271,7 @@ export function writeCallOf(o: {
     if (source === null) return { kind: "refuse", reason: "event_gone" };
     if (from.personalSeries && (!o.place?.startsWith("caldav:") || !personalSeriesOf(source.original))) return { kind: "refuse", reason: "version_stale" };
     // A new series goes out under the series' own organizer. An attendee copy cannot be carried on.
-    if (isAttendeeCopy(source, o.owners, o.access)) return { kind: "refuse", reason: "read_only" };
+    if (isAttendeeCopy(source, o.owners, o.access) || sharedCopyNeedsProtection(source, o.owners, o.access)) return { kind: "refuse", reason: "read_only" };
     const cut = timeOfKey(from.at);
     if (draft.rule === null || cut === null) return { kind: "refuse", reason: "content_refused" };
     if (source.versionTag === null || source.versionTag === "") return { kind: "refuse", reason: "version_unknown" };
@@ -287,6 +287,8 @@ export function writeCallOf(o: {
     };
   }
   if (o.event === null) return { kind: "refuse", reason: "event_gone" };
+  if (act.kind === "calendar_event_update" && o.access === "writer" && o.event.partial)
+    return { kind: "refuse", reason: "read_only" };
   if (seriesEdit && o.firstAttempt && o.event.updatedAt && o.event.updatedAt.getTime() !== Date.parse(act.base))
     return { kind: "refuse", reason: "version_stale" };
   const personal = act.kind === "calendar_event_update" && act.personalSeries;
@@ -364,7 +366,18 @@ export function writeCallOf(o: {
   }
   switch (act.kind) {
     case "calendar_event_update": {
-      let change = changeOf(act.change, o.organizer);
+      const event = o.event;
+      const sharedCopy = sharedCopyNeedsProtection(event, o.owners, o.access);
+      const existingAddress = event.organizer?.trim().toLowerCase();
+      const noGuests = event.deleteGuests?.every(({ address }) => address.trim().toLowerCase() === existingAddress);
+      if (sharedCopy) {
+        if (event.partial || !event.deleteGuests) return { kind: "refuse", reason: "read_only" };
+        const dav = o.place?.startsWith("caldav:") === true;
+        if ((dav && event.original === null && (!noGuests || event.organizer !== null)) || (!dav && !noGuests))
+          return { kind: "refuse", reason: "read_only" };
+        if (event.original !== null && event.versionTag !== o.base) return { kind: "refuse", reason: "version_stale" };
+      }
+      let change = changeOf(act.change, existingAddress && o.owners.has(existingAddress) ? existingAddress : o.organizer);
       if (change === null) return { kind: "refuse", reason: "content_refused" };
       // A whole series' new start, with no repeat named, moves the series' end (UNTIL) with it, from the series as it stands
       // now (behind a write of it that went first, too): its last day stays its last. Where it cannot be moved, nothing leaves.
@@ -379,7 +392,8 @@ export function writeCallOf(o: {
       if (target.occurrence === null && unproven(change.rule === undefined ? stored : change.rule, change.start ?? first)) {
         return { kind: "refuse", reason: "repeat_unsupported" };
       }
-      return { kind: "change", target: act.audience ? { ...target, audience: act.audience } : target, change };
+      return { kind: "change", target: sharedCopy ? { ...target, sharedCopy: true } :
+        act.audience ? { ...target, audience: act.audience } : target, change };
     }
     case "calendar_event_delete":
       // Cloud writers compare the live audience under this same provider version before deleting.
@@ -390,6 +404,8 @@ export function writeCallOf(o: {
       if (o.event.ownInvitee === null || o.event.status === "cancelled") return { kind: "refuse", reason: "content_refused" };
       return { kind: "answer", target: day === null ? target : { ...target, recurringSeries: true }, as: o.event.ownInvitee, reply: REPLY[act.answer] };
     case "calendar_event_move": {
+      if (o.place === "google" && !verifiedOrganizer(o.event.organizer, o.owners))
+        return { kind: "refuse", reason: "read_only" };
       if (o.to === null) return { kind: "refuse", reason: "not_found" };
       const audience = o.base === o.event.versionTag
         ? confirmedDeleteAudience(o.place, { ...o.event, unchangedSeries: o.event.changedDays === 0 },

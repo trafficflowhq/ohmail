@@ -183,12 +183,14 @@ export function CalendarRecordScope({
   anchor,
   question,
   occurrence,
+  record = true,
   onChoose,
   onClose,
 }: {
   anchor: HTMLElement;
   question: string;
   occurrence: boolean;
+  record?: boolean;
   onChoose: (scope: "record" | "occurrence") => void;
   onClose: () => void;
 }) {
@@ -204,7 +206,7 @@ export function CalendarRecordScope({
         ...(occurrence
           ? [{ id: "occurrence", label: t("edit.thisEvent"), onPress: () => onChoose("occurrence") }]
           : []),
-        { id: "record", label: t("edit.allEvents"), onPress: () => onChoose("record") },
+        ...(record ? [{ id: "record", label: t("edit.allEvents"), onPress: () => onChoose("record") }] : []),
       ]}
     />
   );
