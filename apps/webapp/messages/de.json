@@ -1839,6 +1839,7 @@
     "languageAria": "Sprache",
     "languageFailed": "Das ließ sich nicht speichern — versuch es nochmal.",
     "languageName": {
+      "system": "Telefon",
       "en": "English",
       "de": "Deutsch"
     },
@@ -4788,6 +4789,7 @@
     "untilPast": "Das Enddatum war am {date}. Es wird nichts gesendet.",
     "untilExpired": "Wähle ein Datum in der Zukunft, oder schalte die Abwesenheitsantwort aus.",
     "localNote": "Antworten werden gesendet, solange ohmail auf diesem Computer offen ist.",
+    "phoneNote": "Antworten werden gesendet, solange ohmail auf diesem Telefon geöffnet ist.",
     "hostNote": "Antworten werden gesendet, solange ohmail auf {host} geöffnet ist.",
     "save": "Speichern",
     "saving": "Wird gespeichert …",
@@ -5322,6 +5324,7 @@
       "notACode": "Kein ohmail-Code."
     },
     "server": {
+      "cloud": "ohmail Cloud.",
       "say": "Mein Server ist unter <blank></blank>.",
       "label": "Adresse deines Servers",
       "blank": "seine Adresse",
@@ -5348,6 +5351,14 @@
       "scan": "Code scannen"
     },
     "terms": {
+      "folders": "Wo deine Mails liegen",
+      "inbox": "Die Ohbox zeigt Mails von Leuten, zu denen du Ja gesagt hast. Der Verlauf zeigt ältere Mails. Beide sind Ansichten deines Posteingangs.",
+      "folderScreener": "Im Screener warten Mails von Leuten, über die du noch nicht entschieden hast.",
+      "folderNews": "Newsletter und Texte für später.",
+      "folderReceipts": "Belege, Bestellungen und Tickets.",
+      "folderScreened": "Mails, die du aussortiert hast.",
+      "folderQuarantine": "Als Spam markierte Mails.",
+      "folderOther": "Gesendet, Entwürfe, Papierkorb, Junk und deine eigenen Ordner bleiben, wie sie sind.",
       "say": "Auf diesem Handy organisieren.",
       "while": {
         "android": "Es organisiert, solange seine Benachrichtigung angezeigt wird. Wische sie weg, um zu stoppen.",
@@ -5360,6 +5371,13 @@
       "chooseOther": "Anders wählen"
     },
     "form": {
+      "serverSettings": "Servereinstellungen",
+      "hostPorts": "Host und Ports",
+      "passwordHelp": "Passworthilfe",
+      "pickAnother": "Anderen wählen",
+      "later": "Später",
+      "provider": "Meine Post ist bei",
+      "providerChosen": "Meine Post ist bei {provider}.",
       "iAm": "Ich bin <address></address> mit dem Passwort <password></password>.",
       "iAmAppPassword": "Ich bin <address></address> mit dem App-Passwort <password></password>.",
       "seenAs": "Andere sehen mich als <name></name>.",
@@ -5376,6 +5394,7 @@
       "smtpHost": "Ausgangsserver (SMTP)",
       "smtpPort": "SMTP-Port",
       "tls": "Implizites TLS",
+      "tlsPorts": "Wechselt den Posteingang zwischen Port 993 und 143. Port 143 verwendet STARTTLS.",
       "twoStep": "Bestätigung in zwei Schritten an",
       "whereToMake": "Wo du eines erstellst",
       "appOnlyNote": "Manche Arbeits-, Schul- und Advanced-Protection-Konten können keine App-Passwörter erstellen, und die kann ohmail noch nicht verbinden.",
@@ -5492,6 +5511,29 @@
     }
   },
   "phoneSettings": {
+    "legalTitle": "Was mit deiner Mail passiert",
+    "privacy": "Datenschutz",
+    "subprocessors": "Unterauftragsverarbeiter",
+    "imprint": "Impressum",
+    "mailboxCount": "{count, number}",
+
+    "factorBrowser": "Bestätige mit einem Passkey im Browser. Verwende dort dasselbe Konto.",
+    "openBrowser": "Im Browser öffnen",
+    "invitesEmpty": "Keine Einladungen",
+    "noAccount": "Kein Konto",
+    "accountLoading": "Dein Konto wird geladen.",
+    "plan": "Tarif",
+    "status": "Status",
+    "storageEmpty": "Keine Speichernutzung verfügbar",
+    "subscriptionEmpty": "Noch kein Tarif",
+    "companion": {
+      "title": "ohmail öffnen",
+      "line": "Du findest ohmail im App Store dieses Telefons.",
+      "failed": "Dieses Telefon konnte die App nicht öffnen.",
+      "appStore": "App Store öffnen",
+      "playStore": "Google Play öffnen",
+      "cancel": "Abbrechen"
+    },
     "thisPhone": {
       "title": "Dieses Handy",
       "tag": {
@@ -5929,6 +5971,7 @@
     "notDone": "Nicht ausgeführt",
     "notCopied": "Nicht kopiert",
     "cancelled": "Abgebrochen",
+    "thisPhone": "Dieses Telefon",
     "thisOne": "Dieser Browser"
   },
   "accountSubscription": {
@@ -5976,6 +6019,7 @@
     "none": "Keine Einladungen"
   },
   "accountSecurity": {
+    "setupQr": "QR-Code zum Einrichten der Authenticator-App",
     "notRead": "Nicht gelesen",
     "notDone": "Nicht ausgeführt",
     "cancelled": "Abgebrochen",
@@ -5998,6 +6042,8 @@
     "self": "Dein eigener Server",
     "ownComputer": "Dieser Computer",
     "signedIn": "Angemeldet",
+    "thisPhone": "Dieses Telefon",
+    "signOutOnPhone": "Öffnet Server, um die Abmeldung auf diesem Telefon zu bestätigen.",
     "thisBrowser": "Dieser Browser",
     "changeLabel": "Passwort",
     "cancel": "Abbrechen",
@@ -6550,6 +6596,9 @@
     "title": "Einladungen",
     "close": "Schließen",
     "unreadable": "Der Kalender kann auf diesem Gerät nicht gelesen werden.",
+    "position": "{group} · {index} von {count}",
+    "previous": "Die vorherige",
+    "next": "Die nächste",
     "noZone": "Die Einladungen können nicht aufgelistet werden: Dieses Gerät kennt seine Zeitzone nicht.",
     "group": {
       "toAnswer": "Zu beantworten",
@@ -6748,6 +6797,14 @@
       "title": "Kalenderzugänge"
     },
     "view": {
+      "opensIn": "Startansicht",
+      "startsOn": "Woche beginnt am",
+      "weekends": "Wochenenden",
+      "showDeclined": "Abgelehnte Termine zeigen",
+      "deviceSummary": "{view} · {day}",
+      "opens": { "agenda": "Agenda", "day": "Tag", "week": "Woche", "month": "Monat", "year": "Jahr" },
+      "starts": { "0": "Montag", "5": "Samstag", "6": "Sonntag" },
+
       "newEvents": "Neue Termine kommen in",
       "noWritable": "Kein Kalender zum Schreiben",
       "week": "Woche",
@@ -6773,6 +6830,13 @@
     "group": "Kalender",
     "close": "Einstellungen schließen",
     "mail": {
+      "readForEvents": "Nach Terminen lesen",
+      "noMailbox": "Kein Postfach",
+      "phoneOfferNote": "Wähle, aus welchen Postfächern Terminvorschläge auf diesem Telefon erscheinen.",
+      "offered": "Vorgeschlagen",
+      "evidence": { "calendar": "Kalendereinladungen", "data": "Termine in strukturierten E-Mails" },
+      "onCalendar": "Im Kalender",
+
       "title": "Mail und Kalender",
       "fromMail": "Aus Mail",
       "open": "Öffnen"
@@ -7152,6 +7216,12 @@
     "found": "Etwas in einer Mail gefunden",
     "titles": "Titel",
     "showTitles": "Titel in Benachrichtigungen anzeigen",
+    "calendarOn": "An",
+    "calendarOff": "Aus",
+    "calendarOnDevice": "Auf diesem Gerät",
+    "calendarPhoneNoticeKinds": "Dieses Telefon kann Terminerinnerungen anzeigen. Einladungen, Änderungen, Antworten und die Tagesübersicht findest du in der App.",
+    "calendarPhonePrivacy": "Erinnerungen und Widgets zeigen keine Termindetails.",
+    "widgetTitles": "Titel auf Widgets anzeigen",
     "thisDevice": "Dieses Gerät",
     "mail": "Mail",
     "onlyWhileOpen": "Nur wenn ohmail geöffnet ist",
@@ -7178,9 +7248,10 @@
     "where": "Wo das Modell läuft",
     "cloud": "ohmail Cloud",
     "working": "Betriebsbereit",
-    "draftReply": "Antwort entwerfen",
     "draftCost": "{credits, number} Credits pro Entwurf",
+    "draftReply": "Antwort entwerfen",
     "budget": "Verbleibendes KI-Budget",
+    "creditsAmount": "{remaining, number} von {total, number}",
     "creditsLeft": "Noch {remaining, number} von {total, number}",
     "creditsDetail": "{remaining, number} von {total, number} Credits",
     "creditsEmpty": "0 Credits",

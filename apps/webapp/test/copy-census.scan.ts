@@ -426,6 +426,11 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
     readers: { t: "shortcuts" },
     glue: { mounted: "trash" },
   },
+  "packages/app-logic/src/search/live.ts": {
+    readers: { "own.t": "search" },
+    forwardsTo: "packages/app-logic/src/search/facets.ts",
+    glue: { mounted: "search" },
+  },
   "packages/app-logic/src/search/facets.ts": {
     readers: { t: "search" },
     glue: { mounted: "search" },
@@ -645,8 +650,9 @@ function mountedNamespaces(repo: string, mounted: MountedReader): Set<string | n
     return new Set(["news", "receipts"]);
   }
   if (mounted === "search") {
-    source(`${app}/search/Seat.tsx`, 'const t = useText("search");',
-      "(): SearchLiveOwn => ({", "useSearchLive(args, useOwn())");
+    source(`${app}/search/Seat.tsx`, "function useOwn(): SearchLiveOwn {",
+      'const t = useText("search");', "(): SearchLiveOwn => ({ t,",
+      "const own = useOwn();", "useSearchLive(args, own)");
     source(`${logic}/search/live.ts`, "const model = useSearchList({", "t: own.t,");
     source(`${logic}/search/search-list.ts`, "const facets = useFacets({", "useSearchKeys({", "t,");
     return new Set(["search"]);
