@@ -1,6 +1,6 @@
-import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { autoReplyByUsWhere, messages, recordChanges, type Tx } from "@trafficflow/db";
-import { dialect } from "@trafficflow/db/dialect";
+import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { silentLogger, type Logger } from "@trafficflow/core/mail";
 
 /**
@@ -54,14 +54,33 @@ export interface AwayReplyRedeliverResult {
   cursor: string | null;
 }
 
+/** The ordered live messages whose mirrors need the away reply flag. */
+export function awayReplyCandidatesSql(
+  d: Dialect, accountId: string, afterId: string | null,
+) {
+  const account = d.castUuid(accountId);
+  // Filter before sorting. This lets Postgres scan the account without following the primary key.
+  return sql`
+    with matches as materialized (
+      select ${messages.id} from ${messages}
+      where ${messages.accountId} = ${account}
+        and ${messages.deletedAt} is null
+        ${afterId === null ? sql`` : sql`and ${messages.id} > ${d.castUuid(afterId)}`}
+        and ${autoReplyByUsWhere(d, {
+          accountId: account,
+          id: sql`${messages.id}`,
+          fromAddress: sql`${messages.fromAddress}`,
+          messageIdHeader: sql`${messages.messageIdHeader}`,
+        })}
+    )
+    select id from matches order by id`;
+}
+
 /**
  * Re-deliver the flag for one account, once.
  *
- * Each page is its own transaction, so a long walk never holds the account's seq counter — the
- * lock `recordChanges` takes is released per page. The walk carries an ID CURSOR and must: the
- * candidate predicate is the rows' own state and this pass does not change that state, so a page
- * it has emitted for still matches and a re-reading walk would loop on page one for ever. Ordering
- * by `id` with `id > afterId` is what makes it terminate.
+ * Read the candidate IDs once. Each batch is its own transaction so the account's sync sequence
+ * lock is released between writes. The cursor carries unfinished work past the safety bound.
  */
 export async function awayReplyFlagRedeliverPass(
   db: Tx, deps: AwayReplyRedeliverDeps,
@@ -73,57 +92,35 @@ export async function awayReplyFlagRedeliverPass(
     examined: 0, redelivered: 0, exhausted: false, cursor: null,
   };
 
-  let afterId: string | null = deps.afterId ?? null;
-  for (let page = 0; page < maxPages; page++) {
-    const rows = await db.select({ id: messages.id })
-      .from(messages)
-      .where(and(
-        eq(messages.accountId, deps.accountId),
-        // A TOMBSTONED ROW IS NEVER RE-DELIVERED. `materializeMessages` omits it and `/sync`
-        // turns that absence into a tombstone, so an update change for one would ask every
-        // mirror to re-tombstone mail it has already discarded.
-        isNull(messages.deletedAt),
-        autoReplyByUsWhere(dialect(db), {
-          accountId: sql`${messages.accountId}`,
-          id: sql`${messages.id}`,
-          fromAddress: sql`${messages.fromAddress}`,
-          messageIdHeader: sql`${messages.messageIdHeader}`,
-        }),
-        ...(afterId === null ? [] : [gt(messages.id, sql`${afterId}::uuid`)]),
-      ))
-      .orderBy(asc(messages.id))
-      .limit(batch);
-
-    // `break`, never `return`: an early return here would skip the log line below, and a
-    // pass that ran silently is indistinguishable from one that never did.
-    if (rows.length === 0) { result.exhausted = true; break; }
-    result.examined += rows.length;
+  const d = dialect(db);
+  const rows = maxPages > 0
+    ? await d.exec(db, awayReplyCandidatesSql(d, deps.accountId, deps.afterId ?? null))
+    : [];
+  const limit = maxPages * batch;
+  for (let offset = 0; offset < rows.length && offset < limit; offset += batch) {
+    const ids = rows.slice(offset, offset + batch).map(([id]) => String(id));
+    result.examined += ids.length;
 
     // ONE TRANSACTION PER PAGE, `db.transaction` directly — the sibling passes' shape. The type
     // matters and is not ceremony: `recordChanges` takes a `LedgerTx`, which makes
     // `recordChanges(db, …)` uncompilable, because the seq allocation and the rows must commit
     // together. The account's `account_sync_state` lock is held for this page and no longer.
     await db.transaction(async (tx) => {
-      await recordChanges(tx, rows.map((r) => ({
+      await recordChanges(tx, ids.map((id) => ({
         accountId: deps.accountId,
         entityType: "message" as const,
-        entityId: r.id,
+        entityId: id,
         op: "update" as const,
         // NO meta. `change_log.meta` is the folder-move shape two passes read as one
         // (`meta ->> 'to' = 'INBOX'`); this row is a re-read instruction and carries no move.
         meta: null,
       })));
     });
-    result.redelivered += rows.length;
-    afterId = rows[rows.length - 1]!.id;
-
-    // A SHORT PAGE IS THE END OF THE SET — `limit batch` returned fewer than it could, so there is
-    // nothing after it. This is the ordinary exit.
-    if (rows.length < batch) { result.exhausted = true; break; }
-    // Falling out of the loop instead means the safety bound was reached: not exhausted, and the
-    // cursor goes back to the caller so the next attempt continues from here.
-    if (page === maxPages - 1) result.cursor = afterId;
+    result.redelivered += ids.length;
+    result.cursor = ids[ids.length - 1]!;
   }
+  result.exhausted = rows.length < limit;
+  if (result.exhausted) result.cursor = null;
 
   if (result.redelivered > 0 || !result.exhausted) {
     /**

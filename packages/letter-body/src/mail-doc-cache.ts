@@ -43,6 +43,8 @@ export interface MailDocInputs {
   forward: boolean;
   /** A marked link asks in a tab of its own, so it carries no `href` (`link-ask.ts`). */
   askInPage: boolean;
+  reader?: boolean;
+  settledCids?: ReadonlySet<string>;
   /**
    * The frame's width: not in the key, because most letters read alike at every width. An entry holds the
    * width it was resolved at and the widths its sheets compared against; it serves a width in the same band.
@@ -116,6 +118,8 @@ function keyOf(i: CacheInputs): string {
     i.darkWanted ? "d" : "-",
     i.forward ? "f" : "-",
     i.askInPage ? "a" : "-",
+    i.reader ? "r" : "-",
+    serialOf(i.settledCids),
   ].join("\u0000");
 }
 

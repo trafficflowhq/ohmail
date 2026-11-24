@@ -11,10 +11,15 @@
  * Nothing leaves the page: the engine is the fake one.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { ListHead } from "@ohmail/ui/mail";
-import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
+import {
+  ListMeetingContext,
+  PresentedMirrorContext,
+  useReaderVisit,
+  type ListMeeting,
+} from "@ohmail/app-logic/reading";
 import { Frame } from "../../src/frame/Frame.js";
 import { useFrame, useRailModel } from "../../src/frame/commands.js";
 import type { CalendarEntry, PlaceEntry, RailModel } from "../../src/frame/contract.js";
@@ -34,6 +39,14 @@ import doorsEn from "../../messages/doors.en.json" with { type: "json" };
 
 const q = new URLSearchParams(location.search);
 const switchProducts = q.has("switch");
+const latePictures = q.has("latePictures");
+const embeddedPicture = q.has("embeddedPicture");
+const lateBody = q.has("lateBody");
+const newsletter = q.has("newsletter");
+const lateNewsletter = newsletter && lateBody;
+const readerEdges = q.has("readerEdges");
+const waitsForOpen =
+  switchProducts || latePictures || embeddedPicture || lateBody || newsletter || readerEdges;
 const device = (q.get("device") ?? "desktop") as "desktop" | "phone";
 const room = ROOMS[device] ?? ROOMS.desktop;
 const size = { width: window.innerWidth || room.width, height: window.innerHeight || room.height };
@@ -56,9 +69,83 @@ const letters: EngineMessage[] = Array.from({ length: n }, (_, i) => {
     ...m,
     threadId: "T",
     unread: i === firstUnread || (i > firstUnread && i % 3 === 0),
+    ...(latePictures && (i === 0 || i === n - 1) && { body: undefined }),
+    ...(embeddedPicture && i === n - 2 && { body: undefined }),
+    ...(readerEdges && i === 3 && { body: undefined }),
+    ...((lateBody || newsletter || readerEdges) && i === n - 1 && { body: undefined }),
+    ...((latePictures || readerEdges) && i === n - 1 && { hasAttachments: true, attachmentCount: 1 }),
   } as EngineMessage;
 });
-const mail = fakeMail(letters, [], {});
+const newestId = `w${n - 1}`;
+function framedLetter(content: string, loadedRemoteContent = true) {
+  const text = "Here is the project update.";
+  return {
+    state: "ready",
+    text,
+    html: `<table cellspacing="0" cellpadding="0"><tr><td><table cellspacing="0" cellpadding="0"><tr><td><p>${text}</p>${content}</td></tr></table></td></tr></table>`,
+    loadedRemoteContent,
+  };
+}
+function picturedLetter(name: string, extra = "") {
+  return framedLetter(
+    `<img src="https://pictures.example/${name}.png" alt="Project photo" width="360">${extra}`,
+  );
+}
+const newsletterBody = picturedLetter("below", `<p>${LINES}</p>`.repeat(40));
+const embeddedId = `w${n - 2}`;
+const mail = fakeMail(letters, [], {
+  ...(latePictures && {
+    w0: picturedLetter(
+      "above",
+      '<img src="https://pictures.example/sized.png" alt="Project sketch" width="360" height="280">',
+    ),
+    [`w${n - 1}`]: q.has("short") ? picturedLetter("below") : newsletterBody,
+  }),
+  ...(newsletter && !lateNewsletter && { [newestId]: newsletterBody }),
+  ...(readerEdges && {
+    w3: framedLetter('<img src="cid:missing" alt="Unavailable logo" width="150">', false),
+    [newestId]: {
+      state: "ready",
+      text: "Here is the project update.",
+      html: '<table cellspacing="0" cellpadding="0"><tr><td><table cellspacing="0" cellpadding="0"><tr><td><p>Here is the project update.</p><img src="https://pictures.example/icon.png" alt="Project icon" width="24"><img src="https://pictures.example/sized-icon.png" alt="Sized icon" width="24" height="48" style="height:auto"></td></tr></table></td></tr></table>',
+    },
+  }),
+  ...(embeddedPicture && {
+    [embeddedId]: {
+      state: "ready",
+      text: "Here is the project sketch.",
+      html: '<p>Here is the project sketch.</p><p><img src="cid:sketch" alt="Inline sketch" width="90" height="70"></p><p><img src="cid:logo" alt="Inline logo" width="360"><img src="cid:missing" alt="Missing part"></p>',
+    },
+  }),
+});
+if (latePictures) {
+  Object.assign(window, {
+    deliverEarlierBody: () => mail.patch("w1", { body: `Earlier details\n\n${LINES.repeat(12)}` }),
+  });
+}
+if (lateBody) {
+  Object.assign(window, {
+    deliverLatestBody: () => {
+      if (lateNewsletter) mail.putBody(newestId, newsletterBody);
+      else mail.patch(newestId, { body: `${LINES}\n\n`.repeat(40) });
+    },
+  });
+}
+let pictureConsent = false;
+let embeddedImages = new Map<string, string>();
+const embeddedBytes = Promise.withResolvers<void>();
+if (embeddedPicture) {
+  Object.assign(window, {
+    deliverEmbeddedImages: (sketch: string, logo: string) => {
+      embeddedImages = new Map([
+        ["sketch", sketch],
+        ["logo", logo],
+      ]);
+      mail.patch(embeddedId, {});
+      embeddedBytes.resolve();
+    },
+  });
+}
 (window as unknown as { addEarlier: () => void }).addEarlier = () => {
   mail.add({
     ...letters[0]!,
@@ -70,13 +157,28 @@ const mail = fakeMail(letters, [], {});
 
 const files: ReaderFiles = {
   hold: () => () => undefined,
-  itemsOf: () => ({ state: "ready", items: [] }),
+  itemsOf: (id) => ({
+    state: "ready",
+    items:
+      (latePictures || readerEdges) && id === newestId
+        ? [
+            {
+              id: "plan",
+              filename: "Project plan.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 2048,
+              state: "idle",
+              inline: false,
+            },
+          ]
+        : [],
+  }),
   open: () => undefined,
   ensure: () => undefined,
   downloadAll: () => undefined,
   downloadingAll: () => false,
-  cidImagesOf: () => new Map(),
-  needCidImages: () => undefined,
+  cidImagesOf: (id) => (id === embeddedId ? embeddedImages : new Map()),
+  needCidImages: (id) => (id === embeddedId ? embeddedBytes.promise : undefined),
 };
 
 const words: Messages = fillOver(
@@ -115,7 +217,7 @@ function List() {
   return (
     <div className="st-pane">
       <ListHead title="Reading" />
-      {switchProducts && <button onClick={() => commands.open(`w${openAt}`)}>Q3 plan</button>}
+      {waitsForOpen && <button onClick={() => commands.open(`w${openAt}`)}>Q3 plan</button>}
     </div>
   );
 }
@@ -123,11 +225,27 @@ function List() {
 const readerParts = readerEntry({
   body: letterBody,
   files,
-  pictures: "none",
+  pictures:
+    latePictures || readerEdges || newsletter
+      ? {
+          proxyFor: () => (url) => `${location.origin}/img?name=${new URL(url).pathname.slice(1)}`,
+          consented: () => pictureConsent,
+          consent: () => {
+            pictureConsent = true;
+            mail.patch(newestId, {});
+          },
+          auto: latePictures || newsletter,
+          loadPixels: false,
+          resolvedFor: () => new Map(),
+          needRemote: () => undefined,
+        }
+      : "none",
   look: () => undefined,
   sentCopy: "none",
   reply: "none",
-  invitation: "none",
+  invitation: readerEdges
+    ? ({ messageId }) => (messageId === newestId ? <div>Project invitation</div> : null)
+    : "none",
 });
 // Test the column control under touch without changing the foldable's normal placement.
 const reader: ReaderEntry = q.has("column")
@@ -181,14 +299,35 @@ const { host } = fakeHost({
     posture: "flat",
     reducedMotion: q.get("motion") !== "full",
   }),
-  address: fakeAddress(switchProducts ? "#/ohbox" : `#/ohbox/${q.has("whole") ? "t" : "m"}/w${openAt}`),
+  address: fakeAddress(waitsForOpen ? "#/ohbox" : `#/ohbox/${q.has("whole") ? "t" : "m"}/w${openAt}`),
   appearance: fakeAppearance(look),
 });
+
+const noop = () => undefined;
+const disabledStep = { disabled: true, run: noop, label: "" };
+function FixtureVisit({ children }: { children: ReactNode }) {
+  const { wiring } = useReaderVisit({ shown: readerEdges ? letters.at(-1)! : null, markSeen: noop });
+  if (wiring === null) return children;
+  const meeting: ListMeeting = {
+    blank: null,
+    visit: {
+      openId: newestId,
+      unread: false,
+      wiring: { ...wiring, look: "tint" },
+      readSet: [],
+      act: noop,
+      step: { up: disabledStep, down: disabledStep },
+    },
+  };
+  return <ListMeetingContext.Provider value={meeting}>{children}</ListMeetingContext.Provider>;
+}
 
 createRoot(document.getElementById("root")!).render(
   <TextProvider locale="en" messages={words} timeZone="Europe/Zurich">
     <PresentedMirrorContext.Provider value={mail.engine.read()}>
-      <Frame host={host} />
+      <FixtureVisit>
+        <Frame host={host} />
+      </FixtureVisit>
     </PresentedMirrorContext.Provider>
   </TextProvider>,
 );

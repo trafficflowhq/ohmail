@@ -199,11 +199,13 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
       read += 1;
       dropped += r.dropped;
       deps.memory.failures.delete(`calendar:${cal.id}`);
+      deps.memory.failures.delete(`host:${cal.id}`);
       continue;
     }
     if (actsOnConnection(r.word, w)) {
       if (w === "ics" && r.word === "ended") await holdCalendar(db, key, cal, "ended", new Date(deps.clock.now() + WAIT_DAY_MS));
-      return settleConnection(deps, db, key, signIn, r.word, r.retryAfterMs);
+      const retryHost = w === "caldav" && r.word === "host_changed" && r.continuing === true;
+      return settleConnection(deps, db, key, signIn, r.word, r.retryAfterMs, retryHost ? cal.id : null);
     }
     if (await settleCalendar(deps, db, key, cal, r.word, r.retryAfterMs) === "gone") return { kind: "gone" };
   }
@@ -244,6 +246,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
  */
 async function settleConnection(
   deps: CalendarSyncDeps, db: ConnectionDb, key: ConnectionKey, signIn: PassSignIn | null, reason: string, retryAfterMs: number | null,
+  retryHostFor: string | null = null,
 ): Promise<CalendarSyncOutcome> {
   const fault = faultWord(reason);
   const fromTrade = signIn?.tradeRefusal()?.reason === fault;
@@ -263,11 +266,13 @@ async function settleConnection(
       await setConnectionState(tx, key, held, { status: held.status, errorCode: fault, synced: false });
       return { kind: "off", why: "provider_off" };
     }
-    const failures = act === "retry" ? failed(deps, key.id) : FAILING_FROM;
-    const until = now + waitFor(fault, failures, retryAfterMs);
+    // A first page can succeed every time a refused continuation starts over.
+    const retryHost = retryHostFor !== null;
+    const failures = retryHost ? failed(deps, `host:${retryHostFor}`) : act === "retry" ? failed(deps, key.id) : FAILING_FROM;
+    const until = now + (retryHost && failures < FAILING_FROM ? doublingWait(failures) : waitFor(fault, failures, retryAfterMs));
     await holdConnectionUntil(tx, key, new Date(until));
     await setConnectionState(tx, key, held, {
-      status: act === "connection_day" || failures >= FAILING_FROM ? "failing" : held.status, errorCode: fault, synced: false,
+      status: failures >= FAILING_FROM ? "failing" : held.status, errorCode: fault, synced: false,
     });
     return { kind: "backed_off", word: fault, untilMs: until };
   }, { lock: "no key update" });

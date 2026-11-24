@@ -30,12 +30,11 @@ function useObservedCalendarSettings(
   port: CalendarPort | null,
   setup: CalendarSetupPort | "none",
 ): SettingsRead {
-  const version = useSyncExternalStore(
-    port?.subscribe ?? still,
-    port?.version ?? zero,
-    port?.version ?? zero,
-  );
   const [reading, setReading] = useState<SettingsSnapshot | null>(null);
+  const settingsVersion = port?.settingsVersion ?? port?.version ?? zero;
+  const readVersion = reading?.port === port ? settingsVersion : (port?.version ?? zero);
+  const version = useSyncExternalStore(port?.subscribe ?? still, readVersion, readVersion);
+  const lastRead = useRef<{ port: CalendarPort; version: number } | null>(null);
   const snapshot = useRef<SettingsSnapshot | null>(null);
   const publish = useCallback((next: SettingsSnapshot) => {
     snapshot.current = next;
@@ -53,19 +52,28 @@ function useObservedCalendarSettings(
   }, [port, door]);
 
   useEffect(() => {
-    if (port === null) return;
+    if (port === null) {
+      lastRead.current = null;
+      return;
+    }
+    const settingsStamp = settingsVersion();
+    if (lastRead.current?.port === port && lastRead.current.version === settingsStamp) return;
+    lastRead.current = null;
     const started = ++revision.current;
     let live = true;
     port.settings().then(
       (said) => {
-        if (live && started === revision.current && latest.current?.port === port) publish({ port, said });
+        if (live && started === revision.current && latest.current?.port === port) {
+          lastRead.current = { port, version: settingsStamp };
+          publish({ port, said });
+        }
       },
       () => undefined,
     );
     return () => {
       live = false;
     };
-  }, [port, publish, version]);
+  }, [port, publish, settingsVersion, version]);
 
   const save = useCallback(
     async (change: SettingsChange) => {

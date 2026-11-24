@@ -1,4 +1,8 @@
 import { createHmac, randomBytes } from "node:crypto";
+import type { IncomingMessage } from "node:http";
+import { makeTrustedProxies, toWebRequest } from "@trafficflow/core/adapters/http-host";
+import { clientIp } from "../../../packages/api/src/context";
+import { addressUnitOf, ipClassOf, networkVerdict } from "../../../packages/services/src/auth/ip-class";
 import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +15,72 @@ afterEach(() => {
 const proofHeader = "x-ohmail-client-ip";
 
 describe("forwarding the browser's client address to the API", () => {
+  it("passes the signed address on the external rewrite to the API and the approval check", async () => {
+    vi.resetModules();
+    const secret = randomBytes(32).toString("hex");
+    const origin = "http://localhost:3002";
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("TF_API_ORIGIN", origin);
+    vi.stubEnv("TF_WEB_CLIENT_IP_SECRET", secret);
+    const { middleware } = await import("../middleware");
+    const now = 1_800_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    const client = "2001:db8::7";
+    const egress = "198.51.100.5";
+    const peer = "192.0.2.5";
+    const proxies = makeTrustedProxies([peer], { lookup: async () => [] });
+    const trust = { proxies, peerTrusted: await proxies.trustsPeer(peer) };
+    const apiPath = "/auth/desktop-approval/request?check=1";
+    const browser = new NextRequest("https://web.example.test/api" + apiPath, {
+      headers: {
+        host: "web.example.test",
+        connection: "keep-alive, x-proxy-hop",
+        "keep-alive": "timeout=5",
+        "x-proxy-hop": "fixture",
+        "x-vercel-forwarded-for": client,
+        [proofHeader]: "unverified",
+      },
+    });
+    const response = await middleware(browser);
+    const destination = response.headers.get("x-middleware-rewrite");
+    // A separate external config rewrite has no explicit request override on its destination.
+    const outboundProof = destination
+      ? response.headers.get("x-middleware-request-" + proofHeader)
+      : browser.headers.get(proofHeader);
+    const throughRailway = (directAddress: string, proof: string | null): string => clientIp(toWebRequest({
+      method: "GET",
+      url: apiPath,
+      headers: { host: "api.example.test" },
+      rawHeaders: ["Host", "api.example.test", "x-real-ip", directAddress, ...(proof ? [proofHeader, proof] : [])],
+      socket: { remoteAddress: peer },
+    } as IncomingMessage, { bodyMaxBytes: 1024, onTooLarge: () => {}, trust, clientIpHeader: "x-real-ip", clientIpSecret: secret }));
+
+    const fromBrowser = throughRailway(egress, outboundProof);
+    expect(fromBrowser === client).toBe(true);
+    expect(destination === origin + apiPath).toBe(true);
+    expect(new URL(destination!).host).toBe(new URL(origin).host);
+    const overrides = response.headers.get("x-middleware-override-headers")?.split(",");
+    for (const name of ["host", "connection", "keep-alive", "x-proxy-hop"]) {
+      expect(overrides).not.toContain(name);
+      expect(response.headers.has(`x-middleware-request-${name}`)).toBe(false);
+    }
+    expect(response.headers.has(proofHeader)).toBe(false);
+    const fromDesktop = throughRailway(client, null);
+    expect(fromDesktop === client).toBe(true);
+    const keyOf = (unit: string) => createHmac("sha256", secret).update(unit).digest("hex");
+    const asked = ipClassOf(fromDesktop);
+    const storedKey = keyOf(addressUnitOf(fromDesktop));
+    expect(networkVerdict(asked, storedKey, fromBrowser, keyOf)).toBe("same");
+
+    const forged = outboundProof?.replace(client, egress) ?? null;
+    expect(throughRailway(client, forged) === client).toBe(true);
+    const fromOtherNetwork = throughRailway(egress, null);
+    expect(networkVerdict(asked, storedKey, fromOtherNetwork, keyOf)).toBe("different");
+    clock.mockReturnValue(now + 61_000);
+    const stale = throughRailway(egress, outboundProof);
+    expect(stale === egress).toBe(true);
+  });
+
   it("authenticates the platform address in the upstream request headers", async () => {
     vi.resetModules();
     const secret = randomBytes(32).toString("hex");
@@ -36,14 +106,26 @@ describe("forwarding the browser's client address to the API", () => {
     const api = await answer("/api/auth/register", true);
     expect(headerSent(api) === expected).toBe(true);
     expect(api.headers.has(proofHeader)).toBe(false);
-    expect(headerSent(await answer("/ApI/auth/register", true)) === expected).toBe(true);
-    expect(headerSent(await answer("/%61pi/hello", true, "GET")) === expected).toBe(true);
+    const mixed = await answer("/ApI/auth/register", true);
+    expect(headerSent(mixed) === expected).toBe(true);
+    expect(mixed.headers.get("x-middleware-rewrite") === "http://localhost:3002/auth/register").toBe(true);
+    const encoded = await answer("/%61pi/hello", true, "GET");
+    expect(headerSent(encoded) === expected).toBe(true);
+    expect(encoded.headers.get("x-middleware-rewrite") === "http://localhost:3002/hello").toBe(true);
+    const escaped = await answer("/api/messages/a%2Fb?search=%23", true, "GET");
+    expect(escaped.headers.get("x-middleware-rewrite") === "http://localhost:3002/messages/a%2Fb?search=%23").toBe(true);
     expect(headerSent(await answer("/%61pi/waitlist", true, "GET"))).toBeNull();
-    expect(headerSent(await answer("/api/auth/register", false))).toBeNull();
-    expect(headerSent(await answer("/api/waitlist", true))).toBeNull();
+    const missing = await answer("/api/auth/register", false);
+    expect(headerSent(missing)).toBeNull();
+    expect(missing.headers.has("x-middleware-rewrite")).toBe(false);
+    const waitlist = await answer("/api/waitlist", true);
+    expect(headerSent(waitlist)).toBeNull();
+    expect(waitlist.headers.has("x-middleware-rewrite")).toBe(false);
 
     vi.stubEnv("VERCEL", undefined);
-    expect(headerSent(await answer("/api/auth/register", true))).toBeNull();
+    const outsideVercel = await answer("/api/auth/register", true);
+    expect(headerSent(outsideVercel)).toBeNull();
+    expect(outsideVercel.headers.has("x-middleware-rewrite")).toBe(false);
   });
 
   it("matches API paths in any case", async () => {

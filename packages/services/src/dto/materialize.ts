@@ -495,18 +495,29 @@ async function materializeRows(
    * "include"`) carries them too, so `MessageService.delete`'s echo cannot disagree with the row
    * the client already holds. One store answers a boolean and the other 0/1, normalised below.
    */
-  const earlierInvitation = (column: SQL) => sql`
+  // Order invitation metadata first. The outer limit stops probing letter rows as soon as
+  // it finds a live revision. Without the subquery boundary, every older letter is read.
+  type PreviousInvitation = { start: string | null; startsAt: string | number | null };
+  const previousInvitation = sql<PreviousInvitation | string | null>`
     case when ${messageInvitations.hostedDetails} is null
       and ${messageInvitations.method} = 'REQUEST' and ${messageInvitations.sequence} > 0 then (
-      select ${column} from ${messageInvitations} earlier
-      join ${messages} letter on letter.id = earlier.message_id and letter.account_id = earlier.account_id
-      where earlier.account_id = ${messageInvitations.accountId}
-        and earlier.mailbox_id = ${messageInvitations.mailboxId}
-        and earlier.uid = ${messageInvitations.uid} and earlier.recurrence_id = ${messageInvitations.recurrenceId}
-        and lower(earlier.organizer) = lower(${messageInvitations.organizer})
-        and earlier.method = 'REQUEST' and earlier.sequence < ${messageInvitations.sequence}
-        and letter.deleted_at is null
-      order by earlier.sequence desc, earlier.stamped_at desc, earlier.message_id
+      select ${d.jsonObject({ start: sql`prior.start_raw`, startsAt: sql`prior.starts_at` })}
+      from (
+        select earlier.message_id, earlier.start_raw, earlier.starts_at, earlier.sequence, earlier.stamped_at
+        from ${messageInvitations} earlier
+        where earlier.account_id = ${d.castUuid(accountId)}
+          and earlier.mailbox_id = ${messageInvitations.mailboxId}
+          and earlier.uid = ${messageInvitations.uid} and earlier.recurrence_id = ${messageInvitations.recurrenceId}
+          and lower(earlier.organizer) = lower(${messageInvitations.organizer})
+          and earlier.method = 'REQUEST' and earlier.sequence < ${messageInvitations.sequence}
+        order by earlier.sequence desc, earlier.stamped_at desc, earlier.message_id
+        ${d.name === "pg" ? sql`offset 0` : sql`limit -1 offset 0`}
+      ) prior
+      where case when exists (
+        select 1 from ${messages} letter
+        where letter.account_id = ${d.castUuid(accountId)} and letter.id = prior.message_id and letter.deleted_at is null
+      ) then true else false end
+      order by prior.sequence desc, prior.stamped_at desc, prior.message_id
       limit 1
     ) end`;
   const fields = {
@@ -514,12 +525,11 @@ async function materializeRows(
     fs: prefixed(folderState, "fs"),
     st: prefixed(messageStates, "st"),
     inv: prefixed(messageInvitations, "inv"),
-    previousStart: earlierInvitation(sql`earlier.start_raw`).as("inv_previous_start"),
-    previousAt: earlierInvitation(sql`earlier.starts_at`).mapWith(messageInvitations.startsAt).as("inv_previous_at"),
+    previousInvitation: previousInvitation.as("inv_previous"),
     tagId: sql<string | null>`${messageTags.tagId}`.as("mt_tag_id"),
     awaySentAt: sql`${awayReplies.sentAt}`.mapWith(awayReplies.sentAt).as("ar_sent_at"),
     autoReply: sql<unknown>`case when ${autoReplyByUsWhere(d, {
-      accountId: sql`${messages.accountId}`,
+      accountId: d.castUuid(accountId),
       id: sql`${messages.id}`,
       fromAddress: sql`${messages.fromAddress}`,
       messageIdHeader: sql`${messages.messageIdHeader}`,
@@ -536,7 +546,7 @@ async function materializeRows(
   type Row = {
     m: typeof messages.$inferSelect; fs: typeof folderState.$inferSelect;
     st: typeof messageStates.$inferSelect; inv: typeof messageInvitations.$inferSelect; tagId: string | null;
-    previousStart: string | null; previousAt: Date | null;
+    previousInvitation: PreviousInvitation | string | null;
     awaySentAt: Date | null; autoReply: unknown; invitation: unknown; itipReply: unknown; listAddress: unknown;
   } & Record<string, unknown>;
   // Dynamic: the page join is present only for a joined page. Every join is 1:1 but the tags.
@@ -577,8 +587,15 @@ async function materializeRows(
   const out: MaterializedRow[] = [];
   for (const { row: r, tags: labels } of byId.values()) {
     const invitation = r.inv?.messageId == null ? undefined : invitationFieldOf(r.inv);
-    if (invitation && (r.previousStart != null || r.previousAt != null))
-      invitation.previous = { start: r.previousStart, startsAt: iso(r.previousAt) };
+    // SQLite returns the object as text and stores the instant in milliseconds.
+    const previous = typeof r.previousInvitation === "string"
+      ? JSON.parse(r.previousInvitation) as PreviousInvitation : r.previousInvitation;
+    if (invitation && previous !== null && (previous.start !== null || previous.startsAt !== null)) {
+      invitation.previous = {
+        start: previous.start,
+        startsAt: previous.startsAt === null ? null : new Date(previous.startsAt).toISOString(),
+      };
+    }
     out.push({
       dto: messageRowToDTO(
         // A side row the left join did not find comes back as columns that are all null.

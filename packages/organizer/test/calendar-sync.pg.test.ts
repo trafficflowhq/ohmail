@@ -20,6 +20,7 @@ import {
   CalendarTurnOverdue, calendarPool, inConnection, newCalendarSyncMemory, occurrenceKey, parkConnection, passDb, rowsOfObject,
   type CalendarSyncOutcome,
 } from "../src/calendar/index.js";
+import { RETRY_FLOOR_MS, WAIT_DAY_MS } from "../src/calendar/words.js";
 import {
   AVAILABLE, ZONES, calendarsOf, capturedLog, changesOf, childrenOf, connectionOf, depsFor, eventOf, eventsOf, openWorld, providersOf, scriptedReader,
   seedConnection, silentHttp, single, upsert, type ScriptedPage, type World,
@@ -1194,6 +1195,83 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect(await names.turns()).toEqual([false]);
     expect(await names.calendar()).toMatchObject({ errorCode: "too_large", syncToken: null });
   }, 120_000);
+
+  it.each([false, true])("uses the appropriate wait when CalDAV refuses a host (continuation: %s)", async (continuation) => {
+    const refusal = { refuse: { ok: false as const, reason: "host_changed" as const, retryAfterMs: null } };
+    const seeded = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
+    const first = { items: [upsert("first.ics", "v1", single("first", 1))] };
+    const reader = scriptedReader("caldav", { readings: new Map([["", continuation ? [first, refusal] : [refusal]]]) });
+    const now = Date.now();
+    const deps = depsFor(w, providersOf({ caldav: { reader, http: silentHttp() } }), { clock: { now: () => now }, turn: { pages: 1, ms: 30_000 } });
+    if (continuation) expect(await calendarSyncPass(deps, seeded.due, never)).toMatchObject({ kind: "synced", pages: 1, more: true });
+    const untilMs = now + (continuation ? RETRY_FLOOR_MS : WAIT_DAY_MS);
+    expect(await calendarSyncPass(deps, seeded.due, never)).toEqual({ kind: "backed_off", word: "host_changed", untilMs });
+    expect(await connectionOf(w, seeded.accountId, seeded.connectionId)).toMatchObject({ errorCode: "host_changed", nextPollAt: new Date(untilMs) });
+  }, 60_000);
+
+  it("backs off for a day after three CalDAV continuation refusals and retries sooner after a completed reading", async () => {
+    const refusal = { refuse: { ok: false as const, reason: "host_changed" as const, retryAfterMs: null } };
+    const first = { items: [upsert("first.ics", "v1", single("first", 1))] };
+    const readings = new Map<string, readonly (ScriptedPage | typeof refusal)[]>([["", [first, refusal]]]);
+    const seeded = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
+    const reader = scriptedReader("caldav", { readings, endToken: () => null });
+    const now = Date.now();
+    const deps = depsFor(w, providersOf({ caldav: { reader, http: silentHttp() } }), { clock: { now: () => now }, turn: { pages: 1, ms: 30_000 } });
+    const turn = () => calendarSyncPass(deps, seeded.due, never);
+    const refusalAfterFirstPage = async () => {
+      await makeDue(seeded.accountId);
+      expect(await turn()).toMatchObject({ kind: "synced", pages: 1, more: true });
+      const outcome = await turn();
+      expect(outcome).toMatchObject({ kind: "backed_off", word: "host_changed" });
+      return (await connectionOf(w, seeded.accountId, seeded.connectionId)).nextPollAt!.getTime() - now;
+    };
+
+    const waits = [await refusalAfterFirstPage(), await refusalAfterFirstPage(), await refusalAfterFirstPage()];
+    expect(waits).toEqual([RETRY_FLOOR_MS, 2 * RETRY_FLOOR_MS, WAIT_DAY_MS]);
+    expect(reader.calls.map(({ cursor }) => cursor)).toEqual([null, "1", null, "1", null, "1"]);
+    expect(await connectionOf(w, seeded.accountId, seeded.connectionId)).toMatchObject({ status: "failing", errorCode: "host_changed" });
+
+    readings.set("", [first]);
+    await makeDue(seeded.accountId);
+    expect(await turn()).toMatchObject({ kind: "synced", pages: 1, more: false });
+    readings.set("", [first, refusal]);
+    expect(await refusalAfterFirstPage()).toBe(RETRY_FLOOR_MS);
+  }, 60_000);
+
+  it("keeps a CalDAV continuation's backoff when another calendar finishes reading", async () => {
+    const refusal = { refuse: { ok: false as const, reason: "host_changed" as const, retryAfterMs: null } };
+    const first = { items: [upsert("first.ics", "v1", single("first", 1))] };
+    const seeded = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
+    const affected = { id: "family", name: "Family", color: null, writable: true, byToken: true, zone: null };
+    const other = { ...affected, id: "personal", name: "Personal" };
+    const readings = new Map<string, readonly (ScriptedPage | typeof refusal)[]>([["", [first]]]);
+    const reader = scriptedReader("caldav", {
+      calendars: [affected, other], readings, endToken: () => null,
+    });
+    const personal = scriptedReader("caldav", { readings: new Map([["", [{ items: [] }]]]), endToken: () => null });
+    const read = reader.readChanges;
+    reader.readChanges = (c, cal, since, page) => cal.id === other.id
+      ? personal.readChanges(c, cal, since, page)
+      : read(c, cal, since, page);
+    const now = Date.now();
+    const deps = depsFor(w, providersOf({ caldav: { reader, http: silentHttp() } }), { clock: { now: () => now }, turn: { pages: 1, ms: 30_000 } });
+    const turn = () => calendarSyncPass(deps, seeded.due, never);
+    const holdOther = async (providerId: string) => {
+      await makeDue(seeded.accountId);
+      await w.db.update(calCalendars).set({ nextPollAt: new Date(now + WAIT_DAY_MS) })
+        .where(and(eq(calCalendars.accountId, seeded.accountId), eq(calCalendars.providerId, providerId)));
+    };
+
+    await turnsUntilDone(deps, seeded.due);
+    readings.set("", [first, refusal]);
+    for (const wait of [RETRY_FLOOR_MS, 2 * RETRY_FLOOR_MS, WAIT_DAY_MS]) {
+      await holdOther(other.id);
+      expect(await turn()).toMatchObject({ kind: "synced", calendars: 0, pages: 1, more: true });
+      expect(await turn()).toEqual({ kind: "backed_off", word: "host_changed", untilMs: now + wait });
+      await holdOther(affected.id);
+      expect(await turn()).toMatchObject({ kind: "synced", calendars: 1, pages: 1, more: false });
+    }
+  }, 60_000);
 
   it("a calendar's refusal is its word and its wait, recorded; a retry that keeps failing is bounded; the next good reading clears the word", async () => {
     const refuse = (reason: "forbidden" | "page_link_refused" | "token_gone") => ({ refuse: { ok: false as const, reason, retryAfterMs: null } });

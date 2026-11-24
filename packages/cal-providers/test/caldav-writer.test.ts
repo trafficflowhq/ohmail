@@ -18,10 +18,12 @@ import {
   zoned,
   parseRRule,
 } from "@ohmail/cal-core";
-import type { HostResolver } from "@trafficflow/core/net";
+import { pinnedHttpRequest, type HostResolver } from "@trafficflow/core/net";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeWriter } from "../src/caldav/index.js";
+import { ANSWER_TIMEOUT_MS, CONNECT_TIMEOUT_MS, FETCH_BODY_MAX_BYTES, MAX_REDIRECTS } from "../src/limits.js";
 import type { CalendarWriter, Connection, EventDraft, WriteAnswer } from "../src/port.js";
+import { guardedRequest } from "../src/request/guarded.js";
 import { namedHostRequest } from "../src/request/index.js";
 import { startCalDavStandIn, type StandIn, type StandInOptions } from "./caldav-stand-in.js";
 
@@ -98,6 +100,83 @@ describe("CalDAV's writer", () => {
       "",
     ].join("\r\n");
   const cut = plainDate(2026, 11, 18);
+
+  it.each(["create", "change", "move", "remove"] as const)(
+    "can %s on a numbered host after following a home alias in a fresh turn",
+    async (operation) => {
+      const home = "/dav/calendars/mila/";
+      const alias = "/calendar-home/";
+      const redirects: Record<string, string> = {};
+      const b = await bench({ homeHref: () => alias, sendsOn: redirects, nativeMove: true });
+      const base = `caldav.example.test:${b.dav.port}`;
+      const numbered = `p01-${base}`;
+      redirects[alias] = `http://${numbered}${home}`;
+      b.dav.addCalendar("personal");
+      const stored = (path: string) => `http://${numbered}${path}`;
+      const cal = { id: stored(b.dav.paths.collection("studio")) };
+      const to = { id: stored(b.dav.paths.collection("personal")) };
+      const source = b.dav.paths.member("studio", "kiln.ics");
+      const original = personalText();
+      b.dav.put("studio", "kiln.ics", original, '"original"');
+      const target = { id: stored(source), version: '"original"', text: original, occurrence: null };
+      const connection = { ...b.connection, start: `http://${base}${b.dav.paths.start}` };
+      const writer = makeWriter({
+        http: guardedRequest({
+          writes: true,
+          resolver,
+          policy: { kind: "own-network" },
+          hosts: null,
+          limits: {
+            connectMs: CONNECT_TIMEOUT_MS,
+            totalMs: ANSWER_TIMEOUT_MS,
+            maxRedirects: MAX_REDIRECTS,
+            maxBodyBytes: FETCH_BODY_MAX_BYTES,
+          },
+          request: (url, opts) => {
+            const here = new URL(url);
+            const host = here.host;
+            here.hostname = "127.0.0.1";
+            return pinnedHttpRequest(here.href, { ...opts, headers: { ...opts.headers, host } });
+          },
+        }),
+        clock: { now: () => NOW },
+        zones: ZONES,
+      });
+
+      const operations = {
+        create: () => writer.create(connection, cal, { key: { hex: KEY }, event: draft() }, never),
+        change: () => writer.change(connection, cal, target, { summary: "Kiln check, moved" }, never),
+        move: () =>
+          writer.moveEvent!(
+            connection,
+            cal,
+            to,
+            {
+              ...target,
+              audience: { organizer: null, guests: [] },
+              recurringSeries: true,
+            },
+            never,
+          ),
+        remove: () => writer.remove(connection, cal, target, never),
+      };
+      expect(await operations[operation]()).toMatchObject({ ok: true, written: true });
+      expect(b.dav.seen.slice(0, 4).map(({ host, method, path }) => [host, method, path])).toEqual([
+        [base, "PROPFIND", b.dav.paths.start],
+        [base, "PROPFIND", b.dav.paths.principal],
+        [base, "PROPFIND", alias],
+        [numbered, "PROPFIND", home],
+      ]);
+      const method = { create: "PUT", change: "PUT", move: "MOVE", remove: "DELETE" }[operation];
+      const path = operation === "create" ? b.dav.paths.member("studio", `${UID}.ics`) : source;
+      const sent = b.dav.seen
+        .slice(4)
+        .filter((request) => ["PUT", "MOVE", "DELETE"].includes(request.method));
+      expect(sent.map((request) => [request.host, request.method, request.path, request.signedIn])).toEqual([
+        [numbered, method, path, true],
+      ]);
+    },
+  );
   it("finds the original UID at the destination when the response to MOVE was lost", async () => {
     const b = await bench({ nativeMove: true, loseMoveReply: true });
     b.dav.addCalendar("personal");
@@ -1371,6 +1450,7 @@ describe("CalDAV's writer", () => {
     expect(typed.dav.seen.map((s) => `${s.method} ${s.path}`)).toEqual([
       "PROPFIND /dav/",
       "PROPFIND /dav/principals/mila/",
+      "PROPFIND /dav/calendars/mila/",
     ]);
   });
 

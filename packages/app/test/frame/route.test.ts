@@ -65,6 +65,14 @@ describe("the route: one object for the place a person is in", () => {
     expect(routeOf("#/compose")).toMatchObject({ place: "write" });
   });
 
+  it("keeps the News list open when its letter is missing", () => {
+    const news = routeOf("#/reads");
+    expect(routeOf("#/reads/m/null")).toEqual(news);
+    expect(routeOf("#/reads/t/null")).toEqual(news);
+    expect(fragmentOf({ ...news, open: "null" })).toBe("#/reads");
+    expect(fragmentOf({ ...news, open: undefined as never })).toBe("#/reads");
+  });
+
   it("opens the first run as a stage over the Ohbox", () => {
     expect(routeOf("#/first-run/add?mailbox=mb-1")).toEqual({
       place: "ohbox",

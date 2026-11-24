@@ -43,7 +43,7 @@ export {
 export { goneEverywhereWhere } from "./gone-everywhere.js";
 // A rule's `match` as SQL keys it, and whether it names a sender: ONE spelling for every reader.
 export {
-  ruleMatchKeySql, ruleNamesSenderSql, sharedProviderAllowRefusal, SHARED_PROVIDER_DOMAINS, SharedProviderDomainError,
+  ruleMatchKeySql, ruleNamesSenderSql, ruleSetNamesSenderSql, ruleCanNameDomainSql, sharedProviderAllowRefusal, SHARED_PROVIDER_DOMAINS, SharedProviderDomainError,
 } from "./rule-match-sql.js";
 export {
   readDrainCursor, writeDrainCursor, UNSUB_DRAIN_PASS, type DrainCursor,
@@ -493,7 +493,7 @@ export {
  * it is store-neutral — the phone runs the same engine on the device store.
  */
 export {
-  resolveCutline, cutlineArms, perMailboxSql, senderIsActiveSql, activeSenderKeysSql, senderIsDecidedSql, senderIsOwnSql, senderScreenedOutByPersonSql, activeSenderExpr, anyOf,
+  resolveCutline, cutlineArms, perMailboxSql, senderIsActiveSql, activeSenderKeysSql, activeSenderMessageSql, senderIsDecidedSql, senderIsOwnSql, senderScreenedOutByPersonSql, activeSenderExpr, anyOf,
   senderHasHeldClaimSql, heldClaimKeysSql, heldClaimInsideSql, heldForIdentitySql, notHeldForIdentitySql, heldUnconfirmedOnlySql, heldArrivedInsideSql, senderHasHeldArrivalSql, heldClaimWaitsSql, personSkipSql, senderHasPersonConsentSql,
   CUTLINE_PERSON_WRITTEN_PROVENANCE,
   mailboxCountsAsOwn, mailboxCountsAsOwnSql, notGoneSql,

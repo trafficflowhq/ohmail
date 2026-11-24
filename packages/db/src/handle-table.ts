@@ -2,8 +2,8 @@
  * THE HANDLE'S ONE TABLE: what each server handle's pool is, by the role it serves and the kind of
  * pool it dials. Every number a pool is built with is read from a cell here, and every cell is
  * written from the named constants below, so a number changes in one place and the reason for it
- * stays beside it. Today's numbers are the cells' stand-ins: the pooler's admission (its client
- * cap) and the server's room at the busy hour have not been read whole, so no cell is raised.
+ * stays beside it. Managed pool sizing counts client connections separately from the
+ * database connections the transaction pooler uses.
  *
  * Two kinds of pool. A SESSION pool dials a Postgres that keeps a connection's session (a
  * self-hosted server's own, or the managed host's session port): the deadlines asked at connect
@@ -106,13 +106,12 @@ export const POOLED_ACQUIRE_TIMEOUT_MS = 15_000;
 export const SESSION_ACQUIRE_TIMEOUT_MS = 5_000;
 
 /**
- * Connections one warm serverless instance holds on the pooled URL. Fluid compute serves several
- * requests from one instance, and at `max: 1` every second request queued behind the first: the
- * `db_busy` the session doors answered. Four, bounded: the transaction-mode pooler multiplexes the
- * server side, and client connections are bounded by instances x (4 + write reserve). A fifth
- * concurrent read still pipelines behind a busy connection and meets the acquire ceiling.
+ * Pooled read connections per API instance. Eight reads and two reserved writes are sized for one
+ * API instance sharing the pooler's per-role server pool with the worker's own connections.
+ * Recalculate server-side capacity and CPU headroom before adding an API instance, including the
+ * overlap while a deploy runs two instances at once.
  */
-export const POOLED_MAX_CONNECTIONS = 4;
+export const POOLED_MAX_CONNECTIONS = 8;
 
 /** Managed API write connections, with room for session refresh during another write. */
 export const POOLED_WRITE_MAX_CONNECTIONS = 2;

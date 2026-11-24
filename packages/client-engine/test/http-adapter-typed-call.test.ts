@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { HttpAdapter, MutationRejectedError } from "@ohmail/client-engine";
 import { routePath } from "../src/adapters/route-path.js";
 
@@ -55,6 +55,23 @@ describe("the calls, as they leave", () => {
     const body = await adapter.fetchBody("m 1");
     expect(asked).toEqual([{ method: "GET", url: "http://wire.test/messages/m%201/body", body: undefined }]);
     expect(body.text).toBe("hello");
+  });
+
+  it("does not send a letter read or glance with a missing message id", async () => {
+    const { adapter, asked } = recording({ id: "m1", updatedAt: "2026-01-01T00:00:00.000Z" });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(adapter.getMessage("null")).resolves.toBeNull();
+      await expect(adapter.getMessage(null as never)).resolves.toBeNull();
+      await adapter.mutate({ kind: "feed_mark_seen", view: "reads", messageIds: ["null", null as never, "m1"] },
+        { idempotencyKey: "glance" });
+      expect(asked).toEqual([{ method: "PATCH", url: "http://wire.test/messages/m1",
+        body: { unread: false, via: "glance" } }]);
+      expect(warning).toHaveBeenCalledTimes(1);
+      expect(warning).toHaveBeenCalledWith("ohmail: missing_message_id");
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it("carries a query exactly as the call wrote it", async () => {

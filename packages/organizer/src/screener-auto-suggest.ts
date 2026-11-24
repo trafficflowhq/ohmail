@@ -2,7 +2,7 @@ import { and, asc, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   folderState, messageInstances, messages,
-  resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
+  resolveCutline, onServerPool, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
   notGoneSql, readGoneMailboxIds,
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, automaticAiAdmits,
@@ -600,7 +600,7 @@ async function selectCandidates(
      `k` was never about ordering the answer. Nothing about WHICH message represents a sender
      changes, which is what the paragraph below depends on. */
   // `account_id` LEADS the predicate rather than filtering a cross-account result.
-  const reps = db.select({
+  const held = db.select({
     messageId: messages.id,
     mailboxId: messages.mailboxId,
     fromAddress: messages.fromAddress,
@@ -637,8 +637,11 @@ async function selectCandidates(
       // where the representative is chosen, as the queue's window does (`heldSenderReps`).
       isNull(messages.deletedAt),
       notGoneSql(d, messages.mailboxId, gone),
-    ))
-    .as("reps");
+    ));
+  const reps = held.as("reps");
+  const candidates = onServerPool(db) ? sql`
+    select lower(from_address) from (${held}) held
+    where rank = 1 and held_arrival = 0 and created_at > ${d.ts(opts.watermark)}` : undefined;
 
   const rows = await db.select({
     messageId: reps.messageId,
@@ -673,7 +676,7 @@ async function selectCandidates(
       // that reads no settings gets the query it always had.
       // A letter at the gate that arrived inside the cutline counts whatever its Date, as on the page.
       opts.cutline
-        ? sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone)})`
+        ? sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone, { candidates })})`
         : undefined,
       // (5) THE DECIDED PREDICATE — the same expression the queue's page excludes through, and
       // UNCONDITIONAL for that page's reason. This pass builds its own candidate set, so arm (4)'s

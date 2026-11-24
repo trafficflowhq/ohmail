@@ -200,7 +200,13 @@ export interface LinkRun {
  * SAME gate before constructing the element, so a node built by anything else still cannot put a
  * `javascript:` or `data:text/html` into the app document. `alt` renders only as a React text node.
  */
-export interface ImageRun { kind: "image"; src: string; alt: string }
+export interface ImageRun {
+  kind: "image";
+  src: string | null;
+  alt: string;
+  size?: { width: number; height: number };
+}
+export const IMAGE_PLACEHOLDER_PX = 120;
 /**
  * The writer's coloured words — an answer typed in red under a question — in one of the palette's
  * inks, picked from the sender's colour by the walker; `plain` is the reader's own ink again
@@ -498,14 +504,32 @@ function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<str
             {node.elsewhere ? <bdi className="msg-link-host" dir="ltr"> ({node.host})</bdi> : null}
           </a>
         );
-      case "image":
+      case "image": {
+        const ratio = node.size ? `${node.size.width} / ${node.size.height}` : undefined;
+        if (node.src === null) {
+          return (
+            <span
+              key={key}
+              className="msg-img msg-img-placeholder"
+              aria-hidden="true"
+              style={{
+                width: node.size?.width ?? IMAGE_PLACEHOLDER_PX,
+                height: node.size ? undefined : IMAGE_PLACEHOLDER_PX,
+                aspectRatio: ratio,
+              }}
+            />
+          );
+        }
         // THE GATE AT THE SINK — see {@link inlineImageAdmitted}. A node whose src fails it draws
         // nothing (the strip still lists the part); the alt text is the sender's and enters the
         // document only as a React attribute value. `.msg-img` caps the width at the column
         // (message-body.css) — the stored size otherwise, which is what a signature logo wants.
-        return inlineImageAdmitted(node.src, own)
-          ? <img key={key} className="msg-img" src={node.src} alt={node.alt} loading="lazy" decoding="async" />
-          : null;
+        if (!inlineImageAdmitted(node.src, own)) return null;
+        return (
+          <img key={key} className="msg-img" src={node.src} alt={node.alt}
+            width={node.size?.width} height={node.size?.height} loading="lazy" decoding="async" />
+        );
+      }
     }
   });
 }

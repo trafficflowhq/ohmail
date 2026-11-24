@@ -97,7 +97,7 @@ export interface AttachmentsChrome {
    * {@link cidImagesOf}. Budgets, single-flight and the no-retry-after-refusal rule all live in
    * the engine (`loadInlineImages`); calling this again with the same ids is a cheap no-op.
    */
-  needCidImages(messageId: string, contentIds: string[]): void;
+  needCidImages(messageId: string, contentIds: string[]): Promise<void> | void;
   /**
    * THE EVENTS ONE MESSAGE CARRIES, once each (`calendarEventsOf`): what `MessageEvents` draws
    * above the mail. Filled automatically when the message's list loads (the same effect that

@@ -76,6 +76,16 @@ async function importedAt(messages: EngineMessage[], iso: string): Promise<Memor
 const d = (i: number): string => `2026-08-${String(10 - i).padStart(2, "0")}${"T"}09:00:00.000Z`;
 
 describe("no visit yet (a mirror built from an existing mailbox)", () => {
+  it("skips stored feed rows with a missing id before they can open or be read", async () => {
+    const valid = msg({ id: "letter", date: d(0), unread: true });
+    const store = await mirrorOf([valid]);
+    await store.putLocal("message", "bad", { ...valid, id: "null", date: d(1) });
+    await store.putLocal("message", "missing", { ...valid, id: null, date: d(2) });
+    const part = feedPartition(store, "reads");
+    expect(part.fresh.map((row) => row.id)).toEqual(["letter"]);
+    expect(part.newCount).toBe(1);
+  });
+
   it("an imported pile names its unread letters on the first visit, and draws no line", async () => {
     // A warm pile, interleaved exactly as a real mailbox is; all of it predates the first sync.
     const pile = [

@@ -67,7 +67,7 @@ export function hostsBeside(typedHost: string): (host: string) => boolean {
   };
 }
 
-/** The origins one turn's sign-in may travel to, and whether the turn has asked its server where the calendars are. */
+/** The origins one turn's sign-in may travel to, and whether the turn has followed redirects from the homes. */
 export interface TurnHosts {
   /** The request port's question for every request: is this the sealed server's own origin, or one it named in this turn? */
   admits(to: Hop): boolean;
@@ -81,7 +81,7 @@ export interface TurnHosts {
   /** Could the server name this address's host at all? Where not, there is nothing to ask it. */
   couldName(address: string): boolean;
   /**
-   * Run `ask` (the discovery, for the hosts it names) once in the turn: the first caller runs it,
+   * Follow the discovered homes once in the turn: the first caller runs `ask`,
    * and every caller reads how it ended, the word of an asking that failed or `null`.
    */
   once(ask: () => Promise<ProviderRefusal | null>): Promise<ProviderRefusal | null>;

@@ -27,6 +27,7 @@ import {
   MAX_QUOTE_DEPTH,
   NO_OWN_IMAGES,
   type BodyNode,
+  IMAGE_PLACEHOLDER_PX,
   type InlineNode,
   type QuoteNode,
   type RichParagraphNode,
@@ -2369,7 +2370,7 @@ export const MAX_RICH_CHARS = BODY_PAGE_CHARS;
  * The walk's budget, per EMITTED node and per character of text; below zero the build is refused.
  * `own` rides with it: the message's own picture URLs, the only `blob:` srcs an image run copies.
  */
-interface RichBudget { left: number; chars: number; own: ReadonlySet<string>; tone: TagHueName | null }
+interface RichBudget { left: number; chars: number; own: ReadonlySet<string>; tone: TagHueName | null; reserveImages: boolean }
 function spend(b: RichBudget): boolean { return --b.left >= 0; }
 /** Spend a node that carries `n` characters of the sender's text. */
 function spendText(b: RichBudget, n: number): boolean {
@@ -2438,6 +2439,30 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
   inTone(el, b, out, (into) => appendElement(el, into, b, nest));
 }
 
+function imageSizeOf(el: Element): { width: number; height: number } | undefined {
+  const width = el.getAttribute("width")?.trim() ?? "";
+  const height = el.getAttribute("height")?.trim() ?? "";
+  const dimension = /^[1-9]\d{0,5}$/;
+  if (dimension.test(width) && dimension.test(height)) return { width: Number(width), height: Number(height) };
+}
+
+function sizeUnavailableImage(
+  img: HTMLImageElement,
+  size: ReturnType<typeof imageSizeOf>,
+  waitsFlat: boolean,
+): void {
+  if (size && !img.style.aspectRatio) img.style.aspectRatio = `${size.width} / ${size.height}`;
+  if (waitsFlat && !size) img.setAttribute("data-ohmail-blockflat", "1");
+}
+
+function parkDeclaredRatio(img: HTMLImageElement, size: { width: number; height: number }): void {
+  const ratio = `${size.width} / ${size.height}`;
+  img.setAttribute(PARK_FLAT_ATTR, "ratio");
+  img.style.setProperty("--ohmail-parked-ratio", ratio);
+  const deferred = img.getAttribute(DEFERRED_STYLE_ATTR);
+  if (deferred !== null) img.setAttribute(DEFERRED_STYLE_ATTR, `${deferred};--ohmail-parked-ratio:${ratio}`);
+}
+
 /** One element of inline content, in the ink {@link appendInline} settled. */
 function appendElement(el: Element, out: InlineNode[], b: RichBudget, nest: number): void {
   const tag = el.tagName.toLowerCase();
@@ -2449,8 +2474,12 @@ function appendElement(el: Element, out: InlineNode[], b: RichBudget, nest: numb
     // spend budget on an invisible 1×1. The src is copied, never composed; `BodyText` re-tests
     // {@link inlineImageAdmitted} at the element write — one gate, both sinks.
     const src = el.getAttribute("src") ?? "";
-    if (src !== BLANK_GIF && inlineImageAdmitted(src, b.own) && spend(b)) {
-      out.push({ kind: "image", src, alt: el.getAttribute("alt") ?? "" });
+    const pending = el.getAttribute("data-ohmail-embedded") === "pending";
+    if ((pending || (src !== BLANK_GIF && inlineImageAdmitted(src, b.own))) && spend(b)) {
+      out.push({
+        kind: "image", src: pending ? null : src, alt: el.getAttribute("alt") ?? "",
+        ...(b.reserveImages && { size: imageSizeOf(el) }),
+      });
     }
     return;
   }
@@ -2809,14 +2838,14 @@ function tableOf(el: Element, depth: number, b: RichBudget, out: BodyNode[], nes
  * means "render the text part", which is the rendering every prose message had before this
  * walker existed — the fallback is the previous behaviour, not a degraded one.
  */
-export function buildRichNodes(root: Element, own: ReadonlySet<string> = NO_OWN_IMAGES): BodyNode[] | null {
-  const nodes = buildRichNodesOf(root, own);
+export function buildRichNodes(root: Element, own: ReadonlySet<string> = NO_OWN_IMAGES, reserveImages = false): BodyNode[] | null {
+  const nodes = buildRichNodesOf(root, own, reserveImages);
   return nodes !== null && nodes.length > 0 ? nodes : null;
 }
 
 /** The walk of one side of a folded body's cut: empty when it holds nothing, `null` past the budget. */
-function buildRichNodesOf(root: Element, own: ReadonlySet<string>): BodyNode[] | null {
-  const b: RichBudget = { left: MAX_RICH_NODES, chars: MAX_RICH_CHARS, own, tone: null };
+function buildRichNodesOf(root: Element, own: ReadonlySet<string>, reserveImages: boolean): BodyNode[] | null {
+  const b: RichBudget = { left: MAX_RICH_NODES, chars: MAX_RICH_CHARS, own, tone: null, reserveImages };
   const nodes = blocksOf(root, 0, b, 0);
   return b.left < 0 ? null : quietWholeInk(nodes);
 }
@@ -2834,6 +2863,10 @@ export function unrenderedHtmlVerdict(html: string, subject?: string | null): Qu
 }
 
 export interface SanitizeOptions {
+  /** Reserve image space while the conversation reader is waiting for a picture. */
+  reserveImages?: boolean;
+  /** An active part door reserves unresolved pictures until its fetch finishes. */
+  settledCids?: ReadonlySet<string>;
   /**
    * How to reach a remote image, or `null` for "you may not". `null` is the default and the
    * only value the product ships today; see the header for why the consent path waits on a
@@ -3244,6 +3277,12 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
 
     if (tag === "img") {
       const src = node.getAttribute("src") ?? "";
+      const style = (node as HTMLImageElement).style;
+      const height = node.getAttribute("height") ?? "";
+      const size = imageSizeOf(node);
+      const cssHeight = style.getPropertyValue("height");
+      const waitsFlat = cssHeight === "auto" || (cssHeight === "" && height === "");
+      const needsSpace = opts.reserveImages && !pixel && !size && waitsFlat;
       // An unnamed picture is otherwise read out by its src (a blob: or data: URL): a beacon is hidden, the rest named.
       const named = ["alt", "aria-hidden", "role"].some((n) => node.hasAttribute(n)) ||
         ["title", "aria-label"].some((n) => (node.getAttribute(n) ?? "").trim() !== "");
@@ -3285,13 +3324,16 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
           const via = proxy(src);
           // Parked over a blank: the frame runs no script, so `proxied-images.ts` starts it once loaded.
           node.setAttribute("src", via === "" ? "" : BLANK_GIF);
-          if (via !== "") node.setAttribute(DEFERRED_SRC_ATTR, via);
-          // A blank's 1:1 would stand a width-only picture as a square of its width while it waits.
-          const h = (node as HTMLElement).style?.getPropertyValue("height") ?? "";
-          if (via !== "" && (h === "auto" || (h === "" && !node.getAttribute("height")))) node.setAttribute(PARK_FLAT_ATTR, "1");
+          if (via !== "") {
+            node.setAttribute(DEFERRED_SRC_ATTR, via);
+            // The blank image's 1:1 ratio must not decide the waiting picture's size.
+            if (opts.reserveImages && size && !style.aspectRatio) parkDeclaredRatio(node as HTMLImageElement, size);
+            if (waitsFlat && !size) node.setAttribute(PARK_FLAT_ATTR, "1");
+          }
         } else {
           node.setAttribute("src", BLANK_GIF);
           node.setAttribute("data-ohmail-blocked", "1");
+          if (!pixel) sizeUnavailableImage(node as HTMLImageElement, size, waitsFlat);
         }
         // WHAT THIS IMAGE WAS JUDGED TO BE, kept on the element because `data-ohmail-blocked`
         // cannot answer it: under the manual mode a picture and a beacon are both blanked and
@@ -3319,13 +3361,18 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
         } else {
           if (cid) recordCid(cid);
           node.setAttribute("src", BLANK_GIF);
-          node.setAttribute("data-ohmail-embedded", "1");
+          const pending = cid && opts.settledCids && !opts.settledCids.has(cid);
+          node.setAttribute("data-ohmail-embedded", pending ? "pending" : "1");
+          if (!pending) sizeUnavailableImage(node as HTMLImageElement, size, waitsFlat);
+          if (pending && opts.reserveImages && size && !style.aspectRatio) parkDeclaredRatio(node as HTMLImageElement, size);
+          if (pending && needsSpace) node.setAttribute(PARK_FLAT_ATTR, "1");
         }
       } else if (!src.startsWith("data:")) {
         // Anything relative. It cannot be resolved from here, and a browser renders an
         // unresolvable src as a broken-image glyph in the middle of the mail.
         node.setAttribute("src", BLANK_GIF);
         node.setAttribute("data-ohmail-embedded", "1");
+        sizeUnavailableImage(node as HTMLImageElement, size, waitsFlat);
       }
       return;
     }
@@ -3558,11 +3605,12 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // THE WALK RUNS ON THE SAME ELEMENT the line above serialized — the sanitized, post-passed
   // document — and only for a mail the frame will not render. What it emits is data (text runs,
   // bounded ints, gated hrefs); the serialized string stays the frame's.
-  const rich = designed ? null : buildRichNodes(sanitized, ownImages);
+  const reserveImages = opts.reserveImages === true;
+  const rich = designed ? null : buildRichNodes(sanitized, ownImages, reserveImages);
   // Last, because it cuts the tree: everything above is about the whole document.
   const folded = opts.history === true
     ? foldSanitized(sanitized, {
-      prose: rich !== null, blocked, cids, links, asks, met, walk: (holder) => buildRichNodesOf(holder, ownImages), subject: opts.subject,
+      prose: rich !== null, blocked, cids, links, asks, met, walk: (holder) => buildRichNodesOf(holder, ownImages, reserveImages), subject: opts.subject,
     })
     : null;
   // The folded document is its own: the cut left only what it draws in `sanitized`.
@@ -3755,7 +3803,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
    The inverted path overrides this below with #e4e4e4, which is chosen to invert to the app's
    own dark panel; specificity is what keeps the two apart, so the paper applies exactly when
    the filter does not. */
-body{margin:0;padding:16px;background:var(--ohmail-paper,#fff);color:var(--ohmail-ink,#1b1b1b);
+body{margin:0;padding:16px var(--ohmail-paper-inset,16px);background:var(--ohmail-paper,#fff);color:var(--ohmail-ink,#1b1b1b);
   font:15px/1.62 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   overflow-wrap:break-word}
 img{border:0}
@@ -3941,8 +3989,11 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
    keeps a sideways gesture that reaches the block's end from turning into a history swipe.
    Same rule, same reason, on the native path's \`.msg-pre-wrap\`/\`.msg-table-wrap\`. */
 :root[data-ohmail-reflow] pre{white-space:pre !important;overflow-x:auto !important;overflow-y:hidden !important;overscroll-behavior-x:contain;overflow-wrap:normal !important}
-/* A parked picture that declares no height waits flat, as one in flight does (proxied-images.ts). */
-:root img[data-ohmail-parkflat]{height:0 !important}
+/* The picture queue clears the waiting size when the bytes arrive or fail (proxied-images.ts). */
+:root img[data-ohmail-blockflat]{height:14px !important}
+:root img[data-ohmail-parkflat="1"]{height:0 !important}
+:root[data-ohmail-reader] img[data-ohmail-parkflat="1"]{height:${IMAGE_PLACEHOLDER_PX}px !important}
+:root[data-ohmail-reader] img[data-ohmail-parkflat="ratio"]{aspect-ratio:var(--ohmail-parked-ratio)}
 `;
 
 /**
@@ -3962,7 +4013,7 @@ export function buildMailDocument(
    * the point: a caller holding a boolean knows that images are on and NOT where they may come
    * from, so the only policy it could ask for was `'self'` — every url on this origin.
    */
-  opts: { imgSource?: string | null; dark?: boolean; reflow?: boolean; paper?: Rgb | null; ink?: Rgb | null } = {},
+  opts: { imgSource?: string | null; dark?: boolean; reflow?: boolean; paper?: Rgb | null; ink?: Rgb | null; reader?: boolean } = {},
 ): string {
   // The paper rides on the ROOT ELEMENT and is independent of `dark`, so the light and dark
   // builds of the same message still differ by the attribute alone — which is the equality
@@ -3981,8 +4032,9 @@ export function buildMailDocument(
    * changes, and when the html changes the frame is rebuilt anyway.
    */
   const reflow = opts.reflow === true ? " data-ohmail-reflow=\"1\"" : "";
+  const reader = opts.reader ? " data-ohmail-reader" : "";
   return [
-    `<!doctype html><html${opts.dark === true ? " data-ohmail-dark=\"1\"" : ""}${reflow}${paper}><head><meta charset="utf-8">`,
+    `<!doctype html><html${opts.dark === true ? " data-ohmail-dark=\"1\"" : ""}${reflow}${reader}${paper}><head><meta charset="utf-8">`,
     `<meta http-equiv="Content-Security-Policy" content="${frameCsp(opts.imgSource ?? null)}">`,
     // Belongs to the same promise as the CSP: if a consented image is ever fetched through
     // the proxy, not even the path of the page the reader is on travels with it.
@@ -4269,6 +4321,7 @@ function blockNoticeOf(html: string): BlockNotice | null {
 }
 
 /** Stable empties for the renders where there is no sanitized document to read them from. */
+const NO_SETTLED_CIDS: ReadonlySet<string> = new Set();
 const NO_ASSETS: readonly BlockedAsset[] = [];
 const NO_SHEETS: readonly string[] = [];
 const NO_LINKS: readonly string[] = [];
@@ -4365,7 +4418,7 @@ export interface MessageBodyProps {
    * Repeat calls with the same ids must be cheap; the engine's single-flight and its refusal
    * to re-ask a failed part are what this leans on.
    */
-  onCidImages?: (contentIds: string[]) => void;
+  onCidImages?: (contentIds: string[]) => Promise<void> | void;
   /**
    * How this message is actually being drawn, reported to whoever mounted the component. `"prose"` is the frameless
    * path — {@link BodyText} in the app's own type, drawing no images at all (`img` is absent from the walker's
@@ -4426,9 +4479,11 @@ export interface MessageBodyProps {
   onControls?: (controls: readonly BodyControl[]) => void;
   /**
    * THE LOOK OF THE SHEET IT STANDS ON. `"sheet"` sets the body in the measures and on the ground of the reader's
-   * sheet (`message-body-sheet.css`); absent, the body looks as it always has.
+   * sheet (`message-body-sheet.css`). In the conversation reader, the paper lines up with the text column.
    */
-  look?: "sheet";
+  look?: "sheet" | "reader";
+  /** Lets the conversation keep its landing in the same layout pass that fits the frame. */
+  onBodyLayout?: () => void;
 }
 
 /**
@@ -4466,6 +4521,7 @@ export function MessageBody({
   owner,
   onControls,
   look,
+  onBodyLayout,
 }: MessageBodyProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -4576,6 +4632,14 @@ export function MessageBody({
     [imageProxy],
   );
   const proxy = remoteLoaded && imgSource !== null ? imageProxy : null;
+  const reader = look === "reader";
+  const [finishedParts, setFinishedParts] = useState<{
+    messageId: typeof messageId; html: typeof html; ids: ReadonlySet<string>;
+  }>();
+  const finishedHere = finishedParts && finishedParts.messageId === messageId && finishedParts.html === html
+    ? finishedParts.ids
+    : undefined;
+  const settledCids = reader && onCidImages ? finishedHere ?? NO_SETTLED_CIDS : undefined;
 
   // `text` is null on a body the mirror has not loaded, whatever its type says; read it as empty.
   const hasText = (text ?? "").trim().length > 0;
@@ -4598,7 +4662,7 @@ export function MessageBody({
     const cache = engine && messageId ? mailDocCacheFor<ReturnType<typeof sanitizeView>>(engine) : null;
     const inputs: MailDocInputs = {
       messageId: messageId ?? "", html, proxied: proxy !== null, imgSource, cidImages, resolvedRemoteImages,
-      loadPixels: loadTrackingPixels, hasText, darkWanted, forward: isForwardSubject(subject), askInPage, frameWidth: mediaWidth,
+      loadPixels: loadTrackingPixels, hasText, darkWanted, forward: isForwardSubject(subject), askInPage, reader, settledCids, frameWidth: mediaWidth,
     };
     const kept = cache?.read(inputs);
     if (kept) return kept.value;
@@ -4617,7 +4681,7 @@ export function MessageBody({
     try {
       made = sanitizeMailHtml(html, {
         imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels, history: true, subject, askInPage,
-        frame: { width: mediaWidth },
+        frame: { width: mediaWidth }, reserveImages: reader, settledCids,
       });
     } catch {
       // Hostile mail never takes the view down: this one letter is shown as its text, with the reason.
@@ -4648,6 +4712,7 @@ export function MessageBody({
       // The body's own ink on a dark page it reads on, or ohmail's light ink on a dark page that names
       // none and where no element paints a background (`letterPaperOf`); else the frame's.
       ink: ink ?? null,
+      reader,
     };
     const doc = buildMailDocument(clean, docOpts);
     // The same document with its quoted history cut out: the frame's folded state, read as its own letter.
@@ -4718,7 +4783,7 @@ export function MessageBody({
     // for the same reason `proxy` is — it is half of the document the frame gets — and it is
     // memoized on `imageProxy`, so it moves only when the proxy itself does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText, engine, messageId, subject, askInPage, mediaWidth]);
+  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText, engine, messageId, subject, askInPage, mediaWidth, reader, settledCids]);
 
   /**
    * FLIP THE DARK TRANSFORM ON THE LIVE DOCUMENT — never by rebuilding the srcdoc. The transform is gated on
@@ -4795,11 +4860,21 @@ export function MessageBody({
    * a layout read.
    */
   const sizes = useRef(new WeakMap<Element, string>());
+  const reportLayout = useRef(onBodyLayout);
+  reportLayout.current = onBodyLayout;
 
   const measure = useCallback(() => {
     const frame = frameRef.current;
     const doc = frame?.contentDocument;
     if (!frame || !doc?.documentElement) return;
+    const root = doc.documentElement;
+    const reader = root.hasAttribute("data-ohmail-reader");
+    const frameStyle = reader || frame.closest(".oh-message[data-unread]") ? getComputedStyle(frame) : null;
+    const inset = frameStyle === null ? "" : frameStyle.getPropertyValue("--ohmail-unread-paper-inset") ||
+      (reader ? frameStyle.getPropertyValue("--sheet-pad") : "");
+    if (inset !== root.style.getPropertyValue("--ohmail-paper-inset")) {
+      root.style.setProperty("--ohmail-paper-inset", inset);
+    }
     // The frame and its mail are as the last run left them, so the probe would write what is
     // already there, and the probe itself clamps the pane's scroll for a task. Checked before the
     // scrollers are read and before any attribute comes off, so no half-probe is left behind.
@@ -4815,7 +4890,6 @@ export function MessageBody({
     const scrollers = scrollAncestors(frame);
     const tops = scrollers.map((el) => el.scrollTop);
 
-    const root = doc.documentElement;
     const restore = frame.style.height;
 
     // ── THE PROBE READS THE MAIL AT ITS NATURAL SIZE, WHICH MEANS UNSCALED TOO ─────────
@@ -4891,6 +4965,7 @@ export function MessageBody({
     if (shell) sizes.current.set(shell, sizeKey(shell.offsetWidth, shell.offsetHeight));
     const store = fitStore.current;
     if (store && frame.style.height) store.cache.setFit(store.key, { width: frame.clientWidth, height: frame.style.height });
+    reportLayout.current?.();
   }, []);
 
   // Keyed on the DOCUMENT, not the `mail` object: a re-sanitize that yields the same bytes (a new
@@ -4906,6 +4981,9 @@ export function MessageBody({
    */
   const framelessView =
     mail?.state !== "ok" ? true : mail.prose && hasText && (!showOriginal || !mail.frameFits);
+  useLayoutEffect(() => {
+    if (framelessView) reportLayout.current?.();
+  }, [framelessView, mail]);
   /**
    * THE QUOTED HISTORY, FOLDED — per message, collapsed on every mount. On a frame the fold applies
    * only to a body framed by its own classification: "Show original" on a prose letter shows the
@@ -4968,6 +5046,10 @@ export function MessageBody({
   /** What the frame on screen was built from: the cut document's lists while folded. */
   const shown = mail?.state === "ok" ? (frameFolded ? frameFold : mail) : null;
   const frameKey = shownKey;
+  useLayoutEffect(() => {
+    // The height is already written when this commit adds the frame's end marker.
+    if (!framelessView && frameKey !== null && loadedKey === frameKey) reportLayout.current?.();
+  }, [framelessView, frameKey, loadedKey]);
   const docCache = engine && messageId ? mailDocCacheFor<unknown>(engine) : null;
   fitStore.current = frameKey !== null && docCache ? { key: frameKey, cache: docCache } : null;
   seedHeight.current = frameKey !== null && docCache ? docCache.fitOf(frameKey)?.height ?? "" : "";
@@ -5052,15 +5134,24 @@ export function MessageBody({
    * the frameless path when the walker produced structure (its image runs draw the resolved bytes in place — the
    * signature-logo case, which classifies prose). Only the text-part fallback (`rich === null`) asks for
    * nothing — it draws no images, so fetching bytes it cannot show would be pure spend; the strip lists the parts
-   * there. TERMINATION is the `cids` array draining, not any state here: resolved references stop being reported by
-   * the sanitize pass, and the engine refuses to re-fetch what failed. So a re-fire with an unchanged list — a
-   * re-render, an unstable callback — is a cheap no-op by the callee's contract, not by this effect's memory.
+   * there. A resolved reference drops out of the list. In the reader, a completed request also clears the
+   * waiting space for any part that did not arrive. The engine owns retries and can still deliver it later.
    */
   const wantedCids =
     mail?.state === "ok" && shown !== null && (!framelessView || mail.rich !== null) ? shown.cids : undefined;
   useEffect(() => {
-    if (wantedCids && wantedCids.length > 0) onCidImages?.(wantedCids);
-  }, [wantedCids, onCidImages]);
+    if (!wantedCids?.length || !onCidImages) return;
+    if (settledCids && wantedCids.every((cid) => settledCids.has(cid))) return;
+    const request = onCidImages(wantedCids);
+    if (!settledCids) return;
+
+    let current = true;
+    const finish = (): void => {
+      if (current) setFinishedParts({ messageId, html, ids: new Set([...settledCids, ...wantedCids]) });
+    };
+    void Promise.resolve(request).then(finish, finish);
+    return () => { current = false; };
+  }, [wantedCids, onCidImages, settledCids, messageId, html]);
 
   /**
    * ── AND THE SAME FOR REMOTE PICTURES, ON A DOOR THAT FETCHES THEM ITSELF ────────────────

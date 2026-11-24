@@ -1456,11 +1456,23 @@ export class HttpAdapter implements EngineAdapter {
     };
   }
 
+  private warnedMissingMessageId = false;
+
+  private hasMessageId(id: unknown): boolean {
+    if (typeof id === "string" && id !== "" && id !== "null" && id !== "undefined") return true;
+    if (!this.warnedMissingMessageId) {
+      this.warnedMissingMessageId = true;
+      console.warn("ohmail: missing_message_id");
+    }
+    return false;
+  }
+
   /**
    * `GET /messages/:id` — one message the store holds. `null` on a 404, which is the route's answer
    * for an id that is not this account's; any other non-2xx throws through `rejectionOf`.
    */
   async getMessage(messageId: string): Promise<EngineMessage | null> {
+    if (!this.hasMessageId(messageId)) return null;
     const res = await this.call("GET /messages/:id", { params: { id: messageId } });
     if (res.status === 404) return null;
     if (!res.ok) throw await this.rejectionOf(res);
@@ -2080,6 +2092,7 @@ export class HttpAdapter implements EngineAdapter {
         let stale: MutationRejectedError | null = null;
         let applied = 0;
         for (const id of m.messageIds ?? []) {
+          if (!this.hasMessageId(id)) continue;
           const res = await this.call("PATCH /messages/:id", { params: { id }, body: { unread: false, via: "glance" }, ...age, ...sig });
           if (!res.ok) {
             const rejection = await this.rejectionOf(res);

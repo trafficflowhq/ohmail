@@ -173,9 +173,6 @@ export function panelsOf(scroller: HTMLElement, names: ThreadDomNames = THREAD_D
     const first = from && cssRect(from).height > 0 ? box(from) : null;
     const mark = el.querySelector("[data-own-end]");
     const frame = el.querySelector("iframe.mb-frame");
-    // A frame draws its end marker only once measured (until then its foot is the 150px default);
-    // a body still standing in for its frame says so.
-    const unmeasured = (!mark && frame !== null) || el.querySelector("[data-body-pending]") !== null;
     const block = el.querySelector(names.body);
     let lead: LineBox | null = null;
     let end: LineBox | null = null;
@@ -193,13 +190,24 @@ export function panelsOf(scroller: HTMLElement, names: ThreadDomNames = THREAD_D
     }
     return {
       id: el.dataset.convId!,
-      ready: el.hasAttribute("data-body-ready") && !unmeasured,
+      ready: letterBodyIsReady(el, frame, mark),
       height: cssRect(el).height,
       first,
       lead,
       end,
     };
   });
+}
+
+/** The renderer adds its end marker after measuring the frame. */
+export function letterBodyIsReady(
+  letter: HTMLElement,
+  frame = letter.querySelector("iframe.mb-frame"),
+  end = letter.querySelector("[data-own-end]"),
+): boolean {
+  return letter.hasAttribute("data-body-ready") &&
+    (frame === null || end !== null) &&
+    letter.querySelector("[data-body-pending]") === null;
 }
 
 /** Cache the reading geometry in scroll coordinates. A scroll changes the view, not the panels. */

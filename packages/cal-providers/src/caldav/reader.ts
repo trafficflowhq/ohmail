@@ -7,15 +7,14 @@
  * the calendar core reads from it, a series and its changed days as several items of one address.
  * Nothing is expanded here.
  *
- * Nothing is kept between two calls: no address, no sign-in, no listing. A reading in pages asks
- * for the listing again at every page and cuts it after the last address handed out, so the cursor
- * holds two short texts and the reader holds nothing. What a pass ends with is the token of its
+ * A reading in pages asks for the listing again at every page and cuts it after the last address
+ * handed out, so the cursor holds two short texts. What a pass ends with is the token of its
  * FIRST listing: an object that changes while the pass runs is then told again by the next round,
  * where a later token would have passed it over.
  *
- * One thing is kept between the calls of ONE TURN, with the `Connection` object the caller made
- * for it and gone with that object: the hosts the server itself named, which are the only ones
- * beside its own that the sign-in travels to (`hosts.ts`).
+ * The hosts the server names and the discovery used to recover them are cached for ONE TURN, with
+ * the `Connection` object the caller made for it. Only those hosts and the typed origin receive
+ * the sign-in (`hosts.ts`).
  *
  * A listing the server itself cut short is read on only while the server lists it as it did: under
  * the token it handed back, or, where it words that token anew at every answer, with every member
@@ -151,6 +150,8 @@ function take(member: Listed, found: FoundMembers, items: ChangeItem[], left: Le
 /** Where a server says the signed-in person's calendars are, and whether the sign-in had to turn to TLS alone on the way there. */
 type Found = { readonly ok: true; readonly tlsOnly: boolean; readonly principal: string; readonly homes: readonly string[]; readonly addresses: readonly string[] } | Refused;
 
+const LOCATED = new WeakMap<Connection, Promise<Found>>();
+
 /**
  * The discovery, whole (`discover.ts`, steps 1 to 3): asked of the sealed record's own starts with
  * the session of the discovery, so that the hosts the server names on the way are the turn's.
@@ -168,7 +169,7 @@ async function find(s: Session, typed: Typed): Promise<Found> {
  * this turn. THE ONE BUILDER OF A CALDAV SIGN-IN: the reader and the writer both make it here, and
  * the turn is the caller's `Connection` object (`hosts.ts`).
  */
-export function caldavSession(deps: AdapterDeps, c: Connection, signal: AbortSignal, continuing?: string): { readonly ok: true; readonly session: Session; readonly typed: Typed } | Refused {
+export function caldavSession(deps: AdapterDeps, c: Connection, signal: AbortSignal): { readonly ok: true; readonly session: Session; readonly typed: Typed } | Refused {
   if (c.credential.kind !== "basic") return refuse("sign_in_refused");
   const typed = c.start === null ? null : typedAddress(c.start);
   if (typed === null) return refuse("address_invalid");
@@ -178,21 +179,26 @@ export function caldavSession(deps: AdapterDeps, c: Connection, signal: AbortSig
     // Typed with TLS (`secured` is the TLS form of an address typed without): the password then never travels without it,
     // whatever address a server's answer or a caller's stored calendar names.
     auth: { credential: c.credential, admits: hosts.admits, tlsOnly: typed.secured === null },
-    locate: () => hosts.once(async () => {
-      const found = await find(session, typed);
+    locate: async (refused) => {
+      let lookup = LOCATED.get(c);
+      if (lookup === undefined) {
+        lookup = find(session, typed);
+        LOCATED.set(c, lookup);
+      }
+      const found = await lookup;
       if (!found.ok) return found.reason;
-      if (continuing !== undefined) {
-        const collection = hopOf(new URL(continuing), null);
-        if (hosts.admits(collection)) return null;
-        // A provider may name a home alias. Re-follow only the principal's homes to recover its redirect.
+      const to = hopOf(new URL(refused), null);
+      if (hosts.admits(to)) return null;
+      return hosts.once(async () => {
+        // An alias can redirect to the calendar's host. Follow the principal's homes at most once per turn.
         const discover = found.tlsOnly ? tlsAlone(session) : session;
         for (const home of found.homes) {
           const answer = await askHome(discover, home);
-          if (hosts.admits(collection)) return answer.ok ? null : answer.reason;
+          if (hosts.admits(to)) return answer.ok ? null : answer.reason;
         }
-      }
-      return null;
-    }),
+        return null;
+      });
+    },
   };
   return { ok: true, typed, session };
 }
@@ -232,7 +238,7 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
 
     async readChanges(c, cal, since, page, signal): Promise<Answer<ChangePage>> {
       const collection = addressOf(cal.id);
-      const opened = caldavSession(deps, c, signal, page.cursor !== null ? collection ?? undefined : undefined);
+      const opened = open(c, signal);
       if (!opened.ok) return opened;
       const s = opened.session;
       const began = page.cursor === null ? standingOf(since) : readCursor(page.cursor);

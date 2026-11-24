@@ -70,7 +70,7 @@ export type ReadingResult =
   | { readonly kind: "more"; readonly pages: number; readonly changed: number }
   /** The turn's budget ended and no place was free to keep the reading: the calendar stays due and begins again when one is. */
   | { readonly kind: "no_place"; readonly pages: number; readonly changed: number }
-  | { readonly kind: "refused"; readonly word: CalendarSyncFault; readonly retryAfterMs: number | null; readonly pages: number; readonly changed: number }
+  | { readonly kind: "refused"; readonly word: CalendarSyncFault; readonly retryAfterMs: number | null; readonly pages: number; readonly changed: number; readonly continuing?: boolean }
   | { readonly kind: "gone" }
   | { readonly kind: "halted" }
   | { readonly kind: "superseded" };
@@ -216,7 +216,7 @@ export async function readCalendar(ctx: ReadingContext, cal: StoredCalendar): Pr
         reading = r;
         continue;
       }
-      return { kind: "refused", word: faultWord(answer.reason), retryAfterMs: answer.retryAfterMs, pages, changed };
+      return { kind: "refused", word: faultWord(answer.reason), retryAfterMs: answer.retryAfterMs, pages, changed, continuing: reading.cursor !== null };
     }
     const page = answer.value;
     reading.pages += 1;

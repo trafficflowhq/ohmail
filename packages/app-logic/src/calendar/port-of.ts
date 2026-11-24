@@ -147,6 +147,7 @@ export function calendarPortOf(parts: PortParts) {
     },
     events: () => queue.events(),
     settings: parts.settings,
+    settingsVersion: () => parts.engine.store.stampOf("settings"),
     ...(parts.setSuggestionDismissed ? { setSuggestionDismissed: parts.setSuggestionDismissed } : {}),
     setup: parts.setup,
     held: parts.held,
