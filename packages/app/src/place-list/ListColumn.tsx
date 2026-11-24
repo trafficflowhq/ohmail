@@ -1,10 +1,12 @@
 /**
  * A list place's column: its head, then its own scroller; on a phone's width the rows lie on one sheet. Every list
- * beside the reading column stands in it (the list places, the streams, the piles, Drafts).
+ * beside the reading column stands in it (the list places, the streams, the piles, Drafts). Under a finger the list
+ * pulled down at its top is the mail ground's Pull new mail, as on the Ohbox.
  */
 import { useCallback, useEffect, useRef, type ReactNode, type Ref } from "react";
 import { Sheet } from "@ohmail/ui/mail";
 import type { LayoutPlan } from "../frame/contract.js";
+import { ListTouch, useGroundPull } from "../touch/index.js";
 import "./place-list.css";
 
 /** A letter's row under the column's scroller, by the id it carries (never an id spelled into a selector). */
@@ -73,6 +75,8 @@ export function ListColumn({
     [scrollerRef],
   );
   useCursorRowInView(cursor, scroller);
+  /* The ground's one flight: the rail's foot, the list's menu and this pull press the same binding. */
+  const pull = useGroundPull();
   useEffect(() => {
     const el = scroller.current;
     const column = el?.parentElement;
@@ -124,13 +128,15 @@ export function ListColumn({
         tabIndex={-1}
         data-manual-anchor={manualScrollAnchor ? "" : undefined}
       >
-        {plan.device === "phone" ? (
-          <div className="pl-page">
-            <Sheet kind="plain">{children}</Sheet>
-          </div>
-        ) : (
-          children
-        )}
+        <ListTouch scroller={scroller} run={false} pull={pull}>
+          {plan.device === "phone" ? (
+            <div className="pl-page">
+              <Sheet kind="plain">{children}</Sheet>
+            </div>
+          ) : (
+            children
+          )}
+        </ListTouch>
       </div>
       {foot}
     </div>

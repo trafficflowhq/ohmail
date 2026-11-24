@@ -1,9 +1,9 @@
 /**
  * THE FIRST STEP: which way the calendar is with. One capsule a way our server offers and this build has a step for;
- * typing narrows them, Enter takes the first that fits. With none offered it says so in one line.
+ * with a plain heading above. With none offered it says so in one line.
  */
 import { useRef, useState, type ReactNode } from "react";
-import { Blank, Button, Dot, EndDot, Page, Sentence } from "@ohmail/ui/base";
+import { Button, EndDot, Page, Sentence } from "@ohmail/ui/base";
 import {
   isCalendarOAuthProvider,
   type CalendarOAuthProvider,
@@ -39,7 +39,6 @@ export function WayStep({
   busy = false,
 }: WayStepProps) {
   const t = useText("calsetup");
-  const [typed, setTyped] = useState<string | null>(null);
   const [startResult, setStartResult] = useState<CalendarOAuthResult | null>(null);
   const asking = useRef(false);
   const press = async (way: CalendarWay) => {
@@ -66,15 +65,8 @@ export function WayStep({
       {startResult === null && microsoftApproval ? <MicrosoftApproval read={microsoftApproval} /> : null}
     </>
   ) : undefined;
-  const input = typed ?? (via && offered?.includes(via) ? via : "");
-  const words = input.trim().toLowerCase();
-  const fits = (way: CalendarWay) =>
-    words === "" ||
-    t(`way.${way}`)
-      .toLowerCase()
-      .split(/\s+/)
-      .some((word) => word.startsWith(words));
-  const shown = (offered ?? []).filter(fits);
+  // A browser handoff names the provider chosen on the previous device.
+  const shown = via && offered?.includes(via) ? [via] : offered;
   if (offered !== null && offered.length === 0) {
     return (
       <Page acts={leave} afterLine={outcome}>
@@ -86,14 +78,13 @@ export function WayStep({
       </Page>
     );
   }
-  const first = shown[0];
   return (
     <Page
       acts={leave}
       afterLine={outcome}
       stack
       material={
-        offered === null ? undefined : (
+        shown === null ? undefined : (
           <div role="group" aria-label={t("way.group")}>
             {shown.map((way) => (
               <Button
@@ -101,7 +92,6 @@ export function WayStep({
                 kind="two"
                 size="l"
                 disabled={busy || startResult === "connecting"}
-                keyHint={way === first ? "↵" : undefined}
                 onPress={() => void press(way)}
               >
                 {oauthInBrowser && isCalendarOAuthProvider(way)
@@ -114,20 +104,9 @@ export function WayStep({
       }
     >
       <Sentence size="xl" level={1}>
-        {t.rich("way.sentence", {
-          way: () => (
-            <Blank
-              key="way"
-              label={t("way.label")}
-              placeholder=""
-              size={6}
-              value={input}
-              onChange={setTyped}
-              onEnter={() => first && void press(first)}
-            />
-          ),
-        })}
-        <Dot kind="hot" product="cal" />
+        <EndDot kind="hot" product="cal">
+          {t("way.sentence")}
+        </EndDot>
       </Sentence>
     </Page>
   );

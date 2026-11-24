@@ -350,6 +350,24 @@ describe("Dialog", () => {
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Delete" }));
   });
 
+  it("every question stands over the whole window, outside the pane that opened it, and Escape restores the opener's focus", () => {
+    const { container } = render(
+      <portalRenderer.Provider value={createPortal}>
+        <div className="pane" style={{ transform: "translateX(0)", overflow: "hidden" }}>
+          <Asked />
+        </div>
+      </portalRenderer.Provider>,
+    );
+    ask();
+    const dialog = screen.getByRole("dialog", { name: "Move to Trash" });
+    expect(container.contains(dialog)).toBe(false);
+    expect(dialog.closest(".oh-over")?.parentElement).toBe(document.body);
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Move to Trash" }));
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Delete" }));
+  });
+
   it("is a modal dialog named by its sentence, with the keys on its first button", () => {
     render(<Asked />);
     expect(screen.queryByRole("dialog")).toBeNull();

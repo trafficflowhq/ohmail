@@ -613,7 +613,7 @@ export abstract class EngineState {
    */
   protected readonly inlineImageAsks = new Map<string, { cids: readonly string[]; reasks: Map<string, number>; again: boolean }>();
   /**
-   * `messageId:attachmentId` of the part a pass is fetching now. Its own arrival owes no second
+   * `messageId:attachmentId` of the parts a pass is fetching now. Their own arrival owes no second
    * pass: one would spend the per-pass budget again on the parts past {@link INLINE_IMAGE_MAX_PARTS}.
    */
   protected readonly inlinePassParts = new Set<string>();

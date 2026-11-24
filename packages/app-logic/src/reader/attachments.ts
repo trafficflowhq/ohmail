@@ -736,7 +736,7 @@ export function useMessageAttachments(
   );
 
   const needCidImages = useCallback(
-    (id: string, contentIds: string[]): Promise<void> => engine.loadInlineImages(id, contentIds),
+    (id: string, contentIds: string[], opts?: { first?: boolean }): Promise<void> => engine.loadInlineImages(id, contentIds, opts),
     [engine],
   );
 

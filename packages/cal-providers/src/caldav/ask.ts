@@ -32,11 +32,14 @@ export interface Session {
   readonly hosts: TurnHosts;
   /**
    * Asks the server where the person's calendars are, once in the turn, so that the hosts it names
-   * are admitted: the word of an asking that failed, or `null`. No function in a session of that
-   * asking itself ({@link finding}).
+   * are admitted: where the refused address is to be asked now, or the word of an asking that
+   * failed. No function in a session of that asking itself ({@link finding}).
    */
-  readonly locate: ((refused: string) => Promise<ProviderRefusal | null>) | null;
+  readonly locate: ((refused: string) => Promise<Located>) | null;
 }
+
+/** Where a refused address is asked once the server said where the calendars are: itself, or the same place at the home that answered; or a word. */
+export type Located = { readonly ok: true; readonly url: string } | { readonly ok: false; readonly reason: ProviderRefusal };
 
 /**
  * The session the discovery asks with: a redirect its requests are answered with names the origin
@@ -47,24 +50,40 @@ export const finding = (s: Session): Session => ({ ...s, auth: { ...s.auth, admi
 /** The same session with a sign-in that travels with TLS alone from here on. */
 export const tlsAlone = (s: Session): Session => ({ ...s, auth: { ...s.auth, tlsOnly: true } });
 
+type Request = Pick<HttpRequest, "method" | "headers" | "body" | "precondition">;
+
 /**
  * THE ONE WAY A CALDAV REQUEST LEAVES. The request port sends the sign-in only to an origin the
  * turn admits and refuses every other address before it looks anything up (`host_changed`). An
  * address a caller's stored row names is refused so until the server itself has named its host in
  * this turn: the server is then asked where the calendars are, once in the turn, and the request is
- * made again. Where it names that host, the request goes there; where it does not, the port
- * refuses it again and that is the answer; where the asking itself failed, its word is. A host the
- * server could not name at all is not asked about: its refusal stands, and nobody was asked.
+ * made again. Where it names that host, the request goes there. Where it does not, but the address
+ * lies inside a calendar home that answered this turn from another origin, the request goes to the
+ * same place at that origin: the server moved the person's calendars between its hosts, and the
+ * stored address names the place inside the home, not the host (a `Destination` on the stored
+ * origin moves with it). Otherwise the refusal stands; where the asking itself failed, its word
+ * is. A host the server could not name at all is not asked about: its refusal stands, and nobody
+ * was asked. No origin is admitted by any of this: every request still goes only where the port
+ * lets it.
  *
  * A write is never sent twice by this: a refused address is refused before anything is sent, and a
  * write follows no redirect.
  */
-export async function leave(s: Session, url: string, req: Pick<HttpRequest, "method" | "headers" | "body" | "precondition">): Promise<HttpAnswer> {
-  const send = (): Promise<HttpAnswer> => s.deps.http.request(url, { ...req, auth: s.auth, validators: null, signal: s.signal });
-  const answer = await send();
+export async function leave(s: Session, url: string, req: Request): Promise<HttpAnswer> {
+  const send = (to: string, r: Request): Promise<HttpAnswer> => s.deps.http.request(to, { ...r, auth: s.auth, validators: null, signal: s.signal });
+  const answer = await send(url, req);
   if (answer.arrived || answer.reason !== "host_changed" || s.locate === null || !s.hosts.couldName(url)) return answer;
-  const failed = await s.locate(url);
-  return failed === null ? send() : { arrived: false, reason: failed };
+  const located = await s.locate(url);
+  if (!located.ok) return { arrived: false, reason: located.reason };
+  return send(located.url, located.url === url ? req : movedRequest(req, url, located.url));
+}
+
+/** A request's `Destination` that names the stored origin names the origin the request is sent to instead. */
+function movedRequest(req: Request, from: string, to: string): Request {
+  const destination = req.headers.destination;
+  if (destination === undefined) return req;
+  const moved = knownAt(to, from)(destination);
+  return moved === destination ? req : { ...req, headers: { ...req.headers, destination: moved } };
 }
 
 export async function allowsMove(session: Session, url: string): Promise<boolean> {
@@ -154,6 +173,51 @@ export function isSelf(scope: Scope, address: string): boolean {
 }
 
 export const isUnder = (scope: Scope, address: string): boolean => address.startsWith(scope.under) && !isSelf(scope, address);
+
+/**
+ * The same place at a calendar home's host: `address` (one of {@link addressOf}'s) where it is on
+ * another host, with the home's scheme and port, and its path lies inside the home's path; else
+ * `null`. The home is an address that answered in this turn, so its origin is one the turn admits.
+ * Another port or another scheme is another server, and is never taken for the same place.
+ */
+export function samePlaceAt(address: string, home: string): string | null {
+  const at = new URL(address);
+  const inside = new URL(home);
+  const under = `${withoutEndSlashes(inside.pathname)}/`;
+  if (at.host === inside.host || at.protocol !== inside.protocol || at.port !== inside.port) return null;
+  if (!at.pathname.startsWith(under) || withoutEndSlashes(at.pathname).length < under.length) return null;
+  return `${inside.origin}${at.pathname}${at.search}`;
+}
+
+/**
+ * Addresses an answer from `answeredAt` names, known under the origin of `known`: a calendar's
+ * members keep the origin the calendar is stored at, whichever of the server's hosts answered for
+ * it. The same function where both are one origin.
+ */
+export function knownAt(known: string, answeredAt: string): (address: string) => string {
+  const from = new URL(answeredAt).origin;
+  const to = new URL(known).origin;
+  if (from === to) return (address) => address;
+  return (address) => (address.startsWith(`${from}/`) ? `${to}${address.slice(from.length)}` : address);
+}
+
+/**
+ * What one place of a server is known by whichever of its hosts names it: its scheme, its port, its
+ * path in one spelling (each segment unescaped and escaped again, no slash at its end) and its
+ * query. Only the host is left out, as {@link samePlaceAt} reads the same place at another host:
+ * another port or another scheme is another server. A text that is no address is its own key.
+ */
+export function placeKey(address: string): string {
+  let url: URL;
+  try {
+    url = new URL(address);
+  } catch {
+    // No address: it is known by its text.
+    return address;
+  }
+  const key = sameMemberKey(url.href);
+  return `${url.protocol}//:${url.port}${withoutEndSlashes(key.slice(url.origin.length).split("?")[0]!)}${url.search}`;
+}
 
 /**
  * One spelling of an address (one of {@link addressOf}'s) for telling whether two written forms name

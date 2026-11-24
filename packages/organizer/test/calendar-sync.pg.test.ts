@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import { and, eq, sql } from "drizzle-orm";
 import { PG_TEST_URL } from "@trafficflow/db/testing";
-import { calCalendars, calConnections, calEvents, calWrites, changeLog, mailboxes, type Tx } from "@trafficflow/db";
+import { calCalendars, calConnections, calEvents, calSettings, calWrites, changeLog, mailboxes, type Tx } from "@trafficflow/db";
 import { zoned, wall, type ZoneSource } from "@ohmail/cal-core";
 import { Secret, type ChangeItem, type StoredCredential } from "@ohmail/cal-providers";
 import { calendarSyncPass, calendarTurnFailed } from "../src/calendar/sync-pass.js";
@@ -1195,6 +1195,101 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect(await names.turns()).toEqual([false]);
     expect(await names.calendar()).toMatchObject({ errorCode: "too_large", syncToken: null });
   }, 120_000);
+
+  describe("a CalDAV server that lists its calendars at another of its hosts", () => {
+    const at = (host: string, slug: string) => `https://${host}-caldav.example.test/123/calendars/${slug}/`;
+    const SLUGS = ["family", "privat", "work"] as const;
+    const listingAt = (host: string) => SLUGS.map((slug) => ({ id: at(host, slug), name: slug, color: null, writable: true, byToken: true, zone: null }));
+    async function listedAndRead() {
+      const seeded = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
+      const reader = scriptedReader("caldav", { readings: new Map([["", [{ items: [upsert("kiln.ics", "v1", single("kiln", 1))] }]]]), endToken: () => null });
+      let host = "p01";
+      reader.listCalendars = async () => ({ ok: true, value: listingAt(host) });
+      const deps = depsFor(w, providersOf({ caldav: { reader, http: silentHttp() } }));
+      await turnsUntilDone(deps, seeded.due);
+      const rows = async () => w.db.select({ id: calCalendars.id, providerId: calCalendars.providerId }).from(calCalendars)
+        .where(eq(calCalendars.accountId, seeded.accountId)).orderBy(calCalendars.createdAt, calCalendars.providerId);
+      const eventsIn = async (calendarId: string) => (await w.db.select({ id: calEvents.id }).from(calEvents)
+        .where(and(eq(calEvents.accountId, seeded.accountId), eq(calEvents.calendarId, calendarId)))).length;
+      /** The next turn lists, at this host. */
+      const listAt = async (next: string) => {
+        host = next;
+        deps.memory.listedAt.delete(seeded.connectionId);
+        await makeDue(seeded.accountId);
+        return turnsUntilDone(deps, seeded.due);
+      };
+      return { seeded, reader, deps, rows, eventsIn, listAt };
+    }
+
+    it("keeps each calendar's one row, under the address it was stored at, with its events", async () => {
+      const t = await listedAndRead();
+      const before = await t.rows();
+      expect(before.map((r) => r.providerId)).toEqual(SLUGS.map((slug) => at("p01", slug)));
+      expect(await t.listAt("p02")).toEqual([expect.objectContaining({ kind: "synced" })]);
+      expect(await t.rows()).toEqual(before);
+      for (const row of before) expect(await t.eventsIn(row.id)).toBe(1);
+      expect(await connectionOf(w, t.seeded.accountId, t.seeded.connectionId)).toMatchObject({ status: "active", errorCode: null });
+    }, 60_000);
+
+    it("merges rows an earlier listing stored twice: the one with the person's choice, owed writes or events stays, a row owing a write is never removed", async () => {
+      const t = await listedAndRead();
+      const first = await t.rows();
+      const [family, privat, work] = first;
+      // As an earlier build stored them: the same three calendars again, at the host the server names today.
+      const again = await w.db.insert(calCalendars).values(SLUGS.map((slug) => ({
+        accountId: t.seeded.accountId, connectionId: t.seeded.connectionId, providerId: at("p02", slug), name: slug, access: "owner", nextPollAt: new Date(Date.now() + WAIT_DAY_MS),
+      }))).returning({ id: calCalendars.id, providerId: calCalendars.providerId });
+      const [familyAgain, privatAgain, workAgain] = SLUGS.map((slug) => again.find((r) => r.providerId === at("p02", slug))!);
+      // The person chose the second Privat for new events; the second Work owes a write. The second Family holds only a write
+      // already applied, which is history and weighs nothing; the person hid the first Family, and the second came in shown.
+      await w.db.update(calSettings).set({ newEventsCalendarId: privatAgain!.id }).where(eq(calSettings.accountId, t.seeded.accountId));
+      await w.db.insert(calWrites).values([
+        { accountId: t.seeded.accountId, calendarId: workAgain!.id, op: "create", payload: {}, idempotencyKey: `owed-${workAgain!.id}` },
+        { accountId: t.seeded.accountId, calendarId: familyAgain!.id, op: "create", payload: {}, idempotencyKey: `applied-${familyAgain!.id}`, state: "applied" },
+      ]);
+      await w.db.update(calCalendars).set({ shown: false }).where(eq(calCalendars.id, family!.id));
+
+      await t.listAt("p02");
+      expect((await t.rows()).map((r) => r.id).sort()).toEqual([family!.id, privatAgain!.id, workAgain!.id].sort());
+      expect(await t.eventsIn(family!.id)).toBe(1);
+      // A person's hide wins over a second row stored with the default: the kept row keeps its own choice.
+      expect((await w.db.select({ shown: calCalendars.shown }).from(calCalendars).where(eq(calCalendars.id, family!.id)))[0]).toEqual({ shown: false });
+      // The kept rows read the calendar again; the second Family and the first Privat and Work went with their copies.
+      expect(await t.eventsIn(privatAgain!.id)).toBe(1);
+      expect(await t.eventsIn(workAgain!.id)).toBe(1);
+      for (const gone of [familyAgain!, privat!, work!]) expect(await t.eventsIn(gone.id)).toBe(0);
+      expect((await w.db.select({ id: calWrites.id }).from(calWrites).where(eq(calWrites.calendarId, workAgain!.id))).length).toBe(1);
+
+      // A merge's removal leaves a row that came to owe a write after the merge looked, with its events, and says it was not whole.
+      const ctx = { db: passDb(calendarPool(w.db), t.seeded.accountId), key: { accountId: t.seeded.accountId, id: t.seeded.connectionId }, memory: t.deps.memory, halted: () => false };
+      expect(await removeCalendar(ctx, workAgain!.id, { unlessOwed: true })).toEqual({ ok: true, changed: 0, whole: false });
+      expect((await t.rows()).map((r) => r.id)).toContain(workAgain!.id);
+      expect(await t.eventsIn(workAgain!.id)).toBe(1);
+    }, 60_000);
+
+    it("a merge's removal leaves a row the person made the calendar for new events, or that a waiting or refused move goes to, after the merge looked, with its events", async () => {
+      const t = await listedAndRead();
+      const [family, privat, work] = await t.rows();
+      const ctx = { db: passDb(calendarPool(w.db), t.seeded.accountId), key: { accountId: t.seeded.accountId, id: t.seeded.connectionId }, memory: t.deps.memory, halted: () => false };
+      const held = { ok: true, changed: 0, whole: false };
+      await w.db.update(calSettings).set({ newEventsCalendarId: privat!.id }).where(eq(calSettings.accountId, t.seeded.accountId));
+      expect(await removeCalendar(ctx, privat!.id, { unlessOwed: true })).toEqual(held);
+      expect(await t.eventsIn(privat!.id)).toBe(1);
+      for (const state of ["pending", "refused"]) {
+        await w.db.delete(calWrites).where(eq(calWrites.accountId, t.seeded.accountId));
+        await w.db.insert(calWrites).values({
+          accountId: t.seeded.accountId, calendarId: family!.id, op: "move", state, idempotencyKey: `move-${state}`,
+          payload: { act: { kind: "calendar_event_move", toCalendarId: work!.id } },
+        });
+        expect(await removeCalendar(ctx, work!.id, { unlessOwed: true })).toEqual(held);
+        expect(await t.eventsIn(work!.id)).toBe(1);
+      }
+      // A move already applied is history: the row goes.
+      await w.db.update(calWrites).set({ state: "applied" }).where(eq(calWrites.accountId, t.seeded.accountId));
+      expect(await removeCalendar(ctx, work!.id, { unlessOwed: true })).toEqual({ ok: true, changed: 2, whole: true });
+      expect((await t.rows()).map((r) => r.id)).not.toContain(work!.id);
+    }, 60_000);
+  });
 
   it.each([false, true])("uses the appropriate wait when CalDAV refuses a host (continuation: %s)", async (continuation) => {
     const refusal = { refuse: { ok: false as const, reason: "host_changed" as const, retryAfterMs: null } };

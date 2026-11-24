@@ -10,6 +10,21 @@
 
 .tc-pull {
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+/* Let go: the room settles to its hold, or closes, at the kit's pace; under the finger it follows at once. */
+.tc-pull:not([data-finger]) {
+  transition: height var(--d-move) var(--e-move);
+}
+.tc-pull-mark {
+  display: flex;
+}
+.tc-pull-mark .spin {
+  width: var(--s5);
+  height: var(--s5);
 }
 
 /* The end of a list's run: as much room as the glass's inset, so the last row comes clear of the system's bar. On a

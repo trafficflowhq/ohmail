@@ -9,7 +9,7 @@
  */
 
 import { usePersistedChoice } from "../storage/persisted-ui.js";
-import { scopeSuffix, type StorageScope } from "../storage/scope.js";
+import type { StorageScope } from "../storage/scope.js";
 import type { MailboxFacts } from "../mail-state/mail-state.js";
 import type { UnscreenedPileWire } from "@ohmail/wire";
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
@@ -52,7 +52,8 @@ export function usePileNoteDismissal(
 
 /** The account-scoped dismissal count, keyed separately for each pile. */
 export function pileNoteNotNowKey(pile: UnscreenedPileWire, scope: StorageScope): string {
-  return `ohmail.ui.pileNote.notNow.${pile}.${scopeSuffix(scope)}`;
+  if (typeof scope !== "string" || scope === "") throw new Error("ohmail: a pile note key was asked for with no owner");
+  return `ohmail.ui.pileNote.notNow.${pile}.${scope}`;
 }
 
 export function usePileNote(

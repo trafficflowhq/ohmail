@@ -4,11 +4,17 @@
  * longer names goes only when the next listing does not name it either, so a provider that answers
  * a short list once costs nobody their calendar. Sync never sets which calendar is shown or the
  * default: those are the person's.
+ *
+ * A calendar is found again by its key (the providers' `calendarKey`): for CalDAV the place of the
+ * collection whichever of the server's hosts lists it. A row keeps the id it was stored under. Two
+ * rows of one key (stored before calendars were known so) are one calendar: the listing keeps the
+ * one that holds the person's choices and copy, and the others go once the writes owed have had
+ * their turn.
  */
-import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { CalendarInfo } from "@ohmail/cal-providers";
 import {
-  CALENDAR_CHANGES_PER_TRANSACTION, calAlarms, calAttendees, calCalendars, calEvents, calWrites, recordCalendarChanges,
+  CALENDAR_CHANGES_PER_TRANSACTION, calAlarms, calAttendees, calCalendars, calEvents, calSettings, calWrites, recordCalendarChanges,
   type CalendarChange, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { CALENDAR_PROVIDER_ID_MAX_BYTES, fitsCalendarBytes } from "@trafficflow/db/calendar";
@@ -67,25 +73,88 @@ export interface ListingContext {
   readonly halted: () => boolean;
 }
 
-/** Keep new and changed calendars. Defer removals until queued writes have had their turn. */
+/** Writes a calendar still owes: waiting to be sent, or refused and shown to the person. Applied ones are history. */
+const OWED_STATES = ["pending", "refused"];
+
+/** A row that is a second one of a calendar kept under `keeper`. */
+export interface DuplicateCalendar {
+  readonly id: string;
+  readonly keeper: string;
+}
+
+/**
+ * Of rows that are one calendar, the one that stays: the account's calendar for new events, then
+ * one with writes owed, then the one holding the most events, then the oldest.
+ */
+async function keepersOf(
+  ctx: ListingContext, groups: readonly (readonly StoredCalendar[])[],
+): Promise<"gone" | readonly StoredCalendar[]> {
+  const ids = groups.flat().map((s) => s.id);
+  return inConnection(ctx.db, ctx.key, async ({ tx }) => {
+    const events = new Map((await tx.select({ id: calEvents.calendarId, n: sql<number>`count(*)::int` }).from(calEvents)
+      .where(and(eq(calEvents.accountId, ctx.key.accountId), inArray(calEvents.calendarId, ids))).groupBy(calEvents.calendarId))
+      .map((r) => [r.id, Number(r.n)]));
+    const owed = new Set((await tx.selectDistinct({ id: calWrites.calendarId }).from(calWrites)
+      .where(and(eq(calWrites.accountId, ctx.key.accountId), inArray(calWrites.calendarId, ids), inArray(calWrites.state, OWED_STATES)))).map((r) => r.id));
+    const [settings] = await tx.select({ id: calSettings.newEventsCalendarId }).from(calSettings)
+      .where(eq(calSettings.accountId, ctx.key.accountId)).limit(1);
+    const weight = (s: StoredCalendar): readonly number[] => [s.id === settings?.id ? 1 : 0, owed.has(s.id) ? 1 : 0, events.get(s.id) ?? 0];
+    // Each group is in the stored order (oldest first): the first of the heaviest stays.
+    return groups.map((group) => group.reduce((best, s) => {
+      const [a, b] = [weight(s), weight(best)];
+      const i = a.findIndex((v, n) => v !== b[n]);
+      return i !== -1 && a[i]! > b[i]! ? s : best;
+    }));
+  });
+}
+
+/**
+ * Keep new and changed calendars. Defer removals until queued writes have had their turn: the rows
+ * no longer listed (`missing`) and the second rows of one calendar (`duplicates`).
+ */
 export async function applyListing(
   ctx: ListingContext, listed: readonly CalendarInfo[], stored: readonly StoredCalendar[],
-): Promise<{ readonly ok: true; readonly changed: number; readonly missing: readonly string[] } | { readonly ok: false; readonly why: "gone" | "halted" }> {
-  // A calendar is found again by its provider's id: one the store cannot hold, for its length or for what is in it, is not kept.
-  const usable = listed.filter((c) => fitsCalendarBytes(c.id, CALENDAR_PROVIDER_ID_MAX_BYTES) && storableKey(c.id));
-  const named = new Set(usable.map((c) => c.id));
-  const byProvider = new Map(stored.map((s) => [s.providerId, s]));
+  keyOf: (providerId: string) => string = (id) => id,
+): Promise<
+  { readonly ok: true; readonly changed: number; readonly missing: readonly string[]; readonly duplicates: readonly DuplicateCalendar[] }
+  | { readonly ok: false; readonly why: "gone" | "halted" }
+> {
+  // A calendar is found again by its key: one the store cannot hold, for its length or for what is in it, is not kept.
+  const byKey = new Map<string, CalendarInfo>();
+  for (const c of listed) {
+    if (!fitsCalendarBytes(c.id, CALENDAR_PROVIDER_ID_MAX_BYTES) || !storableKey(c.id)) continue;
+    // Named twice (at two hosts of one server): one calendar, as it was named first.
+    const key = keyOf(c.id);
+    if (!byKey.has(key)) byKey.set(key, c);
+  }
+  const usable = [...byKey.values()];
+  const groups = new Map<string, StoredCalendar[]>();
+  for (const s of stored) {
+    const key = keyOf(s.providerId);
+    groups.set(key, [...(groups.get(key) ?? []), s]);
+  }
+  const kept = new Map<string, StoredCalendar>();
+  const duplicates: DuplicateCalendar[] = [];
+  const twice = [...groups.values()].filter((group) => group.length > 1);
+  const keepers = twice.length === 0 ? [] : await keepersOf(ctx, twice);
+  if (keepers === "gone") return { ok: false, why: "gone" };
+  for (const [key, group] of groups) kept.set(key, group[0]!);
+  twice.forEach((group, i) => {
+    const keeper = keepers[i]!;
+    kept.set(keyOf(keeper.providerId), keeper);
+    for (const s of group) if (s.id !== keeper.id) duplicates.push({ id: s.id, keeper: keeper.id });
+  });
   // A listing that names no calendar at all decides nothing: an empty answer is likelier a provider's fault than a person's wish.
-  const missing = usable.length === 0 ? [] : stored.filter((s) => !named.has(s.providerId)).map((s) => s.id);
+  const missing = usable.length === 0 ? [] : [...kept].filter(([key]) => !byKey.has(key)).map(([, s]) => s.id);
   let changed = 0;
 
   for (let at = 0; at < usable.length; at += CALENDAR_CHANGES_PER_TRANSACTION) {
     if (ctx.halted()) return { ok: false, why: "halted" };
     const slice = usable.slice(at, at + CALENDAR_CHANGES_PER_TRANSACTION);
-    const kept = await inConnection(ctx.db, ctx.key, async ({ tx }) => {
+    const done = await inConnection(ctx.db, ctx.key, async ({ tx }) => {
       const changes: CalendarChange[] = [];
       for (const info of slice) {
-        const was = byProvider.get(info.id);
+        const was = kept.get(keyOf(info.id));
         const now = rowOf(info);
         if (was === undefined) {
           const [made] = await tx.insert(calCalendars).values({
@@ -113,11 +182,50 @@ export async function applyListing(
       }
       return changes.length;
     });
-    if (kept === "gone") return { ok: false, why: "gone" };
-    changed += kept;
+    if (done === "gone") return { ok: false, why: "gone" };
+    changed += done;
   }
 
-  return { ok: true, changed, missing };
+  return { ok: true, changed, missing, duplicates };
+}
+
+/** Does the calendar owe a write: one of its own, or a move to it? */
+async function owesWrites(tx: Tx, accountId: string, calendarId: string): Promise<boolean> {
+  const [owed] = await tx.select({ id: calWrites.id }).from(calWrites).where(and(
+    eq(calWrites.accountId, accountId), inArray(calWrites.state, OWED_STATES),
+    or(eq(calWrites.calendarId, calendarId), sql`${calWrites.payload}->'act'->>'toCalendarId' = ${calendarId}`),
+  )).limit(1);
+  return owed !== undefined;
+}
+
+/**
+ * Must a second row of a calendar stay: the account's calendar for new events, or one that owes a
+ * write? The row is held for the rest of the transaction and the settings are read shared, so
+ * that neither a write nor the person's choice comes to it while it is being removed.
+ */
+async function staysWhileOwed(tx: Tx, accountId: string, calendarId: string): Promise<boolean> {
+  await tx.select({ id: calCalendars.id }).from(calCalendars)
+    .where(and(eq(calCalendars.id, calendarId), eq(calCalendars.accountId, accountId))).for("update");
+  const [settings] = await tx.select({ id: calSettings.newEventsCalendarId }).from(calSettings)
+    .where(eq(calSettings.accountId, accountId)).for("share");
+  return settings?.id === calendarId || await owesWrites(tx, accountId, calendarId);
+}
+
+/**
+ * The second rows of one calendar removed with what hangs on them; the calendar's events come back
+ * on its kept row's reading. A row that owes a write is left for a later listing, once the write
+ * has had its turn. The kept row keeps its own choice of being shown.
+ */
+export async function mergeDuplicateCalendars(
+  ctx: ListingContext, duplicates: readonly DuplicateCalendar[],
+): Promise<{ readonly ok: true; readonly changed: number } | { readonly ok: false; readonly why: "gone" | "halted" }> {
+  let changed = 0;
+  for (const { id } of duplicates) {
+    const removed = await removeCalendar(ctx, id, { unlessOwed: true });
+    if (!removed.ok) return removed;
+    changed += removed.changed;
+  }
+  return { ok: true, changed };
 }
 
 /** A calendar goes only after two listings miss it. */
@@ -153,22 +261,27 @@ export async function pruneUnlistedCalendars(
  * that is listed again is read at once from its first page and gets back what was taken.
  */
 export async function removeCalendar(
-  ctx: ListingContext, calendarId: string,
+  ctx: ListingContext, calendarId: string, opts: { readonly unlessOwed?: boolean } = {},
 ): Promise<{ readonly ok: true; readonly changed: number; readonly whole: boolean } | { readonly ok: false; readonly why: "gone" | "halted" }> {
   let changed = 0;
   const mine = (t: { accountId: typeof calEvents.accountId; calendarId: typeof calEvents.calendarId }) =>
     and(eq(t.accountId, ctx.key.accountId), eq(t.calendarId, calendarId));
-  ctx.memory.readings.delete(calendarId);
   const rounds = await inConnection(ctx.db, ctx.key, async ({ tx }) => {
+    // A second row that must stay keeps its reading and its events.
+    if (opts.unlessOwed === true && await staysWhileOwed(tx, ctx.key.accountId, calendarId)) return "stays";
     await tx.update(calCalendars).set({ syncToken: null, nextPollAt: null })
       .where(and(eq(calCalendars.id, calendarId), eq(calCalendars.accountId, ctx.key.accountId), eq(calCalendars.connectionId, ctx.key.id)));
     const [held] = await tx.select({ n: sql<number>`count(*)::int` }).from(calEvents).where(mine(calEvents));
     return Math.ceil(Number(held?.n ?? 0) / CALENDAR_CHANGES_PER_TRANSACTION) + 1;
   });
   if (rounds === "gone") return { ok: false, why: "gone" };
+  if (rounds === "stays") return { ok: true, changed: 0, whole: false };
+  ctx.memory.readings.delete(calendarId);
   for (let round = 0; round < rounds; round++) {
     if (ctx.halted()) return { ok: false, why: "halted" };
     const done = await inConnection(ctx.db, ctx.key, async ({ tx }) => {
+      // Asked again before each part goes: a write or a choice that came since stops the removal, the row held from here on.
+      if (opts.unlessOwed === true && await staysWhileOwed(tx, ctx.key.accountId, calendarId)) return { last: true, count: 0, kept: true };
       const rows = await tx.select({ id: calEvents.id }).from(calEvents).where(mine(calEvents)).limit(CALENDAR_CHANGES_PER_TRANSACTION);
       const changes: CalendarChange[] = [];
       for (const r of rows) {
@@ -186,11 +299,11 @@ export async function removeCalendar(
         if (gone.length > 0) changes.push({ kind: "calendar", id: calendarId, op: "delete" });
       }
       if (changes.length > 0) await recordCalendarChanges(tx as unknown as LedgerTx, ctx.key.accountId, changes);
-      return { last: rows.length === 0, count: changes.length };
+      return { last: rows.length === 0, count: changes.length, kept: false };
     });
     if (done === "gone") return { ok: false, why: "gone" };
     changed += done.count;
-    if (done.last) return { ok: true, changed, whole: true };
+    if (done.last) return { ok: true, changed, whole: !done.kept };
   }
   return { ok: true, changed, whole: false };
 }

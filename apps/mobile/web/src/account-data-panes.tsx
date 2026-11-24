@@ -78,7 +78,7 @@ function PhoneAi({ request, readAccess, managed }: {
   const { model, saveDraft } = useAiDoor(door);
 
   const credits = access && access !== "failed" && access.metered && access.access === "open"
-    ? aiCreditsOf(access.aiCredits) : null;
+    ? aiCreditsOf(access.aiCredits, access.lifecycle) : null;
   return <AiPane
     phone
     model={model}

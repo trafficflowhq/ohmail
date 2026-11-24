@@ -746,6 +746,8 @@ const nextConfig = {
     // build the constant is absent and every self-host branch is unreachable regardless of the
     // runtime environment, which is the same reasoning as the compiled rewrite allow-list.
     ...(selfhost ? { [PUBLIC_FLAVOR_VAR]: "selfhost" } : {}),
+    // Compile platform trust from the build environment. Middleware reads the signing secret at runtime.
+    OHMAIL_WEB_PLATFORM: process.env.VERCEL === "1" ? "vercel" : "",
     // Always emitted, "" when unarmed, so the client and the middleware compile it and never read
     // it at runtime: a dashboard edit without a rebuild cannot widen the policy middleware sends.
     [STAGING_ORIGIN_VAR]: stagingOrigin ?? "",

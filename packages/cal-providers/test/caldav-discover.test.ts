@@ -11,6 +11,7 @@ import { Readable } from "node:stream";
 import { intlZones } from "@ohmail/cal-core";
 import { pinnedHttpRequest, type HostResolver } from "@trafficflow/core/net";
 import { afterEach, describe, expect, it } from "vitest";
+import { calendarKey } from "../src/calendar-key.js";
 import { makeReader } from "../src/caldav/index.js";
 import type { CalendarReader, Connection } from "../src/port.js";
 import { ANSWER_TIMEOUT_MS, CONNECT_TIMEOUT_MS, FETCH_BODY_MAX_BYTES, MAX_REDIRECTS } from "../src/limits.js";
@@ -21,8 +22,8 @@ import { startCalDavStandIn, type StandIn, type StandInOptions } from "./caldav-
 
 const ZONES = intlZones();
 const CLOCK = { now: () => Date.UTC(2026, 10, 14, 9, 0, 0) };
-/** Three names for this machine: the typed host, a numbered host beside it, and a host of somebody else's. */
-const NAMES: Record<string, string[]> = { "caldav.example.test": ["127.0.0.1"], "p01-caldav.example.test": ["127.0.0.1"], "elsewhere.example.net": ["127.0.0.1"] };
+/** Four names for this machine: the typed host, two numbered hosts beside it, and a host of somebody else's. */
+const NAMES: Record<string, string[]> = { "caldav.example.test": ["127.0.0.1"], "p01-caldav.example.test": ["127.0.0.1"], "p02-caldav.example.test": ["127.0.0.1"], "elsewhere.example.net": ["127.0.0.1"] };
 const resolver: HostResolver = { resolve: async (name) => NAMES[name] ?? [] };
 const ownNetwork = (): CalendarReader => makeReader({ http: namedHostRequest({ writes: false, resolver, policy: { kind: "own-network" } }), clock: CLOCK, zones: ZONES });
 /**
@@ -278,27 +279,73 @@ describe("whom the reader tells the password", () => {
       expect(next.value).toMatchObject({ cursor: { kind: "end" }, items: [{ kind: "upsert", event: { uid: "second" } }] });
       expect(s.seen.slice(-2).map((r) => [r.host.startsWith("p01-"), r.signedIn])).toEqual([[true, true], [true, true]]);
 
-      for (const host of ["p02-caldav.example.test", "elsewhere.example.net"]) {
-        const unlisted = new URL(calendar.id);
-        unlisted.hostname = host;
-        expect(await reader.readChanges(signIn(s, typedAt(s)), { id: unlisted.href }, null, { ...PAGE, cursor: cursor.value }, signal()))
-          .toEqual({ ok: false, reason: "host_changed", retryAfterMs: null });
-        expect(s.seen.some((r) => r.host === unlisted.host)).toBe(false);
-      }
+      // A host the server does not name is never asked. Another of its numbered hosts names the same place inside the home the server
+      // names today, and is read there; a host of somebody else's is refused.
+      const moved = new URL(calendar.id);
+      moved.hostname = "p02-caldav.example.test";
+      const movedAt = s.seen.length;
+      expect(await reader.readChanges(signIn(s, typedAt(s)), { id: moved.href }, null, PAGE, signal()))
+        .toMatchObject({ ok: true, value: { items: [{ kind: "upsert", id: `${moved.href}first.ics`, event: { uid: "first" } }] } });
+      expect(s.seen.slice(movedAt).filter((r) => r.method === "REPORT").map((r) => [r.host.split(":")[0], r.path]))
+        .toEqual([["p01-caldav.example.test", `${home}work/`], ["p01-caldav.example.test", `${home}work/`]]);
+      const foreign = new URL(calendar.id);
+      foreign.hostname = "elsewhere.example.net";
+      expect(await reader.readChanges(signIn(s, typedAt(s)), { id: foreign.href }, null, { ...PAGE, cursor: cursor.value }, signal()))
+        .toEqual({ ok: false, reason: "host_changed", retryAfterMs: null });
+      expect(s.seen.some((r) => r.host === moved.host || r.host === foreign.host)).toBe(false);
     });
 
-    it("on a host the server does not name it is not asked, at a name beside the typed one or at another port of the typed host; the server is asked about it once in the turn", async () => {
+    it("reads a calendar stored from an earlier numbered host at the host the server names now, without asking the earlier one, and keeps its members under the stored address", async () => {
+      // The principal on the typed host names a home alias; the alias sends every caller on to today's numbered host. An earlier listing stored the calendar
+      // on another numbered host, as one large provider does when it moves an account between its hosts.
+      const home = "/dav/calendars/mila/";
+      const redirect: Record<string, string> = {};
+      const s = await server({ homeHref: () => "/calendar-home/", sendsOn: redirect });
+      redirect["/calendar-home/"] = `http://p02-caldav.example.test:${s.port}${home}`;
+      s.addCalendar("work", { name: "Work" });
+      s.put("work", "first.ics", [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//ohmail//test//EN", "BEGIN:VEVENT", "UID:first",
+        "DTSTAMP:20261113T120000Z", "DTSTART:20261119T090000Z", "DTEND:20261119T100000Z", "END:VEVENT", "END:VCALENDAR", "",
+      ].join("\r\n"));
+      const reader = ownNetworkByName();
+      const stored = { id: `http://p01-caldav.example.test:${s.port}${home}work/` };
+
+      const read = await reader.readChanges(signIn(s, typedAt(s)), stored, null, PAGE, signal());
+      expect(read).toMatchObject({ ok: true, value: { items: [{ kind: "upsert", id: `${stored.id}first.ics`, event: { uid: "first" } }] } });
+      expect(s.seen.some((r) => r.host.startsWith("p01-"))).toBe(false);
+      expect(asked(s).at(-2)).toEqual(["p02-caldav.example.test", "REPORT", `${home}work/`, true]);
+
+      // Listed today, the same calendar is named at today's host, and is the same calendar.
+      const listed = await reader.listCalendars(signIn(s, typedAt(s)), signal());
+      if (!listed.ok) throw new Error(listed.reason);
+      expect(listed.value.map((c) => new URL(c.id).hostname)).toEqual(["p02-caldav.example.test"]);
+      expect(listed.value.map((c) => calendarKey("caldav", c.id))).toEqual([calendarKey("caldav", stored.id)]);
+    });
+
+    it("knows a calendar by its place whichever host names it, and at another port or another scheme as another calendar, as it is read", () => {
+      const key = (address: string) => calendarKey("caldav", address);
+      const stored = "https://p01-caldav.example.test/123/calendars/work/";
+      expect(key("https://p02-caldav.example.test/123/calendars/work")).toBe(key(stored));
+      expect(key("https://p02-caldav.example.test:443/123/calendars/work/")).toBe(key(stored));
+      expect(key("https://p02-caldav.example.test:8443/123/calendars/work/")).not.toBe(key(stored));
+      expect(key("http://p02-caldav.example.test/123/calendars/work/")).not.toBe(key(stored));
+      expect(key("http://p02-caldav.example.test:443/123/calendars/work/")).not.toBe(key(stored));
+    });
+
+    it("on a host the server does not name it is not asked: at a name beside the typed one it is read at the same place of the home the server names, at another port of the typed host it is refused; the server is asked about it once in the turn", async () => {
       const s = await server();
       s.addCalendar("work", { name: "Work" });
       const reader = ownNetworkByName();
       const turn = signIn(s, typedAt(s));
       const refused = { ok: false, reason: "host_changed", retryAfterMs: null };
-      expect(await reader.readChanges(turn, beside(s), null, PAGE, signal())).toEqual(refused);
+      const report = ["caldav.example.test", "REPORT", "/dav/calendars/mila/work/", true];
+      expect((await reader.readChanges(turn, beside(s), null, PAGE, signal())).ok).toBe(true);
       const discoveryWithHome = [...DISCOVERY, ["caldav.example.test", "PROPFIND", "/dav/calendars/mila/", true]];
-      expect(asked(s)).toEqual(discoveryWithHome);
+      expect(asked(s)).toEqual([...discoveryWithHome, report]);
       expect(await reader.readChanges(turn, { id: "http://caldav.example.test:8443/dav/calendars/mila/work/" }, null, PAGE, signal())).toEqual(refused);
-      expect(await reader.readChanges(turn, beside(s), null, PAGE, signal())).toEqual(refused);
-      expect(asked(s)).toEqual(discoveryWithHome);
+      expect((await reader.readChanges(turn, beside(s), null, PAGE, signal())).ok).toBe(true);
+      expect(asked(s)).toEqual([...discoveryWithHome, report, report]);
+      expect(s.seen.some((r) => r.host.startsWith("p01-") || r.host.endsWith(":8443"))).toBe(false);
     });
 
     it("where the server could not be asked, the reading says that word and not that the host changed, and asks no second time in the turn", async () => {

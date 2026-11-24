@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readerLayoutCases } from "./reader-layout-cases.js";
+import { threadPictureCases } from "./thread-pictures-cases.js";
 
 const require_ = createRequire(resolve(process.cwd(), "package.json"));
 const { chromium } = require_("@playwright/test") as typeof import("@playwright/test");
@@ -971,3 +972,4 @@ it.each([
 );
 
 readerLayoutCases();
+threadPictureCases();

@@ -392,6 +392,14 @@ const isPlan = (v: unknown): v is StorageOfferPlan["plan"] => (PLAN_HINT_PLANS a
 /** A reason the program names in one lower-case word; free text never reaches a screen. */
 const REASON_WORD = /^[a-z][a-z_]{0,31}$/;
 
+/** The setup pool while it holds credits; spent, expired, absent or unreadable is none. */
+function setupPoolOf(raw: unknown): { remaining: number; expiresAt: string | null } | null {
+  const o = obj(raw);
+  if (!o || !isCount(o.remaining) || o.remaining === 0) return null;
+  const at = o.expiresAt;
+  return { remaining: o.remaining, expiresAt: typeof at === "string" && Number.isFinite(Date.parse(at)) ? at : null };
+}
+
 /**
  * The `storageOffer` block, read field by field: absent or null is no offer. One that cannot be read
  * is a drift, named, and reads as no offer; the verdict stands, and no price is ever guessed.
@@ -427,12 +435,25 @@ function storageOfferOf(raw: unknown): StorageOffer | null | { bad: string } {
     if (!isCount(amount)) return { bad: "storageOffer.card.storageUnit" };
     addon = { unitBytes: unit.bytes, amount, maxUnits: unit.maxUnits, interval: card.interval };
   }
+  let mailboxAddon: StorageOffer["mailboxAddon"];
+  if (card.mailboxUnit !== undefined && card.mailboxUnit !== null) {
+    const unit = obj(card.mailboxUnit);
+    // An extra mailbox bills monthly on either plan interval, so its price is quoted as a month's.
+    if (!unit || !isCount(unit.priceMinor) || unit.interval !== "month" || !isCount(unit.maxUnits)) {
+      return { bad: "storageOffer.card.mailboxUnit" };
+    }
+    mailboxAddon = { amount: unit.priceMinor, maxUnits: unit.maxUnits, interval: "month" };
+  }
   let current: StorageOffer["current"] = null;
   if (o.current !== null) {
     const c = obj(o.current);
     if (!c || !isPlan(c.plan) || !isCount(c.addonUnits) || !isCount(c.roomBytes)
-      || (c.roomFrom !== "now" && c.roomFrom !== "first_payment")) return { bad: "storageOffer.current" };
-    current = { plan: c.plan, addonUnits: c.addonUnits, roomBytes: c.roomBytes, roomFrom: c.roomFrom };
+      || (c.roomFrom !== "now" && c.roomFrom !== "first_payment")
+      || (c.addonMailboxes !== undefined && !isCount(c.addonMailboxes))) return { bad: "storageOffer.current" };
+    current = {
+      plan: c.plan, addonUnits: c.addonUnits, roomBytes: c.roomBytes, roomFrom: c.roomFrom,
+      ...(isCount(c.addonMailboxes) ? { addonMailboxes: c.addonMailboxes } : {}),
+    };
   }
   let fit: StorageOffer["fit"] = null;
   if (o.fit !== null) {
@@ -448,7 +469,7 @@ function storageOfferOf(raw: unknown): StorageOffer | null | { bad: string } {
   const reason = o.reason ?? null;
   if (reason !== null && (typeof reason !== "string" || !REASON_WORD.test(reason))) return { bad: "storageOffer.reason" };
   return {
-    currency: card.currency, interval: card.interval, plans, addon, current, fit,
+    currency: card.currency, interval: card.interval, plans, addon, ...(mailboxAddon ? { mailboxAddon } : {}), current, fit,
     canChange: o.canChange, reason,
   };
 }
@@ -706,7 +727,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         const body = obj(res.body);
         const remaining = body?.balance;
         const total = body?.creditAllowance;
-        const aiCredits = isCount(remaining) ? { remaining, ...(isCount(total) && total > 0 ? { total } : {}) } : null;
+        const setup = setupPoolOf(body?.setupCredits);
+        const aiCredits = isCount(remaining)
+          ? { remaining, ...(isCount(total) && total > 0 ? { total } : {}), ...(setup ? { setup } : {}) }
+          : null;
         const card = pricesOf(body?.prices);
         if (card !== null && "bad" in card) named("/v1/access", res.status, card.bad);
         const priced = card !== null && !("bad" in card);

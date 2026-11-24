@@ -78,6 +78,18 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.2" date="2026-11-24">
+      <description>
+        <ul>
+          <li>CalDAV calendars keep syncing when the provider moves them to another of its servers</li>
+          <li>Calendar setup starts with provider buttons</li>
+          <li>Embedded pictures load without signing in again for each one</li>
+          <li>Mail lists on the phone fit their rows</li>
+          <li>The opened letter stays put while a long conversation loads its pictures</li>
+          <li>Cloud's background Screener checks stay fast on large accounts</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.1" date="2026-11-24">
       <description>
         <ul>
@@ -401,13 +413,6 @@
           <li>A screen reader hears which Settings section is open</li>
           <li>ohmail says so when it is too old for its server, or its server is being updated</li>
           <li>The iPhone app's "please update" card opens the App Store</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.11" date="2026-11-11">
-      <description>
-        <ul>
-          <li>The phone opens a second mailbox only once the first one is removed</li>
         </ul>
       </description>
     </release>

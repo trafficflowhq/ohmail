@@ -246,17 +246,54 @@
     text-overflow: ellipsis;
   }
 
-  .oh-row-first:has(> .oh-row-address) > .oh-row-who {
-    flex: 0 0 auto;
-    max-width: 64%;
-  }
-
+  /* Every row says the address after the name while there is room. Short of room the time, the clip and the squares
+     keep theirs; the name keeps its own length; the address takes what is left and ends in an ellipsis, and with less
+     than a few characters' room it leaves the line whole, never a stub: it wraps out of the line, under its foot. */
   .oh-row-address {
+    --oh-row-address-least: 6ch;
+
     flex: 0 1000 auto;
     overflow: hidden;
     min-width: 0;
     color: var(--oh-row-second);
     font-size: var(--t-meta);
+  }
+
+  /* It takes the room the line has left (the spacer's), and its gap before it stands inside it: a left address costs
+     the line nothing. Only its words answer a pointer. */
+  .oh-row-address:not([data-domain]) {
+    --oh-row-address-pull: calc(var(--s2) * -1);
+
+    display: flex;
+    flex: 1 1 0;
+    flex-wrap: wrap;
+    height: 1lh;
+    margin-inline-start: var(--oh-row-address-pull);
+    pointer-events: none;
+  }
+
+  .oh-row-first:has(> .oh-row-address:not([data-domain])):not([data-fold-address]) > .oh-row-room {
+    display: none;
+  }
+
+  /* Nothing, first in the line and as high as it: so the words too can leave the line when they no longer fit. */
+  .oh-row-address:not([data-domain])::before {
+    content: "";
+    flex: none;
+    width: 0;
+    height: 1lh;
+  }
+
+  /* Placed on the line by its least width (a line is filled before its items shrink), then it grows into the room, up
+     to its own length: the blank rest of the line stays the row's, a click there opens the letter, not the card. */
+  .oh-row-address:not([data-domain]) > .oh-row-address-words {
+    flex: 1 1 0;
+    overflow: hidden;
+    min-width: var(--oh-row-address-least);
+    max-width: max-content;
+    pointer-events: auto;
+    margin-inline-start: var(--s2);
+    white-space: nowrap;
     text-overflow: ellipsis;
   }
 
@@ -444,18 +481,10 @@
   }
 
   /* Beside labels the address too is whole or not there: it leaves the line before a label does, never as a stub. */
-  .oh-row-address[data-whole] {
-    display: flex;
-    flex-wrap: wrap;
-    height: 1lh;
-    text-overflow: clip;
-  }
-
-  .oh-row-address[data-whole]::before {
-    content: "";
+  .oh-row-address[data-whole] > .oh-row-address-words {
     flex: none;
-    width: 0;
-    height: 1lh;
+    min-width: auto;
+    text-overflow: clip;
   }
 
   /* Under a finger the address gives way beside a label whatever the room: the labels are what the row says first. */
@@ -469,8 +498,11 @@
     max-width: none;
   }
 
+  /* The address as identity evidence: the name gives way to it, so far sooner that the address gives not a fraction
+     of a pixel while the name has any, down to nothing; only then is its local part cut, and its domain is never cut
+     or broken while the line can hold it. */
   .oh-row-first:has(> .oh-row-address[data-domain]) > .oh-row-who {
-    flex: 0 1000 auto;
+    flex: 0 1000000 auto;
     min-width: 0;
   }
 
@@ -480,6 +512,47 @@
 
   .oh-row-first > .oh-row-who[data-domain] {
     min-width: 0;
+  }
+
+  /* The address's local part gives all its room before the domain breaks, so the domain breaks only when it alone is
+     wider than its box: beside a name, and where a sender with no name stands as the address itself. */
+  .oh-row-first > :is(.oh-row-who, .oh-row-address)[data-domain] .oh-address-local {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  /* On a phone the name beside the address is readable or not there: with less than two characters' room it leaves
+     the line whole, under its foot, as the mailbox chip and the address do, and the gap after it goes with it. */
+  :root[data-device="phone"] .oh-row-first:has(> .oh-row-address[data-domain]) > .oh-row-who {
+    --oh-row-who-pull: calc(var(--s2) * -1);
+
+    display: flex;
+    flex-wrap: wrap;
+    height: 1lh;
+    margin-inline-end: var(--oh-row-who-pull);
+  }
+
+  /* Nothing, first in the line and as high as it: so the name too can leave the line whole. */
+  :root[data-device="phone"] .oh-row-first:has(> .oh-row-address[data-domain]) > .oh-row-who::before {
+    content: "";
+    flex: none;
+    width: 0;
+    height: 1lh;
+  }
+
+  /* Placed on the line by its least width, then it grows into the room, up to its own length. */
+  :root[data-device="phone"]
+    .oh-row-first:has(> .oh-row-address[data-domain])
+    > .oh-row-who
+    > .oh-row-who-words {
+    --oh-row-who-least: 2ch;
+
+    flex: 1 1 0;
+    overflow: hidden;
+    min-width: var(--oh-row-who-least);
+    max-width: max-content;
+    margin-inline-end: var(--s2);
+    text-overflow: ellipsis;
   }
 
   /* A sender that is not who the name says: the sign and its word stand where the address would, whole. */

@@ -96,8 +96,9 @@ export interface AttachmentsChrome {
    * an engine notification, which hands every reader a new door and a grown map through
    * {@link cidImagesOf}. Budgets, single-flight and the no-retry-after-refusal rule all live in
    * the engine (`loadInlineImages`); calling this again with the same ids is a cheap no-op.
+   * `first`: the letter is on screen, so its pictures go ahead of the other letters'.
    */
-  needCidImages(messageId: string, contentIds: string[]): Promise<void> | void;
+  needCidImages(messageId: string, contentIds: string[], opts?: { first?: boolean }): Promise<void> | void;
   /**
    * THE EVENTS ONE MESSAGE CARRIES, once each (`calendarEventsOf`): what `MessageEvents` draws
    * above the mail. Filled automatically when the message's list loads (the same effect that

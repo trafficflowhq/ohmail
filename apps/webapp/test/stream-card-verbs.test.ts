@@ -149,7 +149,8 @@ describe("a letter answered in place", () => {
       .toEqual(expect.arrayContaining(["Thank you, lovely issue.", "Mila"]));
     const row = list.getByRole("option", { name: /subject of one/ });
     expect(row.querySelector(".oh-row-who")?.textContent).toBe("Me → Sender one");
-    expect(row.querySelector(".oh-row-address")).toBeNull();
+    /* "Me → name" says the one it went to by address too, as a sender's row does. */
+    expect(row.querySelector(".oh-row-address")?.textContent).toBe("one@example.invalid");
     expect(row.querySelector(".oh-row-preview")?.textContent).toBe("Thank you, lovely issue.");
   });
 

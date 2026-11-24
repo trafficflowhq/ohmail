@@ -186,6 +186,9 @@ function andNotGone(d: Dialect, mailboxExpr: SQL, gone: readonly string[]): SQL 
  * message and dates a row before it reads its folder; the grouped form read every message of the
  * sender and its folder (74k: 3.5k senders, about 55 ms per read). Same builder, same answer.
  * A `gone` mailbox's mail is left out ({@link notGoneSql}).
+ *
+ * `candidates` names the senders whose activity is asked once, as a set, where row security keeps
+ * the index on `lower(from_address)` out of reach ({@link heldSenderKeysSql}).
  */
 export function senderIsActiveSql(
   d: Dialect, accountId: string, senderExpr: SQL, set: CutlineSet, gone: readonly string[],
@@ -199,6 +202,22 @@ export function senderIsActiveSql(
   return sql`case when pg_catalog.row_security_active('public.messages')
     then ${senderExpr} in (${activeSenderKeysSql(d, accountId, set, gone, opts.candidates)})
     else ${exists} end`;
+}
+
+/**
+ * EVERY SENDER WITH MAIL AT THE GATE, as plain rows: the candidates a worker pass hands
+ * {@link senderIsActiveSql}. Not read from the pass's window: Postgres estimates a filter over window
+ * output at one row and then joins every message of the account to it by a nested loop, and a
+ * reference to the window keeps the activity scan from running in parallel.
+ */
+export function heldSenderKeysSql(d: Dialect, accountId: string, gone: readonly string[]): SQL {
+  const account = d.castUuid(accountId);
+  const folderAccount = d.name === "pg" ? sql` and hf.account_id = ${account}` : sql``;
+  return sql`select lower(hm.from_address) from messages hm
+      join folder_state hf on hf.message_id = hm.id${folderAccount}
+     where hm.account_id = ${account}
+       and hf.desired_folder = ${CUTLINE_GATE_FOLDER}
+       and hm.deleted_at is null${andNotGone(d, sql`hm.mailbox_id`, gone)}`;
 }
 
 /** One set of active senders, for a queue read where RLS prevents a per-sender index seek. */

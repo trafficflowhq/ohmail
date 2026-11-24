@@ -122,6 +122,7 @@ export function Letter({
     Body,
     renderedText,
     loaded,
+    loadedRemote,
     scheme,
     owner,
     setNotice,
@@ -129,7 +130,7 @@ export function Letter({
   } = useLetterContent({ message, offMirrorBody, opened, look, unread, reading, presented }, t);
   const text = (
     <Body
-      {...letterPictures(message, body.loadedRemoteContent, parts.pictures, parts.files, reading, presented)}
+      {...letterPictures(message, loadedRemote, parts.pictures, parts.files, reading, presented, current)}
       onBodyLayout={onBodyLayout}
       messageId={message.id}
       text={renderedText}
@@ -281,6 +282,7 @@ function useLetterContent(
     Body,
     renderedText,
     loaded,
+    loadedRemote: body.loadedRemoteContent,
     scheme,
     owner: host.session.scope,
     setNotice,

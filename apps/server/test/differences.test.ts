@@ -329,6 +329,12 @@ describe("what the door decides is not on the list: a function and a process dif
     expect(managed().services.sendSurfaceMaxTotalBytes).toBe(3 * 1024 * 1024);
   });
 
+  it("a process nothing ends keeps a picture's mail server sign-in for the next one; a function a platform ends does not", () => {
+    expect(plain().services.keepImap).toBe(true);
+    expect(managedProcess().services.keepImap).toBe(true);
+    expect(managed().services.keepImap).toBeUndefined();
+  });
+
   it("a function builds its costly services on first use; a process before it listens", () => {
     const lazy = Object.getOwnPropertyDescriptor(managed().services, "auth");
     const eager = Object.getOwnPropertyDescriptor(plain().services, "auth");

@@ -714,3 +714,21 @@ describe("the place's own notices", () => {
     expect(screen.queryByRole("button", { name: "More that needs you here" })).toBeNull();
   });
 });
+
+describe("on a phone", () => {
+  /* The Ohbox's established list: the rows stand on the list's sheet, and on a phone no row is drawn open while no
+     sender is (opening one takes the whole screen). Screened out and Spam draw the same rows on the same sheet. */
+  it.each(["#/screener/screened", "#/screener/spam", "#/screener"])(
+    "at %s the rows stand on the list's sheet as the Ohbox's do, none drawn open",
+    (at) => {
+      const held = { waiting: QUEUE, waitingCount: 3, screenedOut: QUEUE, spam: QUEUE };
+      mountPlace(modelOf(asked, held), { at, room: "phone" });
+      const options = screen.getAllByRole("option");
+      expect(options.length).toBeGreaterThan(0);
+      for (const option of options) {
+        expect(option.closest(".oh-sheet"), "a row stands on the bare ground").not.toBeNull();
+        expect(option.hasAttribute("data-open"), "a row is drawn open on a phone").toBe(false);
+      }
+    },
+  );
+});

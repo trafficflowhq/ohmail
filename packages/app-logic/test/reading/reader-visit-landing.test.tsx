@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { useThreadPosition } from "../../src/reader/thread-landing.js";
 import type { EngineMessage } from "@ohmail/wire";
 import { LANDING_REST_MS, useReaderVisit } from "../../src/reading/reader-seen.js";
 
@@ -13,6 +14,24 @@ import { LANDING_REST_MS, useReaderVisit } from "../../src/reading/reader-seen.j
 
 const letter = (id: string) => ({ id, unread: true }) as EngineMessage;
 afterEach(cleanup);
+
+it("ignores an old manual scroll anchor after automatic positioning resumes", () => {
+  const scroller = document.createElement("div");
+  Object.defineProperties(scroller, {
+    clientHeight: { value: 800 },
+    scrollHeight: { value: 1000 },
+  });
+  scroller.scrollTop = 200;
+  const pin = { current: null };
+  const { result, rerender } = renderHook(
+    ({ manual }) => useThreadPosition(scroller, manual, () => undefined, pin),
+    { initialProps: { manual: true } },
+  );
+  result.current.readingAnchor.current = { id: "m1", scroll: 300, offset: 14 };
+  expect(result.current.wasClamped()).toBe(true);
+  rerender({ manual: false });
+  expect(result.current.wasClamped()).toBe(false);
+});
 
 describe("the visit of a list's reader: a step key's landing", () => {
   it("keeps the landed letter's record while the address still names the letter before, and rests it when shown", () => {

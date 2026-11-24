@@ -245,15 +245,9 @@ const isOwaPath = (u: OwaUrl): boolean => {
 };
 const owaPathParam = (u: OwaUrl): string => (u.params.get("path") ?? "").toLowerCase();
 
-/**
- * Is this body text an Outlook Web App invitation stub? Read from the first
- * {@link OWA_STUB_HEAD_CHARS} of the TEXT part only. The text's first URL is the calendar item link
- * (`/owa…?itemid=…&path=/calendar/item`), on its first line or under a short label line, and a later
- * URL on the same origin is the `path=/options/popandimap` page. URLs, not sentences: the sentences
- * follow the mailbox language. Pure; never throws.
- */
-export function owaInvitationStub(text: string): OwaInvitationStub | null {
-  const head = text.replace(/^﻿/, "").trimStart().slice(0, OWA_STUB_HEAD_CHARS);
+/** The stub's calendar item link and its options link, or `null` where the text is no stub. */
+function owaStubLinks(text: string): { readonly item: OwaUrl; readonly options: OwaUrl } | null {
+  const head = text.replace(/^\uFEFF/, "").trimStart().slice(0, OWA_STUB_HEAD_CHARS);
   const urls: Array<OwaUrl | null> = [];
   for (const m of head.matchAll(OWA_URL_TOKEN)) {
     urls.push(owaUrl(m[0].replace(OWA_URL_TRAILING, ""), m.index ?? 0));
@@ -274,11 +268,72 @@ export function owaInvitationStub(text: string): OwaInvitationStub | null {
   const options = urls.slice(1).find((u): u is OwaUrl =>
     u !== null && u.scheme === item.scheme && u.host === item.host && isOwaPath(u)
     && owaPathParam(u) === "/options/popandimap");
-  if (options === undefined) return null;
+  return options === undefined ? null : { item, options };
+}
 
+/**
+ * Is this body text an Outlook Web App invitation stub? Read from the first
+ * {@link OWA_STUB_HEAD_CHARS} of the TEXT part only. The text's first URL is the calendar item link
+ * (`/owa…?itemid=…&path=/calendar/item`), on its first line or under a short label line, and a later
+ * URL on the same origin is the `path=/options/popandimap` page. URLs, not sentences: the sentences
+ * follow the mailbox language. Pure; never throws.
+ */
+export function owaInvitationStub(text: string): OwaInvitationStub | null {
+  const options = owaStubLinks(text)?.options;
+  if (options === undefined) return null;
   // Constants only: the /owa/<segment>/ names a sign-in realm, and the sender chose it.
   const linkable = options.scheme === "https" && M365_HOSTS.has(options.host) && M365_OWA_PATH.test(options.path);
   return { optionsHref: linkable ? `https://${options.host}/owa/?path=/options/popandimap` : null };
+}
+
+/** How much of the body text is searched for a calendar item link outside the stub's own shape. */
+const OWA_ITEM_HEAD_CHARS = 8192;
+/** Exchange's item ids are a few hundred characters; a longer one is no id of theirs. */
+export const OWA_ITEM_ID_MAX_CHARS = 512;
+/** An Exchange item id as a link carries it: base64, or its URL-safe form, and its padding. */
+const OWA_ITEM_ID = /^[A-Za-z0-9+/_-]{16,512}={0,2}$/;
+const OWA_ITEM_PATH = /^\/calendar\/item\/([^/]+)\/?$/i;
+
+const owaItemIdOf = (raw: string | undefined): string | null =>
+  raw !== undefined && raw.length <= OWA_ITEM_ID_MAX_CHARS && OWA_ITEM_ID.test(raw) ? raw : null;
+
+/** A link's own segment, percent-decoded; `null` on bad encoding. */
+function decodedSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * THE EXCHANGE ITEM ID OF A MEETING INVITATION SENT AS AN OUTLOOK WEB APP LINK, or `null`. The id
+ * is only ever handed to the person's own Microsoft calendar connection to look the event up; the
+ * link itself is never fetched, so its host decides nothing but which shapes are read:
+ *  - the stub {@link owaInvitationStub} recognizes, on any host: its item link's `itemid`;
+ *  - on Microsoft 365's own hosts (https, no port, no user part), a link
+ *    `/owa/…?itemid=…&path=/calendar/item` or `/calendar/item/<id>` anywhere in the first
+ *    {@link OWA_ITEM_HEAD_CHARS} of the text (the answer links an invitation carries).
+ * An id that is not of an Exchange id's shape (base64 or its URL-safe form, at most
+ * {@link OWA_ITEM_ID_MAX_CHARS}) is no id. Pure; never throws.
+ */
+export function owaInvitationItemId(text: string): string | null {
+  const stub = owaStubLinks(text);
+  if (stub !== null) return owaItemIdOf(stub.item.params.get("itemid"));
+  const head = text.replace(/^\uFEFF/, "").slice(0, OWA_ITEM_HEAD_CHARS);
+  for (const m of head.matchAll(OWA_URL_TOKEN)) {
+    const u = owaUrl(m[0].replace(OWA_URL_TRAILING, ""), m.index ?? 0);
+    if (u === null || u.scheme !== "https" || !M365_HOSTS.has(u.host)) continue;
+    let id: string | null = null;
+    if (isOwaPath(u) && owaPathParam(u) === "/calendar/item") id = owaItemIdOf(u.params.get("itemid"));
+    else {
+      const segment = OWA_ITEM_PATH.exec(u.path)?.[1];
+      const decoded = segment === undefined ? null : decodedSegment(segment);
+      id = decoded === null ? null : owaItemIdOf(decoded);
+    }
+    if (id !== null) return id;
+  }
+  return null;
 }
 
 /**

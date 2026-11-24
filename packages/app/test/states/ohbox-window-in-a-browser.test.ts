@@ -293,3 +293,110 @@ it.each([
   },
   30_000,
 );
+
+describe("the way back to the top of the Ohbox on a phone", () => {
+  type Box = { left: number; top: number; right: number; bottom: number };
+  const meets = (a: Box, b: Box) =>
+    a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+
+  async function scrolledFar(query: string, width: number, height: number) {
+    const page = await browser!.newPage({
+      viewport: { width, height },
+      hasTouch: true,
+      reducedMotion: "reduce",
+    });
+    await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+    await page.goto(`${ORIGIN}/?screen=ohbox&device=phone&many=400&${query}`);
+    await page.waitForSelector(".ob-scroll [role=option][data-id]", { state: "attached", timeout: 15_000 });
+    await page.evaluate(async () => {
+      const list = document.querySelector<HTMLElement>(".ob-scroll")!;
+      list.scrollTop = 2_000;
+      list.dispatchEvent(new Event("scroll"));
+      await new Promise((r) => setTimeout(r, 500));
+    });
+    return page;
+  }
+
+  it.each([
+    [412, 915],
+    [360, 800],
+  ])(
+    "stands clear of the dock's buttons at %i by %i, above them as in News",
+    async (width, height) => {
+      const page = await scrolledFar("open=none", width, height);
+      try {
+        const read = await page.evaluate(() => {
+          const box = (el: Element) => {
+            const { left, top, right, bottom } = el.getBoundingClientRect();
+            return { left, top, right, bottom };
+          };
+          const jump = document.querySelector(".ob-list > .oh-jumpback[data-on]");
+          const dock = document.querySelector(".fr-dockbox");
+          return {
+            jump: jump ? box(jump) : null,
+            dock: dock ? box(dock) : null,
+            buttons: dock ? [...dock.querySelectorAll("button, a")].map(box) : [],
+          };
+        });
+        expect(read.jump, "the way back does not stand once the list is far from its top").not.toBeNull();
+        expect(read.dock, "the dock does not stand").not.toBeNull();
+        for (const button of read.buttons)
+          expect(meets(read.jump!, button), "it lies over a dock button").toBe(false);
+        expect(read.jump!.bottom, "it does not stand above the dock").toBeLessThanOrEqual(read.dock!.top);
+      } finally {
+        await page.close();
+      }
+    },
+    60_000,
+  );
+
+  it("does not stand over a conversation opened over the list", async () => {
+    const page = await scrolledFar("open=ben-kiln", 412, 915);
+    try {
+      await page.waitForSelector(".fr-list[inert]", { state: "attached", timeout: 15_000 });
+      const read = await page.evaluate(() => {
+        const jump = document.querySelector<HTMLElement>(".ob-list > .oh-jumpback")!;
+        return {
+          far: jump.hasAttribute("data-on"),
+          seen: jump.checkVisibility({ visibilityProperty: true, opacityProperty: true }),
+        };
+      });
+      expect(read.far, "the list behind is not far from its top").toBe(true);
+      expect(read.seen, "the list's way back stands over the conversation").toBe(false);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+});
+
+it("a conversation's row carries its sender's address after the name, as a single letter's row does", async () => {
+  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+    await page.goto(`${ORIGIN}/?open=none&screen=ohbox`);
+    await page.waitForSelector("[role=option][data-id] .oh-readsquares", { timeout: 15_000 });
+    const rows = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>("[role=option][data-id]")].map((row) => {
+        const address = row.querySelector<HTMLElement>(".oh-row-address");
+        return {
+          /* A conversation of one voice: a name, not "Giulia, Ben". */
+          squares:
+            row.querySelector(".oh-readsquares") !== null &&
+            !row.querySelector(".oh-row-who")!.textContent!.includes(","),
+          address:
+            address !== null &&
+            address.checkVisibility({ visibilityProperty: true }) &&
+            address.clientWidth > 0,
+        };
+      }),
+    );
+    const conversations = rows.filter((r) => r.squares);
+    expect(conversations.length, "no conversation's row of one voice").toBeGreaterThan(0);
+    expect(
+      conversations.every((r) => r.address),
+      "a conversation's row shows no address",
+    ).toBe(true);
+  } finally {
+    await page.close();
+  }
+}, 60_000);
