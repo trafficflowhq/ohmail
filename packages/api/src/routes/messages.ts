@@ -159,10 +159,7 @@ export const messageRoutes: Route[] = [
     },
   },
   {
-    // `POST /messages/:id/draft` — AI draft-from-history. Assembles a sensitivity-safe context
-    // (KB + this thread; `no_kb`/`no_ai`/sensitive structurally excluded), calls the injected
-    // drafter, and stores a `drafts` row (never sent). A `no_ai`/sensitive target is refused 422
-    // before the drafter is called. Echoes X-Sync-Seq. Idempotent-marked, and metering made it a
+    // Create a draft using this message and account-scoped context.
     // prerequisite: `debit_draft`'s attempt key must be the client's `Idempotency-Key`, so on a
     // metered deployment the key is required (400 without) — the `POST /drafts/:id/send` shape: a
     // paid, non-repeatable action needs the client to say "this is one intent" before we spend.

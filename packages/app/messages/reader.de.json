@@ -80,7 +80,7 @@
       "youSender": "Du",
       "yesterday": "gestern {time}",
       "menu": "Nachricht",
-      "sensitive": "Bestätigungscode · von KI ausgenommen"
+      "sensitive": "Bestätigungscode"
     }
   },
   "body": {

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dayShort, type CalendarEventRecord, type CalendarPort } from "@ohmail/app-logic/calendar";
 import calendarDe from "../../messages/calendar.de.json" with { type: "json" };
 import calmail from "../../messages/calmail.en.json" with { type: "json" };
@@ -1636,6 +1636,9 @@ it.each([
   ["de", 16, "FREQ=MONTHLY;BYMONTHDAY=16", "Jeden Monat am 16."],
   ["de", 27, "FREQ=MONTHLY;BYDAY=-1FR", "Jeden Monat am letzten Freitag"],
   ["en", 27, "FREQ=YEARLY;BYMONTH=11;BYDAY=-1FR", "Every year on the last Friday of November"],
+  ["en", 10, "FREQ=MONTHLY;INTERVAL=3;BYDAY=TU;BYSETPOS=2", "Every 3 months on the second Tuesday"],
+  ["de", 10, "FREQ=MONTHLY;INTERVAL=3;BYDAY=TU;BYSETPOS=2", "Alle 3 Monate am zweiten Dienstag"],
+  ["en", 16, "FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=16", "Every 2 months on the 16th"],
 ] as const)("describes a supported %s repeat in the deletion prompt", async (locale, day, rule, words) => {
   const at = Date.UTC(2026, 10, day);
   const start = `202611${day}`;
@@ -2505,6 +2508,88 @@ it("chooses a recurring invitation’s scope before changing an earlier answer",
       answer: "tentative",
     }),
   );
+});
+
+describe("an invitation already answered", () => {
+  const at = Date.UTC(2026, 10, 17, 9);
+  const daily = (over: Partial<CalendarEventRecord> = {}) =>
+    meeting({
+      organizer,
+      invitees: [guest],
+      myAnswer: "accepted",
+      start: { kind: "instant", value: "20261117T090000Z" },
+      end: { kind: "instant", value: "20261117T100000Z" },
+      startsAt: "2026-11-17T09:00:00Z",
+      repeat: { rules: ["FREQ=DAILY;COUNT=4"], added: [], excluded: [] },
+      ...over,
+    });
+  /** An answer to the first day alone, as the device's selector hands it: on that day, not on the series. */
+  const dayAnswer = (state: "pending" | "refused") =>
+    state === "pending"
+      ? {
+          at: String(at),
+          answer: "accepted" as const,
+          waiting: "provider" as const,
+          refusal: null,
+          refusedWriteId: null,
+        }
+      : {
+          at: String(at),
+          answer: null,
+          waiting: null,
+          refusal: "version_stale" as const,
+          refusedWriteId: "w-day",
+        };
+  const openDay = (record: CalendarEventRecord, answer?: ReturnType<typeof dayAnswer>, day = at) => {
+    const world = openWithMailboxes(
+      record,
+      async () => [mailbox(guest.address)],
+      `#/cal/week/2026-11-17/e/firing@${day}`,
+    );
+    const events = world.port.events;
+    world.port.events = () => events().map((event) => ({ ...event, ...(answer && { answers: [answer] }) }));
+    act(() => world.put("calendar_event", record.id, record));
+    return world;
+  };
+
+  it("shows the answer given, in the switch and in words, and asks a change as a change", async () => {
+    const world = openDay(daily());
+    const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
+    expect(card.getByText("you said yes")).toBeTruthy();
+    expect(card.queryByText("to answer")).toBeNull();
+    expect((await screen.findByRole("button", { name: "Yes" })).getAttribute("aria-pressed")).toBe("true");
+    world.port.press = vi.fn(async () => ({ key: "answer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Maybe" }));
+    const scope = (await screen.findByRole("menuitem", { name: "This event" })).closest(
+      "[role=menu],[role=dialog]",
+    );
+    expect(scope?.textContent).toContain("Change your answer to Maybe");
+  });
+
+  it("shows an answer to one day on that day while it waits, and the other days as the series stands", async () => {
+    openDay(daily({ myAnswer: "none" }), dayAnswer("pending"));
+    const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
+    expect(card.getByText("you said yes to this one")).toBeTruthy();
+    expect((await screen.findByRole("button", { name: "Yes" })).getAttribute("aria-pressed")).toBe("true");
+    expect(card.getByText("Waiting")).toBeTruthy();
+    cleanup();
+    openDay(daily({ myAnswer: "none" }), dayAnswer("pending"), at + 86_400_000);
+    const other = within(await screen.findByRole("dialog", { name: "Kiln check" }));
+    expect(other.getByText("to answer")).toBeTruthy();
+    expect(other.queryByText("Waiting")).toBeNull();
+  });
+
+  it("takes a refused answer to one day back on that day alone", async () => {
+    openDay(daily({ myAnswer: "none" }), dayAnswer("refused"));
+    const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
+    expect(card.getByText("to answer")).toBeTruthy();
+    expect((await screen.findByRole("button", { name: "Yes" })).getAttribute("aria-pressed")).toBe("false");
+    expect(card.getByText("changed elsewhere")).toBeTruthy();
+    cleanup();
+    openDay(daily({ myAnswer: "none" }), dayAnswer("refused"), at + 86_400_000);
+    const other = within(await screen.findByRole("dialog", { name: "Kiln check" }));
+    expect(other.queryByText("changed elsewhere")).toBeNull();
+  });
 });
 
 it("offers earlier real places by frequency then recency, with no web or call links", async () => {

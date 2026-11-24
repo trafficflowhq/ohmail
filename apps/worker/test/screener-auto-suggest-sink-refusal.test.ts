@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { screenerAttemptKey } from "@trafficflow/db";
 import {
-  SensitivePayloadRefusal, type ClassifierInput, type ClassifierPort, type ClassifierResult,
+  ModelDeclinedError, type ClassifierInput, type ClassifierPort, type ClassifierResult,
 } from "@trafficflow/core";
 import { fakeSpendPort } from "../../../packages/organizer/test/_spendport.js";
 import { makeClassifierCircuit } from "../src/ai-circuit.js";
@@ -13,7 +13,7 @@ import { NOW, attemptFor, gateInto, held, obligationsInto, recording, world } fr
  * refusal as a model fault: it stopped at that sender every cycle, kept the charge, and nobody
  * behind the sender was asked. Now the sender is skipped and refunded, held out for a day unless
  * it writes again, and the batch goes on; a plain outage still stops the pass. Mutations: drop the
- * pass's `SensitivePayloadRefusal` arm (the batch stops), or its `declines.remember`.
+ * pass's `ModelDeclinedError` arm (the batch stops), or its `declines.remember`.
  */
 
 const NEWSLETTER: ClassifierResult = { destination: "ohmail/News", confidence: 0.8, rationale: "a newsletter", spam: false };
@@ -28,7 +28,7 @@ function sinkRefusing(refuse: ReadonlySet<string>, fails: ReadonlySet<string> = 
   const answer = async (input: ClassifierInput): Promise<ClassifierResult> => {
     asked.push(input.from.address);
     if (refuse.has(input.from.address)) {
-      throw new SensitivePayloadRefusal({ safe: false, category: null, reason: "credential_shape" });
+      throw new ModelDeclinedError("refusal", null);
     }
     if (fails.has(input.from.address)) throw new Error("anthropic 529 overloaded");
     return NEWSLETTER;
@@ -36,7 +36,7 @@ function sinkRefusing(refuse: ReadonlySet<string>, fails: ReadonlySet<string> = 
   return { asked, classify: answer, screen: answer };
 }
 
-describe("a refusal at the sink is one sender's answer", () => {
+describe("a provider refusal is one sender's answer", () => {
   it("the refused sender is skipped and refunded, and the senders behind it are bought", async () => {
     const w = await world();
     const refused = await held(w, "a@example.test", 1);
@@ -54,7 +54,7 @@ describe("a refusal at the sink is one sender's answer", () => {
       declines: makeDeclineMemory(), now: () => NOW,
     });
 
-    expect(r.stopped, "a refusal at the sink stopped the batch").toBeUndefined();
+    expect(r.stopped, "a provider refusal stopped the batch").toBeUndefined();
     expect(r).toMatchObject({ bought: 2, chargedAttempts: 2 });
     expect(inner.asked).toEqual(["a@example.test", "b@example.test", "c@example.test"]);
     expect(gate.releases.filter((x) => x.refund)).toEqual([
@@ -62,9 +62,9 @@ describe("a refusal at the sink is one sender's answer", () => {
     ]);
     expect(obligations.owed).toEqual([expect.objectContaining({ attempt: attemptFor(gate, refused), reason: "drafter_failed" })]);
     expect(obligations.settled).toEqual([attemptFor(gate, refused)]);
-    const named = log.named("screener_auto_suggest_refused_at_sink");
+    const named = log.named("screener_auto_suggest_declined");
     expect(named).toHaveLength(1);
-    expect(named[0]).toMatchObject({ accountId: w.accountId, messageId: refused, refusal: "credential_shape", cooldownMs: DECLINE_COOLDOWN_MS });
+    expect(named[0]).toMatchObject({ accountId: w.accountId, messageId: refused, stopReason: "refusal", refusalCategory: null });
     expect(named[0]!.droppedFields).toBeUndefined();
     expect(circuit.state(), "the refusal was counted as a model fault").toMatchObject({ open: false, consecutiveFaults: 0 });
   });

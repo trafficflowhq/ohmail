@@ -1,21 +1,13 @@
 import type { WorkflowPattern, WorkflowStep, WorkflowTrigger } from "@ohmail/wire";
-import { and, eq, isNotNull, or, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import {
-  messages, rules, learningSignals, workflowProposals, fencedAccountWrite, type Tx,
+  rules, learningSignals, workflowProposals, fencedAccountWrite, type Tx,
 } from "@trafficflow/db";
 import { canonicalDestination, DESTINATIONS } from "../../types.js";
 import type { Logger } from "../../log.js";
 import { deriveProposals, type WorkflowPort } from "./propose.js";
 
-// Pattern ASSEMBLY + proposal GENERATION. In CORE (db-coupled, worker-importable — the executor's
-// seam) so the worker's `proposal-cron` and the services `ProposalsService` both delegate here
-// without the worker importing services; the AI port is injected. REDACTION:
-// `assembleWorkflowPatterns` emits non-sensitive pattern METADATA only — sender/domain,
-// destination, recurrence count, provenance — drawn from `learning_signals` and enabled `rules`.
-// It never reads a body, snippet or subject, and it STRUCTURALLY excludes any pattern whose
-// sender or domain has any sensitivity-flagged message, so a suggestion derived from sensitive
-// mail can never be surfaced or sent to the model. `buildProposeParams` re-asserts the redaction
-// allowlist as defence in depth.
+// The proposal pass sends account-scoped sender and routing pattern metadata.
 
 /** How many times a sender→destination pattern must recur before it is a candidate. */
 export const RECURRENCE_THRESHOLD = 3;
@@ -26,37 +18,16 @@ export interface AssemblePatternsOpts {
 }
 
 /**
- * Assemble the redaction-safe recurring patterns for one account. Metadata only,
- * sensitive senders/domains excluded structurally.
+ * Assemble recurring pattern metadata for one account.
  */
 export async function assembleWorkflowPatterns(
   db: Tx, accountId: string, opts: AssemblePatternsOpts = {},
 ): Promise<WorkflowPattern[]> {
   const threshold = opts.threshold ?? RECURRENCE_THRESHOLD;
 
-  // 1. The sensitive frontier: every sender/domain with ANY sensitivity-flagged
-  //    message. A pattern touching one of these is dropped below — never surfaced.
-  const sensRows = await db.select({ from: messages.fromAddress }).from(messages)
-    .where(and(
-      eq(messages.accountId, accountId),
-      or(
-        eq(messages.noAi, true), eq(messages.noForward, true), eq(messages.noKb, true),
-        isNotNull(messages.sensitivityCategory), eq(messages.priority, true),
-      ),
-    ));
-  const sensitiveSenders = new Set<string>();
-  const sensitiveDomains = new Set<string>();
-  for (const r of sensRows) {
-    const addr = (r.from ?? "").toLowerCase();
-    if (!addr) continue;
-    sensitiveSenders.add(addr);
-    const dom = addr.split("@")[1];
-    if (dom) sensitiveDomains.add(dom);
-  }
-
   const patterns: WorkflowPattern[] = [];
 
-  // 2. Recurring POSITIVE learning signals, grouped by sender/domain → destination.
+  // Recurring POSITIVE learning signals, grouped by sender/domain → destination.
   const signalRows = await db.select({
     senderAddress: learningSignals.senderAddress,
     senderDomain: learningSignals.senderDomain,
@@ -87,7 +58,7 @@ export async function assembleWorkflowPatterns(
     }
   }
 
-  // 3. Established, enabled rules — deliberate recurring routing the user already set.
+  // Established, enabled rules — deliberate recurring routing the user already set.
   const ruleRows = await db.select({
     kind: rules.kind, match: rules.match, destination: rules.destination, hits: rules.hits,
   }).from(rules).where(and(eq(rules.accountId, accountId), eq(rules.enabled, true)));
@@ -106,14 +77,9 @@ export async function assembleWorkflowPatterns(
     }
   }
 
-  // 4. Sensitive exclusion — drop any pattern whose sender/domain touches sensitive mail.
-  // 5. Canonical destinations only: a pattern routed anywhere else (Junk, Trash, a folder of the
+  // Canonical destinations only: a pattern routed anywhere else (Junk, Trash, a folder of the
   //    person's own) is never offered to the model, so no proposal can name one.
   return patterns.flatMap((p) => {
-    const addr = (p.senderAddress ?? "").toLowerCase();
-    const dom = (p.senderDomain ?? "").toLowerCase();
-    if (addr && sensitiveSenders.has(addr)) return [];
-    if (dom && sensitiveDomains.has(dom)) return [];
     const destination = p.destination === undefined ? undefined : canonicalDestination(p.destination);
     if (destination === undefined || !(DESTINATIONS as readonly string[]).includes(destination)) return [];
     return [{ ...p, destination }];

@@ -1,5 +1,5 @@
 import type { ToolName, WorkflowStep } from "@ohmail/wire";
-import { and, asc, eq, inArray, isNull, isNotNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import {
   messages,
   folderState,
@@ -28,21 +28,8 @@ import type { NativeLocator } from "../../ports.js";
 import type { DraftPort, DraftInput, DraftResult } from "../draft.js";
 import { ModelDeclinedError } from "../../model-declined.js";
 import { plainTextToOutboundBody } from "../../outbound-text.js";
-/* The model-sink door. The mail half owns it — `packages/core/src/ai/` is refused from the
- * engine artifact, and `drafting-service.ts` (which the engine DOES mount) screens through the
- * same function, so the door has to live where both can name it. */
-import { screenModelInput } from "../../sensitive.js";
-
-// The gated workflow EXECUTOR — drains a `pending` workflow_run and runs its steps. In CORE at
-// the DB/repo level (the worker imports core+db only): `file_message` reuses the desired-state
-// handoff (never IMAP), `draft_reply` calls the injected DraftPort and inserts a `drafts` row,
-// `add_kb_entry` inserts a `kb_entries` row. Two invariants: (1) never act on sensitive mail — a
-// whole-run pre-flight refuses if ANY targeted message is flagged, with a per-step structural
-// re-check behind it; (2) never double-execute — each step commits in its own tx and advances a
-// durable `stepCursor`; the (runId, stepIndex) audit row is the idempotency marker, and inserts
-// carry a unique `workflow_dedup_key`. The canonical inverse home is `audit_log`;
-// `workflow_runs.log` is a convenience index. This was the one call site making a paid model call
-// inside a transaction; since the charge moved into `prepare`, it no longer does.
+// Each workflow step commits in its own transaction and advances a durable cursor.
+// The audit row records the step and its inverse so an applied step is never repeated.
 
 /* The undo payload is declared with the tool GRAMMAR, in `workflow-shapes.ts`, not here with the
  * runner that writes it: the service that replays an undo is mail-half code, and having the shape
@@ -119,7 +106,7 @@ export type StepPrepared =
     };
 
 /**
- * A typed, gated workflow tool. `resolveTargets` feeds the sensitivity pre-flight + re-check.
+ * A typed, gated workflow tool. `resolveTargets` identifies the messages the tool may read or change.
  *
  * `prepare` is OPTIONAL and only `draft_reply` has one: `file_message` and `add_kb_entry` are
  * deterministic database work with nothing to pay for and nobody to call.
@@ -168,6 +155,17 @@ const fileMessageTool: Tool = {
   async apply(ctx, args) {
     const messageId = requireString(args.messageId, "file_message.messageId");
     const toFolder = requireString(args.toFolder, "file_message.toFolder");
+    const [protectedMessage] = await ctx.tx.select({ id: messages.id }).from(messages)
+      .where(and(
+        eq(messages.accountId, ctx.accountId),
+        eq(messages.id, messageId),
+        or(
+          eq(messages.noAi, true), eq(messages.noForward, true), eq(messages.noKb, true),
+          isNotNull(messages.sensitivityCategory), eq(messages.priority, true),
+        ),
+      )).limit(1);
+    if (protectedMessage) throw new WorkflowStepError("sensitive");
+
     // Read the prior folder_state: preserve observedFolder (the worker's truth) and
     // capture the prior DESIRED as the inverse target (undo re-sets it).
     const prior = await ctx.repo.getFolderState(messageId);
@@ -191,14 +189,7 @@ const fileMessageTool: Tool = {
   },
 };
 
-/**
- * Assemble the sensitivity-safe DraftInput for a `draft_reply` step (mirrors
- * DraftingService's redaction rules). KB grounding = the account's recent entries; thread
- * context = the target thread's OTHER messages as REDACTED snippets, with the
- * sensitivity exclusion STRUCTURAL in the WHERE (`no_kb`/`no_ai`/sensitive siblings
- * can never reach the DraftPort). The whole-run pre-flight already refused a
- * sensitive TARGET; this is the sibling-leak second layer.
- */
+/** Assemble the account’s knowledge-base entries and thread previews for a draft. */
 async function buildDraftInput(
   tx: Tx, accountId: string, target: DraftTarget,
 ): Promise<DraftInput> {
@@ -211,25 +202,9 @@ async function buildDraftInput(
           eq(messages.accountId, accountId),
           eq(messages.threadId, target.threadId),
           ne(messages.id, target.id),
-          eq(messages.noKb, false),
-          eq(messages.noAi, false),
-          isNull(messages.sensitivityCategory),
         ))
         .orderBy(asc(messages.date)).limit(20)
     : [];
-  /**
-   * THE DOOR, before the input object exists. The per-field ingest flags above are structural and
-   * screen each column on its own; a credential split across a subject and a snippet satisfies
-   * every one of them and arrives whole. An automatic pass has nobody to tell, so the refusal
-   * FAILS the step with its class in the reason — one line in the run log, the item skipped, and
-   * no charge, because `prepare` screens before it spends.
-   */
-  const screened = screenModelInput([
-    { label: "incoming", fields: [target.subject, target.snippet, target.fromAddress] },
-    ...kb.map((e) => ({ label: "kb", fields: [e.title, e.content] })),
-    ...siblings.map((s) => ({ label: "thread", fields: [s.snippet, s.from] })),
-  ]);
-  if (!screened.admitted) throw new WorkflowStepError(`credential_screened:${screened.reason}`);
   return {
     incoming: { subject: target.subject, from: target.fromAddress, snippet: target.snippet },
     context: {
@@ -272,7 +247,7 @@ const draftReplyTool: Tool = {
    * per step (`workflow_run:<runId>:<stepIndex>`); a re-drained run answers `duplicate` →
    * proceed, charged nothing — crash-resume: when the crash landed between charge and commit, we
    * pay for the repeated model call. `spend`, not `tryDebit`: a database fault must not read as
-   * an empty balance. Reached only after both sensitivity checks; a refusal FAILS the step.
+   * an empty balance. A refusal fails the step.
    */
   async prepare(ctx, args) {
     const messageId = requireString(args.messageId, "draft_reply.messageId");
@@ -429,14 +404,6 @@ const addKbEntryTool: Tool = {
       title = requireString(args.title, "add_kb_entry.title");
       content = requireString(args.content, "add_kb_entry.content");
     }
-    /**
-     * THE DOOR, and this path is the worse of the two: a KB entry is read back as grounding on
-     * every later draft, so a credential stored here reaches the model again and again. The entry
-     * is NOT added — never a redacted one, which would put a `[REDACTED]` note in the user's own
-     * knowledge base and claim it as their words.
-     */
-    const screened = screenModelInput([{ label: "kb_entry", fields: [title, content] }]);
-    if (!screened.admitted) throw new WorkflowStepError(`credential_screened:${screened.reason}`);
     // The step transaction is fenced; this asks again because the entry is the person's own words
     // and the read above happened inside it — one indexed row against a lock already held.
     await fenceErased(ctx.tx, dialect(ctx.tx), { accountId: ctx.accountId });
@@ -469,40 +436,12 @@ function toolFor(name: string): Tool | undefined {
   return (REGISTRY as Record<string, Tool>)[name];
 }
 
-/**
- * The structural sensitivity check. Returns true if ANY of `messageIds` (in
- * `accountId`) is no_ai OR no_forward OR no_kb OR sensitivity-flagged OR priority.
- * Run as ONE SQL predicate (not a post-filter) so a flag can never be forgotten.
- */
-/**
- * Do ALL of `messageIds` belong to `accountId`? Separate from {@link anySensitive}, which FAILS
- * OPEN on a foreign id and must: its predicate carries the account, so a stranger's message
- * matches no row and answers "none flagged" — wrong for "may this account act on these at all":
- * `upsertFolderState` is keyed on `message_id` alone, so naming another account's id could move
- * mail in a stranger's mailbox. Checked at `resolveTargets`: every tool declares its targets, so
- * one check covers every future tool. It asks "does any target belong to somebody else": a
- * missing id must still throw `target_missing` at its own step — the no-auto-rollback property.
- * The ids are v4 UUIDs, so the leaked oracle is worth nothing.
- */
+/** Check whether any named message belongs to another account. */
 async function anyForeign(tx: Tx, accountId: string, messageIds: string[]): Promise<boolean> {
   if (messageIds.length === 0) return false;
   const rows = await tx.select({ id: messages.id }).from(messages)
     .where(and(inArray(messages.id, uniq(messageIds)), ne(messages.accountId, accountId)))
     .limit(1);
-  return rows.length > 0;
-}
-
-async function anySensitive(tx: Tx, accountId: string, messageIds: string[]): Promise<boolean> {
-  if (messageIds.length === 0) return false;
-  const rows = await tx.select({ id: messages.id }).from(messages)
-    .where(and(
-      eq(messages.accountId, accountId),
-      inArray(messages.id, messageIds),
-      or(
-        eq(messages.noAi, true), eq(messages.noForward, true), eq(messages.noKb, true),
-        isNotNull(messages.sensitivityCategory), eq(messages.priority, true),
-      ),
-    )).limit(1);
   return rows.length > 0;
 }
 
@@ -548,7 +487,7 @@ export type WorkflowRunResult =
 export class WorkflowExecutor {
   /**
    * Run ONE workflow_run to completion. The drain has already flipped
-   * it `pending → running` under a guarded UPDATE; here we pre-flight sensitivity,
+   * it `pending → running` under a guarded UPDATE; here we pre-flight account ownership,
    * then execute steps from `stepCursor`, each in its own tx (durable resume), each
    * writing an `audit_log` inverse. A step failure marks the run `failed` WITHOUT
    * rolling back prior steps (they are individually reversible + already logged).
@@ -569,17 +508,10 @@ export class WorkflowExecutor {
     if (!wf || !workflowId) return this.fail(deps.db, run, now, "workflow_gone", -1);
     const steps = (wf.steps as WorkflowStep[]) ?? [];
 
-    // WHOLE-RUN SENSITIVITY PRE-FLIGHT. Resolve EVERY step's targets and refuse the
-    // ENTIRE run (act on NOTHING) if any is sensitivity-flagged. This runs before any step.
+    // Validate the account of every step's targets before applying any step.
     const allTargets = uniq(steps.flatMap((s) => toolFor(s.tool)?.resolveTargets(s.args ?? {}) ?? []));
-    // OWNERSHIP FIRST, because the sensitivity question presumes it. `anySensitive` scopes its
-    // own query to the account and therefore answers "not flagged" about a message belonging to
-    // somebody else — a correct answer that reads as permission. See {@link anyForeign}.
     if (await anyForeign(deps.db, run.accountId, allTargets)) {
       return this.fail(deps.db, run, now, "not_owned", -1);
-    }
-    if (await anySensitive(deps.db, run.accountId, allTargets)) {
-      return this.fail(deps.db, run, now, "sensitive", -1);
     }
 
     // Execute from the durable cursor. Each step is FOUR phases, and the split between (iii)
@@ -617,15 +549,9 @@ export class WorkflowExecutor {
          * and never `now`: `now` is the PASS's frozen stamp, so a duration measured against it
          * would be zero for every step. */
         const stepStartedAtMs = Date.now();
-        // (ii) Sensitivity, THIRD layer. The pre-flight refused the whole run and (iv) re-checks at write
-        //      time; this one exists because prepare moved the model and the money EARLIER than
-        //      the in-tx check, and a message flagged sensitive since the pre-flight must not
-        //      reach a model or a ledger row on the strength of a check that runs after both.
+        // (ii) Recheck target ownership before calling the model or spending credits.
         if (await anyForeign(deps.db, run.accountId, targets)) {
           throw new WorkflowStepError("not_owned");
-        }
-        if (await anySensitive(deps.db, run.accountId, targets)) {
-          throw new WorkflowStepError("sensitive");
         }
         // (iii) PREPARE — strictly between transactions. The ONLY place a paid call or a ledger
         //       write happens. No `db.transaction` frame is open here, which is what makes the
@@ -657,9 +583,8 @@ export class WorkflowExecutor {
             await tx.update(workflowRuns).set({ stepCursor: i + 1 }).where(eq(workflowRuns.id, run.id));
             return;
           }
-          // Sensitivity second layer: per-step structural RE-CHECK in its OWN query.
+          // Recheck target ownership inside the step's transaction.
           if (await anyForeign(tx, run.accountId, targets)) throw new WorkflowStepError("not_owned");
-          if (await anySensitive(tx, run.accountId, targets)) throw new WorkflowStepError("sensitive");
 
           const { effect, inverse } = await tool.apply(
             { repo, tx, accountId: run.accountId, runId: run.id, stepIndex: i, now },

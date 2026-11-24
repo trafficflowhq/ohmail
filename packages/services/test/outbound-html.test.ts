@@ -501,3 +501,11 @@ describe("a code block survives, and its whitespace is meaning rather than layou
     }
   });
 });
+
+it("delivers compact paragraphs and keeps the receiving client's list indent", () => {
+  for (const tag of ["ul", "ol"]) {
+    const { html } = prepareOutboundDelivery(`<p>Materials</p><${tag}><li>Chalk</li></${tag}>`, "Materials\nChalk");
+    expect.soft(html).toContain('<p style="margin:0">Materials</p>');
+    expect.soft(html).toContain(`<${tag} style="margin-top:0;margin-bottom:0">`);
+  }
+});

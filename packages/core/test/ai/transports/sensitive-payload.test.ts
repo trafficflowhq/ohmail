@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  DRAFT_OWN_PREFIX, DRAFT_PREFIX, NO_LETTER, SensitivePayloadRefusal, type ClassifierInput, type DraftInput,
+  DRAFT_OWN_PREFIX, DRAFT_PREFIX, NO_LETTER, type ClassifierInput, type DraftInput,
 } from "../../../src/mail.js";
 import { buildDraftParams } from "../../../src/ai/draft.js";
 import {
@@ -55,15 +55,15 @@ function counting(): { calls: string[]; fetchImpl: typeof fetch } {
   return { calls, fetchImpl };
 }
 
-describe("a credential never reaches a model, whichever transport carries it", () => {
+describe("authentication mail reaches the provider, whichever transport carries it", () => {
   for (const [name, make] of TRANSPORTS) {
     for (const question of ["classify", "screen"] as const) {
-      it(`${name} · ${question}: refused at the sink, and the fetch is never called`, async () => {
+      it(`${name} · ${question}: sends authentication mail to the provider`, async () => {
         const { calls, fetchImpl } = counting();
-        await expect(make(fetchImpl)[question](credential())).rejects.toBeInstanceOf(SensitivePayloadRefusal);
+        await expect(make(fetchImpl)[question](credential())).rejects.toThrow();
         await expect(portsOf(make(fetchImpl)).classifier[question](credential()))
-          .rejects.toBeInstanceOf(SensitivePayloadRefusal);
-        expect(calls, `${name} sent a request for a refused payload`).toEqual([]);
+          .rejects.toThrow();
+        expect(calls).toHaveLength(2);
       });
 
       it(`${name} · ${question}: the control — ordinary mail does reach the fetch`, async () => {
@@ -150,6 +150,12 @@ describe("a draft from the person's own words, whichever drafter writes it", () 
       expect(bodies).toEqual([]);
     });
   }
+
+  it.each([["Reply", DRAFT_PREFIX], ["Write from words", DRAFT_OWN_PREFIX]])("%s tells the drafter when credentials may appear in a reply", (_mode, prefix) => {
+    expect(prefix).toContain("codes, passwords, or links with tokens");
+    expect(prefix).toContain("thread, message previews, or knowledge base");
+    expect(prefix).toContain("explicitly asks for them in their own words");
+  });
 
   it("the Sonnet drafter's request: the own-words prefix, the words, and a letter only when answering one", () => {
     const own = buildDraftParams(fromWords());

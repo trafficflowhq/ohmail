@@ -373,15 +373,29 @@ export interface World {
   readonly setup: CalendarSetupPort;
 }
 
+/**
+ * The setup's reading of Google just after its sign-in, held at one moment: its calendars not found yet (`finding`, and
+ * `slow` once the page has stood 8 seconds), two of them found and not read to their end (`arriving`), or refused.
+ */
+const READING = ["finding", "slow", "arriving", "failed"] as const;
+const readingOf = (state: string | null) => READING.find((r) => r === state) ?? null;
+
+function readingCalendars(reading: ReturnType<typeof readingOf>): readonly CalendarRecord[] {
+  if (reading === null) return CALENDARS;
+  const others = CALENDARS.filter((k) => k.connectionId !== "google");
+  if (reading !== "arriving") return others;
+  const found = CALENDARS.filter((k) => k.connectionId === "google").slice(0, 2);
+  return [...found.map((k) => ({ ...k, lastSyncedAt: null })), ...others];
+}
+
 export function worldOf(at: WorldState): World {
+  const reading = readingOf(at.state);
   const connections: CalendarConnectionRecord[] = [
-    connection(
-      "google",
-      "google",
-      "mila@lichtgrat.example",
-      null,
-      at.signedOut ? { status: "reconnect" } : {},
-    ),
+    connection("google", "google", "mila@lichtgrat.example", null, {
+      ...(at.signedOut ? { status: "reconnect" } : {}),
+      ...(reading === null ? {} : { lastSyncedAt: null }),
+      ...(reading === "failed" ? { status: "reconnect", errorCode: "token_gone" } : {}),
+    }),
     connection("icloud", "caldav", "mila.brunner@icloud.example", "p42-caldav.icloud.com"),
     connection("m365", "microsoft", "mila.brunner@vidralva.example", null),
   ];
@@ -392,7 +406,7 @@ export function worldOf(at: WorldState): World {
   const events = [...OWN, ...invitations(at.state), ...addedOf(at.state)].map(event);
   const kinds: Record<string, readonly { readonly id: string }[]> = {
     calendar_connection: connections,
-    calendar: CALENDARS,
+    calendar: readingCalendars(reading),
     calendar_event: events,
     calendar_suggestion: SUGGESTIONS,
   };

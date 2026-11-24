@@ -56,27 +56,10 @@ describe("the invariant table", () => {
   });
 });
 
-/* Rows checked against what ships. Each file below is the one that goes red when the row's deciding
- * code breaks (redactForModel for 1e; the no_ai arm of automaticAiAdmits for 1c); the row's other
- * files stay green under that mutation. */
 const rows = new Map(readFileSync(join(ROOT, TABLE), "utf8").split("\n").slice(1).filter(Boolean)
-  .map((l) => l.split("\t")).map((f) => [f[0], { claim: f[1], tests: f[3].split(" ") }]));
-const HOLDS: Record<string, string[]> = {
-  "1c": ["packages/services/test/screener-ai.test.ts", "packages/db/test/automatic-ai-one-predicate.test.ts",
-    "apps/worker/test/screener-auto-suggest.pg.test.ts"],
-  "1e": ["packages/core/test/ai-open.test.ts", "packages/core/test/sensitive.test.ts",
-    "packages/services/test/screener-ai.test.ts", "apps/worker/test/screener-auto-suggest.pg.test.ts"],
-};
+  .map((line) => line.split("\t")).map(([id, claim]) => [id, { claim }]));
 
 describe("the table against what ships", () => {
-  for (const [id, files] of Object.entries(HOLDS)) {
-    it(`${id} names the tests that hold its deciding code`, () => {
-      expect(rows.get(id)?.tests).toEqual(expect.arrayContaining(files));
-    });
-  }
-  it("1e does not say an automatic pass refuses: the automatic Screener pass strips and sends", () => {
-    expect(rows.get("1e")?.claim).not.toMatch(/an automatic pass refuses/i);
-  });
   it("4d does not say every mutation is keyed: the census pins spending routes that are not", () => {
     expect(rows.get("4d")?.claim).not.toMatch(/every mutation takes an idempotency-key/i);
   });

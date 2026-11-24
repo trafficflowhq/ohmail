@@ -1,7 +1,7 @@
 import { modelConsentGate, ModelConsentWithdrawn } from "@trafficflow/db";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ModelDeclinedError, SensitivePayloadRefusal } from "@trafficflow/core/mail";
+import { ModelDeclinedError } from "@trafficflow/core/mail";
 import type {
   AiCallOptions, ClassifierInput, ClassifierPort, ClassifierResult,
   DraftInput, DraftPort, DraftResult, KeyProvider,
@@ -599,7 +599,7 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
   let cooldownMs = baseCooldownMs;
 
   const noteFault = (err: unknown): void => {
-    if (err instanceof SensitivePayloadRefusal || err instanceof ModelDeclinedError) return;
+    if (err instanceof ModelDeclinedError) return;
     consecutiveFaults++;
     opts.log("ai_call_failed", {
       err,
@@ -696,7 +696,7 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
         // Rethrown UNWRAPPED, deliberately: a refusal at the sensitivity sink is message-scoped
         // and must not abort the batch, and the loop's own boundary is where it belongs. A decline
         // goes on unwrapped too, and the pipeline files that message as it would with AI off.
-        if (err instanceof SensitivePayloadRefusal || err instanceof ModelDeclinedError) throw err;
+        if (err instanceof ModelDeclinedError) throw err;
         throw new ClassifierFaultError(err);
       }
     },

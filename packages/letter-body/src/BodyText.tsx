@@ -29,7 +29,7 @@
  * but history, never over inline answers; collapsed means NOT IN THE DOM, not hidden by style — a
  * folded tracking URL must not become an anchor until asked for.
  */
-import { Fragment, memo, useId, useMemo, useState, type ReactNode } from "react";
+import { Fragment, memo, useId, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { BODY_PAGE_CHARS, pageEnd, pageEnds, type TagHueName } from "@ohmail/ui/body-parts";
 import { QUOTED_HISTORY_LIMITS, quotedHistoryOfText, type QuotedAt, type QuotedVerdict } from "@ohmail/client-engine";
 import { bodyCopy } from "./words";
@@ -91,6 +91,7 @@ function classifyLine(raw: string): ClassifiedLine {
  * block while quote depth and attribution give the block its shape.
  */
 interface Block {
+  blankLinesBefore: number;
   depth: number;
   attribution: boolean;
   text: string;
@@ -99,18 +100,25 @@ interface Block {
 function toBlocks(lines: ClassifiedLine[]): Block[] {
   const blocks: Block[] = [];
   let run: ClassifiedLine[] = [];
+  let blankLinesBefore = 0;
   const flush = (): void => {
     if (run.length === 0) return;
     const head = run[0]!;
     blocks.push({
+      blankLinesBefore,
       depth: head.depth,
       attribution: head.attribution,
       text: run.map((l) => l.content).join("\n"),
     });
     run = [];
+    blankLinesBefore = 0;
   };
   for (const ln of lines) {
-    if (ln.blank) { flush(); continue; }
+    if (ln.blank) {
+      flush();
+      blankLinesBefore++;
+      continue;
+    }
     const head = run[0];
     if (head && (head.depth !== ln.depth || head.attribution !== ln.attribution)) flush();
     run.push(ln);
@@ -253,6 +261,8 @@ export function inlineImageAdmitted(src: string, own: ReadonlySet<string>): bool
  */
 export interface RichParagraphNode {
   kind: "rich";
+  blank?: true;
+  paragraphBreak?: true;
   attribution: boolean;
   spacing: "paragraph" | "line";
   children: InlineNode[];
@@ -268,9 +278,9 @@ export interface RuleNode { kind: "rule" }
  * code block is dropped: it costs a reader of source nothing, and keeping it would mean deciding how
  * a bold run interacts with preserved whitespace.
  */
-export interface PreNode { kind: "pre"; text: string }
+export interface PreNode { kind: "pre"; text: string; blankLinesBefore?: number }
 /** `ul`/`ol`; each item is its own block list, so nested lists nest. */
-export interface ListNode { kind: "list"; ordered: boolean; items: BodyNode[][] }
+export interface ListNode { kind: "list"; ordered: boolean; compact?: true; items: BodyNode[][] }
 /** Spans are PARSED, BOUNDED INTS — see `MessageBody`'s `boundedSpan` — never sender strings. */
 export interface TableCellNode { header: boolean; colSpan: number; rowSpan: number; children: BodyNode[] }
 export interface TableRowNode { cells: TableCellNode[] }
@@ -307,7 +317,7 @@ function toTree(blocks: Block[]): BodyNode[] {
     // Column-shaped blocks take the preformatted kind at ANY depth — a quoted receipt has
     // the same alignment to lose as an unquoted one. See {@link isColumnar}.
     (depth === 0 ? top : stack[stack.length - 1]!.children).push(
-      isColumnar(block) ? { kind: "pre", text: block.text } : { kind: "para", block },
+      isColumnar(block) ? { kind: "pre", text: block.text, blankLinesBefore: block.blankLinesBefore } : { kind: "para", block },
     );
   }
   return top;
@@ -556,7 +566,13 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<stri
            same paragraph, and a container copy is how a sibling panel ran a signature together.
            Plain path only — a `rich` run's text nodes are markup whitespace and must collapse. */
         return (
-          <p className={node.block.attribution ? "msg-attribution msg-plain" : "msg-p msg-plain"} key={key}>
+          <p
+            className={node.block.attribution ? "msg-attribution msg-plain" : "msg-p msg-plain"}
+            key={key}
+            style={node.block.blankLinesBefore
+              ? { "--blank-lines": node.block.blankLinesBefore } as CSSProperties
+              : undefined}
+          >
             {linkify(node.block.text, key, links)}
           </p>
         );
@@ -567,6 +583,8 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<stri
            exactly one blank line: the shape `<div><br></div>` means everywhere it is written. */
         return (
           <p
+            data-paragraph-break={node.paragraphBreak}
+            data-blank-line={node.blank}
             className={
               node.attribution ? "msg-attribution" : node.spacing === "line" ? "msg-line" : "msg-p"
             }
@@ -591,7 +609,13 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<stri
         // and the pane never grows a horizontal bar. Same construction, same reason, as
         // `.msg-table-wrap` below. The text is ONE React text node — the sink invariant, again.
         return (
-          <div className="msg-pre-wrap" key={key}>
+          <div
+            className="msg-pre-wrap"
+            key={key}
+            style={node.blankLinesBefore
+              ? { "--blank-lines": node.blankLinesBefore } as CSSProperties
+              : undefined}
+          >
             <pre className="msg-pre">{node.text}</pre>
           </div>
         );
@@ -600,8 +624,8 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<stri
           <li key={`${key}-${j}`}>{renderNodes(item, `${key}-${j}-`, own, links)}</li>
         ));
         return node.ordered
-          ? <ol className="msg-list" key={key}>{items}</ol>
-          : <ul className="msg-list" key={key}>{items}</ul>;
+          ? <ol className="msg-list" data-compact={node.compact} key={key}>{items}</ol>
+          : <ul className="msg-list" data-compact={node.compact} key={key}>{items}</ul>;
       }
       case "table":
         // The wrap scrolls a genuinely wide table INSIDE the letter instead of letting it push

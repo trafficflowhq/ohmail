@@ -44,7 +44,7 @@ export type ScreenerSkipReason =
   | "spend_unavailable"
   | "model_unavailable"
   | "model_declined"
-  | "no_auto_ai";
+  | "attempts_exhausted";
 
 export interface ScreenerSuggestWire {
   dryRun: boolean;

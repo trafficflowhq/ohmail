@@ -2030,7 +2030,6 @@ export function screenerSegments(
         /* WHY THERE WILL NEVER BE ONE, when that is the answer. `no_ai` mail is kept away from
            every model, so this sender’s row is not waiting for a run to reach it. Read off the
            representative, which is the message a suggestion would have been about. */
-        ...(rep.sensitivity?.no_ai ? { noAi: true as const } : {}),
         // What the row lists is what it aggregates: any marked message marks the sender.
         ...checkedOf(newestFirst),
         // Oldest first — the order every preview renders, and ALL of them.

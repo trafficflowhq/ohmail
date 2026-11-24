@@ -119,6 +119,35 @@ describe("a series as the device holds it", () => {
     expect(shown[2]!.series?.id).toBe("standup");
   });
 
+  it("draws an answer to one day on that day alone, waiting or refused, and the other days as the series stands", () => {
+    const at = mondayAtNine("2026-11-09");
+    const series = event("standup", { myAnswer: "none" });
+    const day = (answers: EventWithWrites["answers"]) =>
+      occurrencesIn({
+        events: [{ ...held(series), answers }],
+        calendars: [calendar("cal-1")],
+        query: NOVEMBER,
+        zone: ZURICH,
+        zones,
+      }).shown.map((o) => [o.key === at, o.record.myAnswer, o.writes.waiting, o.writes.refusal] as const);
+    expect(
+      day([{ at, answer: "tentative", waiting: "provider", refusal: null, refusedWriteId: null }]),
+    ).toEqual([
+      [false, "none", null, null],
+      [true, "tentative", "provider", null],
+      [false, "none", null, null],
+      [false, "none", null, null],
+    ]);
+    expect(
+      day([{ at, answer: null, waiting: null, refusal: "version_stale", refusedWriteId: "w-1" }]),
+    ).toEqual([
+      [false, "none", null, null],
+      [true, "none", null, "version_stale"],
+      [false, "none", null, null],
+      [false, "none", null, null],
+    ]);
+  });
+
   it("draws an event that does not repeat once, with no key", () => {
     const single = event("dentist", { uid: "dentist@studio.test", repeat: null, title: "Dentist" });
     expect(daysOf([single])).toEqual([["2026-11-02", "Dentist", false]]);

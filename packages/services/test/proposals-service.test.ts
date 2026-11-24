@@ -68,12 +68,12 @@ function spyPort(): WorkflowPort & { received: WorkflowPattern[][] } {
   };
 }
 
-describe("ProposalsService.assemblePatterns — redaction + sensitive exclusion", () => {
-  it("emits recurring sender patterns as METADATA only; a sensitive-derived pattern is EXCLUDED", async () => {
+describe("ProposalsService.assemblePatterns — recurring sender metadata", () => {
+  it("emits recurring sender patterns as METADATA only; a flagged message leaves the pattern eligible", async () => {
     const { db, ctx, accountId } = await ctxFor();
     // Sender A: 4 positive signals, NO sensitive mail → a candidate pattern.
     await seedSignals(db, accountId, "news@acme-com.example", "ohmail/News", 4);
-    // Sender B: 4 positive signals, but B has a sensitivity-flagged message → EXCLUDED.
+    // Sender B: 4 positive signals, but B has a sensitivity-flagged message.
     await seedSignals(db, accountId, "secret@bank.example", "ohmail/Receipts", 4);
     await seedMessage(db, accountId, "secret@bank.example", { sensitivityCategory: "financial" });
     // Sender C: only 1 signal (below threshold) → not recurring.
@@ -82,8 +82,8 @@ describe("ProposalsService.assemblePatterns — redaction + sensitive exclusion"
     const patterns = await svc.assemblePatterns(ctx, { threshold: 3 });
     const senders = patterns.map((p) => p.senderAddress);
     expect(senders).toContain("news@acme-com.example");         // recurring, non-sensitive
-    expect(senders).not.toContain("secret@bank.example");   // sensitive-derived → excluded
-    expect(senders).not.toContain("rare@once.example");     // below threshold
+    expect(senders).toContain("secret@bank.example");
+    expect(senders).not.toContain("rare@once.example");
 
     // METADATA only — no body/snippet/subject field on any pattern.
     for (const p of patterns) {
@@ -119,18 +119,17 @@ describe("ProposalsService.generate — the mock port receives ONLY redacted met
     const port = spyPort();
     const dtos = await svc.generate(ctx, { port, threshold: 3 });
 
-    // The port saw exactly one call, carrying ONLY the non-sensitive sender's metadata.
+    // The port saw exactly one call, carrying metadata for both senders.
     expect(port.received).toHaveLength(1);
     const seen = port.received[0]!;
-    expect(seen.map((p) => p.senderAddress)).toEqual(["news@acme-com.example"]);
+    expect(seen.map((p) => p.senderAddress)).toEqual(expect.arrayContaining(["news@acme-com.example", "secret@bank.example"]));
     // And nothing the port received carried raw content.
     expect(JSON.stringify(seen)).not.toMatch(/snippet|"body"|subject/i);
 
     // The proposals are stored (open).
-    expect(dtos).toHaveLength(1);
+    expect(dtos).toHaveLength(2);
     const rows = await db.select().from(workflowProposals).where(eq(workflowProposals.accountId, accountId));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.status).toBe("open");
+    expect(rows.map((row) => row.status)).toEqual(["open", "open"]);
   });
 
   it("DROPS a proposal whose step declares a non-allowlisted tool", async () => {

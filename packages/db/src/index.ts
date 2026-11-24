@@ -145,7 +145,7 @@ export {
   SCREENER_FOLDER, DECIDABLE_FOLDERS, DECISION_BATCH_MAX, admitsDestination, domainOf,
   heldRowById, heldRowsForSender, heldRowsForDomain, rerouteOwnHeldBag, rerouteUnconfirmedHeld, rerouteAdvisedLetter, heldRowMovesOnPress,
   applyScreenerDecision, validateRequestPayload, parseDecisionScope, confirmedScreenerRows, PassMayNotAdmitError, readListClaimsFiledAlone,
-  fileImpersonationLetters, impersonationReturnedSenders, IMPERSONATION_FILING_FOLDER, IMPERSONATION_FILING_IDS_MAX,
+  automaticFilingAdmits, fileImpersonationLetters, impersonationReturnedSenders, IMPERSONATION_FILING_FOLDER, IMPERSONATION_FILING_IDS_MAX,
   type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
   type HeldElsewhereMailbox, type ImpersonationFilingResult, type UnconfirmedRerouteResult, type ValidatedRequestPayload,
 } from "./screener-apply.js";
@@ -479,8 +479,7 @@ export {
   // shows a sender's advice whichever of their messages it was bought about. Same barrel and the
   // same closure rule: these name `messages` and `routing_decisions` and nothing else.
   screenerSuggestedSenderExists, screenerSuggestionsBySender, hasScreenerSuggestionForSender,
-  // Which held mail an AUTOMATIC buyer may ask a model about — the pass's and the route's one rule.
-  automaticAiAdmits, screenerSuggestionExhausted, screenerSuggestionRetryDue,
+  screenerSuggestionExhausted, screenerSuggestionRetryDue,
   recordScreenerSuggestionRetry, clearScreenerSuggestionRetries,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, SCREENER_SUGGESTION_FAILED,
   type ScreenerSuggestionRow, type StoredSenderSuggestion,

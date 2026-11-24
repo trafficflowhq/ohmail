@@ -2696,6 +2696,10 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
   let run: InlineNode[] = [];
   const spacing: RichParagraphNode["spacing"] =
     RICH_PARAGRAPH_CONTAINERS.has(container.tagName.toLowerCase()) ? "paragraph" : "line";
+  // Word uses paragraphs for individual lines, as do editors that explicitly clear the margin.
+  const paragraphBreak = container.localName === "p"
+    && !/(^|\s)(x_)*Mso/.test(container.className)
+    && parseFloat((container as HTMLElement).style.marginBottom) !== 0;
   /** The ink this container's runs are drawn in; a run's own spans are read against it. */
   const tone = b.tone;
   const flush = (): void => {
@@ -2709,14 +2713,23 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
       // the sender wrote (never the whitespace between two of a builder's divs), and an `image`
       // is a picture standing on its own line — the signature logo's usual shape. Spent from the
       // budget like any other node, so `"<div><br></div>".repeat(100000)` stays bounded.
-      if (children.some((n) => n.kind === "break" || n.kind === "image") && spend(b)) {
-        out.push({ kind: "rich", attribution: false, spacing: "line", children });
+      const blankLine = (container.localName === "p" || (container.localName === "div" && !words)) && drawn.includes("\u00a0");
+      if ((blankLine || children.some((n) => n.kind === "break" || n.kind === "image")) && spend(b)) {
+        const blank = !children.some((n) => n.kind === "image");
+        out.push({
+          kind: "rich",
+          attribution: false,
+          spacing: "line",
+          ...(blank ? { blank } : paragraphBreak ? { paragraphBreak } : {}),
+          children,
+        });
       }
       return;
     }
     if (spend(b)) {
       const para: RichParagraphNode = {
         kind: "rich",
+        ...(paragraphBreak ? { paragraphBreak } : {}),
         attribution: isAttribution(words),
         spacing,
         children: tone !== null && spend(b) ? [{ kind: "ink", tone, children }] : children,
@@ -2753,7 +2766,11 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
         const item = blocksOf(child, depth, b, nest + 1);
         if (item.length > 0) items.push(item);
       }
-      if (items.length > 0 && spend(b)) out.push({ kind: "list", ordered: tag === "ol", items });
+      if (items.length > 0 && spend(b)) {
+        const { marginTop, marginBottom } = (el as HTMLElement).style;
+        const compact = parseFloat(marginTop) === 0 && parseFloat(marginBottom) === 0;
+        out.push({ kind: "list", ordered: tag === "ol", ...(compact ? { compact } : {}), items });
+      }
     } else if (tag === "pre") {
       // THE ONE BLOCK WHOSE WHITESPACE IS CONTENT. Everywhere else in this walk the sender's
       // spacing is noise between elements; in a `pre` the indentation IS the structure, so the
@@ -3907,6 +3924,8 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
    becomes unreachable. \`measure()\` sets this attribute in the same statement that writes the
    height, so the two can never disagree. */
 :root[data-ohmail-fitclip]{overflow:hidden}
+/* At the readability floor the remaining painted width still needs a scrollbar. */
+:root[data-ohmail-fitclip="sideways"]{overflow-x:auto;overscroll-behavior-x:contain}
 /* ── REFLOW, GATED ON THE THIRD ROOT ATTRIBUTE ─────────────────────────────────────────
    The other answer to a mail that is wider than its column, and the one most mail should have
    been getting all along: lay it out AT the column instead of laying it out at its natural
@@ -3974,7 +3993,6 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
 @media (max-width:640px){:root[data-ohmail-reflow]{--type-up:1px}}
 :root[data-ohmail-reflow] body{font-size:${NATIVE_FONT_SIZE};line-height:${NATIVE_LINE_HEIGHT};
   overflow-wrap:anywhere}
-:root[data-ohmail-reflow] *{max-width:100% !important}
 :root[data-ohmail-reflow] :is(table,td,th,div,center){min-width:0 !important}
 :root[data-ohmail-reflow] table{table-layout:auto !important}
 :root[data-ohmail-reflow] img{height:auto !important}
@@ -4013,7 +4031,7 @@ export function buildMailDocument(
    * the point: a caller holding a boolean knows that images are on and NOT where they may come
    * from, so the only policy it could ask for was `'self'` — every url on this origin.
    */
-  opts: { imgSource?: string | null; dark?: boolean; reflow?: boolean; paper?: Rgb | null; ink?: Rgb | null; reader?: boolean } = {},
+  opts: { imgSource?: string | null; dark?: boolean; reflow?: boolean; paper?: Rgb | null; ink?: Rgb | null; reader?: boolean; fitDesign?: boolean } = {},
 ): string {
   // The paper rides on the ROOT ELEMENT and is independent of `dark`, so the light and dark
   // builds of the same message still differ by the attribute alone — which is the equality
@@ -4033,6 +4051,10 @@ export function buildMailDocument(
    */
   const reflow = opts.reflow === true ? " data-ohmail-reflow=\"1\"" : "";
   const reader = opts.reader ? " data-ohmail-reader" : "";
+  // Keep the sender's own caps on a fluid design when preserving its layout.
+  const reflowWidth = opts.fitDesign
+    ? ":where(:root[data-ohmail-reflow] *){max-width:100%}"
+    : ":root[data-ohmail-reflow] *{max-width:100% !important}";
   return [
     `<!doctype html><html${opts.dark === true ? " data-ohmail-dark=\"1\"" : ""}${reflow}${reader}${paper}><head><meta charset="utf-8">`,
     `<meta http-equiv="Content-Security-Policy" content="${frameCsp(opts.imgSource ?? null)}">`,
@@ -4040,7 +4062,7 @@ export function buildMailDocument(
     // the proxy, not even the path of the page the reader is on travels with it.
     "<meta name=\"referrer\" content=\"no-referrer\">",
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
-    `<style>${FRAME_CSS}</style></head><body>`,
+    `<style>${FRAME_CSS}\n${reflowWidth}</style></head><body>`,
     bodyHtml,
     "</body></html>",
   ].join("");
@@ -4142,11 +4164,12 @@ export const MID_FIT_SCALE = 0.75;
  * lives HERE and not in {@link measure} so the decision is arithmetic a unit test can watch
  * fail: deleting it leaves a simple mail scaled, and the guard goes red.
  */
-export function fitScale(columnPx: number, naturalPx: number, reflow = false): number {
+export function fitScale(columnPx: number, naturalPx: number, reflow = false, fitCanvas = false): number {
   if (reflow) return 1;
   if (!Number.isFinite(columnPx) || !Number.isFinite(naturalPx)) return 1;
   if (columnPx <= 0 || naturalPx <= 0) return 1;
   if (naturalPx <= columnPx) return 1;
+  if (fitCanvas) return Math.max(MIN_FIT_SCALE, columnPx / naturalPx);
   if (columnPx < REFLOW_BELOW_PX) return 1;
   return Math.max(columnPx < WIDE_COLUMN_PX ? MID_FIT_SCALE : MIN_FIT_SCALE, columnPx / naturalPx);
 }
@@ -4482,6 +4505,8 @@ export interface MessageBodyProps {
    * sheet (`message-body-sheet.css`). In the conversation reader, the paper lines up with the text column.
    */
   look?: "sheet" | "reader";
+  /** Draw fixed layouts at their design width and fit the result in a full reading view. */
+  fitDesign?: boolean;
   /** Lets the conversation keep its landing in the same layout pass that fits the frame. */
   onBodyLayout?: () => void;
 }
@@ -4521,6 +4546,7 @@ export function MessageBody({
   owner,
   onControls,
   look,
+  fitDesign = look === "reader",
   onBodyLayout,
 }: MessageBodyProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
@@ -4662,7 +4688,7 @@ export function MessageBody({
     const cache = engine && messageId ? mailDocCacheFor<ReturnType<typeof sanitizeView>>(engine) : null;
     const inputs: MailDocInputs = {
       messageId: messageId ?? "", html, proxied: proxy !== null, imgSource, cidImages, resolvedRemoteImages,
-      loadPixels: loadTrackingPixels, hasText, darkWanted, forward: isForwardSubject(subject), askInPage, reader, settledCids, frameWidth: mediaWidth,
+      loadPixels: loadTrackingPixels, hasText, darkWanted, forward: isForwardSubject(subject), askInPage, reader, fitDesign, settledCids, frameWidth: mediaWidth,
     };
     const kept = cache?.read(inputs);
     if (kept) return kept.value;
@@ -4713,6 +4739,7 @@ export function MessageBody({
       // none and where no element paints a background (`letterPaperOf`); else the frame's.
       ink: ink ?? null,
       reader,
+      fitDesign,
     };
     const doc = buildMailDocument(clean, docOpts);
     // The same document with its quoted history cut out: the frame's folded state, read as its own letter.
@@ -4783,7 +4810,7 @@ export function MessageBody({
     // for the same reason `proxy` is — it is half of the document the frame gets — and it is
     // memoized on `imageProxy`, so it moves only when the proxy itself does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText, engine, messageId, subject, askInPage, mediaWidth, reader, settledCids]);
+  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText, engine, messageId, subject, askInPage, mediaWidth, reader, fitDesign, settledCids]);
 
   /**
    * FLIP THE DARK TRANSFORM ON THE LIVE DOCUMENT — never by rebuilding the srcdoc. The transform is gated on
@@ -4909,22 +4936,19 @@ export function MessageBody({
     root.removeAttribute("data-ohmail-fitclip");
     frame.style.height = `${PROBE_PX}px`;
 
-    // `clientWidth` of the FRAME is the column; `scrollWidth` of the frame's root is the widest
-    // the mail actually needs, and it is already clamped up to the viewport, so it is never
-    // less than the column and the scale is never above 1.
-    //
-    // READ OFF THE LIVE ROOT rather than closed over. The attribute is baked into the srcdoc by
-    // `buildMailDocument`, so the document itself carries the answer and this callback stays
-    // dependency-free — which is what keeps it out of the ResizeObserver's teardown/rebuild
-    // cycle. A reflowed mail is never fitted; see `fitScale`.
-    // A NARROW COLUMN REFLOWS WHATEVER THE CLASSIFIER SAID (see `REFLOW_BELOW_PX`). The baked
-    // answer is the value "1"; the column's own is "column", taken back off when the column widens.
-    if (root.getAttribute("data-ohmail-reflow") !== "1") {
-      if (frame.clientWidth > 0 && frame.clientWidth < REFLOW_BELOW_PX) root.setAttribute("data-ohmail-reflow", "column");
+    const column = frame.clientWidth;
+    const simple = root.getAttribute("data-ohmail-reflow") === "1";
+    const fitCanvas = fitDesign && !simple;
+    if (!simple) {
+      // The generic sheet reflows at phone widths. The app reader and News body keep the sender's canvas.
+      if (!fitCanvas && column > 0 && column < REFLOW_BELOW_PX) root.setAttribute("data-ohmail-reflow", "column");
       else root.removeAttribute("data-ohmail-reflow");
     }
-    const reflow = root.hasAttribute("data-ohmail-reflow");
-    const scale = fitScale(frame.clientWidth, root.scrollWidth, reflow);
+    const natural = root.scrollWidth;
+    const reflow = root.getAttribute("data-ohmail-reflow");
+    // WebKit can leave a fixed table wider than its column even in the generic sheet's reflow.
+    const scale = fitScale(column, natural, simple, fitCanvas || reflow === "column");
+    const sideways = column > 0 && Math.ceil(natural * scale) > column;
     // Measured BEFORE the transform is applied, then scaled by the same factor — a transform is
     // a paint-time operation and never changes `offsetHeight`, so the frame would otherwise be
     // told to reserve the mail's full unscaled height and leave a gap under a fitted message.
@@ -4939,22 +4963,20 @@ export function MessageBody({
     } else {
       root.style.removeProperty("--ohmail-scale");
     }
-    // Remembered for the NEXT element — see `heightRef` — in the same statement as the element's
-    // own height: the frame's `style` prop is read from it, so a render never hands React a height
-    // the element no longer has. Written here and nowhere else, so the height the swap reinstates
-    // is always the last one this function actually decided.
-    frame.style.height = heightRef.current = h > 0 ? `${h}px` : restore;
-    /**
-     * THE FRAME'S HEIGHT AND ITS DOCUMENT'S SCROLLABILITY ARE ONE DECISION: A scaled document's layout height is its
-     * UNSCALED one — a transform is a paint operation — so sizing the frame to the painted extent leaves the document
-     * with scrollable overflow that has nothing in it. That overflow captured the wheel over a collapsed
-     * reading-stream card: measured, the frame's own document moved 25px at 1440 (157 at 390) while the stream did
-     * not move at all. `:root[data-ohmail-fitclip]` in the document's own stylesheet takes the root out of the
-     * wheel's chain, and it is written HERE, in the statement after the height, because the two facts are the same
-     * fact — a second place deciding it could differ from this one. NOT when the ceiling clamped the height: then the
-     * mail is genuinely taller than its frame and its own document is the only way to reach the rest of it.
-     */
-    root.toggleAttribute("data-ohmail-fitclip", scale < 1 && !clampedByCeiling && h > 0);
+    // A transform leaves unscaled layout overflow behind. The pane handles vertical scrolling
+    // unless the frame hit its height ceiling. A genuinely wider letter keeps horizontal scrolling.
+    let bar = 0;
+    if (!clampedByCeiling && h > 0) {
+      if (sideways) {
+        root.setAttribute("data-ohmail-fitclip", "sideways");
+        // Reserve the scrollbar's strip on platforms that draw classic scrollbars.
+        bar = Math.max(0, (doc.defaultView?.innerHeight ?? 0) - root.clientHeight);
+      } else if (scale < 1) {
+        root.setAttribute("data-ohmail-fitclip", "");
+      }
+    }
+    // The next frame element carries this height while its document loads.
+    frame.style.height = heightRef.current = h > 0 ? `${Math.min(h + bar, MAX_FRAME_PX)}px` : restore;
 
     for (let i = 0; i < scrollers.length; i++) {
       if (scrollers[i]!.scrollTop !== tops[i]) scrollProgrammatically(scrollers[i]!, tops[i]!);
@@ -4962,12 +4984,13 @@ export function MessageBody({
     lastMeasure.current = measureInputs(frame, doc);
     /* Layout is clean after the read above, so these cost nothing more. */
     const shell = shellRef.current;
+    sizes.current.set(root, sizeKey(root.offsetWidth, root.offsetHeight));
     if (doc.body) sizes.current.set(doc.body, sizeKey(doc.body.offsetWidth, doc.body.offsetHeight));
     if (shell) sizes.current.set(shell, sizeKey(shell.offsetWidth, shell.offsetHeight));
     const store = fitStore.current;
     if (store && frame.style.height) store.cache.setFit(store.key, { width: frame.clientWidth, height: frame.style.height });
     reportLayout.current?.();
-  }, []);
+  }, [fitDesign]);
 
   // Keyed on the DOCUMENT, not the `mail` object: a re-sanitize that yields the same bytes (a new
   // map of the same pictures, a host's new closure) is the same frame and must not probe it again.
@@ -5068,7 +5091,22 @@ export function MessageBody({
     if (frameKey === null || loadedKey !== frameKey) return;
     const frame = frameRef.current;
     const shell = shellRef.current;
-    if (!frame || typeof ResizeObserver === "undefined") return;
+    const doc = frame?.contentDocument;
+    if (!doc) return;
+    const fontLoaded = () => {
+      // The final scaled scroll width can mask a font's change to the natural width.
+      lastMeasure.current = null;
+      measure();
+    };
+    let active = true;
+    doc.fonts?.addEventListener("loadingdone", fontLoaded);
+    // Sandboxed documents can load fonts without dispatching their events to the parent.
+    if (doc.fonts?.status === "loading") void doc.fonts.ready.then(() => { if (active) fontLoaded(); });
+    const stopFonts = () => {
+      active = false;
+      doc.fonts?.removeEventListener("loadingdone", fontLoaded);
+    };
+    if (typeof ResizeObserver === "undefined") return stopFonts;
     /**
      * MEASURED ONCE PER LOAD (`onLoad` below), and again only for a real change: the mail's body
      * grew (a picture arrived) or the column moved. The observer's first report, and every report
@@ -5076,10 +5114,21 @@ export function MessageBody({
      * answered with nothing — it used to probe every frame again, a forced layout per frame per
      * switch.
      */
+    const contentWidths = new Map<Element, number>();
     const ro = new ResizeObserver((entries) => {
       let changed = false;
       for (const en of entries) {
         const b = en.borderBoxSize?.[0];
+        const width = contentWidths.get(en.target);
+        if (width !== undefined) {
+          const next = Math.round(b?.inlineSize ?? (en.target as HTMLElement).offsetWidth);
+          if (next !== width) {
+            contentWidths.set(en.target, next);
+            lastMeasure.current = null;
+            changed = true;
+          }
+          continue;
+        }
         const k = b ? sizeKey(b.inlineSize, b.blockSize) : "";
         if (k === "" || sizes.current.get(en.target) !== k) {
           if (k !== "") sizes.current.set(en.target, k);
@@ -5089,10 +5138,20 @@ export function MessageBody({
       if (changed) measure();
     });
     // The mail's own content, and the column it sits in. Deliberately NOT `frame`.
-    const body = frame.contentDocument?.body;
-    if (body) ro.observe(body, { box: "border-box" });
+    ro.observe(doc.documentElement, { box: "border-box" });
+    if (doc.body) {
+      ro.observe(doc.body, { box: "border-box" });
+      // A table can grow wider inside fixed body and root boxes.
+      for (const child of doc.body.children) {
+        contentWidths.set(child, (child as HTMLElement).offsetWidth);
+        ro.observe(child, { box: "border-box" });
+      }
+    }
     if (shell) ro.observe(shell, { box: "border-box" });
-    return () => ro.disconnect();
+    return () => {
+      stopFonts();
+      ro.disconnect();
+    };
   }, [loadedKey, measure, frameKey]);
 
   /**

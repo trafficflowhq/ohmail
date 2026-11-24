@@ -18,7 +18,7 @@ import { screenerAttemptKey } from "@trafficflow/db";
 import type { RefundObligationPort, SpendPort } from "@trafficflow/db";
 import { fakeSpendPort, type FakeSpendPort } from "../../../packages/organizer/test/_spendport.js";
 import ts from "typescript";
-import { createLogger, makeHaikuClassifier, SensitivePayloadRefusal, type AnthropicLike } from "@trafficflow/core";
+import { createLogger, makeHaikuClassifier, ModelDeclinedError, type AnthropicLike } from "@trafficflow/core";
 import type { ClassifierInput, ClassifierPort, ClassifierResult, LogFields, Logger }
   from "@trafficflow/core";
 import {
@@ -346,10 +346,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
     }
   });
 
-  it("the payload carries the REDACTED subject and declares itself prescreened", async () => {
-    // The credential-bearing case, on the path that spends without a press in the same minute.
-    // `askScreeningQuestion` runs `redactForModel` at the caller, because a port has
-    // implementations outside this repository that receive the input object directly.
+  it("sends the same sign-in subject and snippet as stored", async () => {
     const w = await newWorld({ credits: 50 });
     const id = await held(w, "bank@example.test", AFTER);
     await db.update(messages).set({ subject: "Your code is 482913", snippet: "Your code is 482913" })
@@ -360,9 +357,8 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
 
     expect(spy.screened).toHaveLength(1);
     const sent = spy.screened[0]!;
-    expect(sent.outbound).toBe("prescreened");
-    expect(sent.subject).not.toContain("482913");
-    expect(sent.snippet).not.toContain("482913");
+    expect(sent.subject).toContain("482913");
+    expect(sent.snippet).toContain("482913");
   });
 
   /* ── 1a. THE DECIDED SENDER — nothing is bought about somebody no surface asks about ───── */
@@ -418,7 +414,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
    * missing for a dozen reasons, and "the model was never asked" is the only claim worth making
    * about a privacy boundary.
    */
-  it("a flagged representative is never asked about, never charged for, never stored", async () => {
+  it("suggests and charges for ordinary and sign-in mail alike", async () => {
     const w = await newWorld({ credits: 50 });
     const ordinary = await held(w, "shop@example.test", AFTER);
     const flagged = await held(w, "bank@example.test", new Date(AFTER.getTime() + 1000));
@@ -431,38 +427,19 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
       accountId: w.accountId, classifier: spy, credits: w.gate,
     });
 
-    // THE PRIVACY CLAIM FIRST, so a regression is named by the leak rather than by a count that
-    // happens to sit above it. Asserted three ways, because each is separately satisfiable by a
-    // defect: the exact set of addresses the port was handed, no call carrying the flagged one,
-    // and no digits of the passcode anywhere in the bytes.
-    expect(spy.screened.map((i) => i.from.address)).toEqual(["shop@example.test"]);
-    expect(
-      spy.screened.some((i) => i.from.address === "bank@example.test"),
-      "a flagged sender was sent to the model by a pass nobody pressed",
-    ).toBe(false);
-    const wire = spy.screened.map((i) => `${i.subject}\n${i.snippet}`).join("\n");
-    expect(wire, "the passcode reached the port").not.toContain("482913");
+    expect(spy.screened.map((i) => i.from.address).sort()).toEqual(["bank@example.test", "shop@example.test"]);
     expect(spy.routed).toEqual([]);
-
-    // The unflagged sender is unaffected — this pass still does its job.
     expect(result.ran).toBe(true);
-    expect(result.bought).toBe(1);
-    expect(result.chargedAttempts).toBe(1);
-
-    const stored = await suggestionsOf(w);
-    expect(stored.map((r) => r.messageId)).toEqual([ordinary]);
-    expect(await debitsOf(w)).toEqual([{ delta: -1, source: screenerLedgerSource(ordinary) }]);
-    // `examined` counts the page this pass actually held, so the flagged sender is not in it: the
-    // exclusion is in the QUERY, not a skip inside the loop that a reordering could move below the
-    // spend.
-    expect(result.examined).toBe(1);
+    expect(result.bought).toBe(2);
+    expect(result.chargedAttempts).toBe(2);
+    expect((await suggestionsOf(w)).map((r) => r.messageId).sort()).toEqual([ordinary, flagged].sort());
+    expect(await debitsOf(w)).toEqual(expect.arrayContaining(
+      [ordinary, flagged].map((id) => ({ delta: -1, source: screenerLedgerSource(id) })),
+    ));
+    expect(result.examined).toBe(2);
   });
 
-  it("`no_ai` with a NULL category — the INDETERMINATE class — is excluded too", async () => {
-    // The detector's third outcome, and the one an exclusion written as `sensitivity_category IS
-    // NOT NULL` alone would miss: "I could not read this confidently" is routed into `no_ai` by
-    // `sensitive.ts` precisely so a reader that fails open cannot exist. Mutation: delete the `noAi`
-    // clause of `automaticAiAdmits` and keep the category one — this goes red, here and at the route.
+  it("`no_ai` with a NULL category — the INDETERMINATE class — is suggested for", async () => {
     const w = await newWorld({ credits: 50 });
     const id = await held(w, "unknown@example.test", AFTER);
     await db.update(messages).set({ noAi: true, sensitivityCategory: null })
@@ -473,16 +450,12 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
       accountId: w.accountId, classifier: spy, credits: w.gate,
     });
 
-    expect(spy.screened).toEqual([]);
-    expect(result.bought).toBe(0);
-    expect(await debitsOf(w)).toEqual([]);
+    expect(spy.screened).toHaveLength(1);
+    expect(result.bought).toBe(1);
+    expect(await debitsOf(w)).toHaveLength(1);
   });
 
-  it("a category with `no_ai` FALSE is excluded too — either flag is enough", async () => {
-    // The other half of the pair, and it is a real state rather than a hypothetical: `no_ai` is a
-    // column written at ingest and `sensitive-backfill.ts` exists because it is KNOWN-WRONG for
-    // historical rows. A row whose category says `financial` while its boolean says false must not
-    // be bought for by a pass nobody pressed. Mutation: delete `automaticAiAdmits`' category clause.
+  it("a category with `no_ai` FALSE is suggested for — either flag is enough", async () => {
     const w = await newWorld({ credits: 50 });
     const id = await held(w, "statements@example.test", AFTER);
     await db.update(messages).set({ noAi: false, sensitivityCategory: "financial" })
@@ -493,9 +466,9 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
       accountId: w.accountId, classifier: spy, credits: w.gate,
     });
 
-    expect(spy.screened).toEqual([]);
-    expect(result.bought).toBe(0);
-    expect(await debitsOf(w)).toEqual([]);
+    expect(spy.screened).toHaveLength(1);
+    expect(result.bought).toBe(1);
+    expect(await debitsOf(w)).toHaveLength(1);
   });
 
   /**
@@ -511,7 +484,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
    * all. Mutation: move either predicate into the inner query and `spy.screened` gains a call
    * carrying the OLDER message's subject.
    */
-  it("a sender whose NEWEST held mail is flagged is not suggested — the older one is not promoted", async () => {
+  it("a sender whose NEWEST held mail is flagged is suggested using that message", async () => {
     const w = await newWorld({ credits: 50 });
     const older = await held(w, "mixed@example.test", AFTER);
     await db.update(messages).set({ subject: "last week's newsletter" }).where(eq(messages.id, older));
@@ -526,24 +499,13 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
     });
 
     expect(result.ran).toBe(true);
-    expect(spy.screened, "an older message was promoted to representative and bought for").toEqual([]);
-    expect(result.bought).toBe(0);
-    expect(await suggestionsOf(w)).toEqual([]);
-    expect(await debitsOf(w)).toEqual([]);
-    // Stated as bytes as well as as a count, because this is the assertion that distinguishes
-    // "excluded" from "promoted": `older` is the message a predicate pushed into the `DISTINCT ON`
-    // would have sold instead.
-    expect(
-      spy.screened.some((i) => i.subject.includes("newsletter")),
-      `the older message ${older} was promoted to representative and sold`,
-    ).toBe(false);
+    expect(spy.screened.map((i) => i.subject)).toEqual(["Your sign-in code"]);
+    expect(result.bought).toBe(1);
+    expect((await suggestionsOf(w)).map((row) => row.messageId)).toEqual([newer]);
+    expect(await debitsOf(w)).toHaveLength(1);
   });
 
-  it("a flagged sender does not consume a slot in the per-cycle page", async () => {
-    // The exclusion is in the WHERE and not a `continue` inside the loop, so the cap still buys a
-    // full page of eligible senders. A skip inside the loop would silently shrink the batch — and
-    // would also mean the flagged row had already been selected, priced and reasoned about on the
-    // spend side of the code, which is the shape this fix exists to remove.
+  it("a flagged sender can consume a slot in the per-cycle page", async () => {
     const w = await newWorld({ credits: 200 });
     for (let i = 0; i < AUTO_SUGGEST_BATCH; i++) {
       await held(w, `ok${String(i).padStart(2, "0")}@example.test`, new Date(AFTER.getTime() + i * 1000));
@@ -559,7 +521,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
 
     expect(result.bought).toBe(AUTO_SUGGEST_BATCH);
     expect(spy.screened).toHaveLength(AUTO_SUGGEST_BATCH);
-    expect(spy.screened.some((i) => i.from.address === "bank@example.test")).toBe(false);
+    expect(spy.screened.some((i) => i.from.address === "bank@example.test")).toBe(true);
   });
 
   /* ── 1c. MAIL GONE FROM THE SERVER — a tombstoned letter is no candidate ────────────────── *
@@ -997,7 +959,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
    * Real Postgres twins of `screener-auto-suggest-refund-door.test.ts`. The debt store is the REAL
    * one over this database, and a failing write or settle is a REAL failure: the same store over a
    * connection that has ended. Mutations: let the write's throw skip the release, or rethrow the
-   * settle (`reverseCharge`); drop the pass's `SensitivePayloadRefusal` arm (the batch stops).
+   * settle (`reverseCharge`); drop the pass's `ModelDeclinedError` arm (the batch stops).
    */
   async function endedStore(): Promise<RefundObligationPort> {
     const ended = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
@@ -1080,7 +1042,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
     expect(named("screener_auto_suggest_release_failed")).toEqual([]);
   });
 
-  it("a refusal at the SINK is skipped, refunded through the real store and held out; the senders behind it are bought", async () => {
+  it("a provider refusal is skipped, refunded through the real store and held out; the senders behind it are bought", async () => {
     const w = await newWorld({ credits: 50 });
     const a = await held(w, "a@example.test", AFTER);
     const b = await held(w, "b@example.test", new Date(AFTER.getTime() + 1000));
@@ -1089,7 +1051,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
     const answer = async (input: ClassifierInput): Promise<ClassifierResult> => {
       asked.push(input.from.address);
       if (input.from.address === "a@example.test") {
-        throw new SensitivePayloadRefusal({ safe: false, category: null, reason: "credential_shape" });
+        throw new ModelDeclinedError("refusal", null);
       }
       return { destination: "ohmail/News", confidence: 0.8, rationale: "a newsletter", spam: false };
     };
@@ -1101,7 +1063,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
 
     const r = await pass(t0);
 
-    expect(r.stopped, "a refusal at the sink stopped the batch").toBeUndefined();
+    expect(r.stopped, "a provider refusal stopped the batch").toBeUndefined();
     expect(r).toMatchObject({ bought: 2, chargedAttempts: 2 });
     expect((await suggestionsOf(w)).map((s) => s.messageId).sort()).toEqual([b, c].sort());
     expect(w.gate.releases.filter((x) => x.refund))

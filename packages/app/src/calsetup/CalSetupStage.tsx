@@ -19,7 +19,7 @@ import { useCalendarDevice } from "../calsettings/device.js";
 import type { PaneProps } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
 import { useText } from "../text/index.js";
-import { CalendarsStep, DefaultStep, WaitStep } from "./AfterSteps.js";
+import { CalendarsStep, DefaultStep, useKeepGoing, WaitStep } from "./AfterSteps.js";
 import { useCalendarMirror } from "./mirror.js";
 import { SignInStep } from "./SignInStep.js";
 import { useSetupPort } from "./use-setup-port.js";
@@ -66,6 +66,8 @@ export function CalSetupStage({ route }: PaneProps) {
       {t("leave")}
     </Button>
   );
+  const keepGoing = useKeepGoing(mirror?.port ?? null, words.connection ?? null, out);
+  const close = <Button kind="quiet" icon="x" label={t("close")} onPress={out} />;
   const back = (to: Readonly<Record<string, string>>) => (
     <Button kind="quiet" icon="back" label={t("back")} onPress={() => go(to)} />
   );
@@ -118,11 +120,12 @@ export function CalSetupStage({ route }: PaneProps) {
     return (
       <CalendarsStep
         way={at.way}
-        connected={result === "connected"}
         mirror={mirror}
         connection={at.connection}
         port={port}
-        leave={leave}
+        close={close}
+        keepGoing={keepGoing}
+        out={out}
         again={() =>
           go(
             at.way

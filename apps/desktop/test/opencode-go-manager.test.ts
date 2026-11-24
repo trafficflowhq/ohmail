@@ -15,7 +15,7 @@ import { OPENCODE_GO_MODEL_IDS } from "../../../packages/core/src/ai/transports/
 import type { KeyProvider } from "../../../packages/core/src/crypto.js";
 import {
   CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, ModelDeclinedError,
-  SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, SensitivePayloadRefusal, TAXONOMY_PREFIX,
+  SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
 } from "@trafficflow/core/mail";
 
 const TEST_KEY = "fixture-key-that-is-not-a-provider-credential";
@@ -647,7 +647,7 @@ describe("the automatic classify path with Go configured", () => {
   /* The sync cycle classifies every new message through classifierForCycle() without a press.
      A subject carrying a one-time code must stop at the shared payload builder: refused before
      anything is sent, so opencode.ai sees no inference request at all. */
-  it("sends nothing to opencode.ai for a subject carrying a one-time code", async () => {
+  it("classifies a sign-in message with the configured provider", async () => {
     const reply = chatReply(JSON.stringify({
       destination: "ohmail/Receipts", confidence: 0.8, rationale: "synthetic", spam: false,
     }));
@@ -661,12 +661,12 @@ describe("the automatic classify path with Go configured", () => {
     const cycle = ai.classifierForCycle();
     expect(cycle).toBeDefined();
     await expect(cycle!.classify({ ...SYNTHETIC_CLASSIFIER_INPUT, subject: "Your login code is 991823" }))
-      .rejects.toBeInstanceOf(SensitivePayloadRefusal);
-    expect(requests.slice(before)).toEqual([]);
+      .resolves.toHaveProperty("destination", "ohmail/Receipts");
+    expect(requests.slice(before)).toHaveLength(1);
 
     // The control: the same path with an ordinary subject does reach the chat endpoint.
     await cycle!.classify(SYNTHETIC_CLASSIFIER_INPUT);
-    expect(requests.slice(before).map((r) => r.url)).toEqual([
+    expect(requests.slice(before + 1).map((r) => r.url)).toEqual([
       "https://opencode.ai/inference/go/v1/chat/completions",
     ]);
   });

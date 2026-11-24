@@ -129,6 +129,36 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect((await connectionOf(w, t.accountId, t.connectionId)).status).toBe("active");
   }, 60_000);
 
+  it("a calendar's first reading says it was read even when the calendar holds nothing, and only that once", async () => {
+    const t = await caldavWorld(new Map([["", [{ items: [] }]], ["t1", [{ items: [], unchanged: true }]]]), () => "t1");
+    expect(await calendarSyncPass(t.deps, t.due, never)).toMatchObject({ kind: "synced", calendars: 1, changed: 1 });
+    const [read] = await calendarsOf(w, t.accountId);
+    expect(read?.lastSyncedAt).not.toBeNull();
+    expect(await changesOf(w, t.accountId)).toEqual({ "calendar:create": 1, "calendar:update": 1, "calendar_connection:update": 1 });
+    await makeDue(t.accountId);
+    await calendarSyncPass(t.deps, t.due, never);
+    expect((await calendarsOf(w, t.accountId))[0]?.lastSyncedAt).toEqual(read?.lastSyncedAt);
+    expect(await changesOf(w, t.accountId)).toEqual({ "calendar:create": 1, "calendar:update": 1, "calendar_connection:update": 1 });
+  }, 60_000);
+
+  it("a connection whose first listing finds no calendar says it was read, once, and only itself", async () => {
+    const seeded = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
+    const other = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
+    const reader = scriptedReader("caldav", { calendars: [], readings: new Map() });
+    const deps = depsFor(w, providersOf({ caldav: { reader, http: silentHttp() } }));
+    expect(await calendarSyncPass(deps, seeded.due, never)).toMatchObject({ kind: "synced", calendars: 0, changed: 0 });
+    const first = await connectionOf(w, seeded.accountId, seeded.connectionId);
+    expect(first.lastSyncedAt).not.toBeNull();
+    expect(await changesOf(w, seeded.accountId)).toEqual({ "calendar_connection:update": 1 });
+    expect((await connectionOf(w, other.accountId, other.connectionId)).lastSyncedAt).toBeNull();
+    expect(await changesOf(w, other.accountId)).toEqual({});
+
+    await makeDue(seeded.accountId);
+    await calendarSyncPass(deps, seeded.due, never);
+    expect((await connectionOf(w, seeded.accountId, seeded.connectionId)).lastSyncedAt).toEqual(first.lastSyncedAt);
+    expect(await changesOf(w, seeded.accountId)).toEqual({ "calendar_connection:update": 1 });
+  }, 60_000);
+
   it("a reading that finds nothing changed writes nothing and records no change", async () => {
     const t = await caldavWorld(new Map([["", eventsInPages("n", 3, 3)], ["tok", [{ items: [], unchanged: true }]]]), () => "tok");
     await calendarSyncPass(t.deps, t.due, never);

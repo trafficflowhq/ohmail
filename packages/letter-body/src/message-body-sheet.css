@@ -15,6 +15,47 @@
   max-width: var(--measure);
 }
 
+/* HTML line boxes already include the breaks the writer supplied. */
+.mb:is([data-look="sheet"], [data-look="reader"]):has(> :is(.msg-p, .msg-line, .msg-list)) {
+  gap: 0;
+}
+
+.mb:is([data-look="sheet"], [data-look="reader"]) :is(.msg-p, .msg-line, .msg-list) {
+  margin-block: 0;
+}
+
+/* Use the surrounding empty line when the sender already supplied one. */
+.mb:is([data-look="sheet"], [data-look="reader"]) > :is(.msg-p, .msg-line):not([data-blank-line]) + :is(.msg-list:not([data-compact]), .msg-h, .msg-quote, .msg-table-wrap, .msg-pre-wrap) {
+  margin-block-start: 1lh;
+}
+
+.mb:is([data-look="sheet"], [data-look="reader"]) > :is(.msg-h, .msg-quote, .msg-table-wrap, .msg-pre-wrap):has(+ .msg-p, + .msg-line) {
+  margin-block-end: 0;
+}
+
+.mb:is([data-look="sheet"], [data-look="reader"]) > :is(.msg-list:not([data-compact]), .msg-h, .msg-quote, .msg-table-wrap, .msg-pre-wrap) + :is(.msg-p, .msg-line):not([data-blank-line]) {
+  margin-block-start: 1lh;
+}
+
+.mb:is([data-look="sheet"], [data-look="reader"]) [data-paragraph-break] + :is(.msg-p, .msg-line, .msg-attribution, .msg-hr, .msg-list[data-compact]):not([data-blank-line]) {
+  margin-block-start: 1lh;
+}
+
+:is(.mb[data-look="sheet"], .mb[data-look="reader"], [data-read-body]) > .msg-history-toggle:not(:first-child) {
+  margin-block-start: var(--s2);
+}
+
+/* Plain text uses a new block at each blank line. */
+[data-read-body] .msg-plain {
+  font-size: var(--t-read);
+  line-height: var(--lh-read);
+  margin-block: calc(var(--blank-lines, 0) * 1lh) 0;
+}
+
+[data-read-body] .msg-pre-wrap {
+  margin-block-start: calc(var(--blank-lines, 0) * var(--t-read) * var(--lh-read));
+}
+
 /* A designed letter is its own paper from edge to edge of the sheet, as the kit draws one. */
 .mb:is([data-look="sheet"], [data-look="reader"]) .mb-sheet {
   margin: 0 calc(var(--sheet-pad) * -1);
