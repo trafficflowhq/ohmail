@@ -1,0 +1,3 @@
+### Connecting a calendar shows what is happening
+
+After signing in to a calendar account, the setup shows the account as connected, its calendars as they are found, and the events as they are read. Calendars can be chosen as soon as they appear while the events keep loading. If finding the calendars takes longer than a few seconds, you can keep going and ohmail tells you when they are ready. A refused sign-in says why and offers Try again. A calendar that could not be read says why on its line and no longer keeps the step reading, and an account without calendars says so. An empty calendar now counts as read after its first reading.

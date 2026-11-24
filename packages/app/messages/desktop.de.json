@@ -186,7 +186,7 @@
     "remove": "Anbieter und Schlüssel vergessen",
     "forget": "Vergessen",
     "removeWhy": "Entfernt die gespeicherten Schlüssel von diesem Computer. Mails kommen weiter an und werden weiter einsortiert.",
-    "note": "Gesendet wird nur, was ein Modell zum Antworten braucht. Ein Vorschlag schickt Absender, Betreff und einen kurzen Auszug. Ein Entwurf schickt dasselbe für die Nachricht, auf die du antwortest, dazu Absender und einen kurzen Auszug von bis zu 20 weiteren Nachrichten im Thread und bis zu 5 passende Notizen aus der Wissensdatenbank. Trägt eine Nachricht einen Code oder einen Anmeldelink, wird dieser nie gesendet — egal welcher Anbieter gewählt ist."
+    "note": "Gesendet wird nur, was ein Modell zum Antworten braucht. Ein Vorschlag schickt Absender, Betreff und einen kurzen Auszug. Ein Entwurf schickt dasselbe für die Nachricht, auf die du antwortest, dazu Absender und einen kurzen Auszug von bis zu 20 weiteren Nachrichten im Thread und bis zu 5 passende Notizen aus der Wissensdatenbank."
   },
   "ohmarchy": {
     "offerLead": "ohmarchy auf diesem Computer",

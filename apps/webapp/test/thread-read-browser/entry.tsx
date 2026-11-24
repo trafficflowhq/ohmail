@@ -7,11 +7,18 @@
  * stream card's letter, under `readStreamCards`. Bundled by the test;
  * nothing here is product code. */
 import { createRoot } from "react-dom/client";
+import { useState } from "react";
 import { flushSync } from "react-dom";
 import { createThreadRead } from "@ohmail/client-engine";
 import { MessageBody } from "../../../../packages/letter-body/src/MessageBody";
 import { createThreadReadDom } from "@ohmail/app-logic/reading/reader-seen";
 import { readStreamCards } from "@ohmail/app-logic/lists/stream-landing-read";
+import { useThreadWalk } from "../../../../packages/app-logic/src/reader/thread-walk";
+import { createThreadWalkChannel, type ThreadWalkChannel } from "../../../../packages/app-logic/src/reading/thread-walk-channel";
+import { LetterBody } from "../../../../packages/app/src/reader/body/LetterBody";
+import { TextProvider } from "../../../../packages/app/src/text";
+import type { EngineMessage } from "@ohmail/wire";
+import { Message } from "../../../../packages/ui/src/mail/Reading/Message";
 
 interface Log { reads: string[][]; at: number[] }
 const frames = (n: number): Promise<void> =>
@@ -226,4 +233,76 @@ function streamPress(): void {
 }
 const pressed = (): Log & { since: number } => ({ ...streamLog, since: Math.round(performance.now() - t0) });
 
-(window as unknown as { rig: unknown }).rig = { framed, landing, pictures, backgrounds, streamPress, pressed };
+function designedPane(html: string) {
+  const pane = scrollerOf(800, 940);
+  const root = createRoot(pane);
+  const render = (open: boolean, reader: boolean) => flushSync(() => root.render(
+    <Message head={null} clip={reader ? undefined : { open, word: open ? "Collapse" : "Expand" }}>
+      <MessageBody owner={null} html={html} text="Text version" look={reader ? "reader" : "sheet"} />
+    </Message>,
+  ));
+  render(true, false);
+  return { pane, render };
+}
+
+const anchorMessages = [{ id: "open" }] as EngineMessage[];
+const threadMessages = [{ id: "earlier" }, ...anchorMessages] as EngineMessage[];
+const doNothing = () => {};
+
+let deliverPicture: (data: string) => void;
+
+function OpenLetter({ pane, html, thread, channel }: { pane: HTMLElement; html: string; thread: boolean; channel?: ThreadWalkChannel }) {
+  const [cidImages, setCidImages] = useState<ReadonlyMap<string, string>>();
+  deliverPicture = (data) => setCidImages(new Map([["issue-cover", data]]));
+  const walk = useThreadWalk({ scroller: pane, messages: thread ? threadMessages : anchorMessages, openedId: "open", onEnter: doNothing, channel });
+  return <>
+    {thread && <article data-conv-id="earlier">Earlier in the conversation</article>}
+    <article data-conv-id="open">
+      <MessageBody owner={null} html={html} text="Text version" look="reader" fitDesign remoteLoaded
+        onBodyLayout={walk.refreshLayout} cidImages={cidImages}
+        imageProxy={(url) => `${location.origin}/api/img?u=${encodeURIComponent(url)}`} />
+    </article>
+  </>;
+}
+
+function openAnchored(html: string, width = 390, thread = false): void {
+  const pane = scrollerOf(400, width);
+  flushSync(() => createRoot(pane).render(<OpenLetter pane={pane} html={html} thread={thread} />));
+}
+
+function openPendingPress(html: string) {
+  const pane = scrollerOf(400, 390);
+  const channel = createThreadWalkChannel();
+  flushSync(() => createRoot(pane).render(<OpenLetter pane={pane} html={html} thread channel={channel} />));
+  pressEarlier = () => {
+    if (!channel.press("earlier")) channel.pending = "earlier";
+    return channel.pending;
+  };
+}
+
+let pressEarlier: () => string | null;
+
+function openPreview(html: string): void {
+  const pane = scrollerOf(800, 390);
+  flushSync(() => createRoot(pane).render(
+    <TextProvider locale="en" timeZone="UTC" messages={{}} pending>
+      <article className="scast viewer">
+        <div className="sc-clip"><div className="sc-viewer">
+          <LetterBody owner={null} html={html} text="Text version" messageId="preview" subject="Weekly edition"
+            scheme="light" remoteLoaded={false} imageProxy={null} loadTrackingPixels={false}
+            onNotice={doNothing} onControls={doNothing} />
+        </div></div>
+      </article>
+    </TextProvider>,
+  ));
+}
+
+let designed: ReturnType<typeof designedPane>;
+(window as unknown as { rig: unknown }).rig = {
+  framed, landing, pictures, backgrounds, streamPress, pressed, openPreview, openAnchored, openPendingPress,
+  pressEarlier: () => pressEarlier(),
+  deliverPicture: (data: string) => deliverPicture(data),
+  openDesign: (html: string) => { designed = designedPane(html); },
+  resizeDesign: (width: number) => { designed.pane.style.width = `${width}px`; },
+  showDesign: (open: boolean, reader: boolean) => { designed.render(open, reader); },
+};

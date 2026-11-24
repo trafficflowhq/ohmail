@@ -1490,9 +1490,11 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       if (target.occurrence !== null) {
         const raw = held?.raw;
         if (!raw || raw.isOrganizer !== false) return refused("read_only");
+        // The series is not compared by its version: Exchange moves that on for what no day shows (an exception made
+        // elsewhere, its own bookkeeping). What the answer is about is the day, and the day is held to what was shown:
+        // still a plain day of this series at its first time, or the changed day the person saw (`target.exception`).
         const master = seriesOfRecord(raw, deps.zones, deps.clock.now());
-        if (typeof master === "string" || master.item.id !== target.id || master.item.version !== version)
-          return refused("version_stale");
+        if (typeof master === "string" || master.item.id !== target.id) return refused("version_stale");
         let day = await readInstance(token, initialId, target, master.series, signal, true);
         if ("ok" in day) {
           if (!req.retry || day.reason !== "version_stale") return day;
@@ -1510,25 +1512,15 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
         }
         if (day.item.event.organizer?.email !== master.item.event.organizer?.email)
           return refused("version_stale");
-        const uri = segment(day.item.id);
-        if (uri === null) return refused("not_found");
-        const confirmed = await read(token, uri, signal);
-        if ("ok" in confirmed) return confirmed;
-        if (confirmed.status !== 200) return refusalOf(confirmed, "event_gone");
-        const checked = instanceOf(jsonOf(confirmed.body), target, master.series, false, true);
-        if (!checked || "ok" in checked || checked.item.id !== day.item.id || checked.pre.tag !== day.pre.tag)
-          return refused("version_stale");
-        if (
-          req.retry &&
-          isRecord(checked.raw.responseStatus) &&
-          checked.raw.responseStatus.response === wanted
-        )
-          return answered([checked.item]);
+        // The day as Graph lists it is the one answered: Graph's answer takes no version, so a second read of it would
+        // hold nothing more, and Graph's single read of a day may carry another tag than its listing.
+        if (req.retry && isRecord(day.raw.responseStatus) && day.raw.responseStatus.response === wanted)
+          return answered([day.item]);
         parseAfter = (response) => {
           const after = instanceOf(jsonOf(response.body), target, master.series, false, "applied");
           return after && !("ok" in after) ? after : null;
         };
-        held = checked;
+        held = day;
         version = day.item.version;
       }
       if (held === null || held.item === null || held.item.kind !== "upsert") return refused("unreadable");

@@ -12,7 +12,6 @@ import {
   screenerAttemptKey,
   storeScreenerSuggestion,
   screenerSuggestionsBySender,
-  automaticAiAdmits,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_FAILED, screenerSuggestionExhausted, recordScreenerSuggestionRetry,
   UNPRICED,
   readAccountSettings, readSuggestionGrant, resolveCutline, reverseCharge, suggestionConsentGate, ModelConsentWithdrawn, type ReverseChargeFact,
@@ -42,7 +41,7 @@ import type {
 } from "@trafficflow/core/mail";
 import {
   applyReconcileAction, askScreeningQuestion, canonicalDestination, capSuggestion, createLogger,
-  DESTINATIONS, effectForDestination, isDecidedDestination, ModelDeclinedError, SensitivePayloadRefusal,
+  DESTINATIONS, effectForDestination, isDecidedDestination, ModelDeclinedError,
   resolveOhboxPolicy, senderCheckAll, senderDomainOf, senderFacts, BRANDS, SCREENING_AUTH_VERDICTS,
   asAuthVerdict, ownedSenderName,
 } from "@trafficflow/core/mail";
@@ -501,13 +500,7 @@ export interface ScreenerSuggestBody {
    */
   maxCredits?: unknown;
   quoteGrant?: unknown;
-  /**
-   * NOBODY PRESSED THIS ONE — the opt-in's automatic batch says so with `true`. Such a request asks
-   * only about held mail {@link automaticAiAdmits} passes, the always-on pass's own rule; a flagged
-   * sender is skipped `no_auto_ai`, unpriced, uncharged and never sent. ABSENT or `false` is a press,
-   * which asks about every held sender. Any other value is a 400: a privacy bound that silently
-   * disappears is worse than none claimed.
-   */
+  /** Whether this request uses the account’s automatic suggestion consent. */
   automatic?: unknown;
 }
 
@@ -564,8 +557,8 @@ export type ScreenerSuggestSkip =
   | "over_quote"          // the run reached the number the person confirmed — see `maxCredits`
   | "spend_unavailable"   // see below — every "not now, ask again" the gate can produce
   | "model_unavailable"   // the provider failed before an answer was saved
-  | "model_declined"      // the model declined this sender (a refusal, a cut-off); refunded
-  | "no_auto_ai";         // an AUTOMATIC request, and this sender's mail is kept out of automatic AI
+  | "attempts_exhausted" // automatic retries are exhausted for this representative
+  | "model_declined";     // the model declined this sender (a refusal, a cut-off); refunded
 /**
  * `spend_unavailable` COVERS ONE MORE THING since the double-buy fix, deliberately not a new wire
  * value: another caller holds the exclusive claim on this sender's message and did not finish
@@ -1979,13 +1972,9 @@ export class ScreenerService extends ScreenerReadService {
 
   /**
    * Buy suggestions for an EXPLICIT set of senders. A missing, empty or all-blank set is a 400,
-   * never "all" — a four-figure spend one malformed body away. AI-OPEN: every held sender is
-   * suggestable; the old sensitivity skip is gone — a person chose senders, saw a price, pressed
-   * the button. REDACTION protects the credential (`redactForModel`); the automatic routing path
-   * still refuses. FOUR LAYERS against paying twice: stored suggestion served; `Idempotency-Key`;
-   * the ledger identity `classify:screener:<message_id>`; the EXCLUSIVE CLAIM — the only layer
-   * that sees a caller not yet finished. Each verdict lands in its OWN small transaction — a
-   * death mid-run loses only unwritten results.
+   * never "all". Already stored suggestions and the idempotency key avoid duplicate work.
+   * The ledger key and exclusive claim prevent a second charge for work in progress. Each
+   * verdict lands in its own transaction.
    */
   async suggest(
     ctx: ServiceContext,
@@ -2133,10 +2122,8 @@ export class ScreenerService extends ScreenerReadService {
       );
     }
 
-    // AN AUTOMATIC REQUEST ASKS ONLY ABOUT WHAT THE AUTOMATIC RULE ADMITS — one read for the set,
-    // answered per sender in pass 1 as a skip, never by emptying `rep` (that reads as
-    // `organized_elsewhere`). `null` on a press, which asks about every held sender.
-    const autoAdmitted = automatic ? await automaticallyAskable(ctx, [...rep.values()]) : null;
+    // Honor the automatic retry limit without changing the held sender set.
+    const retryableRepresentatives = automatic ? await representativesWithRetries(ctx, [...rep.values()]) : null;
 
     // What is already bought. Read ONCE for the set, and the reason it is read at all is that a
     // `duplicate` costs the user nothing and costs US a model call.
@@ -2192,22 +2179,6 @@ export class ScreenerService extends ScreenerReadService {
     senders.forEach((sender, index) => {
       const r = rep.get(sender);
       if (!r) { refused[index] = { sender, reason: "not_held" }; return; }
-      // NOBODY PRESSED AN AUTOMATIC REQUEST: a representative the automatic rule does not admit is
-      // skipped here, before the store, the price and the gate — no credit, no model call.
-      if (autoAdmitted && !autoAdmitted.has(r.messageId)) {
-        refused[index] = { sender, reason: "no_auto_ai" };
-        return;
-      }
-      // ON A PRESS THERE IS NO SENSITIVITY GATE — THAT IS THE FEATURE. This line read `if
-      // (!r.aiEligible) { skipped … "withheld" }` and was the whole of the withholding on the
-      // user-requested path; it is gone under AI-OPEN and nothing replaces it: every held sender
-      // named is priced, charged and asked about, the credential handled by REDACTING at the sink
-      // (`classifyUserPayload(input, "redact")`), the same transform that produced the stored
-      // snippet. Removing it in isolation would have been a billing defect: `gate.spend()` is
-      // below, and the sink used to THROW for these rows — a withheld sender would pay a credit
-      // for "the model did not answer". The sink's `"redact"` policy is what makes the removal
-      // safe, not the other way round.
-
       // ALREADY BOUGHT — answer from the store. Not `quoted`, because a control must not price
       // what it will not be charged for, and not `skipped`, because the caller asked a question
       // this has the answer to.
@@ -2221,6 +2192,10 @@ export class ScreenerService extends ScreenerReadService {
           sender, messageId: r.messageId,
           ...withSenderCheck(already, checked.get(r.messageId), ohboxPolicy)!,
         };
+        return;
+      }
+      if (retryableRepresentatives && !retryableRepresentatives.has(r.messageId)) {
+        refused[index] = { sender, reason: "attempts_exhausted" };
         return;
       }
       if (dryRun || mustVerify) pairs.push({ sender, messageId: r.messageId });
@@ -2438,14 +2413,6 @@ export class ScreenerService extends ScreenerReadService {
 
         let result;
         try {
-          // THE REQUEST — `askScreeningQuestion`, ONE definition, in `@trafficflow/core/mail`. The
-          // redaction (at the CALLER, because a port has implementations outside this repo), the
-          // `outbound: "prescreened"` declaration, the screening question rather than the routing
-          // one, and the account's Ohbox bar into the model's user turn — four lines a second
-          // caller (the worker's always-on pass) would have to get independently right, four ways
-          // to send a credential or ask the wrong question. THIS IS THE ONLY AWAIT THAT OVERLAPS
-          // BETWEEN LANES in any meaningful way, and it is the point: no connection, no lock, no
-          // claim-blocking transaction, ~2 s long.
           const facts = senderFacts(checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
           const ask = () => askScreeningQuestion(classifier, {
             fromAddress: r.fromAddress,
@@ -2459,7 +2426,6 @@ export class ScreenerService extends ScreenerReadService {
           } catch (err) {
             // Keep the same spend and claim. Try once more only if the invocation can still fit a call.
             if (automatic || Date.now() >= laneDeadline || err instanceof ModelConsentWithdrawn
-              || err instanceof SensitivePayloadRefusal
               || (err instanceof ModelDeclinedError && err.stopReason === "refusal")) throw err;
             result = await ask();
           }
@@ -2468,8 +2434,7 @@ export class ScreenerService extends ScreenerReadService {
             refused[index] = { sender, reason: "spend_unavailable" };
             return;
           }
-          if (!automatic && (err instanceof ModelDeclinedError
-            ? err.stopReason === "max_tokens" : !(err instanceof SensitivePayloadRefusal))) {
+          if (!automatic && (!(err instanceof ModelDeclinedError) || err.stopReason === "max_tokens")) {
             await queueRetry(r);
           }
           if (err instanceof ModelDeclinedError) {
@@ -2698,7 +2663,6 @@ export class ScreenerService extends ScreenerReadService {
       .innerJoin(reps, and(eq(reps.messageId, messages.id), eq(reps.rank, 1))).where(and(
         eq(messages.accountId, ctx.accountId),
         inArray(messages.id, rows.map((r) => r.messageId)),
-        automaticAiAdmits(messages),
         sql`not ${screenerSuggestionExhausted(ctx.accountId, sql`${messages.id}`)}`,
         sql`not ${screenerSuggestedSenderExists(d, ctx.accountId, sender)}`,
         sql`not ${senderIsDecidedSql(d, ctx.accountId, sender)}`,
@@ -2818,19 +2782,14 @@ async function markCorrespondents(
   return lists;
 }
 
-/**
- * THE REPRESENTATIVES AN AUTOMATIC REQUEST MAY ASK A MODEL ABOUT — those {@link automaticAiAdmits}
- * passes, the always-on pass's own rule over the same two columns. One read for the set, and it
- * returns the ADMITTED ids: a representative this read does not answer for is not asked about.
- */
-async function automaticallyAskable(
+/** Representatives that have not exhausted their automatic retries. */
+async function representativesWithRetries(
   ctx: ServiceContext, rows: readonly ScreenerRow[],
 ): Promise<ReadonlySet<string>> {
   if (rows.length === 0) return new Set();
   const admitted = await ctx.db.select({ id: messages.id }).from(messages).where(and(
     eq(messages.accountId, ctx.accountId),
     inArray(messages.id, rows.map((r) => r.messageId)),
-    automaticAiAdmits(messages),
     sql`not ${screenerSuggestionExhausted(ctx.accountId, sql`${messages.id}`)}`,
   ));
   return new Set(admitted.map((m) => m.id));

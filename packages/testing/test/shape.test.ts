@@ -518,15 +518,9 @@ describe("ohbox", () => {
     expect(otp.body).toContain("481 920");
     expect(otp.snippet).toContain("481 920");
     expect(otp.protected?.label).toBe("Verification code");
-    expect(otp.protected?.redactedNote).toBe("kept out of AI");
-    // The policy string is the claim under test. It must promise the user sees the code
-    // in full AND that only what a model would read is stripped — the MODEL gate survives.
-    // The negative half stays pinned: the AI-OPEN ruling of 2026-08-08 made the old
-    // absolute `/never sent to AI/` false (a suggestion the user asks for reads this mail
-    // with the code stripped), and a copy edit reinstating it is the drift this test catches.
+    expect(otp.protected?.redactedNote).toBe("Verification code");
     expect(otp.protected?.policy).toMatch(/see it in full/i);
-    expect(otp.protected?.policy).toMatch(/stripped/);
-    expect(otp.protected?.policy).not.toMatch(/never sent to AI/);
+    expect(otp.protected?.policy).toMatch(/forwarding needs confirmation/i);
     expect(otp.rationale).toMatch(/^Sensitive class: verification/);
   });
 

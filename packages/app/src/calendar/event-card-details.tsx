@@ -83,8 +83,11 @@ export function renderCardFoot(edit: EventCardProps["edit"] | null, panel: React
 export function eventTags(event: CalendarEventFace, t: Text) {
   return [
     ...(event.waits ? [{ text: t("toAnswer"), hot: true }] : []),
+    ...(event.said && event.state !== "off"
+      ? [{ text: t(event.said.apart ? "saidOne" : "said", { answer: event.said.answer }) }]
+      : []),
     ...(event.state === "off" ? [{ text: t("edit.cancelled"), hot: true }] : []),
-    ...(event.state === "maybe" ? [{ text: t("edit.maybe") }] : []),
+    ...(event.state === "maybe" && !event.said ? [{ text: t("edit.maybe") }] : []),
     ...(event.conflict ? [{ text: t("edit.changedElsewhere"), hot: true }] : []),
   ];
 }

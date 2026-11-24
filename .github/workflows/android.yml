@@ -109,6 +109,10 @@ on:
         description: Production rollout fraction (0.05 is 5%)
         type: string
         default: "0.05"
+      play_replace_staged:
+        description: Replace an older staged production rollout
+        type: boolean
+        default: false
   # The nightly APK build of main (00:41 UTC), beside build.yml's platforms.
   schedule:
     - cron: "41 0 * * *"
@@ -1203,4 +1207,10 @@ jobs:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           PLAY_VERSION_CODE: ${{ inputs.play_version_code }}
           PLAY_ROLLOUT_FRACTION: ${{ inputs.play_rollout_fraction }}
-        run: node .github/scripts/play-upload.mjs promote "$PLAY_VERSION_CODE" "$PLAY_ROLLOUT_FRACTION"
+          PLAY_REPLACE_STAGED: ${{ inputs.play_replace_staged }}
+        run: |
+          args=(promote "$PLAY_VERSION_CODE" "$PLAY_ROLLOUT_FRACTION")
+          if [[ "$PLAY_REPLACE_STAGED" == true ]]; then
+            args+=(--replace-staged)
+          fi
+          node .github/scripts/play-upload.mjs "${args[@]}"

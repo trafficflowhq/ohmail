@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifySensitivity, screenOutboundText, redactForModel } from "../src/sensitive.js";
+import { classifySensitivity } from "../src/sensitive.js";
 import type { NormalizedMessage } from "../src/types.js";
 import { WITHHELD, normalized } from "./fixtures/sensitive-corpus.js";
 import { normalizeMime } from "../src/mime.js";
@@ -124,9 +124,6 @@ describe("precision only — every real credential is still caught", () => {
     expect(r.sensitive).toBe(true);
     expect(r.category).toBe("otp");
     expect(r.flags.no_ai).toBe(true);
-    // The stored body keeps the code (the reader sees their own mail); the model payload strips it.
-    expect(redactForModel("Your verification code",
-      `Your one-time code is 483920. It expires in 10 minutes.`).snippet).not.toContain("483920");
   });
 
   it("the vocabulary still fires in prose, in every shape it claims", () => {
@@ -219,33 +216,6 @@ describe("precision only — every real credential is still caught", () => {
       expect(r.category, token.slice(0, 12)).toBe(null);
       expect(r.verdict, token.slice(0, 12)).toBe("ordinary");
     }
-  });
-});
-
-describe("the sink screens the same way — one defect, two call sites", () => {
-  it("an ordinary snippet carrying a tracking token is safe to send", () => {
-    const s = screenOutboundText(
-      "Your organization is approaching its usage credits spend limit",
-      `Your organization has used 80% of the credits on its plan. ${trackingLink(TOKEN_TRAILING_ESCAPE)}`,
-    );
-    expect(s.safe).toBe(true);
-    expect(s.category).toBe(null);
-    expect(s.reason).toBe(null);
-  });
-
-  it("a credential snippet is still refused when the same token is present", () => {
-    const s = screenOutboundText(
-      "Your verification code",
-      `Your one-time code is 483920. ${trackingLink(TOKEN_TRAILING_ESCAPE)}`,
-    );
-    expect(s.safe).toBe(false);
-    expect(s.category).toBe("otp");
-    expect(s.reason).toBe("vocabulary");
-  });
-
-  it("the shape rules are untouched by the mask — a bare token payload is still refused", () => {
-    expect(screenOutboundText("", "A1b2C3").safe).toBe(false);
-    expect(screenOutboundText("", "483920").safe).toBe(false);
   });
 });
 

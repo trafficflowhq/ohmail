@@ -88,8 +88,10 @@ async function main(args) {
   const origin = dryRun ? dryRunOrigin(args[1]) : publisher;
   const [command, target, fraction, ...rest] = dryRun ? args.slice(2) : args;
   const promote = command === "promote";
-  if (!target || rest.length || (promote ? !fraction : command !== "upload" || fraction !== undefined)) {
-    throw new PlayError("Use upload <bundle.aab> or promote <version-code> <rollout-fraction>.");
+  const replaceStaged = promote && rest.length === 1 && rest[0] === "--replace-staged";
+  if (!target || (rest.length && !replaceStaged)
+      || (promote ? !fraction : command !== "upload" || fraction !== undefined)) {
+    throw new PlayError("Use upload <bundle.aab> or promote <version-code> <rollout-fraction> [--replace-staged].");
   }
   if (!dryRun && !process.env.PLAY_SERVICE_ACCOUNT_JSON) {
     console.log("::notice::Google Play skipped because PLAY_SERVICE_ACCOUNT_JSON is unset.");
@@ -126,6 +128,7 @@ async function main(args) {
   const path = edits + "/" + edit.id;
   let versionCode = target;
   let previous = [];
+  let replacedVersionCodes;
   const track = promote ? "production" : internal;
   if (promote) {
     const tested = await api("tracks.get (internal)", "GET", path + "/tracks/" + internal);
@@ -137,8 +140,22 @@ async function main(args) {
     if (previous.length === 0) {
       throw new PlayError("Submit the first production release in Play Console before using staged rollout.");
     }
-    if (previous.some((release) => release.status !== "completed" || release.versionCodes?.includes(versionCode))) {
-      throw new PlayError("Production already contains this version or has an unfinished release. Check Play Console.");
+    const requestedCode = BigInt(versionCode);
+    for (const { versionCodes } of previous) {
+      if (!Array.isArray(versionCodes) || !versionCodes.length
+          || versionCodes.some((code) => typeof code !== "string" || !/^[1-9]\d*$/.test(code))) {
+        throw new PlayError("Could not verify production version codes. Check Play Console.");
+      }
+      if (versionCodes.some((code) => BigInt(code) >= requestedCode)) {
+        throw new PlayError("Production already contains the same or a newer version. Check Play Console.");
+      }
+    }
+    const unfinished = previous.filter((release) => release.status !== "completed");
+    if (replaceStaged && unfinished.length === 1 && unfinished[0].status === "inProgress") {
+      replacedVersionCodes = unfinished[0].versionCodes;
+      previous = previous.filter((release) => release.status === "completed");
+    } else if (unfinished.length) {
+      throw new PlayError("Production has an unfinished release. Check Play Console.");
     }
   } else {
     const uploaded = await api("bundles.upload", "POST",
@@ -159,6 +176,9 @@ async function main(args) {
   await api("edits.commit", "POST", path + ":commit" + commitOptions);
   console.log((dryRun ? "Dry run: " : "") + "Play committed Android version " + versionCode
     + (promote ? " to production at " + userFraction * 100 + "%." : " to internal testing."));
+  if (replacedVersionCodes) {
+    console.log("Replaced the staged production rollout for version codes " + replacedVersionCodes.join(", ") + ".");
+  }
 }
 
 main(process.argv.slice(2)).catch((error) => {

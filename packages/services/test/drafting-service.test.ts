@@ -60,28 +60,28 @@ async function seedMsg(db: Awaited<ReturnType<typeof setup>>["db"], o: SeedMsg):
 const svc = new DraftingService();
 const draftsSvc = new DraftsService();
 
-describe("DraftingService.draftFromMessage — refuse sensitive/no_ai target", () => {
-  it("a no_ai target → 422 sensitive_no_ai, and the drafter is NEVER called", async () => {
+describe("DraftingService.draftFromMessage — accepts authentication mail", () => {
+  it("drafts a sign-in message with the no_ai flag", async () => {
     const { db, A, mbA, ctxA } = await setup();
-    const id = await seedMsg(db, { accountId: A, mailboxId: mbA, noAi: true });
+    const id = await seedMsg(db, { accountId: A, mailboxId: mbA, noAi: true, subject: "Your sign-in code", snippet: "Use 123456 to sign in." });
     const drafter = mockDrafter();
     await expect(svc.draftFromMessage(ctxA, id, { drafter }))
-      .rejects.toMatchObject({ httpStatus: 422, code: "sensitive_no_ai" });
-    expect(drafter.calls).toBe(0);   // the sensitive body never reached the model
+      .resolves.toHaveProperty("draftId");
+    expect(drafter.calls).toBe(1);
   });
 
-  it("a sensitive (sensitivity_category set) target → 422, drafter not called", async () => {
+  it("drafts a target with a sensitivity category", async () => {
     const { db, A, mbA, ctxA } = await setup();
     const id = await seedMsg(db, { accountId: A, mailboxId: mbA, sensitivityCategory: "otp" });
     const drafter = mockDrafter();
     await expect(svc.draftFromMessage(ctxA, id, { drafter }))
-      .rejects.toMatchObject({ httpStatus: 422 });
-    expect(drafter.calls).toBe(0);
+      .resolves.toHaveProperty("draftId");
+    expect(drafter.calls).toBe(1);
   });
 });
 
-describe("DraftingService.draftFromMessage — structural exclusion of no_kb/sensitive siblings", () => {
-  it("the DraftInput carries the normal thread sibling but NOT the no_kb one", async () => {
+describe("DraftingService.draftFromMessage — thread context", () => {
+  it("the DraftInput carries the normal thread sibling and the previously excluded sibling", async () => {
     const { db, A, mbA, ctxA } = await setup();
     const [th] = await db.insert(threads).values({ accountId: A, subject: "Thread" }).returning();
     const target = await seedMsg(db, {
@@ -103,7 +103,7 @@ describe("DraftingService.draftFromMessage — structural exclusion of no_kb/sen
     expect(drafter.calls).toBe(1);
     const snippets = drafter.inputs[0]!.context.threadMessages.map((t) => t.snippet);
     expect(snippets).toContain("NORMAL-SIBLING-SNIPPET");
-    expect(snippets).not.toContain("NOKB-SIBLING-SNIPPET");   // structural WHERE excluded it
+    expect(snippets).toContain("NOKB-SIBLING-SNIPPET");
     // and never the target itself (ne(id) excludes it)
     expect(snippets).not.toContain("target snippet");
   });
@@ -207,7 +207,7 @@ describe("DraftingService.draftFromText — the person's words, the doors in ord
     expect((await svc.draftFromText(ctxA, { text: "x".repeat(DRAFT_OWN_TEXT_MAX_CHARS), mailboxId: mbA }, { drafter: mockDrafter() })).draftId).toBeTruthy();
   });
 
-  it("the letter: another account's is a 404, a sensitive one a 422, another mailbox a 400, none and no mailbox a 400", async () => {
+  it("the letter: another account's is a 404, a sign-in message drafts, another mailbox a 400, none and no mailbox a 400", async () => {
     const { db, A, B, mbA, ctxA } = await setup();
     const [mbB] = await db.insert(mailboxes).values({ accountId: B, provider: "imap", address: "b@x-ch.example" }).returning();
     const theirs = await seedMsg(db, { accountId: B, mailboxId: mbB!.id });
@@ -218,22 +218,20 @@ describe("DraftingService.draftFromText — the person's words, the doors in ord
     const m = metered();
     const deps = { drafter, ...m, attemptKey: key };
     await expect(svc.draftFromText(ctxA, { text: "hi", inReplyToMessageId: theirs }, deps)).rejects.toMatchObject({ httpStatus: 404 });
-    await expect(svc.draftFromText(ctxA, { text: "hi", inReplyToMessageId: sensitive }, deps)).rejects.toMatchObject({ httpStatus: 422, code: "sensitive_no_ai" });
+    await expect(svc.draftFromText(ctxA, { text: "hi", inReplyToMessageId: sensitive }, deps)).resolves.toHaveProperty("draftId");
     await expect(svc.draftFromText(ctxA, { text: "hi", inReplyToMessageId: mine, mailboxId: other!.id }, deps)).rejects.toMatchObject({ httpStatus: 400 });
     await expect(svc.draftFromText(ctxA, { text: "hi" }, deps)).rejects.toMatchObject({ httpStatus: 400 });
     await expect(svc.draftFromText(ctxA, { text: "hi", mailboxId: mbB!.id }, deps)).rejects.toMatchObject({ httpStatus: 400 });
-    expect([drafter.calls, m.credits.spends.length]).toEqual([0, 0]);
+    expect([drafter.calls, m.credits.spends.length]).toEqual([1, 1]);
   });
 
-  it("a credential in the words is refused about the words: 422, no model call, no charge", async () => {
+  it("drafts and charges once for words about a verification code", async () => {
     const { mbA, ctxA } = await setup();
     const drafter = mockDrafter();
     const m = metered();
-    const err = await svc.draftFromText(ctxA, { text: "send them my verification code 402913 please", mailboxId: mbA }, { drafter, ...m, attemptKey: key })
-      .catch((e: unknown) => e);
-    expect(err).toMatchObject({ code: "credential_screened", httpStatus: 422 });
-    expect((err as Error).message).toMatch(/^your text /);
-    expect([drafter.calls, m.credits.spends.length]).toEqual([0, 0]);
+    const result = await svc.draftFromText(ctxA, { text: "Ask them where to find the verification code", mailboxId: mbA }, { drafter, ...m, attemptKey: key });
+    expect(result.draftId).toBeTruthy();
+    expect([drafter.calls, m.credits.spends.length]).toEqual([1, 1]);
   });
 
   it("an empty balance is refused before the model; a disconnected mailbox before the charge", async () => {

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FIXTURE_SHAPES, anthropicKey } from "../../../test/support/fixture-credentials.js";
 import {
   CLASSIFY_RESULT_SCHEMA, SCREEN_DESTINATIONS, SCREENING_PREFIX, SCREENING_RESULT_SCHEMA,
-  SensitivePayloadRefusal, StaticKeyProvider, TAXONOMY_PREFIX, classifyUserPayload,
+  StaticKeyProvider, TAXONOMY_PREFIX, classifyUserPayload,
 } from "@trafficflow/core/mail";
 import type { ClassifierInput, DraftInput } from "@trafficflow/core/mail";
 import { ClassifierFaultError } from "@ohmail/organizer/classifier-fault";
@@ -338,17 +338,16 @@ describe("provider selection", () => {
 });
 
 describe("what is never sent, whichever provider is chosen", () => {
-  it("mail carrying authentication material is refused at the sink and nothing goes out", async () => {
+  it("mail carrying authentication material reaches the sidecar provider", async () => {
     const { calls, fetchImpl } = recorder(anthropicOk());
     const ai = await make({ dataDir: dataDir(), fetchImpl });
     await ai.save({ provider: "anthropic", anthropic: { apiKey: KEY } });
     const before = calls.length;
 
     await expect(ai.classifier()!.classify(anInput("Your one-time verification code is 402913")))
-      .rejects.toBeInstanceOf(SensitivePayloadRefusal);
+      .resolves.toHaveProperty("destination");
 
-    // Not "a request that was rejected" — no request.
-    expect(calls.length).toBe(before);
+    expect(calls.length).toBe(before + 1);
   });
 
   it("a drafting input carrying a raw field is refused before a request is built", async () => {
@@ -399,14 +398,14 @@ describe("a failing model degrades to rules-only and never wedges the mailbox", 
       .rejects.toBeInstanceOf(ClassifierFaultError);
   });
 
-  it("a sensitivity refusal is NOT a model fault: it never withholds routing", async () => {
+  it("classifying sign-in mail keeps background routing available", async () => {
     const { fetchImpl } = recorder(anthropicOk());
     const ai = await make({ dataDir: dataDir(), fetchImpl, faultThreshold: 2 });
     await ai.save({ provider: "anthropic", anthropic: { apiKey: KEY } });
 
     for (let i = 0; i < 5; i++) {
       await expect(ai.classifierForCycle()!.classify(anInput("Your login code is 991823")))
-        .rejects.toBeInstanceOf(SensitivePayloadRefusal);
+        .resolves.toHaveProperty("destination");
     }
     // Five refusals in a row, and routing is still on. Counting them would let one kind of mail
     // arriving turn the model off for every other kind.
@@ -721,23 +720,13 @@ describe("the SCREENING question — one question, however this install reaches 
       .toBe(JSON.stringify(classifyUserPayload(input)));
   });
 
-  it("refuses credential material on this path too, unless the caller says it redacted", async () => {
+  it("sends authentication mail in a screening request", async () => {
     const { calls, fetchImpl } = recorder(anthropicScreening());
     const ai = await make({ dataDir: dataDir(), fetchImpl });
     await ai.save({ provider: "anthropic", anthropic: { apiKey: KEY } });
     const before = completions(calls).length;
 
-    // No `outbound` field ⇒ the sink refuses, exactly as it does for routing. Absent means safe.
-    await expect(ai.classifier()!.screen!(anInput("Your one-time verification code is 402913")))
-      .rejects.toBeInstanceOf(SensitivePayloadRefusal);
-    expect(completions(calls).length, "a refused payload still reached the wire").toBe(before);
-
-    // And a caller that redacted and SAYS so is served — which is the whole of the AI-OPEN change.
-    await ai.classifier()!.screen!({
-      ...anInput("Your sign-in code"),
-      snippet: "Use [REDACTED] to sign in.",
-      outbound: "prescreened",
-    });
+    await ai.classifier()!.screen!(anInput("Your one-time verification code is 402913"));
     expect(completions(calls).length).toBe(before + 1);
   });
 

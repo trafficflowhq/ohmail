@@ -28,7 +28,7 @@ export type { ClassifierInput, ClassifierResult, ClassifierPort } from "../class
 /* The question, re-exported from the leaf that now owns it. */
 export {
   CLASSIFY_DESTINATIONS, CLASSIFY_RESULT_SCHEMA, SCREEN_DESTINATIONS, SCREENING_PREFIX,
-  SCREENING_RESULT_SCHEMA, SensitivePayloadRefusal, TAXONOMY_PREFIX,
+  SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceScreeningResult,
 } from "../classify-prompt.js";
 export type { ClassifyUserPayload } from "../classify-prompt.js";

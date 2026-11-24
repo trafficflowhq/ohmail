@@ -13,7 +13,18 @@ const commit = api + "/test-edit:commit?changesInReviewBehavior=ERROR_IF_IN_REVI
 const dummySecret = "dry-run-must-ignore-this-service-account";
 const dummyToken = "fake-server-token";
 
-async function run(t, args, { failUpload = false, production = [] } = {}) {
+const productionRead = [
+  "POST /token", "POST " + api, "GET " + api + "/test-edit/tracks/internal",
+  "GET " + api + "/test-edit/tracks/production",
+];
+const productionUpdate = "PUT " + api + "/test-edit/tracks/production";
+const stagedProduction = [
+  { status: "completed", versionCodes: ["120"] },
+  { status: "inProgress", versionCodes: ["122"], userFraction: 0.99 },
+];
+const replaceArgs = ["promote", "123", "0.05", "--replace-staged"];
+
+async function run(t, args, { failUpload = false, inReview = false, production = [], retained = production } = {}) {
   const calls = [];
   let assertion;
   const server = createServer(async (request, response) => {
@@ -61,11 +72,12 @@ async function run(t, args, { failUpload = false, production = [] } = {}) {
           case "PUT " + api + "/test-edit/tracks/production":
             assert.deepEqual(JSON.parse(body), {
               track: "production",
-              releases: [...production, { versionCodes: ["123"], releaseNotes: notes, status: "inProgress", userFraction: 0.05 }],
+              releases: [...retained, { versionCodes: ["123"], releaseNotes: notes, status: "inProgress", userFraction: 0.05 }],
             });
             break;
           case "POST " + commit:
             assert.equal(body, "");
+            if (inReview) response.statusCode = 400;
             break;
           default:
             assert.fail("Unexpected fake API request");
@@ -107,6 +119,49 @@ test("promotes an internal version without uploading a bundle or dropping produc
     "POST /token", "POST " + api, "GET " + api + "/test-edit/tracks/internal",
     "GET " + api + "/test-edit/tracks/production", "PUT " + api + "/test-edit/tracks/production", "POST " + commit,
   ]);
+});
+
+test("replaces an older 99% production rollout when explicitly requested", async (t) => {
+  const result = await run(t, replaceArgs, { production: stagedProduction, retained: [stagedProduction[0]] });
+  assert.equal(result.code, 0, result.output);
+  assert.deepEqual(result.calls, [...productionRead, productionUpdate, "POST " + commit]);
+  assert.match(result.output, /replaced.*122/i);
+});
+
+test("leaves an older staged rollout alone by default", async (t) => {
+  const result = await run(t, ["promote", "123", "0.05"], { production: stagedProduction });
+  assert.equal(result.code, 1);
+  assert.match(result.output, /unfinished release/);
+  assert.deepEqual(result.calls, productionRead);
+});
+
+test("refuses to promote over the same or a newer production version", async (t) => {
+  for (const fixture of [
+    { status: "inProgress", versionCodes: ["122", "123"], userFraction: 0.99 },
+    { status: "inProgress", versionCodes: ["1000"], userFraction: 0.99 },
+    { status: "completed", versionCodes: ["1000"] },
+  ]) {
+    const result = await run(t, replaceArgs, { production: [fixture] });
+    assert.equal(result.code, 1);
+    assert.match(result.output, /same or a newer version/);
+    assert.deepEqual(result.calls, productionRead);
+  }
+});
+
+test("refuses to replace a halted production release", async (t) => {
+  const production = [{ status: "halted", versionCodes: ["122"] }];
+  const result = await run(t, replaceArgs, { production });
+  assert.equal(result.code, 1);
+  assert.match(result.output, /unfinished release/);
+  assert.deepEqual(result.calls, productionRead);
+});
+
+test("refuses to commit a replacement when Play has changes in review", async (t) => {
+  const result = await run(t, replaceArgs, { production: stagedProduction, retained: [stagedProduction[0]], inReview: true });
+  assert.equal(result.code, 1);
+  assert.match(result.output, /edits\.commit.*HTTP 400/);
+  assert.doesNotMatch(result.output, /replaced/i);
+  assert.deepEqual(result.calls, [...productionRead, productionUpdate, "POST " + commit]);
 });
 
 test("stops after a failed bundle upload and keeps the error body out of the log", async (t) => {

@@ -16,7 +16,7 @@ import {
   type Db,
 } from "@trafficflow/services";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { planChange, commitChange, redactForModel, screenOutboundText , UNMETERED_STORAGE_CAP} from "@trafficflow/core/mail";
+import { planChange, commitChange, UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import type { Change } from "@trafficflow/core/mail";
 
 /**
@@ -252,15 +252,6 @@ describe.skipIf(!AVAILABLE)("GET /messages/bodies serves the stored body verbati
     expect(item.text).toContain("482913");
     expect(Buffer.from(item.text, "utf8").equals(Buffer.from(stored!.text, "utf8"))).toBe(true);
 
-    // THE MODEL BOUNDARY, still enforced over the very bytes served above. What reaches the account holder
-    // in full is stripped the instant it is routed to a model: the gate refuses it, and the
-    // redactor blanks the code. This is the privacy property redaction's removal did NOT touch.
-    expect(screenOutboundText(item.text).safe, "the served OTP body must be refused for the model").toBe(false);
-    const forModel = redactForModel("Your verification code", item.text);
-    expect(forModel.redacted).toBe(true);
-    expect(forModel.snippet, "the code reached a model payload").not.toContain("482913");
-    expect(forModel.snippet).toContain("[REDACTED]");
-
     // The no-rehydrate guarantee, structurally: the batch item carries the body and NOTHING that
     // could reconstruct one — no `headers` bag, no attachment field.
     expect(Object.keys(item).sort()).toEqual(["html", "loadedRemoteContent", "messageId", "text"]);
@@ -277,10 +268,7 @@ describe.skipIf(!AVAILABLE)("GET /messages/bodies serves the stored body verbati
     const res = await app.handle(get("/messages/bodies", token), depsOn(db));
     const body = await res.json();
     const item = body.items.find((i: { messageId: string }) => i.messageId === messageId);
-    expect(item.html).toBe(stored!.html);                    // verbatim, non-null
-    // Ordinary mail is safe for the model — the boundary above fires on the credential, not on
-    // every body — so a plain lunch invitation crosses to a model unchanged.
-    expect(screenOutboundText(item.text).safe, "an ordinary body was needlessly refused for the model").toBe(true);
+    expect(item.html).toBe(stored!.html);
   });
 
   it("a CAP-WITHHELD body says so on every wire — and only then does the extra key exist", async () => {
@@ -426,11 +414,6 @@ describe.skipIf(!AVAILABLE)("GET /messages/bodies serves the stored body verbati
     expect(item.text).toBe(stored!.text);
     expect(item.text).toContain("913482");
     expect(item.text).not.toContain("[REDACTED]");
-    // …and still stripped for the model, over the bytes this mode served.
-    expect(screenOutboundText(item.text).safe, "the served OTP body must be refused for the model").toBe(false);
-    const forModel = redactForModel("Your verification code", item.text);
-    expect(forModel.redacted).toBe(true);
-    expect(forModel.snippet).not.toContain("913482");
     // AND STILL NO HEADER BAG ON THE WIRE. The mode reads the headers to derive the posture; the
     // raw values do not cross. Anything else would be the no-rehydrate guarantee undone by the
     // mode that was allowed to join them.

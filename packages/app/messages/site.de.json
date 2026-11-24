@@ -138,8 +138,8 @@
     "unchanged": "unverändert",
     "pointGradTitle": "Muster werden zu Regeln",
     "pointGrad": "Entscheide dreimal gleich, und ohmail fragt, ob daraus eine Regel werden soll. Du gibst sie einmal frei — von da an läuft sie fest, ganz ohne KI.",
-    "pointOtpTitle": "Codes sind unantastbar",
-    "pointOtp": "Trägt eine Mail einen Bestätigungscode oder einen Anmeldelink, wird dieser Code entfernt, bevor irgendetwas eine KI erreicht, und die Mail wird nie weitergeleitet und nie automatisch einsortiert — strukturell, ohne Einstellung, die das abschalten könnte. Du siehst die Nachricht immer vollständig; entfernt wird nur, was ein Modell lesen würde.",
+    "pointOtpTitle": "Bestätigungscodes vollständig lesen",
+    "pointOtp": "Bestätigungsmails sind im Lesebereich vollständig sichtbar. Für Nachrichten, die ohmail als vertraulich erkennt, gilt ein Weiterleitungsschutz.",
     "pointByoTitle": "Dein Schlüssel, dein Rechner — oder unserer",
     "pointByo": "In der Desktop-App bleiben deine Mails auf deinem Rechner, ohne ohmail-Server dazwischen. KI, wenn du sie willst, läuft über deinen eigenen API-Key oder ein lokales Modell, eingestellt in der App; die Rechnung geht an dich. In der Cloud sind monatliche KI-Credits enthalten, und wenn sie aufgebraucht sind, laufen deine Mails nur nach Regeln weiter.",
     "illusRules": "Regeln · der meiste Teil",
@@ -388,7 +388,7 @@
     "cloudCost": "Ab 9 $ im Monat, 14 Tage gratis.",
     "same": "Die Cloud ist Selbst-Hosting, das wir für dich erledigen: derselbe offene Server, derselbe Organizer, dasselbe Postfach als Master. Was sich ändert, ist, wessen Maschine die Kopie hält — und dass wir fürs Betreiben Geld nehmen.",
     "honest": "Das Kleingedruckte zur Cloud: Sie ist nicht Ende-zu-Ende-verschlüsselt. Der Dienst liest Mails, um sie abzulegen und zu durchsuchen, und sehr wenige Leute mit Zugriff auf die Produktionsdatenbank könnten sie technisch lesen. Nie verkauft, nie ausgewertet, für nichts anderes genutzt, als dir den Dienst zu liefern.",
-    "aiNote": "KI in der Cloud läuft unter kommerziellen API-Bedingungen über Anthropic: Deine Mails werden nie zum Trainieren von Modellen verwendet, und Anfragen werden nur kurz aufbewahrt (derzeit bis zu 30 Tage); eine Zero-Retention-Vereinbarung gibt es noch nicht. Auf jeder Stufe wird ein Zugangsgeheimnis in einer Mail (ein Code, ein Login-Link, ein Reset-Token) entfernt, bevor eine Anfrage gebaut wird, und die automatische Einsortierung lässt solche Mails ganz aus. Das ist eingebaut, keine Einstellung."
+    "aiNote": "KI in der Cloud läuft unter kommerziellen API-Bedingungen über Anthropic: Deine Mails werden nie zum Trainieren von Modellen verwendet, und Anfragen werden nur kurz aufbewahrt (derzeit bis zu 30 Tage); eine Zero-Retention-Vereinbarung gibt es noch nicht."
   },
   "folders": {
     "title": "So sieht dein IMAP aus.",

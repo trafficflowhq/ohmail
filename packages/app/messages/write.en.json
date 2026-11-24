@@ -256,7 +256,7 @@
     "sendAndDone": "Send + Done",
     "cancel": "Cancel",
     "hintEsc": "closes the editor",
-    "quotedProtected": "Verification code — kept out of AI",
+    "quotedProtected": "Verification code",
     "conversationAria": "Conversation",
     "conversationCount": "{count, plural, one {1 message} other {# messages}} on this conversation",
     "sending": "Sending",

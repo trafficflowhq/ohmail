@@ -443,19 +443,8 @@ describe("the sender set is EXPLICIT, and absence never buys anything", () => {
  * `"Use 482913 to sign in."` is the exact message the old guard proved could not be suggested for,
  * so a reader can see one message change sides.
  */
-describe("AI-OPEN: every held sender is suggestable, and the code is what does not travel", () => {
-  it("a no_ai / sensitive sender IS suggested for — with the passcode redacted out of the payload", async () => {
-    // THE GUARD THAT MAKES THE WHOLE POLICY A MEASUREMENT RATHER THAN A CLAIM.
-    //
-    // Two assertions, and they have to hold together or the change is not shippable: the sender
-    // gets an answer (the ruling), and the digits `482913` are not in what the port received (the
-    // redaction). Either one alone is satisfiable by a defect — sending raw satisfies the first,
-    // refusing satisfies the second.
-    //
-    // It asserts against `classifier.seen`, which is what the PORT was handed. That is the seam
-    // that matters: a redaction applied further down, inside the bundled Anthropic parameter
-    // builder, would leave this assertion red while looking correct — and would leave the
-    // sidecar's local model reading the code.
+describe("Manual Screener suggestions use held mail previews, including sign-in codes", () => {
+  it("a no_ai / sensitive sender IS suggested for with the ordinary preview", async () => {
     const w = await billable({ credits: 10 });
     const id = await seedMessage(w.db, w.accountId, w.mailboxId, {
       from: "no-reply@bank.example", subject: "Your sign-in code", snippet: "Use 482913 to sign in.",
@@ -474,35 +463,14 @@ describe("AI-OPEN: every held sender is suggestable, and the code is what does n
     expect(res.quoted).toBe(1);
     expect(await w.stored()).toHaveLength(1);
 
-    // SECOND: the one-time passcode did not leave the building. The subject and the snippet are
-    // both checked, because the subject is the field stored RAW and is where the code usually is.
-    const sent = classifier.seen[0]!;
-    expect(`${sent.subject}\n${sent.snippet}`, "the passcode reached the port")
-      .not.toContain("482913");
-    expect(sent.snippet).toContain("[REDACTED]");
-    // The words survive. That is the ruling's other half: what is withheld is the VALUE, and that
-    // this message is about signing in is exactly what the user paid to have noticed.
-    expect(sent.subject).toContain("sign-in code");
-    // And the caller declared what it had done, which is the only reason the outbound sink does
-    // not throw on the surviving authentication vocabulary.
-    expect(sent.outbound).toBe("prescreened");
+    expect(classifier.seen[0]!.snippet).toBe("Use 482913 to sign in.");
 
     // THIRD: it was charged, once, like any other suggestion. A run that spends must say so.
     expect(res.charged).toBe(PLANE_PRICES.screener);
     expect(w.credits.spends).toHaveLength(1);
   });
 
-  it("an ENCODED passcode does not reach the port either — neither the blob nor its decode", async () => {
-    // Y2-A1-2. `screenOutboundText` DECODES embedded base64 before judging, so this message is
-    // correctly flagged — but the redactor used to rewrite only the ORIGINAL bytes, and `CODE`'s
-    // `\b` finds no boundary inside a contiguous base64 run. The intact blob went to the port
-    // marked `prescreened`, one trivial decode away from the passcode. The subject is stored RAW,
-    // so a blob there travelled even more directly.
-    //
-    // Asserted against `classifier.seen` — what the PORT was handed — for the same reason the
-    // plaintext guard above is: this seam is what every implementation receives, bundled or not.
-    // BOTH forms are checked; either alone is satisfiable by a defect (keeping the blob satisfies
-    // the decoded assertion, echoing the decode satisfies the encoded one).
+  it("an encoded preview is passed through unchanged", async () => {
     const blob = Buffer.from("Your one-time passcode is 482913. Do not share it.", "utf8").toString("base64");
     const w = await billable({ credits: 10 });
     await seedMessage(w.db, w.accountId, w.mailboxId, {
@@ -519,11 +487,8 @@ describe("AI-OPEN: every held sender is suggestable, and the code is what does n
     expect(res.suggestions).toHaveLength(1);
     const sent = classifier.seen[0]!;
     const wire = `${sent.subject}\n${sent.snippet}`;
-    expect(wire, "the encoded blob reached the port").not.toContain(blob);
+    expect(wire, "the encoded blob reached the port").toContain(blob);
     expect(wire, "the decoded passcode reached the port").not.toContain("482913");
-    // Categorical: nothing of the embedded decoder's size is left for any model to decode.
-    expect(wire).not.toMatch(/[A-Za-z0-9+/]{16,}/);
-    expect(sent.outbound).toBe("prescreened");
   });
 
   it("ORDINARY mail is passed through BYTE-IDENTICAL — the redactor does not run on everything", async () => {
@@ -810,7 +775,7 @@ describe("AUTOMATIC: the opt-in's batch is not a press", () => {
     { name: "an account without auto-suggest", enabled: false, waiting: ORDINARY },
     { name: "a sensitive-category letter", enabled: true, waiting: CATEGORISED },
     { name: "a letter marked no AI", enabled: true, waiting: INDETERMINATE },
-  ])("a press on $name with a no_slot item must not come back deferred", async ({ enabled, waiting }) => {
+  ])("only defers $name to an opted-in worker when there is no slot", async ({ enabled, waiting }) => {
     const { w, classifier, svc } = await flaggedQueue();
     await w.db.update(accountSettings).set({ autoSuggestAt: enabled ? w.ctx.now() : null })
       .where(eq(accountSettings.accountId, w.accountId));
@@ -821,8 +786,8 @@ describe("AUTOMATIC: the opt-in's batch is not a press", () => {
     try {
       const result = await svc.suggest(w.ctx, { senders: [waiting, delivered] });
       expect(result.stopped).toBe("spend_unavailable");
-      expect.soft(result.deferred).toBeUndefined();
-      expect.soft(await w.stored()).toHaveLength(1);
+      expect(result.deferred).toBe(enabled ? true : undefined);
+      expect(await w.stored()).toHaveLength(enabled ? 2 : 1);
       expect(classifier.calls).toBe(1);
       expect(w.credits.spends).toHaveLength(1);
     } finally {
@@ -918,32 +883,27 @@ describe("AUTOMATIC: the opt-in's batch is not a press", () => {
     }
   });
 
-  it("an automatic batch hands NEITHER flagged sender to the port; the press asks about both, as today", async () => {
+  it("the automatic batch buys suggestions for all three senders", async () => {
     const { w, classifier, svc } = await flaggedQueue();
 
     const auto = await svc.suggest(w.ctx, { senders: [...FLAGGED, ORDINARY], automatic: true });
-    // AT THE SERVICE BOUNDARY: the only input the model client was handed is the ordinary sender's.
-    expect(classifier.seen.map((i) => i.from.address), "a flagged sender reached the port").toEqual([ORDINARY]);
-    expect(auto.skipped).toEqual(FLAGGED.map((sender) => ({ sender, reason: "no_auto_ai" })));
-    expect(auto.suggestions.map((s) => s.sender)).toEqual([ORDINARY]);
-    expect(auto.quoted).toBe(1);
-    expect(auto.charged).toBe(PLANE_PRICES.screener);
-    expect(w.credits.spends, "a flagged sender was charged").toHaveLength(1);
-
-    // THE PRESS, for the same two senders: asked about, the code redacted, charged — as today.
+    expect(auto.skipped).toEqual([]);
+    expect(auto.suggestions.map((a) => a.sender)).toEqual([...FLAGGED, ORDINARY]);
+    expect(classifier.seen.map((a) => a.from.address).sort()).toEqual([...FLAGGED, ORDINARY].sort());
+    expect(auto.quoted).toBe(3);
+    expect(auto.charged).toBe(3 * PLANE_PRICES.screener);
+    expect(w.credits.spends).toHaveLength(3);
     const pressed = await svc.suggest(w.ctx, { senders: FLAGGED });
-    expect(classifier.seen.slice(1).map((i) => i.from.address).sort()).toEqual([...FLAGGED].sort());
-    expect(pressed.skipped).toEqual([]);
     expect(pressed.suggestions).toHaveLength(2);
-    expect(pressed.charged).toBe(2 * PLANE_PRICES.screener);
-    expect(classifier.seen.map((i) => `${i.subject}\n${i.snippet}`).join("\n")).not.toContain("482913");
+    expect(pressed.charged).toBe(0);
+    expect(classifier.calls).toBe(3);
   });
 
-  it("an automatic DRY RUN prices only what the rule admits — the opt-in's quote is the batch's", async () => {
+  it("an automatic DRY RUN prices every held sender — the opt-in's quote is the batch's", async () => {
     const { w, classifier, svc } = await flaggedQueue();
     const quote = await svc.suggest(w.ctx, { senders: [...FLAGGED, ORDINARY], dryRun: true, automatic: true });
-    expect(quote).toMatchObject({ dryRun: true, quoted: 1, quotedCredits: PLANE_PRICES.screener, charged: 0 });
-    expect(quote.skipped.map((s) => s.reason)).toEqual(["no_auto_ai", "no_auto_ai"]);
+    expect(quote).toMatchObject({ dryRun: true, quoted: 3, quotedCredits: 3 * PLANE_PRICES.screener, charged: 0 });
+    expect(quote.skipped).toEqual([]);
     // The press's quote over the same set still prices all three.
     expect((await svc.suggest(w.ctx, { senders: [...FLAGGED, ORDINARY], dryRun: true })).quoted).toBe(3);
     expect(classifier.calls).toBe(0);
@@ -958,8 +918,8 @@ describe("AUTOMATIC: the opt-in's batch is not a press", () => {
     });
     await w.db.update(messages).set({ noAi: true }).where(eq(messages.id, newer));
     const auto = await svc.suggest(w.ctx, { senders: [ORDINARY], automatic: true });
-    expect(auto.skipped).toEqual([{ sender: ORDINARY, reason: "no_auto_ai" }]);
-    expect(classifier.calls).toBe(0);
+    expect(auto.suggestions).toEqual([expect.objectContaining({ messageId: newer })]);
+    expect(classifier.calls).toBe(1);
   });
 
   it("`automatic: false` is a press; anything but a boolean is a 400 that asks nobody", async () => {

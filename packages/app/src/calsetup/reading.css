@@ -1,0 +1,149 @@
+/*
+ * The calendars step while a new connection is read: one sheet, the account's name and its words over its calendars.
+ * A phase is a quiet line with its mark in the squares' gutter: the waiting mark while it runs, the full stop when it
+ * is done, which drops into place. A calendar that has just been found arrives as a step arrives. Under reduced motion
+ * the tokens hold every move still and the marks change in place.
+ */
+.cal-read-sheet {
+  display: grid;
+  padding: var(--s2) 0;
+  border-radius: var(--r-sheet);
+  background: var(--sheet);
+  min-width: 0;
+}
+.cal-read-acct {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 var(--s2);
+  padding: var(--s3) var(--s5) var(--s1);
+  min-width: 0;
+}
+.cal-read-acct-name {
+  font-weight: var(--w-bold);
+  white-space: nowrap;
+}
+.cal-read-acct-label {
+  min-width: 0;
+  color: var(--ink2);
+  font-size: var(--t-meta);
+  overflow-wrap: anywhere;
+}
+.cal-read-acct-new {
+  margin-left: auto;
+  font-size: var(--t-meta);
+  font-weight: var(--w-bold);
+  white-space: nowrap;
+}
+/* A calendar's line: its square in the squares' gutter, its switch at the sheet's edge. */
+.cal-read-lines {
+  --cal-read-gutter: 32px;
+  padding: 0 var(--s5);
+}
+.cal-read-sq {
+  display: inline-flex;
+  flex: none;
+  box-sizing: border-box;
+  width: var(--cal-read-gutter);
+  padding-left: var(--s2);
+}
+/* Why a calendar could not be read hangs under its name, in the second ink. */
+.cal-read-why {
+  display: grid;
+  grid-template-columns: calc(var(--cal-read-gutter) + var(--s2)) minmax(0, 1fr);
+  margin: 0;
+  padding: 0 0 var(--s2);
+  color: var(--ink2);
+}
+.cal-read-why-words {
+  grid-column: 2;
+  max-width: var(--measure);
+}
+.cal-read-phase {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: var(--h-l);
+  margin: 0 var(--s2) var(--s1);
+  padding: 0 var(--s5) 0 var(--s4);
+  min-width: 0;
+  color: var(--ink2);
+}
+.cal-read-lines + .cal-read-phase {
+  margin: var(--s2) var(--s4) 0;
+  padding: 0 var(--s1) 0 var(--s2);
+}
+.cal-read-phase[data-done] {
+  color: var(--ink);
+  font-weight: var(--w-mid);
+}
+.cal-read-phase-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+}
+/* The waiting mark in the calendar's own colour, its track a wash of it. */
+.cal-read-phase .cal-read-spin {
+  --hair: color-mix(in srgb, var(--hot) 22%, transparent);
+  width: 14px;
+  height: 14px;
+}
+.cal-read-phase .cal-read-spin .spin-track,
+.cal-read-phase .cal-read-spin .spin-run {
+  stroke-width: 2;
+}
+.cal-read-phase .cal-read-spin .spin-run {
+  stroke: var(--hot);
+}
+.cal-read-phase[data-done] .cal-read-phase-mark > * {
+  animation: cal-read-drop var(--d-in) var(--e-drop) both;
+}
+.cal-read-phase-words {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-read-phase-count {
+  margin-left: auto;
+  color: var(--ink);
+  font-weight: var(--w-mid);
+  font-variant-numeric: tabular-nums;
+}
+.cal-read-arrive {
+  animation: cal-read-arrive var(--d-step) var(--e-arrive) both;
+}
+@keyframes cal-read-arrive {
+  from {
+    opacity: 0;
+    transform: var(--x-step);
+  }
+}
+@keyframes cal-read-drop {
+  0% {
+    transform: var(--x-drop);
+  }
+  62% {
+    transform: var(--x-drop-land);
+  }
+}
+
+/* Under a finger: the sheet's gutters narrow and a calendar's line is a finger's height. */
+:root[data-device="phone"] .cal-read-acct {
+  padding-inline: var(--s4);
+}
+:root[data-device="phone"] .cal-read-lines {
+  --cal-read-gutter: 36px;
+  padding: 0 var(--sheet-pad) 0 var(--s4);
+}
+:root[data-device="phone"] .cal-read-sq {
+  padding-left: var(--s3);
+}
+:root[data-device="phone"] .cal-read-arrive {
+  padding-block: var(--s1);
+}
+:root[data-device="phone"] .cal-read-acct + .cal-read-phase {
+  margin-inline: var(--s1);
+}

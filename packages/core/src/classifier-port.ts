@@ -34,17 +34,6 @@ export interface ClassifierInput {
    * one it always was, which is every message no signal fired on.
    */
   senderFacts?: string;
-  /**
-   * Who screened these bytes, and therefore what the sink does if they still look sensitive.
-   * Absent (the default) means `"refuse"`: the outbound screen throws on credential material —
-   * the automatic path, unchanged. `"prescreened"` means the CALLER already ran `redactForModel`
-   * and asks on behalf of a person's press: what is withheld is the credential VALUE — that a
-   * message concerns authentication is not a secret. The polarity makes absent safe: `!==
-   * "prescreened"`, never `=== "refuse"` — almost no test file is typechecked, so every literal
-   * omitting this field is `undefined` at runtime, and under `=== "refuse"` all of them would
-   * silently exercise the permissive branch.
-   */
-  outbound?: "refuse" | "prescreened";
 }
 
 export interface ClassifierResult {

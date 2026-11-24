@@ -20,6 +20,26 @@ export interface CalendarMirror {
 const still = () => () => undefined;
 const zero = () => 0;
 
+type Engine = ReturnType<typeof useFrame>["host"]["engine"];
+
+/** The records as they stand now: what the hook reads at each move, and what a watcher that outlives the step reads. */
+export function readMirror(engine: Engine, port: CalendarPort): CalendarMirror {
+  const read = <T>(kind: string) =>
+    engine.store
+      .entries<T | null>(kind)
+      .map((e) => e.entity)
+      .filter((c): c is T => c !== null);
+  const events = port.events();
+  const calendars = read<CalendarRecord>("calendar");
+  return {
+    port,
+    connections: read<CalendarConnectionRecord>("calendar_connection"),
+    calendars,
+    tones: calendarTones(calendars),
+    eventsOn: (ids) => events.filter((e) => ids.has(e.record.calendarId)).length,
+  };
+}
+
 export function useCalendarMirror(): CalendarMirror | null {
   const { host } = useFrame();
   const port = host.wires.calendar === NONE ? null : host.wires.calendar;
@@ -30,20 +50,6 @@ export function useCalendarMirror(): CalendarMirror | null {
   );
   return useMemo(() => {
     void version;
-    if (port === null) return null;
-    const read = <T>(kind: string) =>
-      host.engine.store
-        .entries<T | null>(kind)
-        .map((e) => e.entity)
-        .filter((c): c is T => c !== null);
-    const events = port.events();
-    const calendars = read<CalendarRecord>("calendar");
-    return {
-      port,
-      connections: read<CalendarConnectionRecord>("calendar_connection"),
-      calendars,
-      tones: calendarTones(calendars),
-      eventsOn: (ids) => events.filter((e) => ids.has(e.record.calendarId)).length,
-    };
+    return port === null ? null : readMirror(host.engine, port);
   }, [host.engine, port, version]);
 }

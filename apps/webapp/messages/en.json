@@ -605,7 +605,7 @@
     "tagChip": "Tag",
     "tagsLead": "{count, plural, one {1 tag} other {# tags}}",
     "tagsMore": "Show tags",
-    "protectedPreview": "Verification code · kept out of AI",
+    "protectedPreview": "Verification code",
     "rowSentTo": "Me → {name}",
     "rowSentToMore": "Me → {name} +{count}",
     "actionReply": "Reply",
@@ -1051,8 +1051,8 @@
       "autoTurnOn": "Turn on",
       "autoTurnOff": "Turn off",
       "actTitle": "Act on confident suggestions for me",
-      "actDescription": "When a suggestion about a waiting sender is at least 90% sure that it is spam or one to screen out, ohmail files that sender to Spam or Screened and writes the rule for you. It never lets a sender in: a suggestion for the Ohbox, News or Receipts waits for you. Each such rule is marked as ohmail's and you can undo it in Settings → Rules. Senders you have written to, and sensitive mail, are never filed this way. If that suggestion is about a message whose sender was not confirmed — by your mail provider, or by the signature the sender's own domain put on the message — or rests only on the same subject from other first-time senders, ohmail files only that message, writes no rule, and lists it under Filed automatically, where you can put it back. Off by default.",
-      "actDescriptionUnmarked": "When a suggestion about a waiting sender is at least 90% sure that it is spam or one to screen out, ohmail files that sender to Spam or Screened and writes the rule for you. It never lets a sender in: a suggestion for the Ohbox, News or Receipts waits for you. Each such rule is listed in Settings → Rules, where you can undo it. Senders you have written to, and sensitive mail, are never filed this way. If that suggestion is about a message whose sender was not confirmed — by your mail provider, or by the signature the sender's own domain put on the message — or rests only on the same subject from other first-time senders, ohmail files only that message, writes no rule, and lists it under Filed automatically, where you can put it back. Off by default.",
+      "actDescription": "When a suggestion about a waiting sender is at least 90% sure that it is spam or one to screen out, ohmail files that sender to Spam or Screened and writes the rule for you. It never lets a sender in: a suggestion for the Ohbox, News or Receipts waits for you. Each such rule is marked as ohmail's and you can undo it in Settings → Rules. Senders you have written to are never filed this way. If that suggestion is about a message whose sender was not confirmed — by your mail provider, or by the signature the sender's own domain put on the message — or rests only on the same subject from other first-time senders, ohmail files only that message, writes no rule, and lists it under Filed automatically, where you can put it back. Off by default.",
+      "actDescriptionUnmarked": "When a suggestion about a waiting sender is at least 90% sure that it is spam or one to screen out, ohmail files that sender to Spam or Screened and writes the rule for you. It never lets a sender in: a suggestion for the Ohbox, News or Receipts waits for you. Each such rule is listed in Settings → Rules, where you can undo it. Senders you have written to are never filed this way. If that suggestion is about a message whose sender was not confirmed — by your mail provider, or by the signature the sender's own domain put on the message — or rests only on the same subject from other first-time senders, ohmail files only that message, writes no rule, and lists it under Filed automatically, where you can put it back. Off by default.",
       "actNeedsSuggest": "Needs automatic suggestions",
       "actReader": "Set this on the install that organizes your mail.",
       "actFailed": "That setting did not save. It is unchanged.",
@@ -1101,7 +1101,6 @@
     "noSuggestionAiOff": "AI suggestions are not available for this account: AI is switched off.",
     "noSuggestionAiDown": "AI suggestions are not available right now: AI is not answering.",
     "noSuggestionRefused": "AI suggestions are not available right now: the server refused the request.",
-    "noSuggestionNoAutoAi": "This sender’s mail is kept out of automatic AI.",
     "aiSuggests": "AI suggests",
     "aiActRefused": "ohmail tried to file this sender for you and could not. {accept} files it now.",
     "aiHoldChip": "Needs you",
@@ -2349,7 +2348,7 @@
       "youSender": "You",
       "yesterday": "yesterday {time}",
       "menu": "Message",
-      "sensitive": "Verification code · kept out of AI"
+      "sensitive": "Verification code"
     }
   },
   "body": {
@@ -2592,8 +2591,8 @@
     "unchanged": "unchanged",
     "pointGradTitle": "Patterns graduate into rules",
     "pointGrad": "Decide the same way three times and ohmail asks to make it a rule. You approve it once — from then on it runs deterministically, with no AI at all.",
-    "pointOtpTitle": "Codes are sacred",
-    "pointOtp": "When mail carries a verification code or login link, that code is stripped before anything reaches AI, and the mail is never forwarded and never routed automatically — structurally, with no setting to turn it off. You always see the message in full; only what a model would read is stripped.",
+    "pointOtpTitle": "Read verification codes in full",
+    "pointOtp": "Verification mail is visible in full in your reader. Forwarding protection applies to messages that ohmail identifies as sensitive.",
     "pointByoTitle": "Your key, your machine — or ours",
     "pointByo": "On the desktop app your mail stays on your machine, with no ohmail server in the loop — and its AI, if you want one, is your own API key or a local model, set in the app; the bill is yours. On Cloud: a monthly bag of AI credits is included, and mail keeps flowing rules-only when it runs out.",
     "illusRules": "Rules · most mail",
@@ -2842,7 +2841,7 @@
     "cloudCost": "From $9 a month, 14 days free.",
     "same": "Cloud is self-hosting, done for you: the same open server, the same organizer, the same mailbox as the master. What changes is whose machine holds the copy — and that we bill for running it.",
     "honest": "The fine print for Cloud: it is not end-to-end encrypted. The service reads mail to file and search it, and a small number of people with production database access could technically read it. Never sold, never mined, never used for anything but serving you.",
-    "aiNote": "AI on Cloud goes to Anthropic under commercial API terms: your mail is never used to train models, and requests are retained only briefly (currently up to 30 days); there is no zero-retention agreement yet. On every tier, a credential inside a message — a code, a login link, a reset token — is stripped before a request is built, and automatic routing skips that mail entirely. Structural, not a setting."
+    "aiNote": "AI on Cloud goes to Anthropic under commercial API terms: your mail is never used to train models, and requests are retained only briefly (currently up to 30 days); there is no zero-retention agreement yet."
   },
   "folders": {
     "title": "This is what your IMAP looks like.",
@@ -3957,7 +3956,7 @@
     "remove": "Forget the provider and keys",
     "forget": "Forget",
     "removeWhy": "Removes the stored keys from this computer. Mail keeps arriving and keeps being filed.",
-    "note": "Only what a model needs to answer is sent. A suggestion sends the sender, the subject and a short extract. A draft sends the same for the message you reply to, plus the sender and a short extract of up to 20 other messages in its thread and up to 5 matching knowledge-base notes. Where a message carries a code or a login link, the credential itself is never sent, whichever provider is chosen."
+    "note": "Only what a model needs to answer is sent. A suggestion sends the sender, the subject and a short extract. A draft sends the same for the message you reply to, plus the sender and a short extract of up to 20 other messages in its thread and up to 5 matching knowledge-base notes."
   },
   "shortcuts": {
     "goPile": "Go to {pile}",
@@ -4398,7 +4397,7 @@
     "sendAndDone": "Send + Done",
     "cancel": "Cancel",
     "hintEsc": "closes the editor",
-    "quotedProtected": "Verification code — kept out of AI",
+    "quotedProtected": "Verification code",
     "conversationAria": "Conversation",
     "conversationCount": "{count, plural, one {1 message} other {# messages}} on this conversation",
     "sending": "Sending",
@@ -6663,6 +6662,7 @@
     "activate": "Connect a calendar",
     "leave": "Not now",
     "back": "Back",
+    "close": "Close setup",
     "continue": "Continue",
     "unread": "The calendar cannot be read on this device",
     "way": {
@@ -6738,7 +6738,16 @@
       "show": "Show {name}",
       "notSaved": "Not saved.",
       "checking": "Reading your calendars",
-      "checkingLine": "This can take a moment. You can leave: they arrive by themselves.",
+      "connected": "Connected",
+      "finding": "Finding calendars",
+      "reading": "Reading events",
+      "events": "{count, plural, one {# event} other {# events}}",
+      "slow": "This takes a moment. You can keep going; ohmail tells you when your calendars are ready.",
+      "keepGoing": "Keep going",
+      "none": "No calendars in this account",
+      "closeNone": "Close",
+      "ready": "{provider}: {count, plural, one {# calendar ready} other {# calendars ready}}",
+      "readyShow": "Show",
       "refused": "Nothing was connected",
       "again": "Try again"
     },
@@ -6895,6 +6904,7 @@
       "removeFromCalendar": "Remove from my calendar",
       "removeScope": "Remove {title}",
       "answerScope": "Answer {title}",
+      "changeAnswer": "Change your answer to {answer}",
       "delete": "Delete",
       "moveTo": "Move to",
       "hideCalendar": "Hide this calendar",
@@ -6917,8 +6927,8 @@
         "rule": "Repeat rule {rule}",
         "weekdays": "Every weekday",
         "ordinal": "{order, select, first {first} second {second} third {third} fourth {fourth} last {last} fromEnd {{count, selectordinal, one {#st} two {#nd} few {#rd} other {#th}} from last} other {{count, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}}}",
-        "monthlyDate": "Every month on the {day, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
-        "monthlyWeekday": "Every month on the {ordinal} {weekday}",
+        "monthlyDate": "{count, plural, one {Every month} other {Every # months}} on the {day, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+        "monthlyWeekday": "{count, plural, one {Every month} other {Every # months}} on the {ordinal} {weekday}",
         "yearlyDate": "Every year on {date}",
         "yearlyWeekday": "Every year on the {ordinal} {weekday} of {month}"
       },
@@ -7102,6 +7112,8 @@
     },
     "closeAgenda": "Close Agenda",
     "toAnswer": "to answer",
+    "said": "you said {answer, select, accepted {yes} tentative {maybe} other {no}}",
+    "saidOne": "you said {answer, select, accepted {yes} tentative {maybe} other {no}} to this one",
     "stepBefore": "The {unit, select, month {month} year {year} week {week} other {day}} before",
     "stepAfter": "The {unit, select, month {month} year {year} week {week} other {day}} after"
   },

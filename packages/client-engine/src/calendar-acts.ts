@@ -136,6 +136,25 @@ export interface DeviceAct {
   readonly act: CalendarEventAct;
 }
 
+/**
+ * An answer to one day of a series that has no changed copy of that day yet: it waits, and is refused, on that day
+ * alone (`at`, the day's key). `answer` is what the day shows while it waits; null once refused.
+ */
+export interface DayAnswer {
+  readonly at: string;
+  readonly answer: CalendarEventRecord["myAnswer"];
+  readonly waiting: "device" | "provider" | null;
+  readonly refusal: CalendarWriteFault | null;
+  readonly refusedWriteId: string | null;
+}
+
+/** An answer of one day, named on the series' own record (the day has no record of its own). */
+function dayAnswerOf(record: CalendarEventRecord, act: CalendarEventAct | null): { readonly at: string; readonly answer: CalendarEventRecord["myAnswer"] } | null {
+  return act?.kind === "calendar_event_answer" && act.scope.kind === "occurrence" && act.eventId === record.id && record.recurrenceId === ""
+    ? { at: act.scope.at, answer: act.answer }
+    : null;
+}
+
 /** An event as a view draws it: the record with every waiting write laid over, where it waits, and why one was refused. */
 export interface EventWithWrites {
   readonly record: CalendarEventRecord;
@@ -145,6 +164,8 @@ export interface EventWithWrites {
   /** The refused write a view can send again or let go; `null` for a refusal of our server's, which left nothing. */
   readonly refusedWriteId: string | null;
   readonly removals?: readonly CalendarRemoveScope[];
+  /** Answers to single days of this series, each that day's own: the record's wait and refusal leave them out. */
+  readonly answers?: readonly DayAnswer[];
 }
 
 /**
@@ -186,13 +207,28 @@ export function eventsWithWrites(
   return shown.map((record) => {
     const own = original.get(record.id)?.writes ?? [];
     const fromSeries = exceptionMarks.get(record.id);
-    const marks = fromSeries ? [...own, ...fromSeries].sort((a, b) => a.at.localeCompare(b.at)) : own;
+    const all = fromSeries ? [...own, ...fromSeries].sort((a, b) => a.at.localeCompare(b.at)) : own;
+    const days = new Map<string, DayAnswer>();
+    for (const w of all) {
+      const act = dayAnswerOf(record, w.act);
+      if (act === null) continue;
+      days.set(act.at, w.state === "pending"
+        ? { at: act.at, answer: act.answer, waiting: "provider", refusal: null, refusedWriteId: null }
+        : { at: act.at, answer: null, waiting: null, refusal: w.reason, refusedWriteId: w.id });
+    }
+    for (const { act: done } of device) {
+      const act = dayAnswerOf(record, done);
+      if (act !== null) days.set(act.at, { at: act.at, answer: act.answer, waiting: "device", refusal: null, refusedWriteId: null });
+    }
+    const marks = days.size === 0 ? all : all.filter((w) => dayAnswerOf(record, w.act) === null);
     const lastRefused = [...marks].reverse().find((w) => w.state === "refused") ?? null;
     const removals = hidden.get(record.id);
+    const deviceWaits = days.size === 0 ? onDevice.has(record.id) : device.some((d) => d.act.eventId === record.id && dayAnswerOf(record, d.act) === null);
     return {
       record,
       ...(removals && { removals }),
-      waiting: onDevice.has(record.id) ? "device" : marks.some((w) => w.state === "pending") ? "provider" : null,
+      ...(days.size > 0 && { answers: [...days.values()] }),
+      waiting: deviceWaits ? "device" : marks.some((w) => w.state === "pending") ? "provider" : null,
       refusal: refused.get(record.id) ?? lastRefused?.reason ?? null,
       refusedWriteId: refused.has(record.id) ? null : lastRefused?.id ?? null,
     };

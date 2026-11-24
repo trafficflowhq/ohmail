@@ -20,7 +20,7 @@ const card = (who: string): HTMLElement | null =>
   screen.queryByRole("dialog", { name: `Options for ${who}` });
 
 describe("the letter's head", () => {
-  it("marks a sensitive letter as kept out of AI", () => {
+  it("labels a verification message without an AI exclusion", () => {
     mountReader({
       letters: [
         letter("m1", {
@@ -36,7 +36,8 @@ describe("the letter's head", () => {
       ],
       open: "m1",
     });
-    expect(head().textContent).toContain("Verification code · kept out of AI");
+    expect(head().textContent).toContain("Verification code");
+    expect(head().textContent).not.toMatch(/\bAI\b/);
   });
 
   it("puts the letter's instant behind its printed stamp", () => {

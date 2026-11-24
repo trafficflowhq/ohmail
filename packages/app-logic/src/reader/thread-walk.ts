@@ -12,7 +12,13 @@ import { threadWalk, type Walk } from "@ohmail/client-engine";
 import { nextFrame, THREAD_DOM, type ThreadDomNames } from "../reading/reader-seen.js";
 import type { ThreadWalkChannel } from "../reading/thread-walk-channel.js";
 import { scrollProgrammatically, stampLive } from "../session/programmatic-scroll.js";
-import { LANDING_ROOM, measureLanding, threadLayout, useThreadPosition } from "./thread-landing.js";
+import {
+  LANDING_ROOM,
+  measureLanding,
+  readingLanding,
+  threadLayout,
+  useThreadPosition,
+} from "./thread-landing.js";
 
 export { END_FAR_PX, OPEN_GAP_PX } from "./thread-landing.js";
 
@@ -82,12 +88,8 @@ export function useThreadWalk({
   const landingTop = useRef<number | null>(null);
   const releaseOpening = useOpeningRelease(scroller, keepLanding, anchored, landingTop);
   const manual = keepLanding && ids.length > 1;
-  const { layout, readingAnchor, rememberReadingAnchor, wasClamped, moved } = useThreadPosition(
-    scroller,
-    manual,
-    releaseOpening,
-    pin,
-  );
+  const position = useThreadPosition(scroller, keepLanding, releaseOpening, pin);
+  const { layout, readingAnchor, anchorPending, rememberReadingAnchor } = position;
 
   const { walk, here, latestFar, look } = useWalkLook(
     { scroller, newestFirst, channel, openedId },
@@ -98,9 +100,7 @@ export function useThreadWalk({
   const measure = useCallback(
     (bodyChanged = false): void => {
       if (!scroller || !scope) return;
-      const measured = threadLayout(scroller, scope, latest.current.names);
-      layout.current = measured;
-      const { line, at, view } = measured;
+      const { line, at, view } = (layout.current = threadLayout(scroller, scope, latest.current.names));
       const standsDown = latest.current.standsDown?.() === true;
       if (standsDown) releaseOpening();
       const anchoring = anchored.current && list.current.length > 1 && view > 0;
@@ -110,17 +110,20 @@ export function useThreadWalk({
       }
       const pinned = pin.current === null ? -1 : list.current.indexOf(pin.current);
       const landing = anchoring && pinned >= 0 ? at.get(pin.current ?? "") : undefined;
-      const reading = !landing && !standsDown && manual ? readingAnchor.current : null;
-      const visible = reading ? at.get(reading.id) : undefined;
-      const position = measureLanding(scroller, landing ?? visible, reading?.offset ?? landingTop.current, {
+      const reading = !landing && !standsDown && !anchorPending.current ? readingAnchor.current : null;
+      const target = readingLanding(scroller, at, reading, manual);
+      const held = target?.offset ?? landingTop.current;
+      const position = measureLanding(scroller, landing ?? target, held, {
         keepLanding,
         newestFirst,
         bodyChanged,
         line,
       });
       landingTop.current = landing ? position.top : null;
-      if (standsDown) readingAnchor.current = null;
-      else rememberReadingAnchor(landing ? (pin.current ?? undefined) : reading?.id);
+      if (standsDown) {
+        readingAnchor.current = null;
+        anchorPending.current = false;
+      } else rememberReadingAnchor(landing ? (pin.current ?? undefined) : reading?.id);
       walk.current = threadWalk({
         tops: list.current.map((id) => at.get(id)?.top ?? Number.NaN),
         max: position.max,
@@ -138,6 +141,7 @@ export function useThreadWalk({
       manual,
       layout,
       readingAnchor,
+      anchorPending,
       releaseOpening,
       rememberReadingAnchor,
       walk,
@@ -169,7 +173,7 @@ export function useThreadWalk({
   const landOwed = useCallback(() => landPending(owedTo.current, list.current, land), [land]);
 
   useAnchorRelease(scroller, anchored, anchor, pin, initialId, measure, landingTop, releaseOpening);
-  useLayoutWatch(scroller, scope, ids.join(" "), measure, look, landOwed, wasClamped, moved);
+  useLayoutWatch(scroller, scope, ids.join(" "), measure, look, landOwed, position);
 
   const shown = here !== null && ids.includes(here) ? here : null;
   useWalkChannel(channel, messages, shown, openedId, land);
@@ -242,7 +246,7 @@ function landPending(
   if (i >= 0 && land(i)) channel.pending = null;
 }
 
-/** Measured on every layout change, a frame after it; a scroll reads only the offset. */
+/** Layout changes are measured before paint. Scrolls share one reading-position update per frame. */
 function useLayoutWatch(
   scroller: HTMLElement | null,
   scope: HTMLElement | null,
@@ -250,14 +254,14 @@ function useLayoutWatch(
   measure: () => void,
   look: () => void,
   landOwed: () => void,
-  wasClamped: () => boolean,
-  moved: (hand: boolean) => boolean,
+  { wasClamped, moved, captureMovedAnchor }: ReturnType<typeof useThreadPosition>,
 ): void {
   useLayoutEffect(() => {
     const win = scroller?.ownerDocument.defaultView;
     if (!scroller || !scope || !win) return;
     let measuring: (() => void) | null = null;
     let looking: (() => void) | null = null;
+    let measureAfterScroll = false;
     const check = (): void => {
       measure();
       landOwed();
@@ -273,11 +277,17 @@ function useLayoutWatch(
       const hand = !stampLive(scroller);
       // The browser can clamp scrollTop before ResizeObserver reports a shorter conversation.
       if (hand && wasClamped()) measure();
-      else if (moved(hand) && scroller.style.getPropertyValue(LANDING_ROOM) !== "") measure();
-      if (!looking)
+      else if (moved(hand) && scroller.style.getPropertyValue(LANDING_ROOM) !== "") measureAfterScroll = true;
+      if (looking === null)
         looking = nextFrame(win, () => {
           looking = null;
-          look();
+          if (measureAfterScroll) {
+            measureAfterScroll = false;
+            measure();
+          } else {
+            captureMovedAnchor();
+            look();
+          }
         });
     };
     measure();
@@ -300,7 +310,7 @@ function useLayoutWatch(
       scroller.removeEventListener("scroll", onScroll);
       win.removeEventListener("resize", soon);
     };
-  }, [scroller, scope, key, measure, look, landOwed, wasClamped, moved]);
+  }, [scroller, scope, key, measure, look, landOwed, wasClamped, moved, captureMovedAnchor]);
 }
 
 /** The opening gives way to the visible letter after a gesture or the ceiling. */

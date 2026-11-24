@@ -40,7 +40,7 @@
 {"id":"ownsetup","file":"ownsetup-reference-2.0.1.tar.gz","sha256":"3bb9e16fadcc5ac0c5ecfd05627b672ca8b1553fd51c17ff95073d721b7bf71e","bytes":728670,"urls":[]},
 {"id":"parked","file":"parked-reference-2.0.1.tar.gz","sha256":"be381b9813728370f8a7d3981b1b5b9a525b4626b8952f8848c7a6992b4f25d0","bytes":998575,"urls":[]},
 {"id":"phonedoor","file":"phonedoor-reference-2.0.1.tar.gz","sha256":"5dcc08c8bb5b090fdf94fb6902c7167e3910dbd929faf0eac812d476300648e4","bytes":7430817,"urls":[]},
-{"id":"reading","file":"reading-reference-2.0.1.tar.gz","sha256":"d10a89b7d6d60e2b7e69c82ee9a394d1d4243ee37c2cf8452be02d8aa6420c31","bytes":17317944,"urls":[]},
+{"id":"reading","file":"reading-reference-2.0.1.1.tar.gz","sha256":"8456c6349e9d5e67b1f91157d5babb2d0032071f5058d6df0ae9469c0c859538","bytes":17313714,"urls":[]},
 {"id":"receipts","file":"receipts-reference-2.0.1.tar.gz","sha256":"fca26e22978974ebd54c014c55c11688e7b55158c50958caad1d97d3aba0733c","bytes":2705594,"urls":[]},
 {"id":"resurface","file":"resurface-reference-2.0.1.tar.gz","sha256":"2f7c887c76e1448faa952513fc2db6593e80cf3443d29ab681f3d73ce3117787","bytes":858125,"urls":[]},
 {"id":"screener","file":"screener-reference-2.0.1.tar.gz","sha256":"4abd2fb7d55aefc794bb9a845cad53aafae01614b8b601b5008e6a6dd2f6053f","bytes":18318048,"urls":[]},

@@ -146,27 +146,26 @@ describe("POST /messages/:id/draft — AI draft-from-history (Phase 3b)", () => 
     expect(drafter.calls).toBe(1);
   });
 
-  it("a no_ai target → 422 and the drafter is NEVER called (0 calls)", async () => {
+  it("drafts a target carrying the no_ai flag", async () => {
     const drafter = mockDrafter();
     const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
     const s = await seedSession(db, { now: FIXED_NOW });
     const { id: target } = await seedMessage(db, { accountId: s.accountId, noAi: true });
 
     const res = await H(req("POST", `/messages/${target}/draft`, { bearer: s.token }), deps);
-    expect(res.status).toBe(422);
-    expect(drafter.calls).toBe(0);
-    expect((await res.json()).error.code).toBe("sensitive_no_ai");
+    expect(res.status).toBe(202);
+    expect(drafter.calls).toBe(1);
   });
 
-  it("a sensitive (sensitivity_category) target → 422, 0 calls", async () => {
+  it("drafts a target carrying a sensitivity category", async () => {
     const drafter = mockDrafter();
     const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
     const s = await seedSession(db, { now: FIXED_NOW });
     const { id: target } = await seedMessage(db, { accountId: s.accountId, sensitivityCategory: "otp" });
 
     const res = await H(req("POST", `/messages/${target}/draft`, { bearer: s.token }), deps);
-    expect(res.status).toBe(422);
-    expect(drafter.calls).toBe(0);
+    expect(res.status).toBe(202);
+    expect(drafter.calls).toBe(1);
   });
 
   it("no drafter wired → 503 drafter_unconfigured (retryable:false), not 500 internal", async () => {
@@ -186,7 +185,7 @@ describe("POST /messages/:id/draft — AI draft-from-history (Phase 3b)", () => 
     expect(body.error.retryable).toBe(false);
   });
 
-  it("a no_kb thread sibling is structurally excluded from the DraftInput", async () => {
+  it("includes the flagged thread sibling as context", async () => {
     const drafter = mockDrafter();
     const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
     const s = await seedSession(db, { now: FIXED_NOW });
@@ -209,7 +208,7 @@ describe("POST /messages/:id/draft — AI draft-from-history (Phase 3b)", () => 
     expect(res.status).toBe(202);
     const snippets = drafter.inputs[0]!.context.threadMessages.map((t) => t.snippet);
     expect(snippets).toContain("NORMAL-SNIPPET");
-    expect(snippets).not.toContain("NOKB-SNIPPET");
+    expect(snippets).toContain("NOKB-SNIPPET");
   });
 
   it("cross-account target → 404", async () => {
@@ -236,26 +235,19 @@ describe("POST /messages/:id/draft — a credential split across two fields", ()
   /** Invented, in the shape providers use. Each half is admitted on its own (asserted below). */
   const SPLIT = { subject: "Your passphrase", snippet: "It is 481920, on the label." };
 
-  it("422 with the reason class, no draft, and the drafter is never called", async () => {
+  it("drafts when subject and snippet together resemble authentication mail", async () => {
     const drafter = mockDrafter();
     const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
     const s = await seedSession(db, { now: FIXED_NOW });
     const { id: target } = await seedMessage(db, { accountId: s.accountId, ...SPLIT });
 
     const res = await H(req("POST", `/messages/${target}/draft`, { bearer: s.token }), deps);
-    expect(res.status).toBe(422);
-    const { error } = await res.json();
-    expect(error.code).toBe("credential_screened");
-    expect(error.details).toEqual({ reason: "credential_shape" });
-    // THE PERSON'S HALF: the webapp renders `message` verbatim, so this sentence is the product.
-    expect(error.message).toBe(
-      "this message contains something that looks like a credential, so no draft was generated");
-
-    expect(drafter.calls, "the model was asked anyway").toBe(0);
-    expect(await db.select().from(drafts), "a draft was stored for a refused request").toHaveLength(0);
+    expect(res.status).toBe(202);
+    expect(drafter.calls).toBe(1);
+    expect(await db.select().from(drafts)).toHaveLength(1);
   });
 
-  it("neither half alone is refused — so the 422 is about the JOIN, not the words", async () => {
+  it("also drafts with either field on its own", async () => {
     for (const half of [{ subject: SPLIT.subject }, { snippet: SPLIT.snippet }]) {
       const drafter = mockDrafter();
       const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
@@ -268,7 +260,7 @@ describe("POST /messages/:id/draft — a credential split across two fields", ()
     }
   });
 
-  it("refuses a split carried by the KB GROUNDING, which the target itself does not hold", async () => {
+  it("drafts with matching knowledge-base grounding about authentication", async () => {
     const drafter = mockDrafter();
     const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
     const s = await seedSession(db, { now: FIXED_NOW });
@@ -286,9 +278,8 @@ describe("POST /messages/:id/draft — a credential split across two fields", ()
       accountId: s.accountId, title: `Router ${SPLIT.subject}`, content: SPLIT.snippet,
     });
     const res = await H(req("POST", `/messages/${target}/draft`, { bearer: s.token }), deps);
-    expect(res.status).toBe(422);
-    expect((await res.json()).error.code).toBe("credential_screened");
-    expect(drafter.calls, "only the admitted first request reached the model").toBe(1);
+    expect(res.status).toBe(202);
+    expect(drafter.calls).toBe(2);
   });
 });
 

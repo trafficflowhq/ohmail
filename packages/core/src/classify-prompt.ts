@@ -1,7 +1,6 @@
 import { DESTINATIONS, isDecidedDestination, type Destination } from "./types.js";
 import type { ClassifierInput, ClassifierPort, ClassifierResult } from "./classifier-port.js";
 import type { AiCallOptions } from "./ai-call-report.js";
-import { redactForModel, screenOutboundText, type OutboundScreen } from "./sensitive.js";
 
 /**
  * The routing question — what is asked, what is refused, how an answer is made safe. The port
@@ -212,28 +211,7 @@ export const CLASSIFY_RESULT_SCHEMA = {
   },
 } as const;
 
-/**
- * The refusal {@link classifyUserPayload} raises instead of sending. A distinct type because it
- * is NOT a model fault: a caller must never treat it as retryable, and a circuit breaker must
- * never count it as an outage. It carries no message content — only which rule fired — so the
- * refusal itself cannot become the leak.
- */
-export class SensitivePayloadRefusal extends Error {
-  readonly screen: OutboundScreen;
-  constructor(screen: OutboundScreen) {
-    super(
-      `classifier: refusing to send a payload screened as sensitive `
-      + `(rule=${screen.reason}${screen.category ? `, category=${screen.category}` : ""}). `
-      + `This is the AUTOMATIC path failing CLOSED at the sink: nobody asked for this call, so `
-      + `credential material is not sent. A caller acting on a person's explicit press redacts `
-      + `with redactForModel and sets outbound:"prescreened".`,
-    );
-    this.name = "SensitivePayloadRefusal";
-    this.screen = screen;
-  }
-}
-
-/** What one routing request serialises, once it has passed the screen. */
+/** What one routing request serialises. */
 export interface ClassifyUserPayload {
   from: string;
   subject: string;
@@ -256,23 +234,13 @@ export interface ClassifyUserPayload {
   senderFacts?: string;
 }
 
-/**
- * Screen, then build — the last thing that happens to a payload before it is serialised for any
- * model. The pipeline already declines to construct a classifier for sensitive mail; this second
- * line re-reads the payload about to leave, with the same detector, and throws — the first check
- * cannot see a caller that builds its own input. The order is the guarantee: the screen runs
- * before `payload` exists, so a refused payload is never assembled to be logged or retried. The
- * redaction is deliberately NOT done here: at this sink it would protect only the one
- * implementation routing through it, while ports receive `ClassifierInput` directly — redacting
- * at the caller hands every port text with the credential gone; this sink checks, never launders.
- */
 /** One held first-contact sender, as much of them as the screening question reads. */
 export interface ScreeningAsk {
   /** The sender's address, already lower-cased by the caller's queue. */
   fromAddress: string;
-  /** RAW, as stored. Redacted here — see {@link askScreeningQuestion}. */
+  /** The stored subject. */
   subject: string;
-  /** The stored preview. Redacted here for the same reason. */
+  /** The stored preview. */
   snippet: string;
   /** The account's own "who belongs in my Ohbox" words. Absent ⇒ omitted from the request. */
   ohboxBar?: string;
@@ -280,30 +248,18 @@ export interface ScreeningAsk {
   senderFacts?: string;
 }
 
-/**
- * Ask a model about one held stranger — the whole request in one place, because there are two
- * callers and a second copy would be four ways to get a money-and-privacy path wrong: (1) the
- * credential is removed HERE, at the caller — ports receive this object directly, and {@link
- * redactForModel} fires only where the screen finds credential material; (2) `outbound:
- * "prescreened"` goes with the redaction and only with it; (3) the SCREENING question, not the
- * routing one — the `classify` fallback degrades advice, never safety; (4) the bar reaches the
- * USER turn, a blank one omitted. Not gated on `messages.no_ai`: known-wrong for historical rows,
- * and `subject` is stored raw. The caller decides whether it may spend BEFORE calling this.
- */
 export async function askScreeningQuestion(
   classifier: ClassifierPort,
   ask: ScreeningAsk,
   call: AiCallOptions & { beforeDispatch: () => Promise<void> },
 ): Promise<ClassifierResult> {
-  const safe = redactForModel(ask.subject, ask.snippet);
   const put = classifier.screen?.bind(classifier) ?? classifier.classify.bind(classifier);
   const input = {
     from: { name: null, address: ask.fromAddress },
-    subject: safe.subject,
-    snippet: safe.snippet,
+    subject: ask.subject,
+    snippet: ask.snippet,
     headersDigest: "",
     fewShot: [],
-    outbound: "prescreened" as const,
     ...(ask.ohboxBar ? { ohboxBar: ask.ohboxBar } : {}),
     ...(ask.senderFacts ? { senderFacts: ask.senderFacts } : {}),
   };
@@ -312,10 +268,6 @@ export async function askScreeningQuestion(
 }
 
 export function classifyUserPayload(input: ClassifierInput): ClassifyUserPayload {
-  const screen = screenOutboundText(input.subject, input.snippet);
-  // `!== "prescreened"`, never `=== "refuse"` — see `ClassifierInput.outbound` for why the
-  // polarity is the guard. An absent field takes this branch.
-  if (!screen.safe && input.outbound !== "prescreened") throw new SensitivePayloadRefusal(screen);
   // A blank or whitespace-only bar carries no instruction, so it is dropped rather than serialised
   // as an empty field the model would have to reason about. `undefined` ⇒ the key is omitted.
   const bar = input.ohboxBar?.trim();

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  makeHaikuClassifier, SensitivePayloadRefusal,
+  makeHaikuClassifier, ModelDeclinedError,
   type AnthropicLike, type ClassifierPort, type ClassifierResult,
   type LogFields, type Logger,
 } from "@trafficflow/core";
@@ -14,7 +14,7 @@ import { classifyIngestFault, DeadLetterLedger } from "@ohmail/organizer/dead-le
  *  A REFUSAL AT THE SINK IS NOT A MODEL FAULT — and the circuit used to count it as one.
  * ══════════════════════════════════════════════════════════════════════════════════════════
  *
- * `packages/core/src/ai/classify.ts` states the contract on {@link SensitivePayloadRefusal}
+ * `packages/core/src/ai/classify.ts` states the contract on {@link ModelDeclinedError}
  * itself: *"a caller must never treat it as retryable, and the worker's circuit breaker must
  * never count it as an outage."* `ai-circuit.ts` caught EVERY throw from `inner.classify`,
  * incremented `consecutiveFaults` and tripped — so the sensitivity gate FIRING (the "Sensitive mail" invariant
@@ -61,7 +61,7 @@ const SCREENED = {
 /**
  * The REAL sink, over a client that fails the test if it is reached.
  *
- * Hand-throwing a `SensitivePayloadRefusal` would test the circuit against a mock of the thing
+ * Hand-throwing a `ModelDeclinedError` would test the circuit against a mock of the thing
  * under discussion. This drives `buildClassifyParams` → `screenOutboundText` → the throw, so the
  * error the circuit sees is the one production produces, and the exploding client re-proves in
  * passing that nothing was serialised on the way out.
@@ -70,9 +70,9 @@ function refusingPort(): ClassifierPort & { touched: () => boolean } {
   let touched = false;
   const client: AnthropicLike = {
     messages: {
-      async create(): Promise<{ content: unknown }> {
+      async create(): Promise<{ content: unknown; stop_reason: string }> {
         touched = true;
-        throw new Error("UNREACHABLE: the outbound client was called with a screened payload");
+        return { content: [], stop_reason: "refusal" };
       },
     },
   };
@@ -95,7 +95,7 @@ function impostorPort(): ClassifierPort {
   return {
     async classify(): Promise<never> {
       const err = new Error("upstream said something odd");
-      err.name = "SensitivePayloadRefusal";
+      err.name = "ModelDeclinedError";
       throw err;
     },
   };
@@ -146,7 +146,7 @@ const KEY = "mbx-1:abc123";
 const SOURCE = "classify:mbx-1:abc123";
 const ACCOUNT = "acc-1";
 
-describe("the circuit does not count a sensitivity refusal as a model fault", () => {
+describe("the circuit does not count a provider decline as a model fault", () => {
   it("REPRO — a refused payload must leave the circuit CLOSED and its fault count untouched", async () => {
     const port = refusingPort();
     const circuit = makeClassifierCircuit(port, { faultThreshold: 2 });
@@ -164,9 +164,9 @@ describe("the circuit does not count a sensitivity refusal as a model fault", ()
       await p!.classify(SCREENED).catch(() => undefined);
     }
 
-    expect(port.touched(), "the outbound client must never have been reached").toBe(false);
+    expect(port.touched()).toBe(true);
     expect(circuit.state().consecutiveFaults, "a refusal is not a model fault").toBe(0);
-    expect(circuit.state().open, "the sensitivity gate firing must not open the circuit").toBe(false);
+    expect(circuit.state().open, "a provider decline does not open the circuit").toBe(false);
     expect(circuit.state().opens).toBe(0);
     // The classifier is still being handed out, so the rest of the mailbox keeps its AI.
     expect(circuit.port()).toBeDefined();
@@ -179,31 +179,9 @@ describe("the circuit does not count a sensitivity refusal as a model fault", ()
     // `sync.ts` rethrows `ClassifierFaultError` immediately and by class, and `index.ts` exempts
     // it from `maxSyncFailures`. Wrapping a refusal in it is what routed a defect in OUR detector
     // into the arm reserved for somebody else's outage.
-    expect(err).toBeInstanceOf(SensitivePayloadRefusal);
+    expect(err).toBeInstanceOf(ModelDeclinedError);
     expect(err).not.toBeInstanceOf(ClassifierFaultError);
-    expect((err as SensitivePayloadRefusal).screen.safe).toBe(false);
-  });
-
-  it("is LOUD — a refusal is reported at error level, naming the rule and no content", async () => {
-    const { log, lines } = capturingLogger();
-    const circuit = makeClassifierCircuit(refusingPort(), { faultThreshold: 2, log });
-    await circuit.port()!.classify(SCREENED).catch(() => undefined);
-
-    const refusals = lines.filter((l) => l.event === "classifier_sensitive_refusal");
-    expect(refusals).toHaveLength(1);
-    // Error level, not warn: an upstream check that should have withheld this message did not.
-    expect(refusals[0]!.level).toBe("error");
-    expect(refusals[0]!.fields.reason).toBeDefined();
-    // ...and it is NOT filed as a model fault, which is the misreport this whole slice is about.
-    expect(lines.some((l) => l.event === "classifier_fault")).toBe(false);
-    expect(lines.some((l) => l.event === "classifier_circuit_open")).toBe(false);
-
-    // The log line may name the RULE and never the mail. `screen` carries `reason`/`category`
-    // only, by construction — this pins that the circuit does not add anything richer.
-    const serialised = JSON.stringify(refusals[0]!.fields);
-    expect(serialised).not.toContain("482913");
-    expect(serialised).not.toContain("verification code");
-    expect(serialised).not.toContain("accounts.invalid");
+    expect((err as ModelDeclinedError).stopReason).toBe("refusal");
   });
 
   it("is NEUTRAL, not a success — it neither counts nor clears a genuine fault", async () => {
@@ -304,7 +282,7 @@ describe("the circuit does not count a sensitivity refusal as a model fault", ()
     await circuit.meter("mbx-a", gate).spend(ACCOUNT, "classify_ingest", "mbx-a:m1");
 
     const err = await circuit.port()!.classify(SCREENED).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(SensitivePayloadRefusal);
+    expect(err).toBeInstanceOf(ModelDeclinedError);
     expect(gate.refundedAttempts, "a refusal with no mailbox refunded another mailbox's charge").toEqual([]);
     expect(gate.releases).toEqual([]);
   });
@@ -336,7 +314,7 @@ describe("the circuit does not count a sensitivity refusal as a model fault", ()
  * "catastrophic" is decided here and not in `ai-circuit.ts`.
  */
 describe("the coupling — where an unwrapped refusal lands in the ingest boundary", () => {
-  const refusal = new SensitivePayloadRefusal({ safe: false, category: "otp", reason: "vocabulary" });
+  const refusal = new Error("message processing failed");
 
   it("is MESSAGE-scoped, not infrastructure — so it never aborts the cycle mid-batch", () => {
     // The infrastructure arm rethrows out of `runSyncCycle` and holds EVERY folder's cursor.

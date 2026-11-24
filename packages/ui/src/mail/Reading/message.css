@@ -94,14 +94,18 @@
 
   /* In a stream a letter is cut after a few lines until it is opened, its last line fading. A letter that fits is
      whole. Its control stands in the middle of the sheet's foot; the arrow turns while it stands open. */
-  /* The cut is the text's own box: as wide as the text's measure, and its fade is counted in the text's size. */
+  /* The cut spans the sheet from edge to edge and keeps the sheet's padding inside, so a designed letter's paper
+     reaches both edges and its frame takes the sheet's whole width. A box that shrinks to its content gives a frame
+     no width to fill: the frame falls back to 300px and the letter is drawn in a narrow, cut column. The fade is
+     counted in the text's size. */
   .oh-message-clip {
     --oh-message-clip-lines: 6;
     --oh-message-clip-fade: calc(2.6 * var(--t-read));
+    --oh-message-clip-out: 0 calc(var(--sheet-pad) * -1);
 
     overflow: hidden;
-    width: fit-content;
-    max-width: 100%;
+    margin: var(--oh-message-clip-out);
+    padding-inline: var(--sheet-pad);
   }
 
   .oh-message-clip[data-shut] {

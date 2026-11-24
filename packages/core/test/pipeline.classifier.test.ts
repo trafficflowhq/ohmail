@@ -72,15 +72,14 @@ describe("pipeline AI branch — gating", () => {
     expect(res.action).toEqual({ type: "move", to: "ohmail/Screener" });
   });
 
-  it("NEVER classifies a sensitive/no_ai message — but persists its body in FULL", async () => {
-    const d = makeDeps(FEED);
+  it("classifies sign-in mail and persists the original body without applying trained routing", async () => {
+    const d = makeDeps({ ...FEED, confidence: 0.95 });
+    d.routing.graduated.add("sender:friend@known.example→ohmail/News");
     const raw = eml({ subject: "Your verification code", body: "Your one-time code is 900123." });
     const res = await run(createChange("INBOX", raw), d);
-    expect(d.classifier.calls).toBe(0);            // hard exclusion (resolution C) — the AI gate
-    expect(d.routing.decisions).toHaveLength(0);
+    expect(d.classifier.calls).toBe(1);
+    expect(d.routing.decisions).toHaveLength(1);
     expect(res.action).toEqual({ type: "none" });  // sensitive → stays in INBOX
-    // The AI gate (`classifier.calls === 0`) is what keeps the code from a model. The stored body
-    // is NOT redacted — the reader sees their own code in full (body redaction at rest is removed).
     const stored = (await d.repo.findByDedupKey("mb-1", await dedupKeyFor(raw)))!;
     expect(d.repo.bodies.get(stored.id)!.text).toContain("900123");
     expect(d.repo.bodies.get(stored.id)!.text).not.toContain("[REDACTED]");
