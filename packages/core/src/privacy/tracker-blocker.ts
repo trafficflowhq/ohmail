@@ -50,7 +50,10 @@ export const TRACKER_HOSTS: readonly string[] = [
   "api.mixpanel.com",      // Mixpanel's event endpoint (its own pictures sit on mixpanel.com)
   "api-eu.mixpanel.com",   // the same for EU residency (docs.mixpanel.com/reference/overview)
   "api-in.mixpanel.com",   // the same for India residency (docs.mixpanel.com/reference/overview)
-  "klaviyomail.com",       // Klaviyo opens and clicks
+  "klclick.com",           // Klaviyo opens and clicks, ctrk.* (pictures: cdn.klaviyomail.com and
+  "klclick1.com",          // d3k81ch9hvuctc.cloudfront.net, so not klaviyomail.com, which now
+  "klclick2.com",          // serves a newsletter's every picture; its old trk.* tracker no longer
+  "klclick3.com",          // resolves)
   "track.hubspot.com",     // HubSpot's event and page-view pixel (developers.hubspot.com, Events HTTP API)
   "track-eu1.hubspot.com", // the same for EU portals (ibid.; pictures: *.hubspotusercontent*.net)
 ];
