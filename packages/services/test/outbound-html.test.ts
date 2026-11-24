@@ -9,6 +9,7 @@ import {
   prepareOutboundDelivery,
   sanitizeOutboundHtml,
   sanitizeQuotedHtml,
+  serializeDraftBody,
 } from "../src/outbound-html.js";
 
 /**
@@ -115,6 +116,14 @@ describe("nothing outside the grammar survives", () => {
     expect(out).toContain('href="https://a.example"');
   });
 
+  it("preserves only complete recipient styles on their own tags", () => {
+    const out = sanitizeOutboundHtml(
+      '<p style="margin:0">First</p><p style="margin:0;color:red">Second</p>' +
+      '<ol style="margin:0"><li>Third</li></ol>',
+    );
+    expect(out).toBe('<p style="margin:0">First</p><p>Second</p><ol><li>Third</li></ol>');
+  });
+
   it("drops images entirely — there is no way to carry an inline payload out of this editor", () => {
     // The 2026-08-01 storage outage arrived through inbound `data:` images. There is no `img`
     // in the grammar, so a composed message cannot manufacture the same bytes on the way out.
@@ -141,10 +150,11 @@ describe("nothing outside the grammar survives", () => {
   });
 
   it("styles the recipient's formats and indents the plain-text code", () => {
-    const draft = prepareOutboundBody(
+    const draft = serializeDraftBody(
       '<h1>Release</h1><h2>Install</h2><h3>Notes</h3><hr><pre data-ohmail-code="1" style="color:red"><code>one\n  two</code></pre>',
     );
-    const { html, text } = prepareOutboundDelivery(draft.html, draft.text);
+    const { html, text } = draft;
+    expect(prepareOutboundDelivery(html, text)).toEqual(draft);
     expect(html).toMatch(/<h1 style="font-size:28px;[^"]*">Release<\/h1>/);
     expect(html).toMatch(/<h2 style="font-size:20px;[^"]*">Install<\/h2>/);
     expect(html).toMatch(/<h3 style="font-size:17px;[^"]*">Notes<\/h3>/);
@@ -156,7 +166,7 @@ describe("nothing outside the grammar survives", () => {
     expect(text).toBe("Release\nInstall\nNotes\n--------\n    one\n      two");
   });
 
-  it("keeps only the fixed code flag on draft code blocks and removes it on delivery", () => {
+  it("keeps only the fixed code flag and serializes it as a recipient style", () => {
     const draft = prepareOutboundBody(
       '<p data-ohmail-code="1">Before</p><pre data-ohmail-code="2"><code>old</code></pre>' +
       '<pre data-ohmail-code="1"><code>new</code></pre>',
@@ -165,16 +175,20 @@ describe("nothing outside the grammar survives", () => {
       '<p>Before</p><pre><code>old</code></pre><pre data-ohmail-code="1"><code>new</code></pre>',
     );
     expect(sanitizeOutboundHtml(draft.html)).toBe(draft.html);
-    const sent = prepareOutboundDelivery(draft.html, draft.text);
-    expect(sent.html).toContain("<pre><code>old</code></pre><pre style=");
-    expect(sent.html).not.toContain("data-ohmail-code");
-    expect(sent.text).toBe("Before\nold\n    new");
+    const saved = serializeDraftBody(draft.html);
+    expect(saved.html).toContain("<pre><code>old</code></pre><pre style=");
+    expect(saved.html).not.toContain("data-ohmail-code");
+    expect(saved.text).toBe("Before\nold\n    new");
+    expect(serializeDraftBody(saved.html)).toEqual(saved);
+    expect(prepareOutboundDelivery(saved.html, saved.text)).toEqual(saved);
   });
 
   it("consumes only a direct initial newline in marked pre", () => {
     const draft = prepareOutboundBody('<pre data-ohmail-code="1">\n<code>\nbody\n\n</code></pre>');
     expect(draft.text).toBe("\nbody\n\n");
-    expect(prepareOutboundDelivery(draft.html, draft.text).text).toBe("\n    body\n\n");
+    const saved = serializeDraftBody(draft.html);
+    expect(saved.text).toBe("\n    body\n\n");
+    expect(prepareOutboundDelivery(saved.html, saved.text)).toEqual(saved);
   });
 
   it("is IDEMPOTENT — the send-time pass is a no-op on anything the store-time pass produced", () => {
@@ -504,7 +518,9 @@ describe("a code block survives, and its whitespace is meaning rather than layou
 
 it("delivers compact paragraphs and keeps the receiving client's list indent", () => {
   for (const tag of ["ul", "ol"]) {
-    const { html } = prepareOutboundDelivery(`<p>Materials</p><${tag}><li>Chalk</li></${tag}>`, "Materials\nChalk");
+    const saved = serializeDraftBody(`<p>Materials</p><${tag}><li>Chalk</li></${tag}>`);
+    const { html } = prepareOutboundDelivery(saved.html, saved.text);
+    expect(html).toBe(saved.html);
     expect.soft(html).toContain('<p style="margin:0">Materials</p>');
     expect.soft(html).toContain(`<${tag} style="margin-top:0;margin-bottom:0">`);
   }

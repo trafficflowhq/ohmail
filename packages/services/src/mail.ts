@@ -370,3 +370,5 @@ export {
  * mail service. Nothing built from here constructs an auth service — it resolves a session, which
  * needs the configuration and no dependencies at all. */
 export type { AuthConfig, SessionSurface } from "./auth/config-types.js";
+
+export { screenerLearningSettings } from "./screener-learning-settings.js";

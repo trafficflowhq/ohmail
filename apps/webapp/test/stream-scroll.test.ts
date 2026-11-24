@@ -110,12 +110,17 @@ describe("one scroll owner per reading stream (the source census)", () => {
 
   it("a scale-to-fit message document is taken out of the wheel's chain, and only that one", () => {
     const src = read("packages/letter-body/src/MessageBody.tsx");
-    // The rule is dormant in every document and driven by one attribute, like the dark and scale
-    // rules beside it.
+    // A fitted document yields vertical scrolling to the pane. Wide content at the scale floor
+    // still scrolls sideways, while a frame capped in height must keep its vertical scroller.
     expect(src).toMatch(/:root\[data-ohmail-fitclip\]\{overflow:hidden\}/);
-    // …and the attribute is written in the same place as the height it is a fact about, gated on
-    // the mail NOT having been clamped by the frame ceiling — a document that really is taller
-    // than its frame must keep its scroller or its tail becomes unreachable.
-    expect(src).toMatch(/toggleAttribute\("data-ohmail-fitclip", scale < 1 && !clampedByCeiling && h > 0\)/);
+    expect(src).toMatch(/:root\[data-ohmail-fitclip="sideways"\]\{overflow-x:auto;overscroll-behavior-x:contain\}/);
+    expect(src).toContain('root.removeAttribute("data-ohmail-fitclip")');
+    expect(src).toContain("const sideways = column > 0 && Math.ceil(natural * scale) > column;");
+    expect(src).toContain("const clampedByCeiling = raw > MAX_FRAME_PX;");
+    const fit = src.slice(src.indexOf("if (!clampedByCeiling && h > 0) {"),
+      src.indexOf("frame.style.height = heightRef.current"));
+    expect(fit).toMatch(/^if \(!clampedByCeiling && h > 0\) \{\s*if \(sideways\) \{/);
+    expect(fit).toMatch(/root\.setAttribute\("data-ohmail-fitclip", "sideways"\);[^{}]*\} else if \(scale < 1\) \{\s*root\.setAttribute\("data-ohmail-fitclip", ""\);\s*\}\s*\}/);
+    expect(src.match(/setAttribute\("data-ohmail-fitclip"/g)).toHaveLength(2);
   });
 });

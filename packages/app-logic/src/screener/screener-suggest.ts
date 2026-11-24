@@ -1589,6 +1589,7 @@ const VIEW_DEST: Record<string, SenderSuggestion["dest"]> = {
  */
 export function toSuggestion(a: {
   decision: "yes" | "no" | "hold"; destination?: string; confidence: number; rationale: string;
+  id?: string; learnedReason?: "webinar";
   reasonCode?: string; reasonBrand?: string; reasonCount?: number; failed?: true;
 }): SenderSuggestion {
   if (a.failed) return { dest: "screener", confidence: 0, rationale: "", noAnswer: "model_unavailable" };
@@ -1605,8 +1606,9 @@ export function toSuggestion(a: {
   // A `hold` is a non-answer whatever folder travels beside it, so it is read first and the
   // destination is never consulted. Letting a folder outrank the hold is how the surface would
   // start naming a pile for a sender the model explicitly declined to place.
+  const evidence = { ...(a.id ? { id: a.id } : {}), ...(a.learnedReason === "webinar" ? { learnedReason: a.learnedReason } : {}) };
   if (a.decision === "hold") {
-    return { dest: "screener", confidence: a.confidence, rationale: a.rationale, ...why };
+    return { dest: "screener", confidence: a.confidence, rationale: a.rationale, ...why, ...evidence };
   }
 
   // THE SERVER'S OWN ANSWER, when it sends one. An older server does not, and the fallback below
@@ -1615,7 +1617,7 @@ export function toSuggestion(a: {
   const named = a.destination ? VIEW_DEST[a.destination] : undefined;
   const dest: SenderSuggestion["dest"] = named
     ?? (a.decision === "yes" ? "ohbox" : "screened");
-  return { dest, confidence: a.confidence, rationale: a.rationale, ...why };
+  return { dest, confidence: a.confidence, rationale: a.rationale, ...why, ...evidence };
 }
 
 /**

@@ -13,7 +13,7 @@ import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { CreateDraftBody, DraftDTO, EmailAddress, PatchDraftBody, SendResolution } from "@ohmail/wire";
 import { draftContentRevision } from "./draft-revision.js";
-import { DRAFT_HTML_CAP_BYTES, htmlByteLength, prepareOutboundBody } from "./outbound-html.js";
+import { DRAFT_HTML_CAP_BYTES, htmlByteLength, serializeDraftBody } from "./outbound-html.js";
 
 // The per-MESSAGE ceiling, imported rather than restated: two ceilings on one list that can
 // disagree is how the reply-all regression happened. See {@link DRAFT_MAX_RECIPIENTS}.
@@ -194,6 +194,7 @@ export class DraftsService {
     const rich = this.richBody(body.html, body.body);
     const text = rich ? rich.text : this.validBody(body.body);
     const html = rich ? rich.html : null;
+    if (html !== null) this.requireRichBodySize(html);
     const to = this.validAddresses(body.to, "to");
     const cc = this.validAddresses(body.cc, "cc");
     const bcc = this.validAddresses(body.bcc, "bcc");
@@ -345,10 +346,7 @@ export class DraftsService {
     if (patch.subject !== undefined) set.subject = this.validSubject(patch.subject);
     const rich = this.richBody(patch.html, patch.body);
     let plainOverRich = false;
-    if (rich) {
-      set.html = rich.html;
-      set.body = rich.text;
-    } else {
+    if (!rich) {
       if (patch.html === null) set.html = null;
       if (patch.body !== undefined) {
         set.body = this.validBody(patch.body);
@@ -406,6 +404,12 @@ export class DraftsService {
       }).from(drafts)
         .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
         .limit(1));
+      // A metadata save can echo the old body, including when Send saves the envelope first.
+      if (rich && locked?.html !== patch.html) {
+        this.requireRichBodySize(rich.html);
+        set.html = rich.html;
+        set.body = rich.text;
+      }
       /* THE KEPT FILES FOLLOW THE FORWARD THE ROW WILL HOLD: a list needs one, and a patch that moves
          the forward to another original (or none) drops the old list unless it names a new one. */
       if (locked) {
@@ -799,7 +803,7 @@ export class DraftsService {
     if (typeof html !== "string") {
       throw new ServiceError("validation_failed", 400, "html must be a string or null");
     }
-    const prepared = prepareOutboundBody(html, true);
+    const prepared = serializeDraftBody(html);
     // An edited quote sends both fields so an older server rejects the write instead of flattening it.
     // The plain part still comes exclusively from the sanitized HTML.
     if (body !== undefined && !(typeof body === "string" && hasEditedQuotedHistory(prepared.html))) {
@@ -808,7 +812,11 @@ export class DraftsService {
         "body is derived from html on the server; send one or the other, not both",
       );
     }
-    const size = htmlByteLength(prepared.html);
+    return prepared;
+  }
+
+  private requireRichBodySize(html: string): void {
+    const size = htmlByteLength(html);
     if (size > DRAFT_HTML_CAP_BYTES) {
       // Refused HERE so the constraint never has to. `drafts_html_cap` is the tripwire behind
       // this line â see `0037_draft_html.sql` â and a 413 with a number in it is a sentence a
@@ -818,7 +826,6 @@ export class DraftsService {
         `this message is ${size} bytes of formatted text; the limit is ${DRAFT_HTML_CAP_BYTES}`,
       );
     }
-    return prepared;
   }
 
   /**

@@ -165,7 +165,7 @@ describe("the SQLite journal, applied", () => {
 
   it("keeps a unique index beside a primary key only where a key names it, and every key finds its target", async () => {
     // Entry 0206 dropped the thirteen `(id, <owner>)` unique indexes nothing on this store names.
-    // One such index stays: a sent copy keys onto `outbound_sends (id, account_id)`. Read from the
+    // Sent copies key onto outbound sends and learning keys onto mailboxes, both with account_id. Read from the
     // migrated store's own catalog, both ways: no index of that family is left that no key names,
     // and no key names parent columns that are neither the primary key nor a unique index (the
     // state SQLite answers "foreign key mismatch" for, on the child's every write).
@@ -203,7 +203,8 @@ describe("the SQLite journal, applied", () => {
     const family = all<{ name: string; tbl_name: string }>(
       "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND (name LIKE '%\_id\_account\_uq' ESCAPE '\\' OR name LIKE '%\_id\_mailbox\_uq' ESCAPE '\\')",
     );
-    expect(family.map((i) => i.name)).toEqual(["outbound_sends_id_account_uq"]);
+    expect(family.map((i) => i.name).sort()).toEqual(["mailboxes_id_account_uq", "outbound_sends_id_account_uq"]);
+    expect(named.has("mailboxes(account_id,id)"), "the Screener learning key names this index").toBe(true);
     expect(named.has("outbound_sends(account_id,id)"), "the index that stays is the one a key names").toBe(true);
   });
 

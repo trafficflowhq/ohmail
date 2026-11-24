@@ -384,12 +384,13 @@ for (const [name, engine] of ENGINES) {
     });
 
     it.each([
-      { width: 940, thread: false, positionApi: false },
-      { width: 390, thread: false, positionApi: false },
-      { width: 940, thread: true, positionApi: false },
-      { width: 390, thread: true, positionApi: false },
-      { width: 390, thread: false, positionApi: true },
-    ])("holds text below a picture at $width px (thread: $thread, position API: $positionApi)", async (fixture) => {
+      { width: 940, thread: false, positionApi: false, zoom: 1 },
+      { width: 390, thread: false, positionApi: false, zoom: 1 },
+      { width: 940, thread: true, positionApi: false, zoom: 1 },
+      { width: 390, thread: true, positionApi: false, zoom: 1 },
+      { width: 390, thread: false, positionApi: true, zoom: 1 },
+      { width: 390, thread: true, positionApi: false, zoom: 1.5 },
+    ])("holds text below a picture at $width px (thread: $thread, position API: $positionApi, zoom: $zoom)", async (fixture) => {
       const release = Promise.withResolvers<void>();
       const page = await open(browser!, { asked: 0, now: 0, most: 0, release: release.promise });
       try {
@@ -398,13 +399,15 @@ for (const [name, engine] of ENGINES) {
           '<tr><td><img src="https://pictures.example.test/cover-held.png" width="600" alt="Cover"></td></tr>' +
           '<tr><td style="text-align:center"><span class="reading-text">The first line after the cover</span></td></tr>' +
           '<tr><td style="height:1000px">After the line</td></tr></table>';
-        await page.evaluate(({ html, width, thread }) => {
+        await page.evaluate(({ html, width, thread, zoom }) => {
+          document.documentElement.style.zoom = String(zoom);
+          document.documentElement.style.setProperty("--ui-zoom", String(zoom));
           (window as unknown as { rig: DesignRig }).rig.openAnchored(html, width, thread);
         }, { html, ...fixture });
         await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
         const photo = page.frameLocator(".mb-frame").getByRole("img", { name: "Cover" });
         await expect.poll(() => photo.evaluate((img: HTMLImageElement) => img.src.includes("/api/img"))).toBe(true);
-        await page.evaluate(({ positionApi }) => {
+        const caret = await page.evaluate(async ({ positionApi, zoom }) => {
           const frame = document.querySelector<HTMLIFrameElement>(".mb-frame")!;
           const doc = frame.contentDocument!;
           if (positionApi) {
@@ -419,16 +422,32 @@ for (const [name, engine] of ENGINES) {
           }
           const target = doc.querySelector(positionApi ? ".reading-text" : 'img[alt="Cover"]')!;
           const { top, height } = target.getBoundingClientRect();
-          frame.closest(".read-col")!.scrollTop += frame.getBoundingClientRect().top + top + height / 2 - 14;
+          const scroller = frame.closest<HTMLElement>(".read-col")!;
+          let firstY: number | undefined;
+          if (zoom !== 1) {
+            const getRange = doc.caretRangeFromPoint.bind(doc);
+            doc.caretRangeFromPoint = (x, y) => {
+              firstY ??= y;
+              return getRange(x, y);
+            };
+          }
+          scroller.scrollTop += frame.getBoundingClientRect().top / zoom + top + height / 2 - 14;
+          const expectedY = 14 - (frame.getBoundingClientRect().top - scroller.getBoundingClientRect().top) / zoom;
+          await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+          return { firstY, expectedY };
         }, fixture);
-        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        if (fixture.zoom !== 1) {
+          expect(caret.firstY, "the caret starts on the reading line inside the unzoomed frame")
+            .toBeCloseTo(caret.expectedY, 1);
+        }
         const cover = (await photo.boundingBox())!;
         const line = page.frameLocator(".mb-frame").locator(".reading-text");
         const before = (await line.boundingBox())!.y;
         if (!fixture.positionApi) {
-          expect(cover.y).toBeLessThan(14);
-          expect(cover.y + cover.height).toBeGreaterThan(14);
-          expect(before).toBeGreaterThan(14);
+          const readingLine = 14 * fixture.zoom;
+          expect(cover.y).toBeLessThan(readingLine);
+          expect(cover.y + cover.height).toBeGreaterThan(readingLine);
+          expect(before).toBeGreaterThan(readingLine);
         }
         const height = (await page.locator(".mb-frame").boundingBox())!.height;
         release.resolve();

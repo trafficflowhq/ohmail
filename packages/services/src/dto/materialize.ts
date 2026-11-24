@@ -12,7 +12,7 @@ import {
   invitationWithoutEventWhere, itipReplyHeaderWhere, listAddresses, heldForIdentitySql,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags, messageInvitations, invitationFieldOf,
-  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_FAILED, isScreenerActRefusal, rulesTheActWrote, pendingRefileFrom, refileOwed,
+  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_FAILED, SCREENER_LEARNED_SUGGESTION_STATUS, isScreenerActRefusal, rulesTheActWrote, pendingRefileFrom, refileOwed,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import type {
@@ -930,6 +930,7 @@ export async function materializeScreenerSuggestion(
     messageId: routingDecisions.messageId,
     destination: routingDecisions.destination,
     status: routingDecisions.status,
+    topic: routingDecisions.screenerTopic,
     confidence: routingDecisions.confidence,
     rationale: routingDecisions.rationale,
     spam: routingDecisions.spam,
@@ -976,9 +977,14 @@ export async function materializeScreenerSuggestion(
   return {
     id: r.id,
     messageId: r.messageId,
+    ...(r.topic ? { topic: r.topic } : {}),
     senderKey: r.fromAddress.toLowerCase(),
     ...suggestionAdvice(capped.destination, capped.spam, capped.rationale, policy),
     confidence: capped.confidence,
+    ...(r.status === SCREENER_LEARNED_SUGGESTION_STATUS ? { personalized: true as const } : {}),
+    ...(r.status === SCREENER_LEARNED_SUGGESTION_STATUS && capped.destination === "ohmail/Screened"
+      && capped.rationale === "You usually screen out webinar invitations" && !capped.reasonCode
+      ? { learnedReason: "webinar" as const } : {}),
     ...(signals && capped.reasonCode
       ? { reasonCode: capped.reasonCode, ...reasonDetail(signals) }
       : {}),

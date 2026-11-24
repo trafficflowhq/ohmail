@@ -180,6 +180,16 @@ export function makeHaikuClassifier(opts: HaikuClassifierOpts): ClassifierPort {
     async classify(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult> {
       return coerceClassifierResult(await ask(buildClassifyParams(input, opts), opts, call));
     },
+    async rewriteScreener(request, call) {
+      const model = opts.model ?? DEFAULT_MODEL;
+      return ask({
+        model, max_tokens: request.maxTokens, thinking: thinkingOffFor(model),
+        system: [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: JSON.stringify(request.input) }],
+        output_config: { format: { type: "json_schema", schema: request.schema } },
+        ...(opts.inferenceGeo ? { inference_geo: opts.inferenceGeo } : {}),
+      }, opts, call);
+    },
     async screen(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult> {
       return coerceScreeningResult(await ask(buildScreeningParams(input, opts), opts, call));
     },

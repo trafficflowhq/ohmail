@@ -8,10 +8,11 @@
  * counterpart: full-text lives in external-content indexes kept current by triggers. MAINTAINED,
  * not generated.
  */
-import { sqliteTable, text, integer, real, unique, uniqueIndex, index, primaryKey, customType, check } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, unique, uniqueIndex, index, primaryKey, customType, check, foreignKey } from "drizzle-orm/sqlite-core";
 import { sql, desc } from "drizzle-orm";
 import type { SignedOutMeta } from "./schema-mail.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
+import type { ScreenerLearningState } from "./screener-learning-state.js";
 import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
 
 /**
@@ -395,6 +396,7 @@ export const mailboxes = sqliteTable("mailboxes", {
   heldElsewhereUntil: integer("held_elsewhere_until", { mode: "timestamp_ms" }),
 }, (t) => ({
   // Mail 0161: the list read, the caller's mailboxes in id order. Prebuilt CONCURRENTLY on a server.
+  ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   ixAccount: index("mailboxes_account_idx").on(t.accountId, t.id),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
   // `status='disabled'` and a plain unique would make reconnecting a disconnected address fail
@@ -1148,6 +1150,7 @@ export const routingDecisions = sqliteTable("routing_decisions", {
   actRefusal: text("act_refusal"),
   // Mail 0156: the fact that capped a stored suggestion, or `none`. See the server twin. LAST.
   senderReason: text("sender_reason"),
+  screenerTopic: text("screener_topic"),
 }, (t) => ({
   ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId),
   ckActRefusal: check("routing_decisions_act_refusal_closed",
@@ -2325,6 +2328,19 @@ export const accountSettings = sqliteTable("account_settings", {
   draftReplies: integer("draft_replies", { mode: "boolean" }).notNull().default(true),
   screenerAcknowledgements: integer("screener_acknowledgements").notNull().default(0),
 });
+
+export const screenerLearning = sqliteTable("screener_learning", {
+  mailboxId: text("mailbox_id").primaryKey().notNull(),
+  accountId: text("account_id").notNull(),
+  data: text("data", { mode: "json" }).$type<ScreenerLearningState>().notNull(),
+}, (t) => ({
+  mailbox: foreignKey({
+    name: "screener_learning_mailbox_account_fk",
+    columns: [t.mailboxId, t.accountId],
+    foreignColumns: [mailboxes.id, mailboxes.accountId],
+  }).onDelete("cascade"),
+  account: index("screener_learning_account_idx").on(t.accountId),
+}));
 
 /**
  * Mail 0094: the organizer profile as last read from the mailbox, cached per mailbox.

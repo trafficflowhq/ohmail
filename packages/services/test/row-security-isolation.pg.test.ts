@@ -286,7 +286,7 @@ for (const major of PG_MAJORS) {
       String((await mig.unsafe(`select md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as d from ${q(table)} t where "${col}" = $1`, [account]))[0]!.d);
 
     it("every table that names an account holds rows of both accounts, before anything is read", async () => {
-      expect(owned).toHaveLength(94);
+      expect(owned).toHaveLength(95); // The per-mailbox learning row also carries the account.
       const empty: string[] = [];
       for (const { table, col } of owned) {
         for (const [who, a] of [["A", A], ["B", B]] as const) if (await ownCount(table, col, a.accountId) === 0) empty.push(`${table} (${who})`);

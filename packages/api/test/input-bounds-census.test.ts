@@ -388,7 +388,6 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // row counts (its mailboxes' profiles and one settings row), never by anything a caller picks.
   "GET /account/export",
   "GET /account/ai",
-  "GET /account/screening",
   "GET /consent/seed",
   "GET /consent/reset",
   "POST /consent/reset",
@@ -927,6 +926,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   /* One field, the session id the return address carried, refused 400 unless it is a token of at
      most this many letters, digits, `_` or `-`. The account is the SESSION's, as above. */
   "POST /account/checkout/confirm": { bounds: [RETURN_SESSION_ID_MAX_CHARS] },
+  // A single optional mailbox UUID, validated in the service before the account-scoped lookup.
+  "GET /account/screening": { scalarsOnly: true },
   "PATCH /account/screening": { bounds: [OHBOX_BAR_MAX_BYTES] },
   "PATCH /consent/settings": { bounds: [SETTINGS_MAX_MAILBOX_ENTRIES, MAILBOX_SIGNATURE_MAX_CHARS] },
   // `SEED_MAX_ADDRESSES`, not `SEED_SCAN_LIMIT`: the latter counts MESSAGES scanned by the
@@ -1361,6 +1362,7 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   // The queue's opt-in (`?live=1`): compared to exactly "1", anything else is the page as before.
   "routes/screener.ts#live": "closed-set",
   "routes/screener.ts#mailboxId": "identifier",
+  "routes/screening.ts#learningMailbox": "identifier", // requireUuid before any lookup
   // The organize decision's window: an integer refused outside 1-365, and one of two scope words.
   "routes/screener.ts#dormancyDays": "clamped",
   "routes/screener.ts#scope": "closed-set",
@@ -1677,6 +1679,10 @@ type ArrayOrigin =
  * its expression is one the file already uses.
  */
 const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>> = {
+  "consent-reset.ts :: RESETTABLE_SUGGESTION_STATUSES": {
+    origin: { bounded: "three fixed status literals for the ordinary, personalized and failed suggestion rows" },
+    count: 1,
+  },
   "screener-rule-release.ts :: release.messageIds": {
     origin: { caller: "the request's message ids, validated and capped at SCREENER_RELEASE_MOVE_MAX (500) by readRelease" },
     count: 2,
@@ -2064,7 +2070,7 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // The page's claims-alone probe (mail 0150): subsets of one `clampLimit`ed page's rows.
   "screener-service.ts :: [...letIn]": { origin: { bounded: "the list senders of one screener page a person let in" }, count: 1 },
   "screener-service.ts :: computed": { origin: { bounded: "the representatives of one screener page whose claim the page computed" }, count: 1 },
-  // The automatic request's admitted-set read: the representatives `rep` already holds.
+  // The automatic admitted-set read and the worker-retry read both use representatives from the capped request.
   "screener-service.ts :: rows.map((r) => r.messageId)": {
     origin: { bounded: "one representative per named sender — MAX_SUGGEST_SENDERS, refused in parseSenderSet before any query" },
     count: 2,
@@ -2104,8 +2110,6 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // before it still points at the legacy folder. Two module constants, so the predicate is
   // two elements wide whatever the account holds.
   "message-service.ts :: [NEWS_FOLDER, LEGACY_NEWS_FOLDER]": { origin: "constant", count: 1 },
-  // A start-over removes the suggestion rows of both statuses, the ready and the failed: two names.
-  "consent-reset.ts :: [SCREENER_SUGGESTION_STATUS, SCREENER_SUGGESTION_FAILED]": { origin: "constant", count: 1 },
   "mailbox-filings.ts :: [NEWS_FOLDER, LEGACY_NEWS_FOLDER]": { origin: "constant", count: 2 },
   "mailbox-filings.ts :: target": { origin: { subquery: "the press's own waiting rows of the caller's mailbox, LIMIT FILINGS_PRESS_MAX" }, count: 2 },
   // The four triage states the Ohbox holds out of "New for you", inside `newForYouFilters`'

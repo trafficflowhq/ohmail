@@ -298,7 +298,7 @@ describe("a web forward of a letter whose picture sits in its text", () => {
   it.each([
     ["no note", null, ""],
     ["a plain note", "<p>See the crane.</p>", "See the crane.<br><br><hr>"],
-    ["a bold note", "<p><strong>See the crane.</strong></p>", "<p><strong>See the crane.</strong></p><br><br><hr>"],
+    ["a bold note", "<p><strong>See the crane.</strong></p>", '<p style="margin:0"><strong>See the crane.</strong></p><br><br><hr>'],
   ] as const)("Shift+F with %s keeps the picture in place in the quote", async (_shape, note, opens) => {
     const w = await world({ pictured: true });
     await act(async () => {

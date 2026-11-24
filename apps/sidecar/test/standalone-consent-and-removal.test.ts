@@ -16,7 +16,7 @@ import {
   junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, mailboxes, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, organizerRequests,
   outboundSendFingerprints, outboundSentCopies, outboundSends, REMOVED_MAILBOX_SEND_SENTENCE, routingDecisions,
-  scheduledSendFiles, sessions, tags,
+  scheduledSendFiles, screenerLearning, sessions, tags,
   threadNotes, threads, trackerEvents, unsubscribeExamined, unsubscribeRecords,
   messageInvitations, mailboxPass, writePassProgress,
   passProgress,
@@ -898,6 +898,18 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
     expect(fault.calls, "the ordinary removal did not reach the wipe").toBe(1);
   });
 
+  it("removing a mailbox removes its Screener learning", async () => {
+    const { sidecar } = await boot([41], new MemoryMeta());
+    await agree(sidecar);
+    await sidecar.db.insert(screenerLearning).values({
+      mailboxId: sidecar.world.mailboxId, accountId: sidecar.world.accountId,
+      data: { enabled: true, notice: false, text: "Keep receipts.", lessons: [], updatedAt: null,
+        revision: 1, rewrittenRevision: 1 },
+    });
+    expect((await removeRaw(sidecar)).status).toBe(200);
+    expect(await sidecar.db.select().from(screenerLearning)).toEqual([]);
+  });
+
   it("AN AWAY REPLY DOES NOT PIN THE MAILBOX — the removal still removes, and the ledger goes", async () => {
     /* THE SHIPPED SHAPE, driven through the route a person presses. Mail 0118 keyed the away
        ledger to `messages`, so the wipe's own delete was refused for every install whose responder
@@ -1736,6 +1748,10 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
     }).returning();
     await sidecar.db.insert(outboundSendFingerprints).values({
       accountId, mailboxId, fingerprint: "ef".repeat(32), sendId: sentSend!.id,
+    });
+    await sidecar.db.insert(screenerLearning).values({
+      accountId, mailboxId, data: { enabled: true, notice: false, text: "Keep receipts.", lessons: [],
+        updatedAt: null, revision: 1, rewrittenRevision: 1 },
     });
     const owed = tablesTheRemovalOwes();
     const before = await countsOf(sidecar, owed);

@@ -13,8 +13,7 @@ import { AutolinkPunctuation, CodeMark, LinkMark, MarkBoundaries } from "./marks
 /**
  * Enter is a single line break, not a new paragraph. StarterKit binds Enter to "split the
  * paragraph", so a note typed line by line left as one `<p>` per line — and a `<p>` renders with
- * margins in every mail client, so the single-spaced note arrived double-spaced, with no html-side
- * fix (the inline `margin:0` is exactly what the outbound allow-list strips). So Enter inserts a
+ * margins in mail clients, so a single-spaced note could arrive double-spaced. Enter inserts a
  * hard break — one `<br>`; a blank line is two (`<br><br>`), and `outbound-html.ts` mirrors this
  * into the text/plain half. It defers inside lists and quotes, where Enter already has a job: the
  * handler returns `false` there and the default keymap runs; the high priority is so this can

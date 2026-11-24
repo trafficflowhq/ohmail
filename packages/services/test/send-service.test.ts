@@ -16,7 +16,7 @@ import {
   SEND_COPY_OWED_STAGED_NOT_DUE, SEND_COPY_OWED_CLAIM_MS, SENT_COPY_PASS_WINDOW, dbFor, runOwedSentCopyPass, sentCopyRefusalOf,
 } from "../src/index.js";
 import type { ServiceContext, StagedAttachmentSource } from "../src/index.js";
-import { prepareOutboundBody } from "../src/outbound-html.js";
+import { serializeDraftBody } from "../src/outbound-html.js";
 import { ServiceError } from "../src/errors.js";
 import { SENT_COPY_MAILBOX_WAITS_MS, SENT_COPY_TURN_MAX, SENT_COPY_TURN_UNIT } from "../src/sent-copy-pass.js";
 import { owedCopiesDueNow, ownAttempts, SEND_COPY_OWED_MAILBOX_UNIT } from "../src/send-service.js";
@@ -114,9 +114,20 @@ describe("SendService — gated idempotent send (Phase 3c)", () => {
     expect(sent.html).toBe(html);
   });
 
+  it("sends the saved formatting of a new draft byte for byte", async () => {
+    const { ctx, newDraft } = await setup();
+    const { html, text } = serializeDraftBody("<p>Materials</p><ul><li>Chalk</li></ul>");
+    const draftId = await newDraft("draft", { body: text, html });
+    const { factory, state } = fakeAdapter();
+    await svc.send(ctx, draftId, "saved-formatting", { openSendAdapter: factory });
+    expect(html).toBe('<p style="margin:0">Materials</p><ul style="margin-top:0;margin-bottom:0"><li>Chalk</li></ul>');
+    expect(state.sent[0]!.html).toBe(html);
+    expect(state.sent[0]!.text).toBe(text);
+  });
+
   it("delivers the source edges of an authored code block verbatim with indentation", async () => {
     const { ctx, newDraft } = await setup();
-    const draft = prepareOutboundBody('<pre data-ohmail-code="1"><code>\r\none  \r\n\r\n  two  \r\n\r\n</code></pre>');
+    const draft = serializeDraftBody('<pre data-ohmail-code="1"><code>\r\none  \r\n\r\n  two  \r\n\r\n</code></pre>');
     const draftId = await newDraft("draft", { html: draft.html, body: draft.text });
     const { factory, state } = fakeAdapter();
     await svc.send(ctx, draftId, "code-source", { openSendAdapter: factory });
@@ -128,7 +139,7 @@ describe("SendService — gated idempotent send (Phase 3c)", () => {
 
   it("sends a divider-only draft as a rule and a plain divider line", async () => {
     const { ctx, newDraft } = await setup();
-    const draft = prepareOutboundBody("<hr><p></p>");
+    const draft = serializeDraftBody("<hr><p></p>");
     const draftId = await newDraft("draft", { html: draft.html, body: draft.text });
     const { factory, state } = fakeAdapter();
     expect((await svc.send(ctx, draftId, "divider-only", { openSendAdapter: factory })).status).toBe("sent");
@@ -139,7 +150,7 @@ describe("SendService — gated idempotent send (Phase 3c)", () => {
 
   it("delivers heading sizes, a divider and a code block in both MIME parts", async () => {
     const { ctx, newDraft } = await setup();
-    const draft = prepareOutboundBody(
+    const draft = serializeDraftBody(
       '<h1>Release</h1><h2>Install</h2><h3>Notes</h3><hr><pre data-ohmail-code="1"><code>one\n  two</code></pre>',
     );
     const draftId = await newDraft("draft", { html: draft.html, body: draft.text });

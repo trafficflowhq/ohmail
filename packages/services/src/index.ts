@@ -485,3 +485,5 @@ export {
   makeAttachmentStagingPort, resolveStagedAttachments,
   type StagedUploadGrant, type ResolvedStagedAttachment, type StagedResolutionFailure,
 } from "./attachment-staging.js";
+
+export { screenerLearningSettings } from "./screener-learning-settings.js";

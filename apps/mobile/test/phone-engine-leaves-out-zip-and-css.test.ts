@@ -1,8 +1,8 @@
 /**
  * Two libraries leave the phone's engine through `apps/sidecar/src/phone/aliases.js`: the zip
  * archiver (only the download-all routes build an archive, and the phone's app never asks for
- * one) and sanitize-html's CSS parser (reached only for a `style` attribute the policy allows,
- * and the outbound policy allows `a[href]` alone). This file reads both out of the artifact's
+ * one) and sanitize-html's CSS parser (the outbound policy matches complete style values
+ * with parsing disabled). This file reads both out of the artifact's
  * graph, and drives the paths that STAY through a bundle built under the same table: outbound
  * sanitizing, which must answer exactly what the workspace's copy answers, and the attachment
  * byte check the single-attachment download runs.
@@ -91,6 +91,12 @@ describe("on a bundle built under the same table", () => {
         expect(onPhone).not.toMatch(/style=|javascript:|<script/);
       });
     }
+
+    it("keeps the exact saved paragraph and list styles on the phone", () => {
+      const html = '<p style="margin:0">Words</p><ol style="margin-top:0;margin-bottom:0"><li>Item</li></ol>';
+      expect(phone.sanitize(html)).toBe(html);
+      expect(sanitizeOutboundHtml(html)).toBe(html);
+    });
 
     it("the single-attachment byte check serves the row's file and refuses another part", () => {
       const body = new TextEncoder().encode("%PDF-1.4 the row's own file");

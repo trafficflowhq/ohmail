@@ -3,6 +3,7 @@ import { Button } from "@ohmail/ui/base";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import type { ScreenerModel, ScreenerSuggest, ScreenerUnsubscribe } from "./model.js";
+import { LearningControls } from "./LearningControls.js";
 import { SettingDetails } from "./SettingDetails.js";
 import { useWrite, WrittenSwitch } from "./written.js";
 
@@ -12,8 +13,8 @@ import { useWrite, WrittenSwitch } from "./written.js";
  */
 export function SuggestSheet({ model }: { readonly model: ScreenerModel }) {
   const t = useText("settingsScreener");
-  const { suggest, ownSuggest, act, unsubscribe } = model;
-  if (!suggest && !ownSuggest && !act && !unsubscribe) return null;
+  const { suggest, ownSuggest, act, unsubscribe, learning } = model;
+  if (!suggest && !ownSuggest && !act && !unsubscribe && !learning) return null;
   return (
     <SettingsSheet title={t("suggestions")}>
       {suggest ? <AutoSuggest suggest={suggest} /> : null}
@@ -40,6 +41,7 @@ export function SuggestSheet({ model }: { readonly model: ScreenerModel }) {
         </>
       ) : null}
       {unsubscribe ? <UnsubscribeSwitch control={unsubscribe} /> : null}
+      {learning ? <LearningControls learning={learning} /> : null}
     </SettingsSheet>
   );
 }
@@ -94,7 +96,6 @@ function AutoSuggest({ suggest }: { readonly suggest: ScreenerSuggest }) {
     <>
       <SettingLine
         label={said.title}
-        tag={said.cost ? own("creditPerSender") : undefined}
         toggle={{
           on: suggest.on === true,
           onChange: (next) => {

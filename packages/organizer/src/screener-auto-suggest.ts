@@ -1,3 +1,5 @@
+import { SCREENER_WEBINAR_REASON } from "@trafficflow/core/mail";
+import { drainScreenerLearning } from "./screener-learning.js";
 import { and, asc, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
@@ -7,7 +9,7 @@ import {
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, screenerSuggestionExhausted,
   screenerSuggestionRetryDue, recordScreenerSuggestionRetry,
-  decisionCanBeApplied, readAccountSettings, readRequestEligibility, reverseCharge, suggestionConsentGate, ModelConsentWithdrawn,
+  readScreenerLearning, screenerLearningContext, learningSnapshotIsCurrent, screenerTopic, decisionCanBeApplied, readAccountSettings, readRequestEligibility, reverseCharge, suggestionConsentGate, ModelConsentWithdrawn,
   type AccessPort, type AiUsageLine, type RefundObligationPort, type RefundObligationReason, type ReverseChargeFact, type SpendPort,
   type Tx,
 } from "@trafficflow/db";
@@ -15,7 +17,7 @@ import { screenerUsageHook, type UsageHook } from "./ai-usage-line.js";
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import { correspondentsAmong } from "@trafficflow/core/adapters/drizzle-repo";
 import {
-  askScreeningQuestion, capSuggestion, ModelDeclinedError, senderCheckAll, senderFacts,
+  askScreeningQuestion, prepareScreeningQuestion, sendScreeningQuestion, screenerLearnedReason, capSuggestion, ModelDeclinedError, senderCheckAll, senderFacts,
   silentLogger,
   type ClassifierPort, type Logger, type SenderSignals,
 } from "@trafficflow/core/mail";
@@ -140,6 +142,8 @@ export interface ScreenerAutoSuggestDeps {
    * ever; here the same mistake does nothing, which is visible. A test pins both directions.
    */
   unmetered?: true;
+  /** A self-hosted worker can maintain notes with its configured model. */
+  unmeteredLearning?: true;
   /**
    * WHERE A REFUND THIS PASS OWES IS REMEMBERED. Composed beside {@link credits} by any host with
    * an entitlements program; absent on an unmetered one, which owes nothing.
@@ -157,6 +161,7 @@ export interface ScreenerAutoSuggestDeps {
   /** Where this host records usage: each candidate's model call is attributed to the account as
    *  `screener`, and its line rides that candidate's release. Absent ⇒ nothing is recorded. */
   usageHook?: UsageHook;
+  recordRewriteUsage?: (line: AiUsageLine) => void;
   log?: Logger;
   /** Test seam. Default {@link AUTO_SUGGEST_BATCH}. */
   batch?: number;
@@ -218,6 +223,11 @@ export async function screenerAutoSuggestPass(
   const log = deps.log ?? silentLogger;
   const batch = deps.batch ?? AUTO_SUGGEST_BATCH;
   const { accountId, classifier, credits: gate } = deps;
+  const rewriteCall = deps.usageHook && deps.recordRewriteUsage
+    ? screenerUsageHook(deps.usageHook, accountId, deps.recordRewriteUsage) : undefined;
+  if (deps.access || deps.unmetered || deps.unmeteredLearning) {
+    await drainScreenerLearning(db, accountId, classifier, deps.now, deps.access, rewriteCall);
+  }
 
   // MODEL AND METER FIRST, BEFORE THE OPT-IN IS EVEN READ. Neither is a refusal to report: a host
   // with no classifier does not sell this, and a pass with no gate must not spend. Checking them
@@ -327,7 +337,7 @@ export async function screenerAutoSuggestPass(
     let claimed = false;
     let released = false;
     /** This candidate's model call, once made, for the one release to carry. */
-    let usageLine: AiUsageLine | undefined;
+    const usageLines: AiUsageLine[] = [];
     /**
      * Give the claim back, once; reverse the charge only when told to — through `reverseCharge`,
      * the pressed Screener's and the drafting route's door. The debt is written before the
@@ -339,7 +349,7 @@ export async function screenerAutoSuggestPass(
       if (!gate || !claimed || released) return;
       released = true;
       const meta = { messageId: c.messageId };
-      const usage = usageLine ? { usage: [usageLine] } : {};
+      const usage = usageLines.length ? { usage: usageLines } : {};
       if (reason === null || chargedAttempt === undefined) {
         await gate.release(accountId, { action: "screener", attemptKey, refund: false, meta, ...usage });
         return;
@@ -350,9 +360,24 @@ export async function screenerAutoSuggestPass(
       }, (f) => sayAutoRefund(log, f, accountId, c.messageId, attempt));
       if (countedCharge && receipt === "settled") result.chargedAttempts--;
     };
+    const learned = await readScreenerLearning(db, { accountId, mailboxId: c.mailboxId }, now);
+    const facts = senderFacts(checked);
+    const letter = {
+      fromAddress: c.fromAddress, subject: c.subject, snippet: c.snippet,
+      ...(deps.ohboxBar ? { ohboxBar: deps.ohboxBar } : {}),
+      ...(facts ? { senderFacts: facts } : {}),
+    };
+    const input = prepareScreeningQuestion({ ...letter, ...screenerLearningContext(learned) });
+    if (!input) {
+      declines.remember(accountId, c.messageId, now.getTime() + DECLINE_COOLDOWN_MS);
+      continue;
+    }
+    const personalized = Boolean(input.learnedWords || input.recentCorrections);
     try {
       if (gate) {
-        const outcome = await gate.spend(accountId, "screener", attemptKey, { messageId: c.messageId });
+        const outcome = await gate.spend(accountId, "screener", attemptKey, {
+          messageId: c.messageId, ...(personalized ? { learning: true } : {}),
+        });
         // SOMEBODY IS ALREADY BUYING THIS ONE: SKIP THE CANDIDATE, NOT THE PASS. `continue`, where every
         // other refusal `break`s — the others are properties of the ACCOUNT (empty balance, a subscription
         // that may not spend, an unwell ledger), so every remaining candidate would refuse the same way and
@@ -382,8 +407,19 @@ export async function screenerAutoSuggestPass(
         claimed = true;
         // Recorded, not yet counted: `result.chargedAttempts` moves below, once this candidate is past
         // the entitlement re-check, because a charge that is handed straight back moved nothing.
-        if (outcome.verdict === "ok") chargedAttempt = outcome.attempt;
-        else previousAttempt = outcome.attempt;
+        if (outcome.verdict === "ok") {
+          chargedAttempt = outcome.attempt;
+          if (personalized && outcome.chargedCredits !== 1 && outcome.chargedCredits !== 2) {
+            result.stopped = "spend_unavailable";
+            break;
+          }
+        } else {
+          previousAttempt = outcome.attempt;
+          if (personalized && outcome.chargedCredits !== 0) {
+            result.stopped = "spend_unavailable";
+            break;
+          }
+        }
       }
 
       // THE ORGANIZER, RE-ASKED INSIDE THE EXCLUSIVE REGION. The filter above ran once for the
@@ -427,19 +463,27 @@ export async function screenerAutoSuggestPass(
       // the account paid twice for one message. Attempts, not credits: the program prices them.
       countedCharge = chargedAttempt !== undefined;
       if (countedCharge) result.chargedAttempts++;
+      const beforeDispatch = async () => {
+        await consent.beforeDispatch();
+        if (personalized && !(await learningSnapshotIsCurrent(db, { accountId, mailboxId: c.mailboxId }, learned, deps.now?.() ?? new Date()))) {
+          throw new ModelConsentWithdrawn();
+        }
+      };
       let verdict;
+      let filing: ReturnType<typeof capSuggestion> | undefined;
       try {
-        const facts = senderFacts(checked);
-        verdict = await askScreeningQuestion(classifier, {
-          fromAddress: c.fromAddress,
-          subject: c.subject,
-          snippet: c.snippet,
-          ...(deps.ohboxBar ? { ohboxBar: deps.ohboxBar } : {}),
-          ...(facts ? { senderFacts: facts } : {}),
-        }, {
-          beforeDispatch: consent.beforeDispatch,
-          ...(deps.usageHook ? screenerUsageHook(deps.usageHook, accountId, (line) => { usageLine = line; }) : {}),
-        });
+        const call = {
+          beforeDispatch,
+          ...(deps.usageHook ? screenerUsageHook(deps.usageHook, accountId, (line) => { usageLines.push(line); }) : {}),
+        };
+        verdict = await sendScreeningQuestion(classifier, input, call);
+        if (personalized && settings.screenerAutoActAt) {
+          try {
+            filing = capSuggestion(await askScreeningQuestion(classifier, letter, { ...call, beforeDispatch: consent.beforeDispatch }), checked);
+          } catch {
+            // The personalized answer is already bought. Automatic filing can wait for ordinary advice.
+          }
+        }
       } catch (err) {
         if (err instanceof ModelConsentWithdrawn) break;
         if (err instanceof ModelDeclinedError) {
@@ -471,15 +515,20 @@ export async function screenerAutoSuggestPass(
           from: capped.destination === verdict.destination ? undefined : verdict.destination,
         });
       }
+      const reason = personalized && !capped.reasonCode
+        ? screenerLearnedReason(input.learnedWords ?? "", verdict.topic ?? screenerTopic(c.subject), capped.destination) : undefined;
       await storeScreenerSuggestion(db, {
         accountId,
         messageId: c.messageId,
         destination: capped.destination,
         confidence: capped.confidence,
-        rationale: capped.rationale,
+        rationale: reason ? SCREENER_WEBINAR_REASON
+          : capped.rationale === SCREENER_WEBINAR_REASON ? "" : capped.rationale,
         spam: capped.spam,
         // Which fact capped it: the act writes no rule on the address from the crowd's cap.
-        senderReason: capped.reasonCode ?? "none",
+        senderReason: capped.reasonCode ?? "none", personalized,
+        ...(verdict.topic ? { topic: verdict.topic } : {}),
+        ...(filing ? { filing: { ...filing, senderReason: filing.reasonCode ?? "none" } } : {}),
       });
       refundOnRelease = null;
       result.bought++;

@@ -5,7 +5,7 @@ import {
   assertOrganizerRole,
   mailboxes, mailboxFolders, messages, messageInstances, folderState, messageBodies, messageStates, claimIdempotencyKey,
   recordChange, recordChanges, recordRouteOverride, demoteRoute, routeOverrideActionId,
-  senderPatternFromAddress,
+  senderPatternFromAddress, reviseScreenerMessage,
   upsertDesiredSeen, upsertDesiredSeenMany, ringFilingDoorbell,
   decisionInstant, placementDecidedAfter, readDecidedAfter, goneEverywhereWhere,
   folderMoveNameError, validateFolderMovePayload, resolveFolderDestination, carryBinding,
@@ -1491,6 +1491,10 @@ export class MessageService {
         },
       );
       if (override?.demoted) owedDemotion = override.patternKey;
+      if (desired && desired !== folder && body.pressRule !== true && !opts.putBackAutoFiling) {
+        await reviseScreenerMessage(bridgeTx(tx), { accountId: ctx.accountId, mailboxId: msg.mailboxId }, id, ctx.now(),
+          folder === "ohmail/Screener" ? undefined : { previous: desired, chosen: folder, actionId: String(seqBig) });
+      }
       // Re-filing spends the resurface (see `spendResurface`) — BEFORE the materialize below,
       // so the DTO this route answers (and stores for idempotent replay) already says `none`.
       const spent = await this.spendResurface(tx, ctx, [id]);

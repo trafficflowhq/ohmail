@@ -67,6 +67,7 @@ export type MessageAct =
   | {
       kind: "screener_decide";
       senderId: string;
+      shownSuggestionId?: string;
       decision: "yes" | "no";
       /**
        * Which of the five the user pressed — and it is now on the wire:

@@ -2,7 +2,7 @@ import { chromium, type Browser, type Locator } from "@playwright/test";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { build } from "esbuild";
-import { prepareOutboundDelivery } from "../packages/services/src/outbound-html.js";
+import { prepareOutboundDelivery, serializeDraftBody } from "../packages/services/src/outbound-html.js";
 
 const labels = [
   "Quartz begins",
@@ -163,7 +163,10 @@ function measure(root: Locator) {
       async (width) => {
         const page = await browser.newPage({ viewport: { width, height: 900 } });
         try {
-          await page.exposeFunction("deliverLetter", prepareOutboundDelivery);
+          await page.exposeFunction("deliverLetter", (html: string) => {
+            const saved = serializeDraftBody(html);
+            return prepareOutboundDelivery(saved.html, saved.text);
+          });
           await page.route("http://letter.invalid/**", (route) =>
             route.fulfill({ contentType: "text/html", body: html }),
           );

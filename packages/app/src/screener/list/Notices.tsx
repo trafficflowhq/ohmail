@@ -1,11 +1,72 @@
 /** The Screener notices that need attention on Waiting. */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ScreenerView } from "@ohmail/app-logic/screener";
 import { NoticeSlot, type NoticeAct, type SlotNotice } from "@ohmail/ui/base";
 import { useFrame } from "../../frame/commands.js";
+import { useScreenerLearningSettings } from "../../settings/screener/useLearningSettings.js";
 import { useText } from "../../text/index.js";
 import { Claimed } from "../asks/Claimed.js";
 import { useScreener, useScreenerBeside } from "../contract.js";
+
+function useLearningNotice(waiting: boolean): SlotNotice | null {
+  const learning = useScreenerLearningSettings();
+  const t = useText("settingsScreener");
+  const { commands } = useFrame();
+  const read = learning?.read;
+  const key = learning?.mailboxes.map((box) => box.id).join(",") ?? "";
+  const [pending, setPending] = useState<{ read: typeof read; key: string; ids: string[] }>();
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!waiting || !read || !key) return;
+    let active = true;
+    const ids = key.split(",");
+    void Promise.allSettled(ids.map((id) => read(id))).then((results) => {
+      if (!active) return;
+      const first = results.flatMap((result, index) =>
+        result.status === "fulfilled" && result.value.enabled && result.value.aiEnabled && result.value.notice
+          ? [ids[index]!]
+          : [],
+      );
+      setPending({ read, key, ids: first });
+    });
+    return () => {
+      active = false;
+    };
+  }, [waiting, key, read]);
+
+  if (!learning || !pending || pending.read !== read || pending.key !== key || !pending.ids.length)
+    return null;
+  return {
+    id: "screener-learning",
+    rank: 4,
+    title: t("learning.description").replace(/\.$/, ""),
+    ...(learning.metered ? { line: t("learning.price") } : {}),
+    acts: [
+      { label: t("learning.settings"), onPress: () => commands.go({ place: "settings", sub: "screener" }) },
+      {
+        label: t("learning.ok"),
+        busy,
+        onPress: () => {
+          if (busy) return;
+          setBusy(true);
+          void Promise.allSettled(pending.ids.map((id) => learning.change(id, { kind: "notice" }))).then(
+            (results) => {
+              setPending((current) =>
+                current === pending
+                  ? {
+                      ...pending,
+                      ids: pending.ids.filter((_, index) => results[index]?.status !== "fulfilled"),
+                    }
+                  : current,
+              );
+              setBusy(false);
+            },
+          );
+        },
+      },
+    ],
+  };
+}
 
 export function Notices({ view }: { view: ScreenerView }) {
   const t = useText("screener");
@@ -15,6 +76,7 @@ export function Notices({ view }: { view: ScreenerView }) {
   const { commands } = useFrame();
   const [front, setFront] = useState<string | undefined>(undefined);
   const [open, setOpen] = useState(false);
+  const learning = useLearningNotice(view.segment === "waiting");
   if (view.segment !== "waiting") return null;
   const notices: SlotNotice[] = [];
   if (role.oauthOnly) {
@@ -79,6 +141,7 @@ export function Notices({ view }: { view: ScreenerView }) {
       ],
     });
   }
+  if (learning) notices.push(learning);
   if (notices.length === 0) return null;
   return (
     <>

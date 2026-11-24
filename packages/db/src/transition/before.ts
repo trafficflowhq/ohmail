@@ -55,7 +55,7 @@ export async function writeLists(tx: Executor, kind: StoreKind, names: EntryName
  */
 export async function expectedCounts(tx: Executor, kind: StoreKind, standing: ReadonlySet<string>): Promise<Map<string, number>> {
   const expected = new Map<string, number>();
-  for (const name of tablesOf(kind)) {
+  for (const name of tablesOf(kind, "window")) {
     const t = MAP_2_0[name]!;
     if (t.rows === "empty") expected.set(name, 0);
     else if (t.rows !== "same") expected.set(name, Number((await one<{ count: string }>(tx, sql.raw(t.rows.sql))).count));

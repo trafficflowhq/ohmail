@@ -14,7 +14,7 @@
 import type { OlderBodyWire } from "@ohmail/client-engine";
 import type { ScreenerAcknowledgement } from "@ohmail/app-logic/consent";
 import type { CalendarPort } from "@ohmail/app-logic/calendar/port";
-import type { DraftFromTextBody } from "@ohmail/wire";
+import type { DraftFromTextBody, ScreenerLearningEdit, ScreenerLearningView } from "@ohmail/wire";
 import type {
   Answered, CodeCeremony, Connected, ConnectInput, ConnectPatch, ConnectProbed, ConnectPurposeKind, MailboxId,
   Secret, SignInProvider, SignInReturn, SignInWays,
@@ -180,6 +180,8 @@ export interface FirstRunWire {
 
 /** What reaches the Ohbox, the bar's words, filing impersonations to Spam. No input today. */
 export interface ScreeningWire {
+  readLearning?(mailboxId: string): Promise<ScreenerLearningView>;
+  changeLearning?(mailboxId: string, edit: ScreenerLearningEdit): Promise<ScreenerLearningView>;
   read(): Promise<ScreeningPreference>;
   change(next: ScreeningChange): Promise<ScreeningPreference>;
 }

@@ -178,7 +178,7 @@ export async function refusal(tx: Executor, kind: StoreKind, names: EntryNames, 
   const there = new Set(rowsOf<{ name: string }>(await tx.execute(sql`
     select m.table_name as name from pg_temp.ohmail_transition_map m where to_regclass('public.' || quote_ident(m.table_name)) is not null`)).map((r) => r.name));
   for (const [name, t] of Object.entries(MAP_2_0)) {
-    if (t.journal !== "desktop" && holds(kind, t.journal) && !made.has(name) && !there.has(name)) add(`a table of 1.0.11 is missing: ${name}`);
+    if (!t.afterWindow && t.journal !== "desktop" && holds(kind, t.journal) && !made.has(name) && !there.has(name)) add(`a table of 1.0.11 is missing: ${name}`);
   }
 
   // The names are the entries' own, from the map: they are said as they are.

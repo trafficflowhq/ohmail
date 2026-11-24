@@ -9,6 +9,10 @@
  * shows. In `core` because both generated-draft writers live in different packages.
  */
 
+/** Inline code-block presentation shared by the draft serializer and editor. */
+export const AUTHORED_CODE_STYLE =
+  "font-family:monospace;font-size:0.9em;color:#12100e;background-color:#f0ebe3;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;padding:8px 12px";
+
 /** A draft-only editor boundary for a quote the sender changed. */
 export const QUOTED_HISTORY_ATTRIBUTE = "data-quoted-history";
 

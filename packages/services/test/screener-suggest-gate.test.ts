@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 import { randomUUID } from "node:crypto";
-import { accounts, routingDecisions, type LedgerTx, type Tx } from "@trafficflow/db";
+import { accounts, changeScreenerLearning, readScreenerLearning, routingDecisions, updateScreenerLearning, type LedgerTx, type Tx } from "@trafficflow/db";
 import { CLASSIFY_DESTINATIONS } from "@trafficflow/core/mail";
 import type { ClassifierPort, ClassifierInput, ClassifierResult, Destination } from "@trafficflow/core";
-import { ScreenerService, setScreeningPreference } from "../src/index.js";
+import { ScreenerService, screenerLearningSettings, setScreeningPreference } from "../src/index.js";
 import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 import { eq } from "drizzle-orm";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
@@ -156,7 +156,7 @@ describe("the reported case — a cold sales pitch under the account holder's ow
     const w = await billable();
     await seedMessage(w.db, w.accountId, w.mailboxId, { from: "b@meetorbitprism.example" });
     const svc = service(w, new Stub(REPORTED));
-    await svc.suggest(w.ctx, { senders: ["b@meetorbitprism.example"] });
+    const bought = await svc.suggest(w.ctx, { senders: ["b@meetorbitprism.example"] });
 
     const page = await svc.list(w.ctx, {});
     expect(page.items[0]!.aiSuggestion).toEqual({
@@ -164,7 +164,7 @@ describe("the reported case — a cold sales pitch under the account holder's ow
       // which pile the model named, and this row is the case where the two disagree usefully —
       // the label IS the gate, so the decision is `hold` and the destination says why.
       decision: "hold", destination: "ohmail/Screener", spam: false,
-      confidence: 0.92, rationale: REPORTED.rationale,
+      confidence: 0.92, rationale: REPORTED.rationale, id: bought.suggestions[0]?.id,
     });
   });
 });
@@ -412,4 +412,99 @@ describe("remainingCredits — the balance the run left behind", () => {
     expect(res.charged).toBe(1);
     expect("remainingCredits" in res, "a failed read was reported as an empty balance").toBe(false);
   });
+});
+
+it("prices and charges learning only when the mailbox contributes context", async () => {
+  const w = await billable();
+  const { ctx, accountId, mailboxId } = w;
+  await changeScreenerLearning(w.db, w, { kind: "notice" }, NOW);
+  const base = "cold@fixture.test";
+  await seedMessage(w.db, accountId, mailboxId, { from: base });
+  const quoteCalls: number[] = [];
+  const classifier = new Stub({ destination: "ohmail/Screened", confidence: 0.9, spam: false,
+    rationale: "A webinar", topic: "webinar" });
+  const svc = new ScreenerService({
+    classifier, adapter: new FakeAdapter(), credits: w.gate,
+    pricing: { ...PLANE_PRICING, async quoteScreenerLearning(_accountId, count) {
+      quoteCalls.push(count);
+      return count + Math.floor(count / 2);
+    } },
+  });
+  const cold = await svc.suggest(ctx, { senders: [base], dryRun: true });
+  expect(cold.quotedCredits).toBe(1);
+  expect(cold.quoteGrant?.pairs[0]?.learning).toBeUndefined();
+  expect((await svc.suggest(ctx, { senders: [base] })).charged).toBe(1);
+  expect(w.gate.spends[0]?.meta?.learning).toBeUndefined();
+  expect(quoteCalls).toEqual([]);
+
+  for (const sender of ["one@fixture.test", "two@fixture.test"]) {
+    await seedMessage(w.db, accountId, mailboxId, { from: sender, subject: sender.startsWith("one") ? "An upcoming gathering" : "A video session" });
+  }
+  await updateScreenerLearning(w.db, w, state => ({ ...state, text: "Screen out webinar invitations." }));
+  const senders = ["one@fixture.test", "two@fixture.test"];
+  const warm = await svc.suggest(ctx, { senders, dryRun: true });
+  expect(warm.quotedCredits).toBe(3);
+  expect(warm.quoteGrant?.pairs.map(pair => pair.learning)).toEqual([true, true]);
+  w.gate.answerOnce({ verdict: "ok", charged: true, attempt: "11", chargedCredits: 1 });
+  w.gate.answerOnce({ verdict: "ok", charged: true, attempt: "12", chargedCredits: 2 });
+  const bought = await svc.suggest(ctx, { senders, maxCredits: warm.quotedCredits, quoteGrant: warm.quoteGrant?.proof });
+  expect(bought.charged).toBe(3);
+  expect(quoteCalls).toEqual([2, 2]);
+  expect(w.gate.spends.slice(1).map(spend => spend.meta?.learning)).toEqual([true, true]);
+  expect(bought.suggestions).toHaveLength(2);
+  expect(bought.suggestions[0]).toMatchObject({ learnedReason: "webinar", rationale: "" });
+  const first = bought.suggestions[0]!;
+  await svc.decide(ctx, first.messageId, { decision: "yes", shownSuggestionId: first.id });
+  const [lesson] = (await readScreenerLearning(w.db, w, NOW))!.lessons;
+  expect(lesson).toMatchObject({ kind: "correction", topic: "webinar" });
+  const remaining = bought.suggestions[1]!.id!;
+  for (const edit of [{ kind: "forget", id: lesson!.id }, { kind: "reset" }, { kind: "enable", enabled: false }]) {
+    await screenerLearningSettings(ctx, mailboxId, edit);
+    expect(await w.db.select({ id: routingDecisions.id }).from(routingDecisions)
+      .where(eq(routingDecisions.id, remaining))).toEqual([{ id: remaining }]);
+  }
+});
+
+it("keeps suggestions in progress during a learning update and refunds the provider's two-credit debit", async () => {
+  const w = await billable();
+  await changeScreenerLearning(w.db, w, { kind: "notice" }, NOW);
+  await updateScreenerLearning(w.db, w, state => ({ ...state, text: "Keep receipts." }));
+  const senders = ["first@fixture.test", "second@fixture.test"];
+  for (const sender of senders) await seedMessage(w.db, w.accountId, w.mailboxId, { from: sender });
+  w.gate.answer({ verdict: "ok", charged: true, attempt: "2", chargedCredits: 2 });
+  w.gate.answerOnce({ verdict: "ok", charged: true, attempt: "1", chargedCredits: 1 });
+  const classify: ClassifierPort["classify"] = async input => {
+    expect(input.learnedWords).toBe("Keep receipts.");
+    if (input.from.address === senders[1]) throw new Error("Synthetic provider failure");
+    await updateScreenerLearning(w.db, w, state => ({ ...state, text: "Keep invoices.", revision: state.revision + 1 }));
+    return { destination: "ohmail/Receipts", confidence: 0.9, rationale: "Receipt", spam: false, topic: "other" };
+  };
+  const svc = new ScreenerService({ classifier: { classify }, adapter: new FakeAdapter(), credits: w.gate,
+    pricing: { ...PLANE_PRICING, quoteScreenerLearning: async () => 3 } });
+  const bought = await svc.suggest(w.ctx, { senders });
+  expect(bought.suggestions.map(s => s.sender)).toEqual([senders[0]]);
+  expect(bought.charged).toBe(1);
+  expect(w.gate.releases.filter(r => r.refund).map(r => r.attempt)).toEqual(["2"]);
+  const first = bought.suggestions[0]!;
+  await svc.decide(w.ctx, first.messageId, { decision: "yes", shownSuggestionId: first.id });
+  expect((await readScreenerLearning(w.db, w, NOW))!.lessons[0]).toMatchObject({ kind: "correction", topic: "other" });
+});
+
+it("quotes and charges one credit when the learned context would exceed the prompt budget", async () => {
+  const w = await billable();
+  const from = "long@fixture.test";
+  await seedMessage(w.db, w.accountId, w.mailboxId, { from, subject: "界".repeat(1_750) });
+  await updateScreenerLearning(w.db, w, state => ({ ...state, notice: false, text: "界".repeat(680) }));
+  const classifier = new Stub({ destination: "ohmail/News", confidence: 0.9, spam: false, rationale: "" });
+  const svc = new ScreenerService({
+    classifier, adapter: new FakeAdapter(), credits: w.gate, pricing: PLANE_PRICING,
+  });
+  const dryRun = await svc.suggest(w.ctx, { senders: [from], dryRun: true });
+  expect(dryRun.quotedCredits).toBe(1);
+  expect(dryRun.quoteGrant?.pairs[0]?.learning).toBeUndefined();
+  const bought = await svc.suggest(w.ctx, { senders: [from], maxCredits: 1, quoteGrant: dryRun.quoteGrant?.proof });
+  expect(bought).toMatchObject({ charged: 1, suggestions: [expect.any(Object)] });
+  expect(classifier.seen[0]).not.toHaveProperty("learnedWords");
+  expect(w.gate.spends[0]?.meta?.learning).toBeUndefined();
+  expect(w.gate.releases.some(release => release.refund)).toBe(false);
 });

@@ -170,8 +170,10 @@ function frameTextAt(
   const frame = letter.querySelector<HTMLIFrameElement>("iframe.mb-frame");
   const doc = frame?.contentDocument;
   if (!frame || !doc || (!doc.caretRangeFromPoint && !doc.caretPositionFromPoint)) return null;
-  const bounds = frame.getBoundingClientRect();
-  const offset = bounds.top - scroller.getBoundingClientRect().top;
+  // The frame document has its own viewport. Convert the outer boxes to the CSS pixels
+  // used by the scroller and the frame document before finding the caret.
+  const bounds = cssRect(frame);
+  const offset = bounds.top - cssRect(scroller).top;
   const start = line - offset;
   if (start < 0 || start >= bounds.height) return null;
   const x = Math.min(bounds.width, doc.documentElement.clientWidth) / 2;
@@ -219,11 +221,7 @@ function textLanding(scroller: HTMLElement, letter: HTMLElement, anchor: Reading
   const rect = range.getBoundingClientRect();
   if (rect.height === 0) return null;
   return {
-    top:
-      frame.getBoundingClientRect().top +
-      rect.top -
-      scroller.getBoundingClientRect().top +
-      scroller.scrollTop,
+    top: cssRect(frame).top + rect.top - cssRect(scroller).top + scroller.scrollTop,
     offset: text.offset,
   };
 }

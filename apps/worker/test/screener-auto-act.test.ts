@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accountSettings, accounts, folderState, mailboxes, messageInstances, messages, routingDecisions, rules,
-  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
+  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, storeScreenerSuggestion, type Tx,
 } from "@trafficflow/db";
 import { applyScreenerDecision, changeLog, contacts, learningSignals, listAddresses } from "@trafficflow/db";
 import { CAP_CONFIDENCE, createLogger } from "@trafficflow/core/mail";
@@ -123,6 +123,25 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
   };
   const rulesFor = async (w: World, match: string) => db.select().from(rules)
     .where(and(eq(rules.accountId, w.accountId), eq(rules.match, match)));
+
+  it("does not file on learned advice and can still use the ordinary verdict", async () => {
+    const w = await newWorld();
+    await settingsRow(w);
+    const messageId = await held(w, "learned@fixture.test");
+    const advice = {
+      accountId: w.accountId, messageId, destination: SPAM, confidence: 0.98,
+      rationale: "", spam: true, senderReason: "none", personalized: true,
+    };
+    await storeScreenerSuggestion(db, advice);
+    const run = () => screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+    expect((await run()).filed).toBe(0);
+    expect(await desiredOf(messageId)).toBe(SCREENER);
+    await storeScreenerSuggestion(db, { ...advice, filing: {
+      destination: "ohmail/Screened", confidence: 0.98, rationale: "", spam: false, senderReason: "none",
+    } });
+    expect((await run()).filed).toBe(1);
+    expect(await desiredOf(messageId)).toBe("ohmail/Screened");
+  });
 
   // ══════════════════════════════════════════════════════════════════════════════════════════
   //  (a) THE SETTING DECIDES — the same sender, the same suggestion, both answers
@@ -348,6 +367,26 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
     expect(await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN })).toMatchObject({ filed: 1 });
     expect(await row()).toEqual({ at: null, why: null });
+  });
+
+  it("records an ordinary filing refusal on the personalized suggestion the person sees", async () => {
+    const w = await newWorld();
+    await settingsRow(w);
+    const waiting = await held(w, "refused@fixture.test");
+    const id = await storeScreenerSuggestion(db, {
+      accountId: w.accountId, messageId: waiting, destination: "INBOX", confidence: 0.95,
+      rationale: "", spam: false, senderReason: "none", personalized: true,
+      filing: { destination: SPAM, confidence: 0.95, rationale: "", spam: true, senderReason: "none" },
+    });
+    const faulty = repoWithFailingMethod(db, "insert", () => { throw new Error("injected store fault"); },
+      { times: 1, sync: true });
+    const refusal = async () => (await db.select({ why: routingDecisions.actRefusal })
+      .from(routingDecisions).where(eq(routingDecisions.id, id)))[0]?.why;
+    expect(await screenerAutoActPass(faulty, { accountId: w.accountId, consent: GIVEN }))
+      .toMatchObject({ filed: 0, failed: 1 });
+    expect(await refusal()).toBe("store_fault");
+    expect(await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN })).toMatchObject({ filed: 1 });
+    expect(await refusal()).toBeNull();
   });
 
   // The tail's clock: a pass whose clock has run files the one sender it started and stops,
