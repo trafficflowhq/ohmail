@@ -1,6 +1,13 @@
 import { NONE } from "../host/index.js";
 import { useLayoutEffect } from "react";
-import type { CalendarEventRecord, CalendarPort } from "@ohmail/app-logic/calendar";
+import {
+  pressAndHear,
+  sentenceOf,
+  type CalendarAct,
+  type CalendarEventRecord,
+  type CalendarPort,
+  type CalendarVerdict,
+} from "@ohmail/app-logic/calendar";
 import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
 import { useFrame, useReport } from "../frame/commands.js";
 import type { Route } from "../frame/contract.js";
@@ -22,16 +29,18 @@ export function useDiscardReport(port: CalendarPort) {
   const t = useText("calendar");
   const report = useReport();
   const address = host.device.address;
-  return (data: Recovery) => {
+  return (data: Recovery, notice?: { text: string; action: string; beforeRestore?: () => void }) => {
     const target: Route = route;
     const fragment = fragmentOf(target);
-    const deadline = Date.now() + UNDO_MS;
-    report(t("draft.discarded"), {
-      action: t("draft.undo"),
+    const deadline = notice ? Number.MAX_SAFE_INTEGER : Date.now() + UNDO_MS;
+    report(notice?.text ?? t("draft.discarded"), {
+      action: notice?.action ?? t("draft.undo"),
       actionDeadline: deadline,
       retainUndo: true,
+      actionUntilPressed: notice !== undefined,
       onAction: () => {
         if (Date.now() >= deadline) return;
+        notice?.beforeRestore?.();
         const recovery = { data, port, fragment, engine: host.engine };
         pending.set(address, recovery);
         if (address.read() === fragment) listeners.get(address)?.();
@@ -42,6 +51,25 @@ export function useDiscardReport(port: CalendarPort) {
       },
     });
   };
+}
+
+export function useRefusedDraft(port: CalendarPort) {
+  const recover = useDiscardReport(port);
+  const t = useText("calendar");
+  const e = useText("event");
+  const report = useReport();
+  return (data: Recovery, act: CalendarAct, verdict: CalendarVerdict, writeId?: string) =>
+    recover(data, {
+      text: e(sentenceOf(act, verdict) ?? "refusal.unknown"),
+      action: t("draft.reopen"),
+      beforeRestore: writeId
+        ? () => {
+            void pressAndHear(port, { kind: "calendar_write_dismiss", writeId }).catch(() =>
+              report(e("refusal.unknown")),
+            );
+          }
+        : undefined,
+    });
 }
 
 export function useDraftRestore<K extends Recovery["kind"]>(

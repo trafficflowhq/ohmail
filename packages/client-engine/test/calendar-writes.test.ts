@@ -106,6 +106,28 @@ describe("an answer to one day of a series", () => {
     expect(shown).toMatchObject({ record: { myAnswer: "none" }, waiting: null, refusal: null, refusedWriteId: null });
     expect(shown!.answers).toEqual([{ at, answer: null, waiting: null, refusal: "version_stale", refusedWriteId: "w-5" }]);
   });
+
+  it("keeps a queued edit on its own day while another day's answer waits at the provider", () => {
+    const editAt = String(Date.UTC(2026, 10, 18, 9));
+    const edit: CalendarEventAct = {
+      kind: "calendar_event_update",
+      eventId: series.id,
+      base: BASE,
+      scope: { kind: "occurrence", at: editAt },
+      change: { title: "One firing" },
+    };
+    const [shown] = eventsWithWrites(
+      [{ ...series, writes: [mark(answer)] }],
+      [{ key: "k-2", act: edit }],
+    );
+    expect(shown).toMatchObject({
+      record: { title: series.title, myAnswer: "none" },
+      waiting: null,
+      refusal: null,
+      answers: [{ at, answer: "accepted", waiting: "provider" }],
+      occurrenceEdits: [{ at: editAt, change: { title: "One firing" }, waiting: "device" }],
+    });
+  });
 });
 
 describe("the selector", () => {
@@ -607,4 +629,29 @@ it("holds a proposal for Undo and sends it without overlaying or writing the eve
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("shows a pressed event while the local write is still being saved and rolls it back if saving fails", async () => {
+  const store = new MemoryMirrorStore();
+  await store.load();
+  let rejectWrite!: (reason: Error) => void;
+  vi.spyOn(store, "commitLocal").mockImplementationOnce(
+    () => new Promise((_, reject) => { rejectWrite = reject; }),
+  );
+  const { t, asked } = transport(async (act, key) => echo(record(act.eventId), key));
+  const q = new CalendarWriteQueue(store, t, { uuid: () => "write-key", now: () => 1 });
+  const act = create("instant");
+  if (act.kind !== "calendar_event_create") throw new Error("Expected creation");
+  const saving = q.press({ ...act, event: { ...act.event, repeat: "FREQ=DAILY;COUNT=3" } });
+  try {
+    expect(q.events()).toMatchObject([{
+      record: { id: "instant", repeat: { rules: ["FREQ=DAILY;COUNT=3"] } },
+      waiting: "device",
+    }]);
+    expect(asked).toEqual([]);
+  } finally {
+    rejectWrite(new Error("The local write was refused"));
+    await expect(saving).rejects.toThrow("The local write was refused");
+  }
+  expect(q.events()).toEqual([]);
 });

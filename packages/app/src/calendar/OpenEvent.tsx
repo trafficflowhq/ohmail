@@ -95,7 +95,8 @@ function rowsOf(
     });
   }
   if (calendar?.access === "busy" || !stored) return rows;
-  rows.push(...eventDetails(stored.record, own, t, locale));
+  const confirmed = host.engine.store.get<CalendarEventRecord>("calendar_event", stored.record.id);
+  rows.push(...eventDetails(stored.record, confirmed, own, t, locale));
   return rows;
 }
 interface OpenEventProps {
@@ -184,7 +185,7 @@ function OpenEventCard({
           beforeRestore={beforeRestore}
           port={editing.port}
           actionItems={items}
-          provider={current.connection?.provider}
+          connection={current.connection}
           original={editing.record}
           exception={editing.exception}
           allowed={allowed}

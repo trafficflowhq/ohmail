@@ -159,6 +159,8 @@ function PickedDay({ input, acts }: { input: RangeInput; acts: RangeActs }) {
                 key={r.key}
                 mark={{ kind: "calendar", tone: r.item.tone }}
                 title={r.item.title}
+                recordId={r.item.ref.event}
+                saving={!!r.item.status && !r.item.status.failed}
                 time={words}
                 second={[r.item.second, ...r.item.people].filter(Boolean).join(" · ") || undefined}
                 now={now}
@@ -253,6 +255,8 @@ function GridMonth({
           size="line"
           run
           title={p.item.title}
+          recordId={p.item.ref.event}
+          saving={!!p.item.status && !p.item.status.failed}
           tone={p.item.tone}
           state={p.item.state === "plain" ? undefined : p.item.state}
           open={p.key === input.open}
@@ -290,6 +294,8 @@ function GridMonth({
               key={p.key}
               size="line"
               title={p.item.title}
+              recordId={p.item.ref.event}
+              saving={!!p.item.status && !p.item.status.failed}
               time={time}
               tone={p.item.tone}
               state={p.item.state === "plain" ? undefined : p.item.state}

@@ -6890,6 +6890,25 @@
   },
   "calendar": {
     "connect": "Connect a calendar",
+    "repeat": {
+      "unavailable": "This calendar cannot repeat events yet.",
+      "everyDay": "Every day",
+      "none": "Does not repeat",
+      "custom": "Custom…",
+      "every": "Every",
+      "DAILY": "{count, plural, one {day} other {days}}",
+      "WEEKLY": "{count, plural, one {week} other {weeks}}",
+      "MONTHLY": "{count, plural, one {month} other {months}}",
+      "YEARLY": "{count, plural, one {year} other {years}}",
+      "ends": "Ends",
+      "never": "Never",
+      "onDate": "On date",
+      "after": "After",
+      "times": "Occurrences",
+      "done": "Done",
+      "unsupported": "This calendar cannot keep this repeat rule.",
+      "startDay": "Choose a repeat that includes the event’s start date."
+    },
     "actions": {
       "openLetter": "Open the letter",
       "resizeTimeStart": "Resize start",
@@ -6904,7 +6923,6 @@
       "removeFromCalendar": "Remove from my calendar",
       "removeScope": "Remove {title}",
       "answerScope": "Answer {title}",
-      "changeAnswer": "Change your answer to {answer}",
       "delete": "Delete",
       "moveTo": "Move to",
       "hideCalendar": "Hide this calendar",
@@ -6925,16 +6943,18 @@
         "count": "{frequency}, {count, plural, one {once} other {# times}}",
         "until": "{frequency}, until {date}",
         "rule": "Repeat rule {rule}",
-        "weekdays": "Every weekday",
+        "weekdays": "Every weekday (Mon–Fri)",
         "ordinal": "{order, select, first {first} second {second} third {third} fourth {fourth} last {last} fromEnd {{count, selectordinal, one {#st} two {#nd} few {#rd} other {#th}} from last} other {{count, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}}}",
         "monthlyDate": "{count, plural, one {Every month} other {Every # months}} on the {day, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
         "monthlyWeekday": "{count, plural, one {Every month} other {Every # months}} on the {ordinal} {weekday}",
-        "yearlyDate": "Every year on {date}",
-        "yearlyWeekday": "Every year on the {ordinal} {weekday} of {month}"
+        "yearlyDate": "{count, plural, one {Every year} other {Every # years}} on {date}",
+        "yearlyWeekday": "{count, plural, one {Every year} other {Every # years}} on the {ordinal} {weekday} of {month}"
       },
-      "moveWhen": "Move to {when}"
+      "moveWhen": "Move to {when}",
+      "changeAnswer": "Change your answer to {answer}"
     },
     "draft": {
+      "reopen": "Reopen draft",
       "discarded": "Discarded",
       "undo": "Undo"
     },
@@ -7022,7 +7042,7 @@
     },
     "location": {
       "placeholder": "A place",
-      "unavailable": "Place suggestions are unavailable",
+      "unavailable": "Place suggestions are unavailable. You can keep the place you typed.",
       "back": "Back",
       "clear": "Clear place",
       "own": "Your places",
@@ -7112,10 +7132,10 @@
     },
     "closeAgenda": "Close Agenda",
     "toAnswer": "to answer",
-    "said": "you said {answer, select, accepted {yes} tentative {maybe} other {no}}",
-    "saidOne": "you said {answer, select, accepted {yes} tentative {maybe} other {no}} to this one",
     "stepBefore": "The {unit, select, month {month} year {year} week {week} other {day}} before",
-    "stepAfter": "The {unit, select, month {month} year {year} week {week} other {day}} after"
+    "stepAfter": "The {unit, select, month {month} year {year} week {week} other {day}} after",
+    "said": "you said {answer, select, accepted {yes} tentative {maybe} other {no}}",
+    "saidOne": "you said {answer, select, accepted {yes} tentative {maybe} other {no}} to this one"
   },
   "event": {
     "movePending": "Moving event",

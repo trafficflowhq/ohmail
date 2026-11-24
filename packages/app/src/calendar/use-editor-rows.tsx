@@ -12,6 +12,7 @@ import type { EventDraft } from "./event-draft.js";
 
 export interface EditorRows {
   readonly canInvite: boolean;
+  readonly sentGuests?: readonly CalendarInvitee[];
   readonly canAddAlert: boolean;
   readonly canAddSecondAlert: boolean;
   readonly showCall: boolean;
@@ -44,9 +45,12 @@ export function useEditorRows(draft: EventDraft, change: Change, editor?: Editor
       items: [
         ...guests.map((guest, index) => {
           const name = guest.name || guest.address;
+          const sent = editor.sentGuests?.find(
+            ({ address }) => address.toLowerCase() === guest.address.toLowerCase(),
+          );
           const note = [
             guest.role === "optional" ? t("edit.optional") : null,
-            t("edit.guestAnswer", { answer: guest.answer }),
+            sent && t("edit.guestAnswer", { answer: sent.answer }),
           ]
             .filter(Boolean)
             .join(" · ");
@@ -55,7 +59,7 @@ export function useEditorRows(draft: EventDraft, change: Change, editor?: Editor
             name,
             address: guest.address,
             note,
-            declined: guest.answer === "declined",
+            declined: sent?.answer === "declined",
             expanded: picker?.kind === "role" && picker.index === index,
             onPress: editor.canInvite ? open("role", index) : undefined,
             remove: editor.canInvite
@@ -218,7 +222,11 @@ function InviteePicker({
         <MenuItem
           key={person.address}
           leading={<Avatar name={person.name} address={person.address} size="s" />}
-          note={person.name ? person.address.slice(person.address.lastIndexOf("@") + 1) : undefined}
+          note={
+            person.name && person.name.toLowerCase() !== person.address.toLowerCase()
+              ? person.address
+              : undefined
+          }
           onPress={() => add(person)}
         >
           {person.name || person.address}

@@ -16,6 +16,8 @@ export type AgendaMark =
 export interface AgendaRowProps {
   mark: AgendaMark;
   title: string;
+  recordId?: string;
+  saving?: boolean;
   /** What stands where the time does: the hours, "all day", "until 10:00", or the day in a list across many days. */
   time: string;
   /** The second line: the place, who it is from. */
@@ -98,6 +100,8 @@ export function AgendaRow(p: AgendaRowProps) {
       ref={p.ref}
       className={cx("oh-erow", own.className)}
       data-tone={own["data-tone"]}
+      data-record={p.recordId}
+      aria-busy={p.saving || undefined}
       style={toneStyle(tone)}
       data-now={p.now ? "" : undefined}
       data-quiet={p.quiet ? "" : undefined}

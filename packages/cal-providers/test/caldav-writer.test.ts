@@ -6,6 +6,7 @@
  * reached on. The live run at the bench's own server is `caldav.live.ts`'s.
  */
 import {
+  formatRRule,
   intlZones,
   plainDate,
   expandSeries,
@@ -26,6 +27,8 @@ import type { CalendarWriter, Connection, EventDraft, WriteAnswer } from "../src
 import { guardedRequest } from "../src/request/guarded.js";
 import { namedHostRequest } from "../src/request/index.js";
 import { startCalDavStandIn, type StandIn, type StandInOptions } from "./caldav-stand-in.js";
+
+import { DRAFT_PROOF_CASES } from "./support/repeat-proof.js";
 
 const ZONES = intlZones();
 const NOW = Date.UTC(2026, 10, 15, 9, 0, 0);
@@ -1615,4 +1618,38 @@ it("refuses deleting the anchor of a range override and round-trips a later canc
     ZONES,
   ).occurrences;
   expect(rounds.map(({ start }) => start.kind === "date" && start.day)).toEqual([16, 18, 20, 21]);
+});
+
+it("hands the scheduling server the invitee and the complete repeat rule in the same event", async () => {
+  const b = await bench({ autoSchedule: true });
+  const guest = ["fern", "example.com"].join("@");
+  const rule = parseRRule("FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;COUNT=6")!;
+  const made = await b.writer.create(
+    b.connection,
+    b.cal,
+    {
+      key: { hex: KEY },
+      event: draft({
+        rule,
+        organizer: ["organiser", "example.com"].join("@"),
+        attendees: [{ email: guest, name: "Fern Pike", optional: false }],
+      }),
+    },
+    never,
+  );
+  expect(word(made)).toBe("ok");
+  const read = readCalendar(b.writes()[0]!.body, DEFAULT_LIMITS);
+  expect(read.ok && read.calendar.events[0]?.rules[0]?.rule).toEqual(rule);
+  expect(read.ok && read.calendar.events[0]?.attendees[0]?.email).toBe(guest);
+});
+
+it.each(DRAFT_PROOF_CASES)("round-trips CalDAV RRULE: $name", async ({ draft: event }) => {
+  const b = await bench();
+  const made = await b.writer.create(b.connection, b.cal, { key: { hex: KEY }, event }, never);
+  expect(word(made)).toBe("ok");
+  expect(b.writes()[0]?.body.replace(/\r\n[ \t]/g, "")).toContain(
+    "RRULE:" + formatRRule(event.rule!) + "\r\n",
+  );
+  const item = made.ok && made.items[0];
+  expect(item && item.kind === "upsert" && item.event.rules[0]?.rule).toEqual(event.rule);
 });

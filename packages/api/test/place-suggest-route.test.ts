@@ -94,7 +94,7 @@ describe("(2) through the route, nothing of the person's request goes on to the 
     expect(await read(res)).toMatchObject({ state: "ok", credit: "osm", places: [{ kind: "street", first: "Limmatquai", second: "8001 Zürich" }] });
     expect(r.box.asked).toHaveLength(1);
     const asked = r.box.asked[0]!;
-    expect(asked.query).toEqual({ q: "limmatquai", lang: "de", limit: "12", lat: "47.4", lon: "8.5" });
+    expect(asked.query).toEqual({ q: "limmatquai", lang: "de", limit: "12", lat: "47.4", lon: "8.5", zoom: "10", location_bias_scale: "0.2" });
     expect(Object.keys(asked.headers).sort()).toEqual(["accept", "accept-encoding", "authorization", "connection", "host", "user-agent"]);
     const everything = JSON.stringify(asked);
     for (const of_the_person of [r.s.accountId, r.s.userId, r.s.token, "203.0.113.7", "someone", "Mozilla", "web/1.0.12", "de-CH", "chosen-by-the-caller", "47.37216"]) {

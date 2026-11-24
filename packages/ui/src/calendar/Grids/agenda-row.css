@@ -1,5 +1,9 @@
 /* The agenda's row: the mail row's measures, with the calendar's square where mail has the contact circle. */
 @layer oh {
+  .oh-erow[aria-busy="true"] {
+    opacity: var(--o-cal-saving, 0.72);
+  }
+
   .oh-erow {
     --oh-erow-pad: 0 var(--s3) 0 var(--s1);
     --oh-erow-gap: 2px;

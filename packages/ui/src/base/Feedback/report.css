@@ -10,6 +10,7 @@
     align-items: center;
     gap: var(--s3);
     min-height: var(--h-l);
+    min-width: 0;
     padding: var(--oh-report-pad);
     border-radius: var(--r-pill);
     background: var(--solid);

@@ -164,9 +164,9 @@ const SPELLINGS: readonly Spelling[] = [
 const ZONES: ZoneSource = intlZones();
 
 /** Every case: each spelling, ended by UNTIL, by COUNT and not at all, as a clock time and (but at 02:30) as a whole day. */
-function casesOf(): ProofCase[] {
+function casesOf(spellings = SPELLINGS): ProofCase[] {
   const out: ProofCase[] = [];
-  for (const s of SPELLINGS) {
+  for (const s of spellings) {
     for (const kind of s.hour === undefined ? (["zoned", "date"] as const) : (["zoned"] as const)) {
       for (const end of ["until", "count", "never"] as const) {
         const last = addDays(s.from, s.span);
@@ -204,6 +204,35 @@ function casesOf(): ProofCase[] {
 }
 
 export const PROOF_CASES: readonly ProofCase[] = casesOf();
+export const DRAFT_PROOF_CASES: readonly ProofCase[] = [
+  ...PROOF_CASES.filter((c) => c.shape !== null),
+  ...casesOf([
+    {
+      base: "three weeks, two days",
+      parts: "FREQ=WEEKLY;INTERVAL=3;BYDAY=MO,TH",
+      from: [2026, 11, 23],
+      span: 70,
+    },
+    {
+      base: "every 3 months by date",
+      parts: "FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=23",
+      from: [2026, 11, 23],
+      span: 560,
+    },
+    {
+      base: "every 2 months, last Friday",
+      parts: "FREQ=MONTHLY;INTERVAL=2;BYDAY=-1FR",
+      from: [2026, 11, 27],
+      span: 370,
+    },
+    {
+      base: "every 3 years by date",
+      parts: "FREQ=YEARLY;INTERVAL=3;BYMONTH=3;BYMONTHDAY=31",
+      from: [2027, 3, 31],
+      span: 19 * 366,
+    },
+  ]),
+];
 
 /** The case's text as the CalDAV writer writes a new series, under `uid`. */
 export function caseText(c: ProofCase, uid: string): string {

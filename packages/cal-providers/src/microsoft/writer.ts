@@ -1374,8 +1374,12 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       const calendar = segment(cal.id);
       const transactionId = transactionOf(req.key);
       if (calendar === null || transactionId === null) return refused("not_found");
-      const body = bodyOf(req.event);
+      const { rule, ...fields } = req.event;
+      const recurrence = rule === null ? null : recurrenceFor(rule, fields.start, deps.zones);
+      if (rule !== null && recurrence === null) return refused("repeat_unsupported");
+      const body = bodyOf(fields);
       if (typeof body === "string") return refused(body);
+      if (recurrence !== null) body.recurrence = recurrence;
       const signedIn = await bearerOf(c, signal);
       if (!signedIn.ok) return signedIn;
       if (req.recover) {

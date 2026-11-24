@@ -104,6 +104,36 @@ const eventRows = (accountId: string) => db.select({ id: calEvents.id, providerI
 const pollOf = async (w: World) => (await db.select({ at: calConnections.nextPollAt }).from(calConnections).where(eq(calConnections.id, w.connectionId)))[0]!.at!;
 
 describe.skipIf(!PG_UP)("the calendar's write door", () => {
+  it.each(["google", "microsoft", "caldav"])("explains a recurring meeting refusal before recording a write on %s", async provider => {
+    const w = await world({ provider });
+    const made = create(w, { repeat: "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;COUNT=4" });
+    await expect(record(ctx(w.accountId), "custom-repeat", made)).rejects.toMatchObject({ details: { reason: "repeat_unsupported" } });
+    expect(await rowsOf(w.accountId)).toEqual([]);
+  });
+
+  it.each(["google", "microsoft", "caldav"])("advertises and records a selected repeat on %s", async provider => {
+    const w = await world({ provider });
+    const held = await CALENDAR_BUILDERS.calendar_connection(ctx(w.accountId).db, w.accountId, [w.connectionId]);
+    expect.soft(held.get(w.connectionId)?.repeatShapes).toContain("weeks_on_days/count");
+    const made = { ...create(w, { repeat: "FREQ=WEEKLY;INTERVAL=3;BYDAY=TU,TH;COUNT=5" }), repeatSelected: true };
+    await expect(record(ctx(w.accountId), "selected-repeat", made)).resolves.toMatchObject({ answer: { write: { state: "pending" } } });
+  });
+
+  it.each(["google", "microsoft", "caldav"])("refuses an unsupported editor repeat before recording anything on %s", async provider => {
+    const w = await world({ provider });
+    const made = { ...create(w, { repeat: "FREQ=HOURLY;COUNT=5" }), repeatSelected: true };
+    await expect(record(ctx(w.accountId), "hourly", made)).rejects.toMatchObject({ details: { reason: "repeat_unsupported" } });
+    expect(await rowsOf(w.accountId)).toEqual([]);
+  });
+
+  it("refuses an unrepresentable repeat before recording any write", async () => {
+    const w = await world({ provider: "microsoft" });
+    const made = create(w, { start: { kind: "date", value: "20270331" }, end: { kind: "date", value: "20270401" },
+      repeat: "FREQ=MONTHLY;BYMONTHDAY=31" });
+    await expect(record(ctx(w.accountId), "monthly-31", { ...made, repeatSelected: true })).rejects.toMatchObject({ details: { reason: "repeat_unsupported" } });
+    expect(await rowsOf(w.accountId)).toEqual([]);
+  });
+
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     owned = makeOwnedDb(PG_TEST_URL);

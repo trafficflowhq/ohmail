@@ -26,7 +26,7 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import { formatRRule, parseRRule } from "@ohmail/cal-core/recur/rrule";
 import { intlZones } from "@ohmail/cal-core/time/zones";
-import { PROVEN_REPEATS, proofPlaceOf, seriesEditShape, seriesProven, type ProofPlace, type ProvenRepeats } from "@ohmail/cal-providers/repeat-shapes";
+import { draftRepeatSupported, PROVEN_REPEATS, proofPlaceOf, seriesEditShape, seriesProven, type ProofPlace, type ProvenRepeats } from "@ohmail/cal-providers/repeat-shapes";
 import { carriedExclusions, clockOf, continuedSeries, endedRule, isDayOf, movedRule, offItsClock, personalSeriesOf, confirmedDeleteAudience, storedObjectFacts } from "@ohmail/cal-providers/series";
 import type {
   CalendarEventAct, CalendarEventFields, CalendarEventRecord, CalendarTime, CalendarWriteAnswer, CalendarWriteFault,
@@ -217,12 +217,13 @@ const shapesOf = (cal: HeldCalendar, o: { readonly now: number; readonly proven:
   ({ place: proofPlaceOf(cal.provider as "google" | "caldav" | "microsoft" | "ics", cal.serverUrl), now: o.now, proven: o.proven });
 
 /** A series that is no shape proven where the calendar's connection is: refused here as the drain refuses it (`repeat_unsupported`). */
-function assertProven(d: DoorShapes, rule: import("@ohmail/cal-core").RRule | null, start: import("@ohmail/cal-core").EventTime | null, editing = false): void {
+function assertProven(d: DoorShapes, rule: import("@ohmail/cal-core").RRule | null, start: import("@ohmail/cal-core").EventTime | null, mode: boolean | "draft" = false): void {
   if (rule === null) return;
-  if (start === null || !(editing
-    ? seriesEditShape(d.place, rule, start, ZONES, d.now)
+  if (start === null || !(mode === "draft"
+    ? draftRepeatSupported(d.place, rule, start, ZONES, d.now)
+    : mode ? seriesEditShape(d.place, rule, start, ZONES, d.now)
     : seriesProven(d.place, rule, start, ZONES, d.now, d.proven))) {
-    throw invalid("the repeat is not one this calendar's server was proven to keep");
+    throw new ServiceError("validation_failed", 400, "this calendar cannot keep this repeat rule", { reason: "repeat_unsupported" });
   }
 }
 
@@ -377,7 +378,7 @@ async function recordCreate(
   if (act.invitationMessageId && !await reviewedInvitationCopy(tx, accountId, act.invitationMessageId, act))
     throw readOnly("the invitation is no longer available to add");
   // A new series in a shape proven where the calendar is, from a start its rule names: the drain sends no other.
-  assertProven(shapesOf(cal, o), act.event.repeat === null ? null : parseRRule(act.event.repeat), eventTimeOf(storedTime(act.event.start)));
+  assertProven(shapesOf(cal, o), act.event.repeat === null ? null : parseRRule(act.event.repeat), eventTimeOf(storedTime(act.event.start)), act.repeatSelected ? "draft" : false);
   await assertRoom(tx, accountId, null);
   const made = await insertRow(tx, {
     accountId, calendarId: cal.id, eventId: act.eventId, op: "create", payload: writePayloadOf(act, null, null),
@@ -616,10 +617,11 @@ async function recordOnEvent(
   const first = timeOfStored(event.startKind, event.startLocal, event.startZone);
   const rule = writeRowOf(event) === "series" && event.repeatRule !== null ? parseRRule(event.repeatRule) : null;
   if (writeRowOf(event) === "series") {
-    if (rule === null) throw invalid("the repeat is not one this calendar's server was proven to keep");
+    if (rule === null || first === null) throw invalid("the repeat is not one this calendar's server was proven to keep");
     const cloud = d.place === "google" || d.place === "microsoft";
-    const checkingStoredCloudSeries = cloud && (act.kind === "calendar_event_answer" || ((act.kind === "calendar_event_delete" || act.kind === "calendar_event_move") && act.audience !== undefined));
-    assertProven(d, rule, first, seriesEdit || checkingStoredCloudSeries);
+    const checkingStoredCloudSeries = cloud && (act.kind === "calendar_event_answer" || (act.kind === "calendar_event_move" && act.audience !== undefined));
+    const reviewedDelete = act.kind === "calendar_event_delete" && act.audience !== undefined;
+    if (!reviewedDelete) assertProven(d, rule, first, seriesEdit || checkingStoredCloudSeries);
   }
   if (act.kind === "calendar_event_update" && act.scope.kind === "record") {
     const c = act.change;

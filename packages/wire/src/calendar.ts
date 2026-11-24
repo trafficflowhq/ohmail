@@ -121,6 +121,8 @@ export interface CalendarConnectionRecord {
   grantMailboxId: string | null;
   /** The host a CalDAV server or a subscription is read from; `null` for the other two. */
   serverHost: string | null;
+  /** Rule shapes the server has verified for creating events on this connection. */
+  repeatShapes?: readonly string[];
   consentedAt: ISODateTime | null;
   lastSyncedAt: ISODateTime | null;
   createdAt: ISODateTime;
@@ -466,6 +468,8 @@ export type CalendarEventAct =
       calendarId: string;
       event: CalendarEventFields;
       invitationMessageId?: string;
+      /** The rule was selected in the new event editor. */
+      repeatSelected?: true;
     }
   | (CalendarEventBase & {
       kind: "calendar_event_update";

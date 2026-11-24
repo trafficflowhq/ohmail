@@ -26,6 +26,7 @@ export interface EventDraft {
   readonly place: string | null;
   readonly notes: string | null;
   readonly callLink?: string | null;
+  readonly repeat?: string | null;
   readonly invitees?: readonly CalendarInvitee[];
   readonly alarms?: readonly number[];
 }
@@ -145,7 +146,7 @@ export function fieldsOfDraft(
     place: draft.place?.trim() || null,
     notes: draft.notes?.trim() || null,
     callLink,
-    repeat: null,
+    repeat: draft.repeat ?? null,
     invitees: [],
     alarms: [...new Set(draft.alarms ?? calendar.defaultAlarms.map((alarm) => alarm.minutesBefore))],
   };

@@ -2654,3 +2654,137 @@ it("shows a pending portable move and withholds actions that would change the so
   expect(screen.queryByRole("button", { name: "Delete", exact: true })).toBeNull();
   expect(screen.queryByRole("button", { name: "Move to", exact: true })).toBeNull();
 });
+
+it("shows each invited person's full address and counts only guests' replies", async () => {
+  const host = { name: "Finch Hall", address: ["host", "example.com"].join("@") };
+  const visitor = { ...guest, name: "Ivy Beck", address: ["ivy", "example.com"].join("@") };
+  openWithMailboxes(
+    meeting({ organizer: host, invitees: [visitor, { ...guest, ...host, answer: "none" }] }),
+    async () => [mailbox(host.address)],
+  );
+  const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
+  expect.soft(card.queryByText(visitor.address)).toBeTruthy();
+  expect(card.queryByText(/no answer/)).toBeNull();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const chip = screen.getByRole("button", { name: /^Ivy Beck/ });
+  expect(chip.textContent).toContain(visitor.address);
+  expect(chip.textContent).toContain("yes");
+});
+
+it.each(["google", "microsoft", "caldav"] as const)(
+  "refuses a Friday-only rule on a Tuesday master in the %s editor",
+  async (provider) => {
+    const record = meeting({
+      start: { kind: "date", value: "20261117" },
+      end: { kind: "date", value: "20261118" },
+      startsAt: "2026-11-17T00:00:00Z",
+      repeat: { rules: ["FREQ=WEEKLY;BYDAY=TU,FR"], added: [], excluded: [] },
+    });
+    const world = eventWorld(record);
+    world.put(
+      "calendar_connection",
+      "conn-1",
+      connectionRecord({ provider, repeatShapes: ["weekly/never"] }),
+    );
+    const press = vi.fn(async () => ({ key: "edit" }));
+    world.port.press = press;
+    mountFrame(`#/cal/week/2026-11-20/e/firing@${Date.UTC(2026, 10, 20)}`, world, NONE);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const form = within(screen.getByRole("dialog", { name: "Edit event" }));
+    fireEvent.click(form.getByRole("button", { name: "Repeat" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Every week on Friday" }));
+    fireEvent.click(form.getByRole("button", { name: "Save" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /All events/ }));
+    await act(async () => {});
+    expect(form.getByText("This calendar cannot keep this repeat rule.")).toBeTruthy();
+    expect(press).not.toHaveBeenCalled();
+  },
+);
+
+it("changes only the ending in Custom on a read-back last-Friday rule", async () => {
+  const record = meeting({
+    start: { kind: "zoned", value: "20261127T090000", zone: ZURICH },
+    end: { kind: "zoned", value: "20261127T100000", zone: ZURICH },
+    startsAt: "2026-11-27T08:00:00Z",
+    repeat: { rules: ["FREQ=MONTHLY;UNTIL=20270226;BYDAY=FR;BYSETPOS=-1"], added: [], excluded: [] },
+  });
+  const world = eventWorld(record);
+  world.put(
+    "calendar_connection",
+    "conn-1",
+    connectionRecord({
+      provider: "microsoft",
+      repeatShapes: ["monthly_last_weekday/until"],
+    }),
+  );
+  const press = vi.fn(async () => ({ key: "edit" }));
+  world.port.press = press;
+  mountFrame(`#/cal/week/2026-11-27/e/firing@${Date.UTC(2026, 10, 27, 8)}`, world, NONE);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const form = within(screen.getByRole("dialog", { name: "Edit event" }));
+  fireEvent.click(form.getByRole("button", { name: "Repeat" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Custom…" }));
+  fireEvent.change(screen.getByLabelText("On date"), { target: { value: "2027-04-30" } });
+  const done = screen.getByRole<HTMLButtonElement>("button", { name: "Done" });
+  expect(done.disabled).toBe(false);
+  fireEvent.click(done);
+  fireEvent.click(form.getByRole("button", { name: "Save" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /All events/ }));
+  await vi.waitFor(() =>
+    expect(press).toHaveBeenCalledWith(
+      expect.objectContaining({
+        change: { repeat: expect.stringMatching(/BYDAY=-1FR;UNTIL=20270430T070000Z/) },
+      }),
+    ),
+  );
+});
+
+it("shows the confirmed acceptance and no reply for an invitee being added", async () => {
+  const newGuest = {
+    ...guest,
+    name: "Fern Pike",
+    address: ["fern", "example.test"].join("@"),
+    answer: "none" as const,
+  };
+  const record = meeting({ invitees: [guest] });
+  const world = eventWorld(record);
+  const base = world.port.events()[0]!;
+  world.port.events = () => [
+    {
+      ...base,
+      waiting: "provider",
+      record: { ...record, invitees: [{ ...guest, answer: "none" }, newGuest] },
+    },
+  ];
+  mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE, { words: calmail });
+  const form = within(await screen.findByRole("dialog", { name: record.title }));
+  expect(form.getByText("yes", { exact: true })).toBeTruthy();
+  expect(form.getByText(newGuest.name)).toBeTruthy();
+  expect(form.queryByText(/no answer/i)).toBeNull();
+});
+
+it("reopens the refused edit of a generated occurrence with the changed words and times", async () => {
+  const at = String(Date.UTC(2026, 10, 17, 8));
+  const record = meeting({
+    startsAt: "2026-11-16T08:00:00Z",
+    repeat: { rules: ["FREQ=DAILY;COUNT=4"], added: [], excluded: [] },
+  });
+  const world = eventWorld(record);
+  const watch = vi.fn();
+  Object.assign(world.port, { watchEdit: watch });
+  world.port.press = vi.fn(async () => ({ key: "edit" }));
+  mountFrame(`#/cal/week/2026-11-17/e/firing@${at}`, world, NONE, { words: calmail });
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const form = within(screen.getByRole("dialog", { name: "Edit event" }));
+  fireEvent.change(form.getByRole("textbox", { name: "Event title" }), { target: { value: "Glaze check" } });
+  fireEvent.change(form.getByRole("textbox", { name: "Start time" }), { target: { value: "09:15" } });
+  fireEvent.click(form.getByRole("button", { name: "Save" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /This event/ }));
+  await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(1));
+  const refuse = watch.mock.calls[0]![2];
+  act(() => refuse({ kind: "refused", word: "read_only", details: null }, "write-id"));
+  fireEvent.click(await screen.findByRole("button", { name: "Reopen draft" }));
+  const reopened = within(await screen.findByRole("dialog", { name: "Edit event" }));
+  expect(reopened.getByRole("textbox", { name: "Event title" })).toHaveProperty("value", "Glaze check");
+  expect(reopened.getByRole("textbox", { name: "Start time" })).toHaveProperty("value", "09:15");
+});

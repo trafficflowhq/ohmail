@@ -4,45 +4,70 @@ import { Avatar, Button } from "@ohmail/ui/base";
 import { EventBridge, type EventCardRow, type EventCardProps } from "@ohmail/ui/calendar";
 import { useEventPlacement } from "./use-event-placement.js";
 import type { Text } from "../text/index.js";
+import { sentInvitees } from "./edit-draft.js";
 import { movePending } from "./editable-event.js";
 import type { CalendarEventFace } from "./faces.js";
 import { repeatLine } from "./EventActionQuestion.js";
 
-function peopleRows(record: CalendarEventRecord, own: readonly string[] | null, t: Text): EventCardRow[] {
+function peopleRows(
+  record: CalendarEventRecord,
+  confirmed: CalendarEventRecord | undefined,
+  own: readonly string[] | null,
+  t: Text,
+): EventCardRow[] {
   const rows: EventCardRow[] = [];
-  const { organizer, invitees } = record;
+  const { organizer } = record;
+  const invitees = record.invitees.filter(
+    ({ address }) => address.toLowerCase() !== organizer?.address.toLowerCase(),
+  );
   if (organizer && own && !own.some((address) => address.toLowerCase() === organizer.address.toLowerCase())) {
     rows.push({ label: t("edit.from"), text: organizer.name || organizer.address });
   }
   if (!invitees.length) return rows;
   const answers = new Map<string, number>();
-  for (const person of invitees) answers.set(person.answer, (answers.get(person.answer) ?? 0) + 1);
+  const sent = new Map(sentInvitees(confirmed).map(({ address, answer }) => [address.toLowerCase(), answer]));
+  for (const { address } of invitees) {
+    const answer = sent.get(address.toLowerCase());
+    if (answer) answers.set(answer, (answers.get(answer) ?? 0) + 1);
+  }
   const optional = invitees.filter(({ role }) => role === "optional").length;
   const note = [...answers].map(([answer, count]) => `${count} ${t("edit.guestAnswer", { answer })}`);
   if (optional) note.push(`${optional} ${t("edit.optional")}`);
   rows.push({
     label: t("edit.invitees"),
     note: note.join(" · "),
-    children: invitees.slice(0, 5).map(({ name, address }) => (
-      <span key={address} role="img" aria-label={name || address} title={name || address}>
-        <Avatar name={name || address} address={address} size="xs" />
-      </span>
-    )),
+    children: invitees.map(({ name, address }) => {
+      const answer = sent.get(address.toLowerCase());
+      return (
+        <span key={address} className="cal-detail-guest" title={address}>
+          <Avatar name={name || address} address={address} size="xs" />
+          <span className="oh-evform-name-text">{name || address}</span>
+          {name && name.toLowerCase() !== address.toLowerCase() && (
+            <small className="oh-evform-name-note oh-evform-name-text">{address}</small>
+          )}
+          {answer && <small className="oh-evform-name-note">{t("edit.guestAnswer", { answer })}</small>}
+        </span>
+      );
+    }),
   });
   return rows;
 }
 
 export function eventDetails(
   record: CalendarEventRecord,
+  confirmed: CalendarEventRecord | undefined,
   own: readonly string[] | null,
   t: Text,
   locale: string,
 ): EventCardRow[] {
-  const rows = peopleRows(record, own, t);
+  const rows = peopleRows(record, confirmed, own, t);
   const { repeat, start, alarms } = record;
   if (movePending(record)) rows.push({ label: t("actions.moveTo"), text: t("actions.moving") });
   if (repeat?.rules.length === 1 && !repeat.added.length) {
-    rows.push({ label: t("edit.repeatLabel"), text: repeatLine(repeat.rules[0], start.value, t, locale) });
+    rows.push({
+      label: t("edit.repeatLabel"),
+      text: repeatLine(repeat.rules[0], start.value, t, locale, start.zone),
+    });
   }
   if (alarms.length) {
     const alert = new Intl.ListFormat(locale).format(

@@ -160,6 +160,28 @@ describe("Microsoft's repeat as the one rule grammar", () => {
     expect(page.expanded!.seen).toEqual([{ uid: "uid-m-1", originalStart: zoned(wall(2027, 2, 1, 10), BERLIN) }]);
   });
 
+  it("keeps a repeat when its last day's start falls in a clock gap", async () => {
+    const made = series({
+      start: utc("2027-03-26T01:30:00"),
+      end: utc("2027-03-26T02:00:00"),
+      recurrence: {
+        pattern: { type: "daily", interval: 1 },
+        range: { type: "endDate", startDate: "2027-03-26", endDate: "2027-03-28", recurrenceTimeZone: "W. Europe Standard Time" },
+      },
+    });
+    const { page } = await pageOf([day("2027-03-26T01:30:00Z")], { [SERIES]: { json: made } });
+    expect(page.left).toEqual([]);
+    const [master] = upserts(page.items);
+    expect(master?.event.rules[0]?.rule?.until).toEqual(instant(Date.UTC(2027, 2, 28, 21, 59, 59)));
+    const [all] = seriesOf([master!.event], zones);
+    const { occurrences } = expandSeries(
+      all!,
+      { startMs: Date.UTC(2027, 2, 26), endMs: Date.UTC(2027, 2, 30), viewerZone: BERLIN },
+      zones,
+    );
+    expect(occurrences.map(({ start }) => start.kind === "zoned" && start.wall.day)).toEqual([26, 27, 28]);
+  });
+
   it("reads a series of whole days as days: its start, its rule's end and each day seen, whichever midnight Microsoft tells a day by", async () => {
     const newYear = series({ isAllDay: true, start: utc("2027-01-01T00:00:00"), end: utc("2027-01-02T00:00:00"), recurrence: { pattern: { type: "absoluteYearly", interval: 1, month: 1, dayOfMonth: 1 }, range: { type: "endDate", startDate: "2027-01-01", endDate: "2030-01-01" } } });
     // The first day's start is midnight in UTC; the second's is midnight in Berlin, an hour earlier; the third's is no midnight anywhere.

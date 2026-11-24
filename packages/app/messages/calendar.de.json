@@ -1,6 +1,25 @@
 {
   "calendar": {
     "connect": "Einen Kalender verbinden",
+    "repeat": {
+      "unavailable": "In diesem Kalender lassen sich Termine noch nicht wiederholen.",
+      "everyDay": "Jeden Tag",
+      "none": "Wiederholt sich nicht",
+      "custom": "Eigene Regel…",
+      "every": "Alle",
+      "DAILY": "{count, plural, one {Tag} other {Tage}}",
+      "WEEKLY": "{count, plural, one {Woche} other {Wochen}}",
+      "MONTHLY": "{count, plural, one {Monat} other {Monate}}",
+      "YEARLY": "{count, plural, one {Jahr} other {Jahre}}",
+      "ends": "Endet",
+      "never": "Nie",
+      "onDate": "Am Datum",
+      "after": "Nach",
+      "times": "Termine",
+      "done": "Fertig",
+      "unsupported": "Dieser Kalender unterstützt diese Wiederholungsregel nicht.",
+      "startDay": "Wähle eine Regel, die den Starttag des Termins einschließt."
+    },
     "actions": {
       "openLetter": "Brief öffnen",
       "resizeTimeStart": "Beginn verschieben",
@@ -35,17 +54,18 @@
         "count": "{frequency}, {count, plural, one {einmal} other {# Mal}}",
         "until": "{frequency}, bis {date}",
         "rule": "Wiederholungsregel {rule}",
-        "weekdays": "Jeden Werktag",
+        "weekdays": "Jeden Wochentag (Mo–Fr)",
         "ordinal": "{order, select, first {ersten} second {zweiten} third {dritten} fourth {vierten} last {letzten} fromEnd {{count}. von hinten gezählten} other {{count}.}}",
         "monthlyDate": "{count, plural, one {Jeden Monat} other {Alle # Monate}} am {day}.",
         "monthlyWeekday": "{count, plural, one {Jeden Monat} other {Alle # Monate}} am {ordinal} {weekday}",
-        "yearlyDate": "Jedes Jahr am {date}",
-        "yearlyWeekday": "Jedes Jahr am {ordinal} {weekday} im {month}"
+        "yearlyDate": "{count, plural, one {Jedes Jahr} other {Alle # Jahre}} am {date}",
+        "yearlyWeekday": "{count, plural, one {Jedes Jahr} other {Alle # Jahre}} am {ordinal} {weekday} im {month}"
       },
       "moveWhen": "Auf {when} verschieben",
       "changeAnswer": "Deine Antwort auf {answer} ändern"
     },
     "draft": {
+      "reopen": "Entwurf öffnen",
       "discarded": "Verworfen",
       "undo": "Rückgängig"
     },
@@ -133,7 +153,7 @@
     },
     "location": {
       "placeholder": "Ein Ort",
-      "unavailable": "Ortsvorschläge sind nicht verfügbar",
+      "unavailable": "Ortsvorschläge sind nicht verfügbar. Dein eingegebener Ort bleibt erhalten.",
       "back": "Zurück",
       "clear": "Ort löschen",
       "own": "Deine Orte",
