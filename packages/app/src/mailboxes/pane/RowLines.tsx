@@ -43,7 +43,7 @@ export function RowLines(
   return (
     <div className="mbx-row-lines">
       <SettingLine label={say({ key: "lineProvider" })} value={providerName(m) ?? picker("otherLabel")} />
-      {state.kind !== "ok" && "title" in state && state.title ? (
+      {state.kind === "bad" || (state.kind !== "ok" && "title" in state && state.title) ? (
         <SettingLine label={state.text} value={state.title} />
       ) : null}
       {props.superseded > 0 ? <SettingNote>{say({ key: "superseded" })}</SettingNote> : null}

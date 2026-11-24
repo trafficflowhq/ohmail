@@ -10,12 +10,10 @@ import type { MailboxProbe } from "@ohmail/app-logic/mail-state";
 import { PullContext, usePullNewMail } from "@ohmail/app-logic/session/pull-new-mail";
 import { useFrame } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
-import { useText } from "../../text/index.js";
 
 export function PullMount({ children }: { readonly children: ReactNode }): ReactNode {
-  const { host, report } = useFrame();
-  const ts = useText("sync");
+  const { host } = useFrame();
   const probe = host.reads.mailboxes === NONE ? undefined : (host.reads.mailboxes as MailboxProbe);
-  const binding = usePullNewMail(probe, report, ts);
+  const binding = usePullNewMail(probe);
   return <PullContext.Provider value={binding}>{children}</PullContext.Provider>;
 }

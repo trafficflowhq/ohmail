@@ -125,15 +125,13 @@ const tEn = createTranslator({ locale: "en", messages: en as never, namespace: "
 const tDe = createTranslator({ locale: "de", messages: de as never, namespace: "sync" as never }) as unknown as
   (key: string, values?: Record<string, string | number>) => string;
 
-const endWords = (sentence: string): string => sentence.replace(/\.$/u, "");
-
 describe("the strip says new mail is late, for as long as the server says so", () => {
   it("arrives within one read of the mailboxes and leaves when fetching runs again", async () => {
     served = [row({ behind: true, since: ago(50 * MIN) })];
     const el = await mount();
-    expect(said(el)).toContain(endWords(tEn("behindTitle")));
+    expect(said(el)).toContain(tEn("checkingDelayedCloud", { since: "11:10" }));
     expect(notice(el)?.querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
-    expect(said(el)).toContain(tEn("behindLineCloud", { hasSince: "yes", since: "11:10" }));
+    expect(notice(el)?.querySelector("b")?.textContent).not.toMatch(/[.]$/u);
 
     served = [row({ behind: false, since: ago(1 * MIN) })];
     await nextPoll();
@@ -142,7 +140,7 @@ describe("the strip says new mail is late, for as long as the server says so", (
 
     served = [row({ behind: true, since: ago(51 * MIN) })];
     await nextPoll();
-    expect(said(el)).toContain(endWords(tEn("behindTitle")));
+    expect(said(el)).toContain(tEn("checkingDelayedCloud", { since: "11:09" }));
   });
 
   it.each([
@@ -157,7 +155,7 @@ describe("the strip says new mail is late, for as long as the server says so", (
     expect(slotSays(el)).toBe("");
   });
 
-  it.each([["bar", 390], ["rail", 1440]] as const)("is a calm status with one quiet Hide in the %s", async (placement, width) => {
+  it.each([["bar", 390], ["rail", 1440]] as const)("is a compact status with Open Mailboxes and Hide in the %s", async (placement, width) => {
     vi.stubGlobal("innerWidth", width);
     served = [row({ behind: true, since: ago(50 * MIN) })];
     const el = await mount();
@@ -165,7 +163,8 @@ describe("the strip says new mail is late, for as long as the server says so", (
     expect(status.getAttribute("data-place")).toBe(placement);
     expect(el.querySelector('[role="alert"]')).toBeNull();
     const hide = within(status).getByRole<HTMLButtonElement>("button", { name: "Hide" });
-    expect([...status.querySelectorAll("a, button, [role='button']")]).toEqual([hide]);
+    const open = within(status).getByRole("button", { name: "Open Mailboxes" });
+    expect([...status.querySelectorAll("a, button, [role='button']")]).toEqual([open, hide]);
     expect(hide.getAttribute("data-kind")).toBe("quiet");
     // Standing still: nothing is running, so nothing spins.
     expect(status.querySelector('[role="progressbar"], svg, img, picture, [role="img"]')).toBeNull();
@@ -174,53 +173,52 @@ describe("the strip says new mail is late, for as long as the server says so", (
     expect(slotSays(el)).toBe("");
   });
 
-  it("with no time on record it says so without one", async () => {
+  it("with no time on record there is no evidence of a sustained pause", async () => {
     served = [row({ behind: true, since: null })];
     const el = await mount();
-    expect(said(el)).toContain(endWords(tEn("behindTitle")));
-    expect(said(el)).toContain(tEn("behindLineCloud", { hasSince: "no", since: "" }));
-    expect(said(el)).not.toMatch(/since/);
+    expect(notice(el)).toBeNull();
+    expect(slotSays(el)).toBe("");
   });
 
-  it("after a day it says so plainly, and that it is on us", async () => {
+  it("after a day the compact notice gives the day and time of the last check", async () => {
     served = [row({ behind: true, since: ago(26 * HOUR) })];
     const el = await mount();
-    expect(said(el)).toContain(endWords(tEn("behindTitleDays", { days: 1 })));
-    expect(said(el)).toContain(tEn("behindLineCloudDay", { since: "Thu 10:00" }));
-    expect(said(el)).not.toContain(endWords(tEn("behindTitle")));
+    expect(notice(el)?.querySelector("b")?.textContent)
+      .toBe(tEn("checkingDelayedCloud", { since: "Thu 10:00" }));
   });
 
-  it("23 hours is not yet a day, and 49 hours are two", async () => {
+  it("uses the same short wording for an outage spanning more than one day", async () => {
     served = [row({ behind: true, since: ago(23 * HOUR) })];
-    expect(said(await mount())).toContain(endWords(tEn("behindTitle")));
+    expect(said(await mount())).toContain(tEn("checkingDelayedCloud", { since: "Thu 13:00" }));
     await act(async () => { root!.unmount(); });
     served = [row({ behind: true, since: ago(49 * HOUR) })];
-    expect(said(await mount())).toContain(endWords(tEn("behindTitleDays", { days: 2 })));
+    expect(said(await mount())).toContain(tEn("checkingDelayedCloud", { since: "Wed 11:00" }));
   });
 
-  it("the sentence turns to its day form by the clock alone, with the tab left open", async () => {
-    served = [row({ behind: true, since: ago(23 * HOUR + 59 * MIN) })];
+  it("a five-minute pause is quiet and an open tab shows the notice once 30 minutes pass", async () => {
+    served = [row({ behind: true, since: ago(5 * MIN) })];
     const el = await mount();
-    expect(said(el)).toContain(endWords(tEn("behindTitle")));
-    await act(async () => { await vi.advanceTimersByTimeAsync(2 * MIN); });
+    expect(said(el)).toBe("");
+    await act(async () => { await vi.advanceTimersByTimeAsync(26 * MIN); });
     await settle();
-    expect(said(el)).toContain(endWords(tEn("behindTitleDays", { days: 1 })));
+    expect(said(el)).toContain(tEn("checkingDelayedCloud", { since: "11:55" }));
   });
 
-  it("offline, the nearer fact is said instead", async () => {
+  it("does not announce a Cloud fault over an offline device", async () => {
     Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => false });
     served = [row({ behind: true, since: ago(50 * MIN) })];
     const el = await mount();
-    expect(said(el)).toContain(en.frame.connection.offline.title); // the frame's offline sentence
-    expect(said(el)).not.toContain(endWords(tEn("behindTitle")));
+    expect(slotSays(el)).toBe("");
   });
 
-  it("a mailbox's own trouble does not hide it: the rows say theirs, the strip says this", async () => {
+  it("a mailbox sign-in takes precedence over a pause and still opens Mailboxes", async () => {
     served = [
       row({ behind: true, since: ago(50 * MIN) }),
-      row(null, { id: "mb_2", address: "second@example.invalid", status: "error", errorCode: "auth" }),
+      row(null, { id: "mb_2", address: "workshop@example.test", status: "error", errorCode: "auth" }),
     ];
-    expect(said(await mount())).toContain(endWords(tEn("behindTitle")));
+    const el = await mount();
+    expect(said(el)).toContain("Sign in again");
+    expect(within(el).getByRole("button", { name: "Open Mailboxes" })).toBeTruthy();
   });
 
   /* Which mailboxes the server speaks for is the server's rule: every mailbox it is on duty to
@@ -230,20 +228,18 @@ describe("the strip says new mail is late, for as long as the server says so", (
     const reader = { organizerRole: "reader" as const };
     served = [row({ behind: true, since: ago(50 * MIN) }, reader)];
     const el = await mount();
-    expect(said(el)).toContain(endWords(tEn("behindTitle")));
-    expect(said(el)).toContain(tEn("behindLineCloud", { hasSince: "yes", since: "11:10" }));
+    expect(said(el)).toContain(tEn("checkingDelayedCloud", { since: "11:10" }));
     // Past the server's capacity it is off the roster, and the server takes its word off the row.
     served = [row(null, { ...reader, syncBlockedReason: "at_capacity", syncBlockedSince: ago(MIN) })];
     await nextPoll();
-    expect(el.textContent ?? "").not.toContain(endWords(tEn("behindTitle")));
+    expect(slotSays(el)).toBe("");
   });
 
   it("is German in German", async () => {
     served = [row({ behind: true, since: ago(50 * MIN) })];
     const el = await mount({ locale: "de" });
-    expect(said(el)).toContain(endWords(tDe("behindTitle")));
-    expect(said(el)).toContain(tDe("behindLineCloud", { hasSince: "yes", since: "11:10" }));
-    expect(endWords(tDe("behindTitle"))).not.toBe(endWords(tEn("behindTitle")));
+    expect(said(el)).toContain(tDe("checkingDelayedCloud", { since: "11:10" }));
+    expect(within(el).getByRole("button", { name: "Postfächer öffnen" })).toBeTruthy();
   });
 });
 
@@ -258,7 +254,7 @@ describe("a self-hosted server is never called ohmail Cloud", () => {
       const el = await mount({ managed: false, locale });
       const t = locale === "en" ? tEn : tDe;
       const localStamp = locale === "de" && stamp === "Thu 10:00" ? "Do 10:00" : stamp;
-      expect(said(el)).toContain(t("behindLineServer", { hasSince: since === null ? "no" : "yes", since: localStamp }));
+      expect(said(el)).toBe(since === null ? "" : t("checkingDelayedServer", { since: localStamp }) + (locale === "en" ? "Open MailboxesHide" : "Postfächer öffnenAusblenden"));
       expect(el.textContent ?? "", `${locale}: a self-hosted server was called Cloud`).not.toMatch(/Cloud/);
       // "On us" is said of our own service only.
       expect(said(el)).not.toContain(locale === "en" ? "on us" : "liegt an uns");
@@ -267,8 +263,8 @@ describe("a self-hosted server is never called ohmail Cloud", () => {
     }
   });
 
-  it("the day still shows in the title", async () => {
+  it("the exact day and time still show in the title", async () => {
     served = [row({ behind: true, since: ago(26 * HOUR) })];
-    expect(said(await mount({ managed: false }))).toContain(endWords(tEn("behindTitleDays", { days: 1 })));
+    expect(said(await mount({ managed: false }))).toContain(tEn("checkingDelayedServer", { since: "Thu 10:00" }));
   });
 });

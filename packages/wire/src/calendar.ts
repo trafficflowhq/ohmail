@@ -125,6 +125,8 @@ export interface CalendarConnectionRecord {
   repeatShapes?: readonly string[];
   consentedAt: ISODateTime | null;
   lastSyncedAt: ISODateTime | null;
+  /** Scheduled check time. Older servers and saved device records may omit it. */
+  nextPollAt?: ISODateTime | null;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 }

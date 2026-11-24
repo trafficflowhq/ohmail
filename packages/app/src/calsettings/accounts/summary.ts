@@ -1,7 +1,8 @@
-/** What Calendar accounts says in the menu, from the mirror alone: how many, and whether one wants a new sign-in. */
+/** What Calendar accounts says in the menu, from the mirror alone: how many, and whether one needs attention. */
 import { accountsOf } from "@ohmail/app-logic/calendar/setup";
 import type { PaneSummary } from "../../settings/contract.js";
 import { useLocale, useText } from "../../text/index.js";
+import { calendarCheckDeadline } from "../../calendar/connection-notice.js";
 import { useCalendarMirror } from "../../calsetup/index.js";
 
 export function useAccountsSummary(): PaneSummary | null {
@@ -11,6 +12,8 @@ export function useAccountsSummary(): PaneSummary | null {
   if (mirror === null) return null;
   const accounts = accountsOf(mirror.connections, mirror.calendars);
   const out = accounts.some((a) => a.state === "signedOut");
+  const now = Date.now();
+  const overdue = accounts.some((a) => a.state === "inStep" && calendarCheckDeadline(a.connection) <= now);
   const ways = [...new Set(accounts.map(({ way }) => t(`way.${way}`)))];
   return {
     count: accounts.length ? new Intl.NumberFormat(locale).format(accounts.length) : undefined,
@@ -18,7 +21,13 @@ export function useAccountsSummary(): PaneSummary | null {
       ? new Intl.ListFormat(locale, { type: "unit", style: "short" }).format(ways)
       : undefined,
     value: t(
-      out ? "accounts.state.signedOut" : accounts.length ? "accounts.state.inStep" : "accounts.noneShort",
+      out
+        ? "accounts.state.signedOut"
+        : overdue
+          ? "accounts.state.overdue"
+          : accounts.length
+            ? "accounts.state.inStep"
+            : "accounts.noneShort",
     ),
     hot: out,
   };

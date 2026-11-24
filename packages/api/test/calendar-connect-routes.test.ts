@@ -522,9 +522,11 @@ describe("the routes that name a connection or a calendar", () => {
     const second = await connect(r, ics("https://feeds.example.test/mine.ics"));
     expect(await (await r.ask("GET", "/calendar/connect")).json()).toEqual({ ways: ["icloud", "caldav", "ics"], connections: [first, second] });
     expect(await (await r.ask("GET", "/calendar/connect", undefined, {}, o)).json()).toEqual({ ways: ["icloud", "caldav", "ics"], connections: [theirs] });
+    const stored = (await connectionsOf(r.db, r.s.accountId)).find((row) => row.id === first.id);
+    expect(first.nextPollAt).toBe(stored?.nextPollAt?.toISOString());
     // A record is what the feed sends of a connection: its host, and nothing that signs in.
     expect(Object.keys(first).sort()).toEqual([
-      "consentedAt", "createdAt", "errorCode", "grantMailboxId", "id", "label", "lastSyncedAt", "provider", "serverHost", "status", "updatedAt",
+      "consentedAt", "createdAt", "errorCode", "grantMailboxId", "id", "label", "lastSyncedAt", "nextPollAt", "provider", "repeatShapes", "serverHost", "status", "updatedAt",
     ]);
   });
 

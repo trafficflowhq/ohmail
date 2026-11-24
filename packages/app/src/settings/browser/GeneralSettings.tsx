@@ -1,6 +1,9 @@
 "use client";
 
 import { mirrorOwnerOf } from "@ohmail/app-logic/session/sync-scheduler";
+import { useResolvedDemoMode } from "@ohmail/app-logic/engine";
+import { Button } from "@ohmail/ui/base";
+import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { useState } from "react";
 import { useTheme } from "@ohmail/ui/theme";
 import { useFrame } from "../../frame/index.js";
@@ -41,6 +44,11 @@ export interface GeneralSettingsProps extends Partial<PaneBodyProps> {
 /** Each setting uses the host's own device controls or the confirmed account row. */
 export function BrowserGeneralPane({ language, textSize, captureOwner, showMessages }: GeneralSettingsProps) {
   const { host, report } = useFrame();
+  const demo = useResolvedDemoMode();
+  const rail = useText("rail");
+  const { surface, desktopDownload } = host.device.build;
+  const openLink = host.device.openLink;
+  const download = surface === "web" && !demo && desktopDownload && openLink !== NONE;
   const scope = host.session.scope;
   const t = useText("settings");
   const theme = useTheme();
@@ -129,5 +137,18 @@ export function BrowserGeneralPane({ language, textSize, captureOwner, showMessa
         : null,
     defaultMail: null,
   };
-  return <GeneralPane model={model} showMessages={showMessages} />;
+  return (
+    <>
+      <GeneralPane model={model} showMessages={showMessages} />
+      {download ? (
+        <SettingsSheet>
+          <SettingLine label={rail("getDesktop")}>
+            <Button kind="two" size="s" onPress={() => openLink(desktopDownload)}>
+              {rail("getDesktopOpen")}
+            </Button>
+          </SettingLine>
+        </SettingsSheet>
+      ) : null}
+    </>
+  );
 }

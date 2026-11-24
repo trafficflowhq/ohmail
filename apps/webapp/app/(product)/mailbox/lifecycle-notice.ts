@@ -36,10 +36,10 @@ function remember(key: string): void {
 }
 
 /** What the feed earns for this viewer: a notice, or `null`. Put-away keys are the dismissal's. */
-function noticeFromFeed(entry: AccessFeed | null, hidden: ReadonlySet<string>, now: number): Notice | null {
+function noticeFromFeed(entry: AccessFeed | null, hidden: ReadonlySet<string>, now: number, criticalOnly: boolean): Notice | null {
   if (entry === null || !entry.answer.metered) return null;
-  const next = noticeOf(entry.answer.lifecycle, entry.caughtUp ?? undefined, now);
-  if (next === null) return null;
+  const next = noticeOf(entry.answer.lifecycle, criticalOnly ? undefined : (entry.caughtUp ?? undefined), now);
+  if (next === null || (criticalOnly && next.kind !== "pastDue" && next.kind !== "grace")) return null;
   const key = dismissKey(next, storageOwner());
   return hidden.has(key) || dismissed(key) ? null : next;
 }
@@ -67,7 +67,7 @@ export interface LifecycleNotice {
  * wall's schedule, no lift and no clock), polling after a hand-off. Bound: a tab that keeps focus
  * throughout a payment made on another device reads only on its next return.
  */
-export function useLifecycleNotice(): LifecycleNotice {
+export function useLifecycleNotice(criticalOnly = false): LifecycleNotice {
   /** The account page opens in this screen's language, as the wall's does. */
   const lang = useLocale() === "de" ? "de" : "en";
   const active = !SELF_HOST_BUILD && apiConfigured();
@@ -80,7 +80,7 @@ export function useLifecycleNotice(): LifecycleNotice {
   const drawn = useRef(false);
   useEffect(() => () => { alive.current = false; }, []);
 
-  const notice = noticeFromFeed(entry, hidden, Date.now());
+  const notice = noticeFromFeed(entry, hidden, Date.now(), criticalOnly);
   useEffect(() => { drawn.current = notice !== null; });
 
   const { armPoll } = useAccessSchedule({

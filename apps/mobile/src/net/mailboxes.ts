@@ -172,6 +172,8 @@ export interface PhoneMailbox {
   filing?: PhoneFiling;
   /** `MailboxDTO.errorCode` and `authKind`, read only to class the support mail's block; absent where the wire sent none. */
   errorCode?: string;
+  failedAt?: string | null;
+  unreachableSince?: string | null;
   authKind?: string;
   provider?: string;
   messageCount?: number;
@@ -347,6 +349,8 @@ export async function readMailboxes(session: MailboxSession, counts = false): Pr
           : null,
         /* Each by the `in` spread: a server that sends no key says nothing about it. */
         ...("lastSyncAt" in r ? { lastSyncAt: instantOf(r.lastSyncAt) } : {}),
+        ...("failedAt" in r ? { failedAt: instantOf(r.failedAt) } : {}),
+        ...("unreachableSince" in r ? { unreachableSince: instantOf(r.unreachableSince) } : {}),
         ...("syncBlockedSince" in r ? { syncBlockedSince: instantOf(r.syncBlockedSince) } : {}),
         ...("hostedLastSyncAt" in r ? { hostedLastSyncAt: instantOf(r.hostedLastSyncAt) } : {}),
         ...(filingOf(r.filing) === undefined ? {} : { filing: filingOf(r.filing)! }),

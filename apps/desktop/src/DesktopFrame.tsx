@@ -15,7 +15,7 @@ import {
 } from "@ohmail/app/settings/browser";
 import type { PaneBodyProps } from "@ohmail/app/settings";
 import { ScreenerPane, useFiledLetters } from "@ohmail/app/settings/screener";
-import { calendarNoticeFragment, fragmentOf, useFrame } from "@ohmail/app/frame";
+import { calendarNoticeFragment, fragmentOf, useFrame, type FrameNotice } from "@ohmail/app/frame";
 import { type WayOutDoor, type WayOutSection } from "@ohmail/app/account/way-out";
 import { calendar as calendarEntry, calendarNoticePlace } from "@ohmail/app/calendar";
 import { NO_PANE_PARTS } from "@ohmail/app/mail";
@@ -106,6 +106,7 @@ export interface DesktopFrameProps {
   storage: StorageFacts | null;
   aiCredits?: AiCredits | null;
   mayLinkOut: boolean;
+  lifecycleState?: string | null;
   /** The service serves a page for the account's subscription. */
   manageOffered: boolean;
   withdrawManage: () => void;
@@ -447,7 +448,11 @@ export function DesktopFrame(p: DesktopFrameProps) {
       storage: entry("storage", storage ? <DesktopStorage facts={storage} linksOut={mayLinkOut} reread={rereadAccess} openServer={server === null ? undefined : openStorage} /> : null),
       storageCard: entry("storageCard", storage ? <DesktopStorageNotice facts={storage} linksOut={mayLinkOut} reread={rereadAccess} openServer={server === null ? undefined : openStorage} /> : null),
       /* The reuse sweeps the account's session read lists, acknowledged over the bridge: one notice. */
-      accountStrip: entry("accountStrip", null, sweeps.length > 0 ? () => useSweepsNotice(sweeps, recheckSweeps) : undefined),
+      accountStrip: entry("accountStrip", null, function useAccountStrip() {
+        const payment = usePaymentNotice(p.lifecycleState ?? null, p.manageOffered);
+        const ended = useSweepsNotice(sweeps, recheckSweeps);
+        return payment ? [payment, ...ended] : ended;
+      }),
       security: entry("security", null),
       about: entry("about", <DesktopAbout status={status} />),
       desktop: entry("desktop", null),
@@ -465,7 +470,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
       help: entry("help", null),
     };
     // The entries change with the door and what they draw; the callbacks above are stable.
-  }, [status, storage, mayLinkOut, server, openStorage, p.scope, p.ai, p.aiCredits, p.firstRunOpen, sweeps, withdrawManage, rereadAccess, recheckSweeps, awayFeed]);
+  }, [status, storage, mayLinkOut, server, openStorage, p.scope, p.ai, p.aiCredits, p.firstRunOpen, p.lifecycleState, p.manageOffered, sweeps, withdrawManage, rereadAccess, recheckSweeps, awayFeed]);
 
   const draftReply = useMemo(() => draftReplyOverBridgeFor(status), [status]);
   const { noticeDocument, noticeSession } = status;
@@ -622,9 +627,27 @@ export function DesktopFrame(p: DesktopFrameProps) {
   );
 }
 
+function usePaymentNotice(state: string | null, canOpenBilling: boolean): FrameNotice | null {
+  const { commands } = useFrame();
+  const t = useText("frame");
+  const [hidden, setHidden] = useState(false);
+  const failed = state === "past_due" && canOpenBilling;
+  useEffect(() => { if (!failed) setHidden(false); }, [failed]);
+  if (!failed || hidden) return null;
+  return {
+    kind: "payment",
+    title: t("connection.payment.title"),
+    hot: true,
+    acts: [
+      { label: t("connection.act.billing"), onPress: () => commands.go({ place: "settings", sub: "billing" }) },
+      { label: t("notice.hide"), kind: "quiet", onPress: () => setHidden(true) },
+    ],
+  };
+}
+
 /** The sign-ins ohmail ended because an older copy used them again, as one notice: the advice, OK and Details. */
 function useSweepsNotice(sweeps: readonly ReuseSweepLine[], recheck: () => Promise<unknown>) {
-  useRecheckWhileShown(true, recheck);
+  useRecheckWhileShown(sweeps.length > 0, recheck);
   const { shown, ok } = useSweepsAnswer(sweeps, reuseSweepsOverBridge);
   const notice = useSweepsFrameNotice(shown, ok);
   return notice === null ? [] : [notice];

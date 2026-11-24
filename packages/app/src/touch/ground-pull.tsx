@@ -11,7 +11,7 @@ import { ListTouch } from "./ListTouch.js";
 
 export function useGroundPull(): ListPull | None {
   const ground = usePull();
-  return ground === null ? NONE : { busy: ground.pulling, run: ground.pull };
+  return ground === null ? NONE : { busy: ground.pulling, result: ground.result, run: ground.pull };
 }
 
 export function PullScroll({

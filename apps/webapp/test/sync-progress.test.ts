@@ -342,7 +342,7 @@ const countCommit = (): void => {
 };
 
 /** The shipped shell, live, wrapped in exactly what the Cloud entry wraps it in. */
-async function shell(opts: { probe?: boolean; strict?: boolean; settings?: boolean } = {}): Promise<HTMLElement> {
+async function shell(opts: { probe?: boolean; strict?: boolean; view?: string } = {}): Promise<HTMLElement> {
   const [{ AppShell }, { ThemeProvider, ToastHost }] = modules;
 
   const container = document.createElement("div");
@@ -366,7 +366,7 @@ async function shell(opts: { probe?: boolean; strict?: boolean; settings?: boole
     demo: false,
     resolveOwner: async () => ({ kind: "owner", accountId: SYNC_FIXTURE_OWNER }) as const,
     mailboxFacts: opts.probe === false ? undefined : probe,
-    mailboxesNotices: opts.settings,
+    mailboxesNotices: opts.probe !== false,
   };
 
   await act(async () => {
@@ -388,6 +388,7 @@ async function shell(opts: { probe?: boolean; strict?: boolean; settings?: boole
     await Promise.resolve();
   });
   await tick(0);
+  await goTo(opts.view ?? (opts.probe === false ? "ohbox" : "settings/mailboxes"));
   return container;
 }
 
@@ -480,7 +481,7 @@ describe("a mailbox nobody is syncing says so wherever you are standing", () => 
         { status: 200, headers: { "content-type": "application/json" } },
       );
 
-    const c = await shell();
+    const c = await shell({ view: "ohbox" });
     await tick(0);
 
     // THE PREMISE, ASSERTED. Without rows this whole file could pass against an empty state,
@@ -496,13 +497,14 @@ describe("a mailbox nobody is syncing says so wherever you are standing", () => 
     ]) {
       await goTo(view);
       expect(text(c), `${view} did not show the fixture letter`).toContain(letter);
-      expect(text(c), `${view} said nothing about a mailbox that is not being synced`)
-        .toContain("ohmail cannot read its own folder");
-      expect(text(c), `${view} did not name the mailbox`).toContain("desk@trafficflow.invalid");
-      expect(text(c), `${view} did not say how long`).toContain("for 7 minutes");
-      expect(text(c), `${view} editorialised`).not.toMatch(/try again later|contact|sorry|don't worry/i);
+      expect(text(c), `${view} drew the transient block`).not.toContain("ohmail cannot read its own folder");
     }
 
+    await goTo("settings/mailboxes");
+    expect(text(c)).toContain("ohmail cannot read its own folder");
+    expect(text(c)).toContain("desk@trafficflow.invalid");
+    expect(text(c)).toContain("for 7 minutes");
+    expect(text(c)).not.toMatch(/try again later|contact|sorry|don't worry/i);
     await goTo("ohbox");
     expect(rowCount(c), "the strip replaced the mail instead of sitting above it")
       .toBeGreaterThan(0);
@@ -514,11 +516,7 @@ describe("a mailbox nobody is syncing says so wherever you are standing", () => 
     await tick(0);
     await vi.waitFor(() => expect(bar(c)).toBeTruthy());
     const b = bar(c);
-    // Structural, because "does not scroll away" cannot be measured in jsdom.
-    // The deck is the frame's main column; the strip stands in the notice slot's place.
-    expect(b!.closest(".fr-main"), "the strip was rendered inside the deck").toBeNull();
-    expect(b!.closest(".view"), "the strip was rendered inside a view").toBeNull();
-    expect(b!.closest(".oh-railfoot, .fr-railfoot, .fr-noticebar") !== null).toBe(true);
+    expect(b!.closest(".oh-railfoot, .fr-railfoot, .fr-noticebar")).toBeNull();
   });
 });
 
@@ -642,7 +640,7 @@ describe("thirty minutes of a first import is thirty minutes of a rising count",
 describe("a busy morning is not an import", () => {
   it("stays silent while single messages arrive on a settled mailbox", async () => {
     facts = [mailbox({ lastSyncAt: new Date(Date.parse(ISO) - 60_000).toISOString() })];
-    const c = await shell();
+    const c = await shell({ view: "ohbox" });
 
     // Build a mature mirror first, then let it settle — the strip's own state must go quiet.
     await importFor(17, 30);
@@ -813,7 +811,7 @@ describe("the shell says nothing it cannot know", () => {
 
   it("…but a probe that ANSWERS zero does say so, and points somewhere", async () => {
     facts = [];
-    const c = await shell({ settings: true });
+    const c = await shell();
     await tick(0);
     expect(text(c)).toContain("No mailbox connected");
     const press = [...bar(c)!.querySelectorAll<HTMLButtonElement>("button")]
@@ -959,8 +957,8 @@ describe("an empty Ohbox that is CORRECT says so, and only then", () => {
     answer = empty;
     await tick(120_000);
 
+    expect(text(c), "the premise: Mailboxes reports the block").toContain("cannot read its own folder");
     await goTo("ohbox");
-    expect(text(c), "the premise: the strip is reporting the block").toContain("cannot read its own folder");
     expect(rowCount(c), "the premise: the Ohbox is empty").toBe(0);
     expect(text(c), "the pane explained where the mail went while the mailbox was not being synced")
       .not.toContain("Nothing in your Ohbox yet");
@@ -976,8 +974,8 @@ describe("an empty Ohbox that is CORRECT says so, and only then", () => {
     answer = () => new Response("{}", { status: 503 });
     await tick(30_000);
 
+    expect(text(c), "the premise: Mailboxes reports the outage").toContain(RETRYING);
     await goTo("ohbox");
-    expect(text(c), "the premise: the strip is reporting the outage").toContain(RETRYING);
     expect(text(c), "the pane re-derived its own state and overruled the ladder")
       .not.toContain("Nothing in your Ohbox yet");
   });
@@ -1013,7 +1011,7 @@ describe("an honest wait", () => {
 
   it("escalates past ten minutes, offers the one action, and never claims a failure", async () => {
     facts = [mailbox({ lastSyncAt: null, createdAt: ISO })];
-    const c = await shell({ settings: true });
+    const c = await shell();
     await tick(660_000);
     expect(text(c)).toContain(SLOW);
     expect(text(c)).toContain("connected 11 minutes ago");
@@ -1067,7 +1065,7 @@ describe("the mirror being read is not the mirror growing", () => {
       answer = empty;
       return page(30);
     };
-    const c = await shell();
+    const c = await shell({ view: "ohbox" });
     await tick(0);
 
     // Premise: the warm mirror really did land, and it is not being announced the moment it loads.

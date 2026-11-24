@@ -50,9 +50,10 @@ describe("the sync line and search agree about the first import", () => {
 
   it("mid-import both say so; after the import completes the bar is done and search says whole mailbox", async () => {
     answerSyncWith(() => page(3, "INBOX"));
-    const el = await mountShell([], { probe: facts });
+    const el = await mountShell([], { probe: facts, mailboxesNotices: true });
     await tick(2_000);
-    expect(textOf(el), "the premise: the rail announces the import").toContain(SYNCING);
+    await goTo("settings/mailboxes");
+    expect(textOf(el), "the premise: Mailboxes reports the import").toContain(SYNCING);
 
     await goTo("search");
     await typeQuery(el, "zqxjvwk");
@@ -64,7 +65,9 @@ describe("the sync line and search agree about the first import", () => {
     stamped = true;
     answerSyncWith(() => page(0, "INBOX"));
     await tick(FACTS_POLL_MS + IMPORT_END_IDLE_MS + 5_000);
-    expect(textOf(el), "the rail kept the import after the stamp and the idle tail").not.toContain(SYNCING);
+    await goTo("settings/mailboxes");
+    expect(textOf(el), "Mailboxes kept the import after the stamp and the idle tail").not.toContain(SYNCING);
+    await goTo("search");
     await typeQuery(el, "zqxjvwkx");
     expect(textOf(el)).toContain("Nothing matched");
     expect(textOf(el)).not.toContain("synced so far");
@@ -73,13 +76,15 @@ describe("the sync line and search agree about the first import", () => {
 
   it("the control: with the stamp still unwritten, the same wait leaves both saying the import runs", async () => {
     answerSyncWith(() => page(3, "INBOX"));
-    const el = await mountShell([], { probe: facts });
+    const el = await mountShell([], { probe: facts, mailboxesNotices: true });
     await tick(2_000);
     await goTo("search");
     answerSyncWith(() => page(0, "INBOX"));
     await tick(FACTS_POLL_MS + IMPORT_END_IDLE_MS + 5_000);
-    expect(textOf(el), "the rail let go of an import nobody stamped").toContain(SYNCING);
+    await goTo("settings/mailboxes");
+    expect(textOf(el), "Mailboxes let go of an import nobody stamped").toContain(SYNCING);
     expect(textOf(el), "the import fell back to the awaiting state").not.toMatch(AWAITING_LINE);
+    await goTo("search");
     await typeQuery(el, "zqxjvwkx");
     expect(textOf(el)).toContain("Only the mail synced so far was searched. The rest of your mail has not synced yet.");
   });

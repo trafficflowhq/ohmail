@@ -79,7 +79,7 @@ async function buildConnections(db: Db, accountId: string, ids: readonly string[
     id: calConnections.id, provider: calConnections.provider, label: calConnections.label, status: calConnections.status,
     errorCode: calConnections.errorCode, mailboxId: calConnections.mailboxId, serverUrl: calConnections.serverUrl,
     sourceHost: calConnections.sourceHost, consentedAt: calConnections.consentedAt, lastSyncedAt: calConnections.lastSyncedAt,
-    createdAt: calConnections.createdAt, updatedAt: calConnections.updatedAt,
+    nextPollAt: calConnections.nextPollAt, createdAt: calConnections.createdAt, updatedAt: calConnections.updatedAt,
   }).from(calConnections).where(and(eq(calConnections.accountId, accountId), inArray(calConnections.id, [...ids])));
   return new Map(rows.map((r) => [r.id, {
     id: r.id,
@@ -94,6 +94,7 @@ async function buildConnections(db: Db, accountId: string, ids: readonly string[
     serverHost: r.provider === "ics" || r.provider === "caldav" ? (r.sourceHost ?? hostOf(r.serverUrl)) : null,
     consentedAt: iso(r.consentedAt),
     lastSyncedAt: iso(r.lastSyncedAt),
+    nextPollAt: iso(r.nextPollAt),
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   }]));

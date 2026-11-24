@@ -34,19 +34,24 @@ describe("the desktop download in the mail frame", () => {
     await tick(2500);
     expect(view.getByRole("navigation", { name: "Places" })).toBeTruthy();
 
+    expect(view.queryByRole("button", { name: en.rail.getDesktopOpen })).toBeNull();
+    await act(async () => {
+      window.location.hash = "#/settings/general";
+      window.dispatchEvent(new Event("hashchange"));
+    });
     const download = view.getByRole("button", { name: en.rail.getDesktopOpen });
-    const notice = download.closest<HTMLElement>('[role="status"]')!;
-    expect(notice.textContent).toContain(en.rail.getDesktop);
+    expect(view.getByText(en.rail.getDesktop, { exact: true })).toBeTruthy();
+    expect(download.closest('[role="status"]')).toBeNull();
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
     await act(async () => void fireEvent.click(download));
     expect(open).toHaveBeenCalledTimes(1);
     expect(open).toHaveBeenCalledWith(
       "https://github.com/trafficflowhq/ohmail/releases/latest", "_blank", "noopener,noreferrer",
     );
-    await act(async () => void fireEvent.click(within(notice).getByRole("button", { name: en.rail.getDesktopDismiss })));
-    expect(localStorage.getItem("ohmail.desktopCtaDismissed")).toBe("1");
-    expect(view.queryByRole("button", { name: en.rail.getDesktopOpen })).toBeNull();
-
+    await act(async () => {
+      window.location.hash = "#/ohbox";
+      window.dispatchEvent(new Event("hashchange"));
+    });
     const sameBrowser = within(await mountCloudShell());
     await tick(2500);
     expect(sameBrowser.getByRole("navigation", { name: "Places" })).toBeTruthy();

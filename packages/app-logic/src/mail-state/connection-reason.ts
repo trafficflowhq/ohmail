@@ -50,8 +50,6 @@ function since(minutes: number | null, t: Translate): string | null {
   return minutes < 60 ? t("sinceMinutes", { minutes }) : t("sinceHours", { hours: Math.floor(minutes / 60) });
 }
 
-const DAY_MS = 86_400_000;
-
 const joined = (...parts: Array<string | null | undefined>): string => parts.filter((p) => p).join(" · ");
 
 /**
@@ -70,18 +68,11 @@ export function connectionReason(
   if (state === null) return null;
   switch (state.key) {
     case "behind": {
-      /* NEW MAIL IS LATE: since when, whole days from 24 hours on; "on us" only of our own service, which alone is Cloud. */
-      const at = state.asOf === null ? NaN : Date.parse(state.asOf);
-      const stamp = Number.isNaN(at) ? "" : waterlineStamp(state.asOf!, new Date(), reader.locale);
-      const hasSince = stamp === "" ? "no" : "yes";
-      const days = Number.isNaN(at) ? 0 : Math.max(0, Math.floor((Date.now() - at) / DAY_MS));
+      if (state.asOf === null || Number.isNaN(Date.parse(state.asOf))) return null;
       return {
-        title: days >= 1 ? t("behindTitleDays", { days }) : t("behindTitle"),
-        line: !managed
-          ? t("behindLineServer", { hasSince, since: stamp })
-          : days >= 1
-            ? t("behindLineCloudDay", { since: stamp })
-            : t("behindLineCloud", { hasSince, since: stamp }),
+        title: t(managed ? "checkingDelayedCloud" : "checkingDelayedServer", {
+          since: waterlineStamp(state.asOf, new Date(), reader.locale),
+        }),
       };
     }
     case "blocked": {

@@ -9,7 +9,7 @@
  * no control when it does not — read from the device, never a build assumption.
  */
 import Constants from "expo-constants";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useState, useSyncExternalStore } from "react";
 import { Linking, Platform, View } from "react-native";
 import { buildCommit, buildLabel } from "../src/build-info";
@@ -110,7 +110,8 @@ import { WaitingStrip } from "../src/ui/WaitingStrip";
 import { FilingStrip } from "../src/ui/FilingStrip";
 import { FilingsBlocks } from "../src/ui/FilingsBlock";
 import { filingsWaiting } from "../src/ui/filing-lines";
-import { lateWho, notCheckedNoteSaid } from "../src/ui/late-lines";
+import { setTimeLabel } from "../src/state/live";
+import { lateWho, mailboxIssue, notCheckedNoteSaid } from "../src/ui/late-lines";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
 export default function SettingsScreen({ inPane = false }: { inPane?: boolean }) {
@@ -202,6 +203,7 @@ function SettingsBody({ inPane }: { inPane: boolean }) {
   const backupSays = useSyncExternalStore(subscribeBackupExclusion, backupExclusion, backupExclusion);
   /* In More's pane the away responder opens in the same pane. */
   const pick = useMorePick();
+  const { mailbox } = useLocalSearchParams<{ mailbox?: string }>();
 
   return (
     <Screen>
@@ -213,7 +215,7 @@ function SettingsBody({ inPane }: { inPane: boolean }) {
         </View>
 
         {/* this phone — first, because it is the only block that says what this phone IS */}
-        <ThisPhonePanel />
+        <ThisPhonePanel mailbox={mailbox} />
         <SenderNamePanel />
         <SignaturesPanel />
         <WaitingStrip />
@@ -538,7 +540,7 @@ const HERE_CARD = "this-phone";
 const declinedHere = (key: string): boolean =>
   key === HERE_CARD && (organizerRestrictedSaid() || organizerNotificationsOffSaid());
 
-function ThisPhonePanel() {
+function ThisPhonePanel({ mailbox }: { mailbox?: string }) {
   const w = useWorld();
   const [confirming, setConfirming] = useState<string | null>(null);
   /* WHAT THE LAST PRESS ANSWERED. Its own state and not `organizeRefusal`, which is the LAUNCH
@@ -635,7 +637,10 @@ function ThisPhonePanel() {
   const unreadable = firstSyncSaid(w.boot.firstSync);
   /* Who checks the mailboxes behind this session, for a row whose server says it is not fetching. */
   const lateBy = lateWho(conn.state.k === "live" ? conn.state.session : null);
-  const cards: readonly { key: string; address: string; claim: PhoneClaim; late?: string | null }[] = here !== null
+  const roster = mailbox && w.mailboxes.rows.some((row) => row.id === mailbox)
+    ? w.mailboxes.rows.filter((row) => row.id === mailbox)
+    : w.mailboxes.rows;
+  const cards: readonly { key: string; address: string; claim: PhoneClaim; late?: string | null; error?: ReturnType<typeof mailboxIssue> }[] = here !== null
     ? [{
         key: HERE_CARD,
         address: here.address,
@@ -652,7 +657,7 @@ function ThisPhonePanel() {
            carries it, so the chip re-derives under an open panel rather than at re-entry. */
         claim: claimHere(here, organizerInstruction(), organizerHandedBack()),
       }]
-    : w.mailboxes.rows.map((row) => ({
+    : roster.map((row) => ({
         key: row.id,
         address: row.address,
         /* NO NAME, AND NO HAND-BACK ON A PAIRED ROW. See {@link claimFrom}: every holder a paired
@@ -668,6 +673,7 @@ function ThisPhonePanel() {
         }),
         /* NEW MAIL IS LATE for this mailbox: the strip's sentence, for the row it is about. */
         late: notCheckedNoteSaid(row, Date.now(), readerZone(), activeLocale(), lateBy),
+        error: mailboxIssue(row),
       }));
   if (cards.length === 0) return null;
 
@@ -706,6 +712,13 @@ function ThisPhonePanel() {
                 {/* THE SERVER IS NOT CHECKING THIS MAILBOX — calm, no alert and no press: nothing
                     here is the person's to do, and it leaves when the server says fetching runs. */}
                 {row.late == null ? null : <Txt variant="note" tone="ink2">{row.late}</Txt>}
+                {row.error ? (
+                  <Txt variant="note">
+                    {row.error.words}{row.error.since ? " · " + Copy.lateSince(
+                      setTimeLabel(row.error.since, new Date(), readerZone(), activeLocale()),
+                    ) : ""}
+                  </Txt>
+                ) : null}
                 {/* THE CONNECTION, WHERE SOMEBODY ASKING "IS MY MAIL BEING FILED?" IS LOOKING.
                     The chip above answers who ORGANIZES the mailbox; this answers whether
                     anything can reach it. Both, because they are true at once: this phone is

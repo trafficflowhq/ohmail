@@ -4115,8 +4115,14 @@
     "filingMailboxes": "{count, plural, one {1 mailbox} other {# mailboxes}}",
     "filingReasonsDiffer": "the reasons differ by mailbox",
     "pull": "Pull new mail",
-    "pulling": "Checking your mail server…",
+    "pulling": "Checking…",
     "pullAria": "Pull new mail — check the mail server now",
+    "checkingDelayedCloud": "ohmail Cloud hasn’t checked mail since {since}",
+    "checkingDelayedServer": "Your server hasn’t checked mail since {since}",
+    "pullPaused": "Not now, checking resumes by itself",
+    "pullCurrent": "Up to date",
+    "pullPending": "Checking continues",
+    "pullMailboxFailed": "Couldn’t check · Open Mailboxes",
     "pullQuiet": "Checked — nothing new.",
     "pullSlow": "Still checking. New mail arrives on its own.",
     "pullBehind": "Not checked. ohmail Cloud is not checking right now, and new mail arrives by itself as soon as it does.",
@@ -6245,11 +6251,15 @@
     },
     "connection": {
       "act": {
+        "billing": "Open Billing",
         "signIn": "Sign in",
         "reload": "Reload",
         "connect": "Connect a mailbox",
-        "mailboxes": "Mailboxes",
+        "mailboxes": "Open Mailboxes",
         "writeToUs": "Write to us"
+      },
+      "payment": {
+        "title": "Payment failed"
       },
       "signedOut": {
         "title": "Signed out",
@@ -6273,11 +6283,11 @@
       },
       "mailServerDown": {
         "title": "Mail server not reached",
-        "named": "{address} not reached"
+        "named": "{address}: Mail server unreachable"
       },
       "mailboxPassword": {
-        "title": "The password was refused",
-        "named": "{address} refused the password"
+        "title": "Mailbox sign-in needed",
+        "named": "{address}: Sign in again"
       },
       "mailboxSync": {
         "title": "A mailbox is not syncing",
@@ -6287,7 +6297,8 @@
         "title": "Reconnecting"
       },
       "late": {
-        "title": "New mail is late"
+        "title": "New mail is late",
+        "since": "ohmail Cloud hasn’t checked mail since {time, date, ::HHmm}"
       },
       "behind": {
         "title": "Catching up",
@@ -6794,6 +6805,18 @@
       "microsoft": "Microsoft 365"
     },
     "accounts": {
+      "noticeSignIn": "{name}: Sign in again",
+      "noticeConnection": "{name}: Calendars can’t connect",
+      "noticeOverdue": "{name}: Calendar check overdue",
+      "overdueDetail": "The scheduled calendar check is overdue",
+      "scheduledCheck": "Scheduled check",
+      "openCalendars": "Open Calendars",
+      "errorSince": "Since",
+      "checkState": {
+        "checking": "Checking…",
+        "current": "Checked",
+        "failed": "Couldn’t check"
+      },
       "useCalendar": "Use ohcal",
       "add": "Add a calendar account",
       "addAccount": "Add account",
@@ -6802,6 +6825,7 @@
       "signInAgain": "Sign in again",
       "state": {
         "inStep": "In step",
+        "overdue": "Overdue",
         "signedOut": "Signed out",
         "failing": "Not checked",
         "removing": "Removing"

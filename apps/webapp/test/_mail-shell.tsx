@@ -52,6 +52,7 @@ import type { NotificationHost } from "../app/shell/notification-settings";
 import type { ProfileImportTransport } from "../app/shell/ProfileImportCard";
 import type { ImageDoor } from "../app/shell/remote-images";
 import { CLOUD_WIRE as CLOUD_SUGGEST } from "../app/(product)/mailbox/suggest-wire";
+import { refusalOf } from "@ohmail/app-logic/mailboxes/connect/refusal";
 import { fakePane, ok, row } from "../../../packages/app/test/mailboxes/pane/support.js";
 
 await prepareWriting();
@@ -154,7 +155,13 @@ export function hostFromTodaysInputs(
   const mailboxWire = props.mailboxesNotices === true
     ? {
         ...fakePane().wire,
-        list: async () => ok(((await props.mailboxFacts?.()) ?? []).map((m) => row(m.id, m.address))),
+        list: async () => {
+          try {
+            return ok(((await props.mailboxFacts?.()) ?? []).map((m) => row(m.id, m.address)));
+          } catch {
+            return { ok: false as const, refusal: refusalOf(null) };
+          }
+        },
       }
     : NONE;
   const ceiling = props.sendSurfaceMaxTotalBytes;

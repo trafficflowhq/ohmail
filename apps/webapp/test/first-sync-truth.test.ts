@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import messages from "../messages/en.json";
 import {
   ISO,
+  goTo,
   installShellEnv,
   mailbox,
   mountShell,
@@ -95,7 +96,8 @@ describe("the first-sync strip speaks about the sync, not about arrival", () => 
   it("the shipped shell renders it, on a mailbox that has never completed a cycle", async () => {
     // Through the real shell, because the string being right in the catalogue and the string being on screen are two
     // different claims. The frame says the waiting first sync as its First sync, with today's line beside it.
-    const c = await mountShell([mailbox({ lastSyncAt: null, createdAt: ISO })]);
+    const c = await mountShell([mailbox({ lastSyncAt: null, createdAt: ISO })], { mailboxesNotices: true });
+    await goTo("settings/mailboxes");
     await tick(0);
 
     expect(textOf(c)).toContain(messages.frame.connection.firstSync.title);

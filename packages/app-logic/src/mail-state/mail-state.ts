@@ -30,7 +30,7 @@
    alternative to a second copy of a rule that must never diverge — see `address-key.ts`. */
 import type { FilingRefusalReason } from "@ohmail/wire";
 import { addressKey } from "./address-key.js";
-import { MIRROR_STORE_REFUSED_DETAIL } from "./mailbox-error-key.js";
+import { MIRROR_STORE_REFUSED_DETAIL, mailboxErrorKey } from "./mailbox-error-key.js";
 import {
   FILING_REFUSAL_REASONS, IMPORT_FLOOR_MAX_MS, filingRefusalReason, importFloorInWindow,
 } from "@ohmail/client-engine";
@@ -769,6 +769,8 @@ export interface MailboxFacts {
    * a Pull press say "can't reach the mail server" from it.
    */
   unreachableSince?: string | null;
+  /** Start of the current provider failure, cleared after a successful connection. */
+  failedAt?: string | null;
   /**
    * WHY a `disabled` mailbox is disabled, when the ORGANIZER LEASE decided it (mail 0027).
    *
@@ -1078,6 +1080,37 @@ export function serverUnreachable(m: Pick<MailboxFacts, "status" | "errorCode" |
  * rows carry, the last instant the service checked anything, so the sentence never overstates;
  * `null` when none is on record.
  */
+export const NOTICE_DELAY_MS = 30 * 60_000;
+
+export function noticeDelayPassed(since: string | null | undefined, now: number): boolean {
+  return typeof since === "string" && now - Date.parse(since) >= NOTICE_DELAY_MS;
+}
+
+export function mailboxErrorNeedsAction(m: Pick<MailboxFacts, "errorCode" | "errorDetail">): boolean {
+  const { key } = mailboxErrorKey(m.errorCode, m.errorDetail);
+  return key.startsWith("err_auth") || key.startsWith("err_credential") ||
+    key === "err_storage" || key === "err_host_refused" || key === "err_port_refused" ||
+    key === "err_plaintext_refused";
+}
+
+function mailboxFailureState(m: MailboxFacts, now: number, count: number): MailState {
+  const unreachable = typeof m.unreachableSince === "string" && !mailboxErrorNeedsAction(m);
+  return {
+    ...QUIET,
+    key: "mailboxError",
+    clock: true,
+    count,
+    errorCode: m.errorCode ?? (unreachable ? "connect" : "unknown"),
+    errorDetail: m.errorDetail,
+    errorLocalServer: m.errorLocalServer,
+    address: m.address,
+    mailboxId: m.id,
+    unreachable,
+    minutes: minutesSince(m.failedAt ?? m.unreachableSince ?? null, now),
+    storeRefusals: m.storeRefusals,
+  };
+}
+
 export function fetchingLate(
   rows: readonly Pick<MailboxFacts, "fetching">[] | null | undefined,
 ): { since: string | null } | null {
@@ -1577,6 +1610,8 @@ export interface MailState {
    * server's last finished pass here, and may carry none.
    */
   asOf: string | null;
+  /** The affected settings row. */
+  mailboxId?: string;
   /** The mailbox the state is ABOUT, when it is about exactly one. */
   address: string | null;
   /**
@@ -2217,12 +2252,17 @@ function climb(input: MailStateInputs): MailState {
   const live = mailboxes.filter((m) => m.status !== "disabled");
 
   // NEW MAIL IS LATE — the server reaches us and says it is not fetching. With the connection's own
-  // states above (a loop that cannot read the server cannot know this) and before a mailbox's own
-  // trouble: nothing below can move while nothing fetches, and "syncing" or "filing" over a
+  // states above (a loop that cannot read the server cannot know this), while an urgent mailbox
+  // error still needs attention. "Syncing" or "filing" over a
   // service that is not running is the healthy look this state exists to end. `clock`: the
   // sentence turns to its day form by time alone.
-  const late = fetchingLate(mailboxes);
-  if (late) return { ...QUIET, key: "behind", clock: true, count: mirrored, asOf: late.since };
+  const immediate = live.find((m) => m.status === "error" && mailboxErrorNeedsAction(m));
+  if (immediate) return mailboxFailureState(immediate, now, mirrored);
+  const late = fetchingLate(live);
+  if (late) {
+    const mailboxId = live.find((m) => m.fetching?.behind === true && m.fetching.since === late.since)?.id;
+    return { ...QUIET, key: "behind", clock: true, count: mirrored, asOf: late.since, mailboxId };
+  }
 
   /* 4a. STOOD DOWN — the organizer lease is declining to serve it. The
    * `live` filter drops every `disabled` row, so an account whose only
@@ -2263,6 +2303,7 @@ function climb(input: MailStateInputs): MailState {
       count: mirrored,
       reason: standDownToken(stoodDown.disabledReason),
       address: stoodDown.address,
+      mailboxId: stoodDown.id,
     };
   }
 
@@ -2289,6 +2330,7 @@ function climb(input: MailStateInputs): MailState {
       count: mirrored,
       reason: isSyncBlockReason(blocked.syncBlockedReason) ? blocked.syncBlockedReason : null,
       address: blocked.address,
+      mailboxId: blocked.id,
       minutes: minutesSince(blocked.syncBlockedSince, now),
     };
   }
@@ -2299,22 +2341,14 @@ function climb(input: MailStateInputs): MailState {
   // backoff: whatever the mirror is doing, THIS mailbox is contributing nothing to it.
   // A server this install cannot reach is the same arm from its first observation, said as the
   // Settings pane says it; a mailbox in error for another reason is named first.
-  const failed = live.find((m) => m.status === "error" && typeof m.unreachableSince !== "string")
-    ?? live.find((m) => m.status === "error" || typeof m.unreachableSince === "string");
-  if (failed) {
-    const unreachable = typeof failed.unreachableSince === "string";
-    return {
-      ...QUIET,
-      key: "mailboxError",
-      count: mirrored,
-      errorCode: failed.errorCode ?? (unreachable ? "connect" : "unknown"),
-      ...(failed.errorDetail ? { errorDetail: failed.errorDetail } : {}),
-      ...(failed.errorLocalServer === true ? { errorLocalServer: true } : {}),
-      address: failed.address,
-      ...(unreachable ? { unreachable } : {}),
-      ...(failed.storeRefusals ? { storeRefusals: failed.storeRefusals } : {}),
-    };
-  }
+  const failed = live
+    .filter((m) => m.status === "error" || typeof m.unreachableSince === "string")
+    .map((m) => mailboxFailureState(m, now, mirrored))
+    .reduce<MailState | null>(
+      (oldest, issue) => oldest === null || (issue.minutes ?? -1) > (oldest.minutes ?? -1) ? issue : oldest,
+      null,
+    );
+  if (failed) return failed;
 
   // 5a. FILING — we have filed the mail and the server has not. The API
   // never opens IMAP: decisions write `folder_state` and the worker moves
