@@ -7,18 +7,13 @@ import { AddressText } from "../AddressText.js";
 import type { RowProps } from "./Row.js";
 import { RowAmount } from "./row-tick.js";
 
-/** Short stubs leave the line. The address also yields before a personal tag that would be clipped. */
-function fitFirstLine(line: HTMLElement, fitAddress: boolean) {
+/** The address yields before a personal tag that would be clipped. */
+function fitFirstLine(line: HTMLElement) {
   delete line.dataset.foldAddress;
   delete line.dataset.foldTag;
-  const address = line.querySelector<HTMLElement>(":scope > .oh-row-address");
+  const address = line.querySelector<HTMLElement>(":scope > .oh-row-address > .oh-row-address-words");
   const room = address?.clientWidth ?? 0;
   const words = address?.scrollWidth ?? 0;
-  if (fitAddress && words > room + 1) {
-    const floor = Number.parseFloat(getComputedStyle(line).getPropertyValue("--row-byline-fit-floor"));
-    if (room < Math.max(floor, words * 0.6)) line.dataset.foldAddress = "";
-  }
-
   const name = line.querySelector<HTMLElement>(":scope > .oh-tag[data-own] > .oh-tag-name");
   if (!name || !name.getClientRects().length) return;
 
@@ -31,19 +26,17 @@ function fitFirstLine(line: HTMLElement, fitAddress: boolean) {
   if (clipped()) line.dataset.foldTag = "";
 }
 
-function useFirstLineFit(enabled: boolean, fitAddress: boolean) {
+function useFirstLineFit(enabled: boolean) {
   const line = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
-    if (enabled && line.current) fitFirstLine(line.current, fitAddress);
+    if (enabled && line.current) fitFirstLine(line.current);
   });
   useLayoutEffect(() => {
     const el = line.current;
     if (!el || !enabled) return;
-    const fit = () => fitFirstLine(el, fitAddress);
+    const fit = () => fitFirstLine(el);
     const watch = typeof ResizeObserver === "function" ? new ResizeObserver(fit) : null;
     watch?.observe(el);
-    const address = el.querySelector(":scope > .oh-row-address");
-    if (fitAddress && address) watch?.observe(address);
     document.fonts?.addEventListener("loadingdone", fit);
     return () => {
       watch?.disconnect();
@@ -51,7 +44,7 @@ function useFirstLineFit(enabled: boolean, fitAddress: boolean) {
       delete el.dataset.foldAddress;
       delete el.dataset.foldTag;
     };
-  }, [enabled, fitAddress]);
+  }, [enabled]);
   return line;
 }
 
@@ -121,17 +114,14 @@ export function RowFirst(
     "data-domain": keepAddressDomain ? "" : undefined,
     onClick: contact,
   };
-  const shownAddress =
-    keepAddressDomain && address ? (
-      <AddressText address={address} />
-    ) : props.labels?.length ? (
-      <span>{address}</span>
-    ) : (
-      address
-    );
+  const shownAddress = (
+    <span className="oh-row-address-words">
+      {keepAddressDomain && address ? <AddressText address={address} /> : address}
+    </span>
+  );
   const shownWho = keepAddressDomain && !address ? <AddressText address={who} /> : who;
-  const fitAddress = Boolean(props.fitAddress && address);
-  const line = useFirstLineFit(!keepAddressDomain && (Boolean(props.tag) || fitAddress), fitAddress);
+  const name = rowName(shownWho, { href: address ? undefined : href, contact, nameAction, nameActions });
+  const line = useFirstLineFit(!keepAddressDomain && Boolean(props.tag));
   useMeasuredMark(line, line, "foldVerb", Boolean(props.own && props.labels?.length && !props.twin));
   const flip = onWhen
     ? (event: MouseEvent<HTMLElement>) => {
@@ -142,7 +132,7 @@ export function RowFirst(
   return (
     <span ref={line} className="oh-row-first" aria-hidden={props.twin ? true : undefined}>
       <b className="oh-row-who" data-domain={keepAddressDomain && !address ? "" : undefined}>
-        {rowName(shownWho, { href: address ? undefined : href, contact, nameAction, nameActions })}
+        {keepAddressDomain && address ? <span className="oh-row-who-words">{name}</span> : name}
       </b>
       {props.senderCheck ? <Tag title={props.senderCheck.title}>{props.senderCheck.label}</Tag> : null}
       {props.flag ? (

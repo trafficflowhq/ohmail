@@ -5,9 +5,9 @@
  * (a sender is decided, not read). On one column the open sender stands over the list.
  */
 import { useSwitchEnded } from "@ohmail/app-logic/session/ui-vitals";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { quarantineShelf, shelfRowMatches } from "@ohmail/app-logic/press/quarantine-shelf";
-import { GroupHeading } from "@ohmail/ui/mail";
+import { GroupHeading, Sheet } from "@ohmail/ui/mail";
 import { useOptionalKeyBindings } from "@ohmail/app-logic/keys";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import {
@@ -18,6 +18,7 @@ import {
   PILE_VERB_KEY,
   viewSender,
   type ScreenerState,
+  type ScreenerView,
 } from "@ohmail/app-logic/screener";
 import { useEntered, useFrame, useSelectionBar } from "../frame/commands.js";
 import type { PaneProps } from "../frame/contract.js";
@@ -46,7 +47,7 @@ import type { ScreenerJunkItem } from "./ports.js";
 import { Failed } from "./sender/Failed.js";
 import { keptVerbs } from "./sender/Kept.js";
 import { Sender, type SenderWindow } from "./sender/Sender.js";
-import { useText } from "../text/index.js";
+import { useText, type Text } from "../text/index.js";
 import { useKeyWords } from "./words.js";
 import "./screener.css";
 
@@ -178,6 +179,27 @@ function useScreenerList({ route, plan, keysHere }: PaneProps) {
   };
 }
 
+/** The selection bar's decisions over picked waiting senders. */
+function waitingVerbs(view: ScreenerView, ids: readonly string[], t: Text) {
+  return PICK_DECISIONS.map(({ id, icon }) => ({
+    id,
+    icon,
+    label: t(PILE_VERB_KEY[id]),
+    disabled: view.decidePicked === undefined,
+    onPress: () => view.decidePicked?.(ids, id),
+  }));
+}
+
+/** On a phone the rows stand on the list's sheet, as the Ohbox's do; with room at its foot for the dock. */
+function OnSheet({ phone, picking, children }: { phone: boolean; picking: boolean; children: ReactNode }) {
+  if (!phone) return children;
+  return (
+    <Sheet kind="plain" phoneListPadding={picking ? "top" : "dock"}>
+      {children}
+    </Sheet>
+  );
+}
+
 export function ScreenerList(pane: PaneProps) {
   const { t, segment, go, phoneWindow, listScroller, setShelfPicked, view, junk, junkView, quarantine } =
     useScreenerList(pane);
@@ -198,15 +220,7 @@ export function ScreenerList(pane: PaneProps) {
   const contact = useRowContact();
   const selected = view.rows.filter((row) => selection.ids.includes(viewSender(row).id));
   const verbs =
-    segment === "waiting"
-      ? PICK_DECISIONS.map(({ id, icon }) => ({
-          id,
-          icon,
-          label: t(PILE_VERB_KEY[id]),
-          disabled: view.decidePicked === undefined,
-          onPress: () => view.decidePicked?.(selection.ids, id),
-        }))
-      : keptVerbs(model, segment, selected, t);
+    segment === "waiting" ? waitingVerbs(view, selection.ids, t) : keptVerbs(model, segment, selected, t);
   const foot = <SelectionFoot selection={selection} verbs={verbs} />;
   const asks = (
     <>
@@ -214,6 +228,9 @@ export function ScreenerList(pane: PaneProps) {
       <Unsubscribe view={view} />
     </>
   );
+  /* On a phone an open sender takes the whole screen: while none does, no row is drawn open. */
+  const phone = pane.plan.device === "phone";
+  const listed = phone ? { ...view, openId: null } : view;
   if (junkOn && junkView.full && junkView.open !== null)
     return <JunkLetter junk={junk} item={junkView.open} onBack={junkView.close} />;
   if (view.full && (!junkOn || quarantine))
@@ -233,64 +250,67 @@ export function ScreenerList(pane: PaneProps) {
       <Notices view={view} />
       {junkOn && junk.sweep ? <QuarantineMove sweep={junk.sweep} /> : null}
       <PullScroll className="sc-scroll" scroller={listScroller}>
-        {junkOn ? (
-          <>
-            <Tools
-              view={view}
-              junkCount={spamCount ?? null}
-              extra={
-                shelfFirst
-                  ? {
-                      label: t(providerOpen ? "hideSpamSearch" : "junkSearchLabel"),
-                      onPress: () => {
-                        if (providerOpen) junk.search.setQuery("");
-                        setProviderOpen(!providerOpen);
-                      },
-                    }
-                  : undefined
-              }
-            />
-            {!shelfFirst || providerOpen ? (
-              <Junk
-                junk={junk}
-                view={{
-                  ...junkView,
-                  select: (key) => {
-                    setShelfPicked(false);
-                    junkView.select(key);
-                  },
-                }}
+        <OnSheet phone={phone} picking={selection.ids.length > 0}>
+          {junkOn ? (
+            <>
+              <Tools
+                view={view}
+                junkCount={spamCount ?? null}
+                extra={
+                  shelfFirst
+                    ? {
+                        label: t(providerOpen ? "hideSpamSearch" : "junkSearchLabel"),
+                        onPress: () => {
+                          if (providerOpen) junk.search.setQuery("");
+                          setProviderOpen(!providerOpen);
+                        },
+                      }
+                    : undefined
+                }
               />
-            ) : null}
-            {view.rows.length > 0 ? (
-              <>
-                {!shelfFirst ? (
-                  <GroupHeading count={String(view.rows.length)}>{t("quarantineShelf")}</GroupHeading>
-                ) : null}
-                <Rows
-                  label={t(shelfFirst ? "segSpam" : "quarantineShelf")}
-                  contact={contact}
-                  selection={selection}
+              {!shelfFirst || providerOpen ? (
+                <Junk
+                  junk={junk}
                   view={{
-                    ...view,
-                    openId: quarantine ? view.openId : null,
-                    select: (id) => {
-                      setShelfPicked(true);
-                      view.select(id);
+                    ...junkView,
+                    openKey: phone ? null : junkView.openKey,
+                    select: (key) => {
+                      setShelfPicked(false);
+                      junkView.select(key);
                     },
                   }}
                 />
-              </>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <Tools view={view} touch={pane.plan.pointer === "coarse"} />
-            <Rows view={view} scroller={listScroller} selection={selection} contact={contact} />
-            <Empty view={view} />
-            {segment === "waiting" ? <Tail /> : null}
-          </>
-        )}
+              ) : null}
+              {view.rows.length > 0 ? (
+                <>
+                  {!shelfFirst ? (
+                    <GroupHeading count={String(view.rows.length)}>{t("quarantineShelf")}</GroupHeading>
+                  ) : null}
+                  <Rows
+                    label={t(shelfFirst ? "segSpam" : "quarantineShelf")}
+                    contact={contact}
+                    selection={selection}
+                    view={{
+                      ...view,
+                      openId: quarantine && !phone ? view.openId : null,
+                      select: (id) => {
+                        setShelfPicked(true);
+                        view.select(id);
+                      },
+                    }}
+                  />
+                </>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Tools view={view} touch={pane.plan.pointer === "coarse"} />
+              <Rows view={listed} scroller={listScroller} selection={selection} contact={contact} />
+              <Empty view={view} />
+              {segment === "waiting" ? <Tail /> : null}
+            </>
+          )}
+        </OnSheet>
       </PullScroll>
       {foot}
       {contact.card}

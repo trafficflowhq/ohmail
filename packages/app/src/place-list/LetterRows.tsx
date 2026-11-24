@@ -32,8 +32,6 @@ export interface LetterRowsProps {
   readonly stamp: (iso: string) => string;
   /** What line one says: the sender, or for one's own letter whom it went to. */
   readonly who: (m: EngineMessage) => string;
-  /** Omit a heavily clipped sender address. */
-  readonly fitAddress?: boolean;
   /** The place the letter is in, as a word. */
   readonly where?: (m: EngineMessage) => string | undefined;
   /** One tag, whole. */
@@ -58,7 +56,6 @@ export function LetterRows({
   press,
   stamp,
   who,
-  fitAddress,
   where,
   tag,
   squares,
@@ -97,7 +94,6 @@ export function LetterRows({
             {...contact?.rowProps(m.from, m.id)}
             who={name}
             address={m.from.address}
-            fitAddress={fitAddress}
             {...rowPeople(m, { name: m.from.name ?? m.from.address, address: m.from.address })}
             subject={m.subject}
             preview={m.snippet ?? undefined}

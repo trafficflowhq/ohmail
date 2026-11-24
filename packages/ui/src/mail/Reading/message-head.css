@@ -569,29 +569,46 @@
   }
 }
 
-/* On the phone, a folded News card keeps its delivery badge beside the date. */
+/* On a phone a News card's head gives the sender its line, as the reader's head does: the name on one line and the
+   address on one; the time ends the recipients' line, as the unfolded phone draws it, and the mailbox it came to
+   stands under them. Beside a long time and the mailbox the sender kept a few letters' width and broke per letter. */
 @container stream-card (inline-size < 600px) {
-  [data-stream-phone-list]
-    [data-stream-window]:not([data-receipts])
-    [data-stream-item]:not([data-expanded])
-    .oh-messagehead:has(> .oh-messagehead-delivery) {
-    grid-template-columns: var(--av) minmax(0, 1fr) minmax(0, var(--h-l)) auto;
+  [data-stream-phone-list] [data-stream-window]:not([data-receipts]) .oh-messagehead-tools {
+    display: contents;
   }
 
-  [data-stream-phone-list]
-    [data-stream-window]:not([data-receipts])
-    [data-stream-item]:not([data-expanded])
-    .oh-messagehead:has(> .oh-messagehead-delivery)
-    > .oh-messagehead-tools {
-    grid-column: 4;
-  }
-
-  [data-stream-phone-list]
-    [data-stream-window]:not([data-receipts])
-    [data-stream-item]:not([data-expanded])
-    .oh-messagehead-delivery {
+  [data-stream-phone-list] [data-stream-window]:not([data-receipts]) .oh-messagehead-tools > .oh-button {
     grid-column: 3;
     grid-row: 1;
+    justify-self: end;
+    margin-right: var(--oh-messagehead-pull);
+  }
+
+  [data-stream-phone-list] [data-stream-window]:not([data-receipts]) .oh-messagehead .oh-messagehead-stamp {
+    grid-column: 2 / -1;
+    grid-row: 2;
+    position: relative;
+    z-index: var(--oh-messagehead-layer);
+    justify-self: end;
+    align-self: start;
+    min-height: 0;
+    font-size: var(--t-meta);
+    line-height: var(--oh-messagehead-lh);
+  }
+
+  [data-stream-phone-list] [data-stream-window]:not([data-receipts]) .oh-messagehead > .oh-messagehead-to {
+    max-width: calc(100% - var(--oh-messagehead-beside-note));
+  }
+
+  [data-stream-phone-list]
+    [data-stream-window]:not([data-receipts])
+    .oh-messagehead[data-noted]
+    .oh-messagehead-noted
+    > .oh-blocked {
+    grid-column: 2 / -1;
+    grid-row: 3;
+    justify-self: start;
+    margin-top: var(--s1);
   }
 }
 
