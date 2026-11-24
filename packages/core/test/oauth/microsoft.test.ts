@@ -395,6 +395,7 @@ describe("classifyConsentFailure — the ORDER is the finding", () => {
     expect(classifyConsentFailure("access_denied", "AADSTS90094: grant requires admin permission"))
       .toBe("admin_consent_required");
     expect(classifyConsentFailure("consent_required", null)).toBe("admin_consent_required");
+    expect(classifyConsentFailure("admin_consent_required", null)).toBe("admin_consent_required");
   });
 
   it("a person's own decision is `consent_declined`, and anything else is `consent_failed`", () => {

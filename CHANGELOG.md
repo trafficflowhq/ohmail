@@ -21,6 +21,41 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.1] — 2026-11-24
+
+### Google and Microsoft calendar sign-in finishes on the web
+
+After approving access, you return to calendar setup to choose which calendars to show. If the connection fails, setup tells you why and lets you try again.
+
+### The phone composer shows when signature removal is unavailable
+
+Remove signature stays visible and is announced as disabled while the composer is busy.
+
+### Quieter Screener prompts
+
+The Screener asks once per account before each action that warns about an irreversible change. Confirming on one device remembers your choice on your other devices. Suggest again shows how many senders need a new suggestion and tells you when everyone is up to date. If the mail covered by a quote changes before you confirm, the Screener asks you to check the quote again.
+
+### Screener suggestion sizes and progress
+
+The Screener shows the same sender count in the selected size and the confirmation before you buy suggestions. The first run puts its progress in the list tools, and a repeat run shows progress in its menu.
+
+### Screener suggests for the whole waiting queue
+
+Screener can suggest for the entire waiting queue in one run. Temporary suggestion failures get another chance, and senders the worker could not suggest for can be retried from the list menu. Credits are refunded when a suggestion attempt fails before saving an answer.
+
+### Events on writable shared calendars can be edited
+
+Events on shared calendars become editable when the calendar server grants write access.
+
+### Trial dates, account notices and Microsoft approval
+
+Subscription Settings shows the date a past trial ended in your time zone. You can fold the
+notice list back up after opening it. If Microsoft requires administrator approval for mail
+or calendar, you can copy the approval link to send to your administrator.
+
+The waitlist explains when it cannot accept an address. The web preview uses the ohmail
+and calendar headline.
+
 ## [2.0.0] — 2026-11-24
 
 ### Search within a person's mail
@@ -19069,7 +19104,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.1
 [2.0.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.0
 [1.0.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.13
 [1.0.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.12

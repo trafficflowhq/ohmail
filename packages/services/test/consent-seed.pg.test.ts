@@ -6,7 +6,7 @@ import { accounts, accountSettings, changeLog, contacts, folderState, mailboxes,
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { buildSeedReview, confirmSeed, type SeedConfirmResult } from "../src/consent-seed.js";
+import { acknowledgeScreener, buildSeedReview, confirmSeed, consentSettings, type SeedConfirmResult } from "../src/consent-seed.js";
 import { dbFor, type ServiceContext } from "../src/context.js";
 
 /**
@@ -121,6 +121,18 @@ describe.skipIf(!AVAILABLE)("the sent-mail seed writes consent and moves nothing
   }, 120_000);
 
   afterAll(async () => { await owned.close(); });
+
+  it("keeps both acknowledgements when two clients write different kinds together", async () => {
+    const accountId = randomUUID();
+    await db.insert(accounts).values({ id: accountId, name: "Confirmation test" });
+    const account = { ...ctx, accountId, db: dbFor(db, accountId) };
+    const echoes = await Promise.all([
+      acknowledgeScreener(account, "spamUnsubscribe"),
+      acknowledgeScreener(account, "applySuggestions"),
+    ]);
+    expect(echoes).toContain(5);
+    expect((await consentSettings(account)).screenerAcknowledgements).toBe(5);
+  });
 
   it("offers the people written to, and discloses every robot it removed", async () => {
     const review = await buildSeedReview(ctx);

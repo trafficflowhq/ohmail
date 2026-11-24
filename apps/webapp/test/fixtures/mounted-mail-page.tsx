@@ -4,7 +4,7 @@ import { vi } from "vitest";
 import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
 import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
 import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
-import { en, json, serve, session } from "../account/account-harness";
+import { de, en, json, serve, session } from "../account/account-harness";
 
 export { act };
 
@@ -80,11 +80,11 @@ export async function tick(ms: number): Promise<void> {
   }
 }
 
-export async function mountMailPage(demo = false) {
+export async function mountMailPage(demo = false, locale: "en" | "de" = "en") {
   const { CloudShell } = await import("../../app/(product)/mailbox/CloudShell");
   const { Providers } = await import("../../app/(product)/providers");
   const page = render(
-    <NextIntlClientProvider locale="en" messages={en} timeZone="UTC" now={new Date(ISO)}>
+    <NextIntlClientProvider locale={locale} messages={locale === "de" ? de : en} timeZone="UTC" now={new Date(ISO)}>
       <Providers><CloudShell demo={demo} /></Providers>
     </NextIntlClientProvider>,
   );

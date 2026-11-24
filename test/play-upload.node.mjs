@@ -46,15 +46,15 @@ async function run(t, args, { failUpload = false, production = [] } = {}) {
             if (failUpload) response.statusCode = 403;
             result = failUpload ? { error: { message: dummyToken + " " + assertion } } : { versionCode: 123 };
             break;
-          case "GET " + api + "/test-edit/tracks/qa":
+          case "GET " + api + "/test-edit/tracks/internal":
             result = { releases: [{ versionCodes: ["123"], status: "completed" }] };
             break;
           case "GET " + api + "/test-edit/tracks/production":
             result = { releases: production };
             break;
-          case "PUT " + api + "/test-edit/tracks/qa":
+          case "PUT " + api + "/test-edit/tracks/internal":
             assert.deepEqual(JSON.parse(body), {
-              track: "qa",
+              track: "internal",
               releases: [{ versionCodes: ["123"], releaseNotes: notes, status: "completed" }],
             });
             break;
@@ -95,7 +95,7 @@ test("uploads a signed bundle to internal testing in a single edit", async (t) =
   assert.equal(result.code, 0, result.output);
   assert.deepEqual(result.calls, [
     "POST /token", "POST " + api, "POST /upload" + api + "/test-edit/bundles?uploadType=media",
-    "PUT " + api + "/test-edit/tracks/qa", "POST " + commit,
+    "PUT " + api + "/test-edit/tracks/internal", "POST " + commit,
   ]);
 });
 
@@ -104,7 +104,7 @@ test("promotes an internal version without uploading a bundle or dropping produc
   const result = await run(t, ["promote", "123", "0.05"], { production });
   assert.equal(result.code, 0, result.output);
   assert.deepEqual(result.calls, [
-    "POST /token", "POST " + api, "GET " + api + "/test-edit/tracks/qa",
+    "POST /token", "POST " + api, "GET " + api + "/test-edit/tracks/internal",
     "GET " + api + "/test-edit/tracks/production", "PUT " + api + "/test-edit/tracks/production", "POST " + commit,
   ]);
 });
@@ -121,7 +121,7 @@ test("refuses a staged first production release and an invalid rollout fraction"
   assert.equal(firstRelease.code, 1);
   assert.match(firstRelease.output, /first production release/);
   assert.deepEqual(firstRelease.calls, [
-    "POST /token", "POST " + api, "GET " + api + "/test-edit/tracks/qa", "GET " + api + "/test-edit/tracks/production",
+    "POST /token", "POST " + api, "GET " + api + "/test-edit/tracks/internal", "GET " + api + "/test-edit/tracks/production",
   ]);
   const invalid = await run(t, ["promote", "123", "1"]);
   assert.equal(invalid.code, 1);

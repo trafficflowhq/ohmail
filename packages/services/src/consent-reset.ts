@@ -1,9 +1,10 @@
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertAccountOrganizes,
   accountSettings, contacts, folderState, forgetListConsents, learningSignals, lockAccountRuleKeys, messages,
   recordChanges, recordRuleDelta, routingDecisions, ruleRemovals, rules, type Tx,
+  clearScreenerSuggestionRetries, SCREENER_SUGGESTION_FAILED, SCREENER_SUGGESTION_STATUS,
 } from "@trafficflow/db";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
@@ -129,6 +130,7 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
        stay, because which addresses a list posts as is the mailbox's fact, not a decision. Here,
        before the first delta: ingest and a press take this table before the change-log counter. */
     await forgetListConsents(bridgeTx(tx), ctx.accountId);
+    await clearScreenerSuggestionRetries(bridgeTx(tx), ctx.accountId);
     const doomed = await tx.select({ id: rules.id }).from(rules).where(eq(rules.accountId, ctx.accountId));
 
     // The change-log rows are written BEFORE the delete so a crash between them leaves a
@@ -147,8 +149,9 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
     // Screener SUGGESTIONS only. The rest of `routing_decisions` is the record of why each
     // message is where it is — and since the reset moves nothing, that record is still true.
     const suggestionRows = await tx.delete(routingDecisions)
-      .where(and(eq(routingDecisions.accountId, ctx.accountId), eq(routingDecisions.status, "suggestion")))
-      .returning({ id: routingDecisions.id });
+      .where(and(eq(routingDecisions.accountId, ctx.accountId),
+        inArray(routingDecisions.status, [SCREENER_SUGGESTION_STATUS, SCREENER_SUGGESTION_FAILED])))
+      .returning({ id: routingDecisions.id, status: routingDecisions.status });
     // Suggestions ride `/sync` (the narrow verdict entity), so their reset must too — without
     // these tombstones every mirror keeps rendering advice this account just discarded.
     if (suggestionRows.length > 0) {
@@ -194,7 +197,7 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
     return {
       rulesDeleted: doomed.length,
       contactsDeleted: contactRows.length,
-      screenerSuggestionsDeleted: suggestionRows.length,
+      screenerSuggestionsDeleted: suggestionRows.filter((r) => r.status === SCREENER_SUGGESTION_STATUS).length,
       learningSignalsDeleted: learningRows.length,
       unmoved,
       lastSeq: lastSeq === null ? null : Number(lastSeq),

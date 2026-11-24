@@ -13,7 +13,7 @@ import { ScreenerAbove, screenerPlace } from "../../../packages/app/src/screener
 import { TextProvider } from "../../../packages/app/src/text/index.js";
 import { fakeHost, SEAM_AT_REST } from "../../../packages/app/test/support/fake-host.js";
 import { fakeAddress, fakeAppearance } from "../../../packages/app/test/support/fake-window.js";
-import { BESIDE, modelOf, screenerEngine, sender, WORDS } from "../../../packages/app/test/screener/screener-world.js";
+import { BESIDE, TestConsent, modelOf, screenerEngine, sender, WORDS } from "../../../packages/app/test/screener/screener-world.js";
 
 const designed = '<table width="600" bgcolor="#ffffff" cellpadding="0"><tr><td><h1>Designed</h1><p>Original body</p></td></tr></table>';
 const reader = mailReader({ body: letterBody, look: NONE });
@@ -47,7 +47,9 @@ function mount(html: string | null) {
   render(
     <TextProvider locale="en" messages={{ ...WORDS.en, ...readerWords }} timeZone="UTC">
       <DoorsContext.Provider value={{ files: undefined, pictures: undefined }}>
-        <ScreenedMail />
+        <TestConsent scope="acct-1" transport="none">
+          <ScreenedMail />
+        </TestConsent>
       </DoorsContext.Provider>
     </TextProvider>,
   );

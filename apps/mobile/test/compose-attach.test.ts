@@ -305,7 +305,7 @@ describe("the send lock — the webapp's sendNeedsContent, mirrored", () => {
 });
 
 describe("the sheet's wiring (source, not render — this workspace has no RN renderer)", () => {
-  it("judges the shared predicate and hands both send arms the files", () => {
+  it("judges the shared predicate and hands all three send arms the files", () => {
     expect(COMPOSER).toContain("phoneSendNeedsContent({ forward, body, attachmentCount: attachments.length })");
     /* ALL THREE send arms are handed the same `files` — a fourth compose mode added without
        them would attach nothing and say nothing, which is the shape this pin exists for. The
@@ -314,9 +314,9 @@ describe("the sheet's wiring (source, not render — this workspace has no RN re
        `files` from one arm is still the red it always was. `sendNew` has no source to finish,
        so it carries no flag. */
     expect(COMPOSER).toContain("w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId,");
-    expect(COMPOSER).toContain("forwardPlan?.wire !== undefined ? { forwardParts: forwardPlan.wire } : {}, baseFor(base.current, draftId), waitedFor(base.current, draftId))");
-    expect(COMPOSER).toContain('w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\n          baseFor(base.current, draftId), waitedFor(base.current, draftId))');
-    expect(COMPOSER).toContain("w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined, baseFor(base.current, draftId), waitedFor(base.current, draftId))");
+    expect(COMPOSER).toContain("forwardPlan?.wire !== undefined ? { forwardParts: forwardPlan.wire } : {}, baseFor(base.current, draftId), waitedFor(base.current, draftId), ...markupArgs)");
+    expect(COMPOSER).toContain('w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\n          baseFor(base.current, draftId), waitedFor(base.current, draftId), ...markupArgs)');
+    expect(COMPOSER).toContain("w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined, baseFor(base.current, draftId), waitedFor(base.current, draftId), ...markupArgs)");
   });
 
   it("a Send that lacks only content stays pressable and the press earns the sentence", () => {
@@ -325,8 +325,8 @@ describe("the sheet's wiring (source, not render — this workspace has no RN re
        the button role off the control (measured on the Duo). */
     /* RE-DERIVED: the press reads one act (`sendPressAct`, driven in
        `send-press-after-unverified.test.ts`), whose content-only arm is still this sentence. */
-    expect(COMPOSER).toContain('disabled={pressAct === "none"}');
-    expect(COMPOSER).toContain("onPress={() => press(pressAct)}");
+    expect(COMPOSER).toContain('disabled={pressAct === "none"}\n      onPress={() => press(pressAct, doneOnSend)}');
+    expect(COMPOSER).toContain('disabled={pressAct === "none"}\n      onPress={() => press(pressAct, true)}');
     expect(COMPOSER).toContain('else if (act === "needContent") setNeedNote(true);');
     expect(COMPOSER).toContain("needNote && needsContent ? (");
     expect(COMPOSER).toContain("{Copy.composeNeedContent}");

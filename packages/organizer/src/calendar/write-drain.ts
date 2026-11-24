@@ -22,7 +22,7 @@ import {
 import type { Logger } from "@trafficflow/core";
 import { calAttendees, calCalendars, calEvents, calWrites, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
-  appliedPayloadOf, changedDaysOf, endedDayOf, exceptionBaseOf, ownOrganizerAddresses, parseWritePayload, someoneElses, writeRowOf, type CalendarWritePayload, type CalendarTransferProgress,
+  appliedPayloadOf, changedDaysOf, endedDayOf, exceptionBaseOf, ownOrganizerAddresses, parseWritePayload, isAttendeeCopy, writeRowOf, type CalendarWritePayload, type CalendarTransferProgress,
 } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 import { inConnection } from "./connection.js";
@@ -82,7 +82,7 @@ interface Second {
 
 type Claim =
   | {
-      readonly kind: "claimed"; readonly write: ClaimedWrite; readonly payload: CalendarWritePayload; readonly event: StoredEvent | null; readonly to: string | null;
+      readonly kind: "claimed"; readonly write: ClaimedWrite & { readonly calendarAccess: string }; readonly payload: CalendarWritePayload; readonly event: StoredEvent | null; readonly to: string | null;
       readonly organizer: string | null; readonly own: ReadonlySet<string>;
       /** Whose an event is: the account's mailboxes by the one own set, and the connection's principal; the door asks the same. */
       readonly owners: ReadonlySet<string>;
@@ -288,7 +288,7 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
       const own = await ownAddressesOf(tx, key.accountId, held.principal);
       const owners = await ownOrganizerAddresses(tx, key.accountId, held.principal);
       const exception = payload.exception === undefined ? undefined : await reviewedExceptionOf(
-        tx, key.accountId, head.calendarId, payload, event, owners, head.attempts === 0 && !payload.exception.masterReceipt,
+        tx, key.accountId, head.calendarId, payload, event, owners, head.calendarAccess, head.attempts === 0 && !payload.exception.masterReceipt,
       );
       let ownInvitee: string | null = null;
       if (event !== undefined && head.op === "answer") {
@@ -428,7 +428,7 @@ async function storedEventOf(
 /** The named exception is from the same account, calendar and series. Provider writes still use its recorded tag. */
 async function reviewedExceptionOf(
   tx: Tx, accountId: string, calendarId: string, payload: CalendarWritePayload,
-  master: StoredEvent | undefined, owners: ReadonlySet<string>, first: boolean,
+  master: StoredEvent | undefined, owners: ReadonlySet<string>, access: string, first: boolean,
 ): Promise<NonNullable<WriteTarget["exception"]> | "stale"> {
   const { act, exception } = payload;
   if (!exception || !master || (act.kind !== "calendar_event_update" && act.kind !== "calendar_event_answer") || writeRowOf(master) !== "series") return "stale";
@@ -442,8 +442,8 @@ async function reviewedExceptionOf(
     selected.providerId !== exception.providerId || selected.partial || selected.thisAndFuture ||
     selected.status === "cancelled" ||
     (act.kind === "calendar_event_answer"
-      ? !someoneElses(selected, owners) || selected.organizer !== master.organizer || selected.myAnswer === null
-      : someoneElses(selected, owners)))) return "stale";
+      ? !isAttendeeCopy(selected, owners, access) || selected.organizer !== master.organizer || selected.myAnswer === null
+      : isAttendeeCopy(selected, owners, access)))) return "stale";
   if (first && (selected?.updatedAt?.getTime() !== Date.parse(paired?.[0] ?? act.base) ||
     selected?.versionTag !== exception.version ||
     (paired && master.updatedAt?.getTime() !== Date.parse(paired[1])))) return "stale";
@@ -484,7 +484,7 @@ async function carryOut(
     ? { ...submitted, eventId: claim.write.eventId, base: paired?.[1] ?? claim.event?.updatedAt?.toISOString() ?? submitted.base }
     : submitted;
   const call = writeCallOf({
-    place: claim.place, act, event: claim.event, base: claim.write.baseVersionTag, organizer: claim.organizer, owners: claim.owners, to: claim.to,
+    place: claim.place, act, event: claim.event, base: claim.write.baseVersionTag, organizer: claim.organizer, owners: claim.owners, access: claim.write.calendarAccess, to: claim.to,
     zones: deps.zones, now: deps.clock.now(), proven: deps.proven,
     cancellationAttempted: claim.write.attempts > 1 || claim.payload.cancellationAttempted === true,
     firstAttempt: claim.write.attempts === 1 && !claim.payload.exception?.masterReceipt,
@@ -501,7 +501,7 @@ async function carryOut(
     const from = second.payload.part?.from;
     if (from === undefined) return refused("content_refused");
     const after = writeCallOf({
-      place: claim.place, act: second.payload.act, event: null, base: null, organizer: claim.organizer, owners: claim.owners, to: null, zones: deps.zones,
+      place: claim.place, act: second.payload.act, event: null, base: null, organizer: claim.organizer, owners: claim.owners, access: claim.write.calendarAccess, to: null, zones: deps.zones,
       now: deps.clock.now(), proven: deps.proven,
       continuation: { from, source: claim.event },
     });
@@ -585,7 +585,7 @@ async function carryTransfer(
   if (!write.toCalendarId || !write.baseVersionTag || !input.provider.writer) return moveRefusal("move_unresolved");
   if (!transfer.progress && (!claim.event || payload.act.kind !== "calendar_event_move" || payload.act.eventId !== write.eventId ||
       claim.event.versionTag !== write.baseVersionTag ||
-      claim.event.partial || claim.event.providerId !== transfer.source || someoneElses(claim.event, claim.owners))) {
+      claim.event.partial || claim.event.providerId !== transfer.source || isAttendeeCopy(claim.event, claim.owners, write.calendarAccess))) {
     return { ok: false, reason: "version_stale", retryAfterMs: null };
   }
   const destination = await input.moveDestination?.(write.toCalendarId) ?? null;

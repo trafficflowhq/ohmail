@@ -13,6 +13,7 @@ import { calendar } from "@ohmail/app/calendar";
 import { StepUp } from "./StepUp";
 import { calendarSetupPortOf } from "@ohmail/app-logic/calendar/setup";
 import { startCalendarOAuth } from "./calendar-oauth";
+import { readMicrosoftApproval } from "./microsoft-door";
 import { calendarPortOf, type CalendarPort } from "@ohmail/app-logic/calendar";
 import type { FrameNotice } from "@ohmail/app/frame";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
@@ -236,6 +237,7 @@ export function useWebHost(
       setup: setup ? {
         ...calendarSetupPortOf(setup, () => engine.syncOnce(), () => crypto.randomUUID()),
         factor: (ask) => <StepUp {...ask} expectedOwner={scope} />,
+        microsoftApproval: () => readMicrosoftApproval(scope),
         startOAuth: (provider) => startCalendarOAuth(provider, scope, () => readOwner() === scope && sessionMayAsk()),
       } : undefined,
       held: () => engine.calendarHeld(), load: (span) => engine.loadCalendar(span),

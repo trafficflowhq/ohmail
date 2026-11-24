@@ -7,7 +7,7 @@
 import { MailAppearance } from "../src/theme/mail";
 import { useReplyRun } from "@ohmail/app-logic/piles/reply-run";
 import { useEffect, useState } from "react";
-import { BackHandler, View } from "react-native";
+import { BackHandler, View, type ViewStyle } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { Copy } from "../src/copy";
 import { usePullToSync } from "../src/state/pull";
@@ -74,6 +74,10 @@ function TriageMail({ inPane, pile }: { inPane: boolean; pile?: string }) {
   const tabs = t.mail === true && only === null;
   const shown = only ?? (tabs ? picked : null);
   const piles = shown === null ? w.piles : w.piles.filter((p) => p.kind === shown);
+  const itemStyle: ViewStyle = {
+    paddingHorizontal: 12, paddingVertical: 11,
+    ...(t.mail ? { flexDirection: "row", alignItems: "center", gap: 12 } : {}),
+  };
 
   const [runId, setRunId] = useState<string | null>(null);
   const ids = w.piles.find((p) => p.kind === "replyLater")?.items.flatMap((item) => item.messageId ? [item.messageId] : []) ?? [];
@@ -188,39 +192,43 @@ function TriageMail({ inPane, pile }: { inPane: boolean; pile?: string }) {
                     {Copy.pileEmpty}
                   </Txt>
                 ) : (
-                  p.items.map((i) => (
-                    <TapRow
-                      key={i.id}
-                      onPress={i.messageId ? () => router.push(`/message/${i.messageId}`) : undefined}
-                      accessibilityRole={i.messageId ? "button" : undefined}
-                      style={{ paddingHorizontal: 12, paddingVertical: 11, ...(t.mail ? { flexDirection: "row", alignItems: "center", gap: 12 } : {}) }}
-                    >
-                      {t.mail ? <MailAvatar person={{ name: i.title, address: i.title }} /> : null}
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
-                        <Txt variant="rowSender" style={{ flexShrink: 1 }} numberOfLines={1}>
-                          {i.title}
-                        </Txt>
-                        <View style={{ flex: 1 }} />
-                        {i.resurfaceAt ? (
-                          <Txt variant="caption" tone="accent" tabular>
-                            {i.resurfaceAt}
-                          </Txt>
-                        ) : null}
-                      </View>
-                      {i.subtitle ? (
-                        <Txt variant="rowSubjectSeen" tone="ink2" numberOfLines={1} style={{ marginTop: 2 }}>
-                          {i.subtitle}
-                        </Txt>
-                      ) : null}
-                      {i.preview ? (
-                        <Txt variant="meta" tone="ink3" numberOfLines={1} style={{ marginTop: 1 }}>
-                          {i.preview}
-                        </Txt>
-                      ) : null}
-                      </View>
-                    </TapRow>
-                  ))
+                  p.items.map(({ id, messageId, title, subtitle, preview, resurfaceAt }) => {
+                    const content = (
+                      <>
+                        {t.mail ? <MailAvatar person={{ name: title, address: title }} /> : null}
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
+                            <Txt variant="rowSender" style={{ flexShrink: 1 }} numberOfLines={1}>
+                              {title}
+                            </Txt>
+                            <View style={{ flex: 1 }} />
+                            {resurfaceAt ? (
+                              <Txt variant="caption" tone="accent" tabular>
+                                {resurfaceAt}
+                              </Txt>
+                            ) : null}
+                          </View>
+                          {subtitle ? (
+                            <Txt variant="rowSubjectSeen" tone="ink2" numberOfLines={1} style={{ marginTop: 2 }}>
+                              {subtitle}
+                            </Txt>
+                          ) : null}
+                          {preview ? (
+                            <Txt variant="meta" tone="ink3" numberOfLines={1} style={{ marginTop: 1 }}>
+                              {preview}
+                            </Txt>
+                          ) : null}
+                        </View>
+                      </>
+                    );
+                    return messageId ? (
+                      <TapRow key={id} accessibilityRole="button" style={itemStyle} onPress={() => router.push(`/message/${messageId}`)}>
+                        {content}
+                      </TapRow>
+                    ) : (
+                      <View key={id} accessible style={itemStyle}>{content}</View>
+                    );
+                  })
                 )}
               </View>
             </PileRows>

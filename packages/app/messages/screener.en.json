@@ -158,7 +158,7 @@
     "suggest": {
       "open": "Suggest…",
       "label": "Suggest",
-      "sizeAll": "All {count}",
+      "sizeAll": "{count, plural, =0 {All} other {All #}}",
       "price": "{senders, plural, one {1 sender} other {# senders}} · {credits, plural, one {1 credit} other {# credits}}",
       "credits": "{credits, plural, one {1 credit} other {# credits}}",
       "priceUnmetered": "{senders, plural, one {1 sender} other {# senders}}",
@@ -169,6 +169,8 @@
       "confirm": "{count, select, all {Suggest for all {n} senders} first {Suggest for the first {n} senders} other {Suggest for {n, plural, one {1 sender} other {# senders}}}}",
       "cancel": "Cancel",
       "again": "Suggest again…",
+      "couldNot": "Could not suggest",
+      "retry": "Retry suggestions…",
       "labelAgain": "Suggest again",
       "confirmAgain": "{count, select, all {Suggest again for all {n} senders} first {Suggest again for the first {n} senders} other {Suggest again for {n, plural, one {1 sender} other {# senders}}}}",
       "ariaAgain": "How many senders with a suggestion to ask about again",
@@ -432,12 +434,9 @@
       "sure": "{sure, number, percent}",
       "toWaiting": "Screener",
       "unsub": {
-        "continue": "Continue",
         "final": "Once sent, it cannot be undone.",
         "screened": "Screen out and unsubscribe",
         "spam": "Spam and unsubscribe",
-        "spamDomain": "Mark {domain} as spam and unsubscribe",
-        "screenedDomain": "Screen out {domain} and unsubscribe",
         "service": "The request goes from ohmail’s servers, never from your browser, so your address and reading times stay out of their logs.",
         "computer": "The request goes from your computer, so the sender sees its network address."
       },

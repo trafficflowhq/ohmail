@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { withoutFoldersFlag } from "../../../packages/api/src/routes/local.js";
 import type { Route } from "../../../packages/api/src/router.js";
-import { readFoldersEnabled, writeFoldersEnabled } from "../src/net/consent";
+import { readFoldersEnabled, writeFoldersEnabled, writeScreenerAcknowledgement } from "../src/net/consent";
 import type { ConnectedSession } from "../src/net/pairing";
 
 /**
@@ -34,6 +34,7 @@ import type { ConnectedSession } from "../src/net/pairing";
 
 /** The account row this door answers from — `foldersEnabledAt` as the real route carries it. */
 let stored: string | null = null;
+let screenerAcknowledgements = 0;
 
 /**
  * The consent group, in the two shapes a client meets: the hosted table spreads it raw, every
@@ -48,6 +49,7 @@ function consentGroup(): Route[] {
         screeningScope: "window",
         screeningBaselineAt: "2026-01-02T03:04:05.000Z",
         foldersEnabledAt: stored,
+        screenerAcknowledgements,
         signatures: {},
         themeFace: null,
       }),
@@ -63,6 +65,10 @@ function consentGroup(): Route[] {
         if ("foldersEnabled" in body) {
           stored = body.foldersEnabled === true ? "2026-03-04T05:06:07.000Z" : null;
           out.foldersEnabledAt = stored;
+        }
+        if (body.acknowledgeScreener === "applySuggestions") {
+          screenerAcknowledgements = 4;
+          out.screenerAcknowledgements = screenerAcknowledgements;
         }
         if ("dormancyDays" in body) out.dormancyDays = body.dormancyDays;
         return json(out);
@@ -125,6 +131,13 @@ beforeAll(async () => {
 afterAll(async () => {
   await host.close();
   await hosted.close();
+});
+
+it("writes and reads a Screener acknowledgement through the paired consent door", async () => {
+  screenerAcknowledgements = 0;
+  expect((await readFoldersEnabled(sessionAt(host.origin)))?.screenerAcknowledgements).toBe(0);
+  expect(await writeScreenerAcknowledgement(sessionAt(host.origin), "applySuggestions")).toBe(4);
+  expect((await readFoldersEnabled(sessionAt(host.origin)))?.screenerAcknowledgements).toBe(4);
 });
 
 describe("a paired phone reading a door that serves no folder verb", () => {

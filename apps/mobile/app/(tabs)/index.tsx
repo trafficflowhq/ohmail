@@ -104,6 +104,7 @@ function OhboxBody() {
   const { claim, strip } = useStandaloneClaim();
   const reading = readingAtConnectNow(w.standalone ? readingAtConnectSaid() : null, claim);
   const knock = knockSlotOf(w.mailboxes.known ? noneOrganizedWhy(w.mailboxes.rows) : null, strip !== null);
+  const bell = knock.k === "knock" ? <Doorbell {...shown.doorbell} compact={t.mail} /> : null;
   const seed = useSeedOffer();
 
   // Unknown ≠ empty: before this mirror has ever settled a drain, a zero-row Ohbox shows
@@ -141,7 +142,7 @@ function OhboxBody() {
               onMarkAll={() => w.actions.markAllSeen(shown.ohbox.unreadIds)}
               filed={shown.ohbox.filed}
               calendar={t.mail ? <MailCalendarSwitch /> : undefined}
-              bell={t.mail && knock.k === "knock" ? <Doorbell {...shown.doorbell} compact /> : undefined}
+              bell={t.mail ? bell : undefined}
             />
             {reading ? (
               <Panel style={{ paddingVertical: 14, paddingHorizontal: 18, marginBottom: 12 }}>
@@ -171,7 +172,7 @@ function OhboxBody() {
             {/* The filings the mail server has not taken yet — the web's strip, linking to Settings. */}
             <FilingStrip link />
             {knock.k === "state" ? <StateKnock say={notOrganizingSay(knock.why)} />
-              : knock.k === "knock" && !t.mail ? <Doorbell initials={shown.doorbell.initials} count={shown.doorbell.count} /> : null}
+              : t.mail ? null : bell}
           </>
         }
         empty={

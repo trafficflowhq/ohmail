@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "ohmail",
-    "description": "Der ohmail-Client — E-Mail auf deinen eigenen Postfächern, und nichts passiert ohne dein Ja.",
+    "description": "Mail, die zuerst fragt und automatisch sortiert. und Kalender.",
     "ogAlt": "Das ohmail-App-Icon — ein kleingeschriebenes „oh.“ auf der Leinwandkachel"
   },
   "ribbon": {
@@ -325,6 +325,14 @@
       "search": "Suche",
       "write": "Schreiben"
     },
+    "microsoftApproval": {
+      "fallback": "Bitte deine Administration, ohmail in Microsoft Entra zu genehmigen.",
+      "title": "Admin-Freigabe",
+      "forward": "Dein Admin öffnet diesen Link einmal und gibt ohmail für die Organisation frei.",
+      "link": "Link zur Freigabe",
+      "copy": "Kopieren",
+      "copied": "Kopiert"
+    },
     "notice": {
       "hide": "Ausblenden",
       "collapse": "Einklappen",
@@ -332,6 +340,7 @@
       "sendFailed": "Nachricht nicht gesendet",
       "more": "{count} weitere",
       "moreName": "{count, plural, one {# weiterer Hinweis} other {# weitere Hinweise}}",
+      "showFewer": "Weniger anzeigen",
       "moreClose": "Schließen"
     },
     "systemNotice": {

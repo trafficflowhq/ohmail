@@ -23,17 +23,20 @@ export async function startCalendarOAuth(
 
 function calendarFailureOf(error: unknown): CalendarOAuthResult | null {
   if (!(error instanceof ApiError)) return null;
+  if (error.code === "owner_mismatch" || error.code === "session_mismatch") return "account_mismatch";
+  if (error.status === 401 || error.code === "csrf_failed") return "session_expired";
   return calendarOAuthResultOf((error.details as { reason?: unknown } | null)?.reason) ?? calendarOAuthResultOf(error.code);
 }
 
 function replaceSetup(hash: string): void {
   const url = new URL(window.location.href);
   url.hash = hash;
-  window.history.replaceState(window.history.state, "", url.href);
+  // Use Next's native history integration so its canonical URL is scrubbed too.
+  window.history.replaceState(null, "", url.href);
   window.dispatchEvent(new Event("hashchange"));
 }
 
-/** Hold the one-time inputs in memory after scrubbing the browser address before the frame reads it. */
+/** Take the one-time inputs from the fragment and scrub the address before sending them. */
 export function readCalendarOAuthReturn() {
   if (typeof window === "undefined" || !window.location.hash.startsWith(`${setup}?`)) return null;
   const query = new URLSearchParams(window.location.hash.slice(setup.length + 1));

@@ -54,6 +54,7 @@ export interface TailWalk {
   /** The shard's enabled mailboxes and their accounts, read once when the walk began. */
   mailboxes: readonly EnabledMailbox[];
   accounts: readonly string[];
+  suggestedAccounts: Set<string>;
   /** Index into `TAIL_SECTIONS`, and the accounts that section walks once entered (null: not yet). */
   section: number;
   list: readonly string[] | null;

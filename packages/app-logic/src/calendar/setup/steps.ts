@@ -39,6 +39,7 @@ const OAUTH_RESULTS = [
   "consent_declined",
   "admin_consent_required",
   "consent_failed",
+  "session_expired",
   "state_expired",
   "state_invalid",
   "account_mismatch",

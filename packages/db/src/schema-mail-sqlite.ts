@@ -2322,8 +2322,8 @@ export const accountSettings = sqliteTable("account_settings", {
   /** Mail 0210 — where a conversation's subject stands, and when it was stated. See the server twin. LAST. */
   subjectHeading: text("subject_heading"),
   subjectHeadingAt: integer("subject_heading_at", { mode: "timestamp_ms" }),
-  // LAST: ADD COLUMN appends to the migrated table.
   draftReplies: integer("draft_replies", { mode: "boolean" }).notNull().default(true),
+  screenerAcknowledgements: integer("screener_acknowledgements").notNull().default(0),
 });
 
 /**

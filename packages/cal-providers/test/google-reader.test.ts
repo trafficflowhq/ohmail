@@ -80,10 +80,10 @@ describe("Google: the calendars and the sign-in", () => {
     expect(sent).toEqual([{ url: CALENDARS, method: "GET", token: "t1", tokenGoesTo: { "www.googleapis.com": true, "oauth2.googleapis.com": false, "accounts.google.com": false, "evil.example": false } }]);
   });
 
-  it("follows the list's pages, leaves out a calendar that is deleted or shows only busy times, and reads a reader's as not writable", async () => {
+  it("follows the list's pages, leaves out a calendar that is deleted or shows only busy times, and preserves writer and reader access", async () => {
     const { reader, sent } = readerOver({
       [CALENDARS]: { json: { items: [{ id: "a", summary: "Mine", accessRole: "owner" }, { id: "gone", summary: "Gone", accessRole: "owner", deleted: true }], nextPageToken: "n 2" } },
-      [`${CALENDARS}&pageToken=n%202`]: { json: { items: [{ id: "b", summary: "Theirs", summaryOverride: "Team", accessRole: "reader", backgroundColor: "#16a765" }, { id: "c", summary: "Busy only", accessRole: "freeBusyReader" }] } },
+      [`${CALENDARS}&pageToken=n%202`]: { json: { items: [{ id: "b", summary: "Theirs", summaryOverride: "Team", accessRole: "reader", backgroundColor: "#16a765" }, { id: "c", summary: "Busy only", accessRole: "freeBusyReader" }, { id: "d", summary: "Shared", accessRole: "writer" }] } },
     });
     const answer = await reader.listCalendars(signedIn(), never);
     expect(answer).toEqual({
@@ -91,6 +91,7 @@ describe("Google: the calendars and the sign-in", () => {
       value: [
         { id: "a", name: "Mine", color: null, writable: true, owned: true, byToken: true, zone: null },
         { id: "b", name: "Team", color: "#16a765", writable: false, byToken: true, zone: null },
+        { id: "d", name: "Shared", color: null, writable: true, byToken: true, zone: null },
       ],
     });
     expect(sent.map((s) => s.url)).toEqual([CALENDARS, `${CALENDARS}&pageToken=n%202`]);

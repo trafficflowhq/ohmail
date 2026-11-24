@@ -29,11 +29,12 @@ async function cleanMount(): Promise<void> {
 beforeEach(() => localStorage.clear());
 afterEach(cleanMount);
 
-async function mount({ held, width, autoUnsubscribe, providerConfirms }: {
+async function mount({ held, width, autoUnsubscribe, providerConfirms, consentRow }: {
   held: readonly [Held, ...Held[]];
   width: 1280 | 390;
   autoUnsubscribe?: boolean;
   providerConfirms?: boolean;
+  consentRow?: Parameters<typeof openScreenerSender>[0]["consentRow"];
 }) {
   installShellEnv();
   vi.stubGlobal("innerWidth", width);
@@ -43,6 +44,7 @@ async function mount({ held, width, autoUnsubscribe, providerConfirms }: {
     letters: [letter(held[0]), ...held.slice(1).map(letter)],
     autoUnsubscribe,
     providerConfirms,
+    consentRow,
   });
   expect(opened.shell.querySelector("[data-columns]")?.getAttribute("data-columns")).toBe(width === 390 ? "1" : "2");
   return opened;
@@ -144,23 +146,30 @@ describe("the press, and how far its Undo reaches", () => {
     expect(decisions).toEqual(confirmed);
   });
 
-  it("on the same account, a compact confirmation sends only for the newly selected sender", async () => {
-    const first = await mount({ held: [{ id: "f2", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width: 1280 });
+  it("on the same account, the next screen-out sends only for the newly selected sender without another confirmation", async () => {
+    const consentRow = { screenerAcknowledgements: 0 };
+    const first = await mount({
+      held: [{ id: "f2", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width: 1280, consentRow,
+    });
     await confirmScreenOut(first.shell);
     expect(first.decisions.map(({ id }) => id)).toEqual(["f2"]);
     await cleanMount();
 
-    const second = await mount({ held: [{ id: "f3", from: "news@another-list.example", posture: "one_click", verdict: "pass" }], width: 1280 });
-    await click(screenOut(second.shell));
-    const ask = within(document.body).getByRole("dialog", { name: confirmedLabel });
-    expect(ask.textContent).not.toContain(copy.place.unsub.service);
+    const second = await mount({
+      held: [{ id: "f3", from: "news@another-list.example", posture: "one_click", verdict: "pass" }],
+      width: 1280, consentRow,
+    });
     await tick(COMMIT_MS + 1);
     expect(second.decisions).toEqual([]);
-    await click(within(ask).getByRole("button", { name: "Continue" }));
+    await click(screenOut(second.shell));
+    expect(within(document.body).queryByRole("dialog")).toBeNull();
     expect(within(document.body).queryByRole("button", { name: "Undo" })).toBeNull();
-    expect(second.decisions).toEqual([{
+    const confirmed = [{
       id: "f3", body: { decision: "no", dest: "ohmail/Screened", scope: "sender", applyRetro: false, unsubscribeIds: ["f3"] },
-    }]);
+    }];
+    expect(second.decisions).toEqual(confirmed);
+    await tick(COMMIT_MS + 1);
+    expect(second.decisions).toEqual(confirmed);
   });
 
   it("a sender whose held letter offers none: the toast still names the request as the sender-level condition", async () => {

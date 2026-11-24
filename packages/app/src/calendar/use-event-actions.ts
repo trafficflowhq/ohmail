@@ -9,7 +9,6 @@ import {
   editSchedule,
   editVersions,
   editableEvent,
-  eventOwned,
   moveDestinations,
   nativeMoveTo,
   removableEvent,
@@ -100,10 +99,7 @@ function guestsFor(
     !audience ||
     (audience.audience.organizer !== null &&
       !own?.some((address) => address.trim().toLowerCase() === audience.audience.organizer) &&
-      !(
-        eventOwned(record, own) &&
-        record.organizer?.address.trim().toLowerCase() === audience.audience.organizer
-      ))
+      record.organizer?.address.trim().toLowerCase() !== audience.audience.organizer)
   )
     return null;
   return audience;

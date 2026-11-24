@@ -64,7 +64,7 @@ async function filled(withdraw: () => void = () => {}, scope: string | null = nu
   return renderHook(() => useSubscriptionDoor(scope, withdraw), { wrapper: Words });
 }
 /** The mounted Settings place and the web section the host offers with its access answer. */
-async function mounted(withdraw: () => void = () => {}, account?: string) {
+async function mounted(withdraw: () => void = () => {}, account?: string, lang: "en" | "de" = "en") {
   const [{ useSubscriptionDoor }, { MailFrame }, { WEB_PANE_PARTS }, { MountedSubscriptionSection, SubscriptionSection }] = await Promise.all([
     import("../../app/(product)/mailbox/subscription-door"),
     import("../../app/shell/browser-mail"),
@@ -102,7 +102,7 @@ async function mounted(withdraw: () => void = () => {}, account?: string) {
   }
   await (await import("@ohmail/app/mail")).prepareWriting();
   const view = render(
-    <Words>
+    <Words lang={lang}>
       <ThemeProvider>
         <ToastHost>
           <SubscriptionFrame />
@@ -110,7 +110,7 @@ async function mounted(withdraw: () => void = () => {}, account?: string) {
       </ThemeProvider>
     </Words>,
   );
-  await screen.findByRole("button", { name: en.settings.subscriptionManage });
+  await screen.findByRole("button", { name: (lang === "en" ? en : de).settings.subscriptionManage });
   return view;
 }
 const press = async () => {
@@ -156,16 +156,25 @@ describe("the door's answers to the press (each read in the shipped section's or
     expect(server.on(MINT).map((s) => s.body)).toEqual([{ lang: "en", plan: "plus", interval: "year" }, { lang: "en" }]);
   });
 
-  it("opens the page in this screen's language", async () => {
+  it("opens the page in this screen's language and time zone", async () => {
     const { useSubscriptionDoor } = await import("../../app/(product)/mailbox/subscription-door");
-    server.answer(MINT, json({ url: PAGE }));
-    const { result } = renderHook(() => useSubscriptionDoor(null, () => {}), {
-      wrapper: ({ children }) => <Words lang="de">{children}</Words>,
-    });
-    await act(async () => {
-      await result.current.manage();
-    });
-    expect(server.on(MINT).map((s) => s.body)).toEqual([{ lang: "de" }]);
+    const { setActiveFormatZone } = await import("../../app/shell/locale");
+    const page = new URL("/manage", PAGE);
+    server.answer(MINT, json({ url: page.href }));
+    setActiveFormatZone("Europe/Zurich");
+    try {
+      const { result } = renderHook(() => useSubscriptionDoor(null, () => {}), {
+        wrapper: ({ children }) => <Words lang="de">{children}</Words>,
+      });
+      await act(async () => {
+        await result.current.manage();
+      });
+      expect(server.on(MINT).map((s) => s.body)).toEqual([{ lang: "de" }]);
+      page.searchParams.set("timeZone", "Europe/Zurich");
+      expect(server.left.map((link) => link.href)).toEqual([page.href]);
+    } finally {
+      setActiveFormatZone(null);
+    }
   });
 
   it("has no read of the plans before the matching access answer", async () => {
@@ -175,6 +184,27 @@ describe("the door's answers to the press (each read in the shipped section's or
 });
 
 describe("the press over the real filling", () => {
+  it.each([
+    ["en", "Trial ended", "Aug 18, 2026"],
+    ["de", "Testphase abgelaufen", "18.08.2026"],
+  ] as const)("shows the local calendar day of a past trial in %s", async (lang, ended, day) => {
+    const { setActiveFormatZone } = await import("../../app/shell/locale");
+    setActiveFormatZone("Europe/Zurich");
+    access = {
+      ...open(NEAR),
+      lifecycle: { state: "trialing", closedReason: null, trialEndsAt: "2026-08-17T23:30:00.000Z" },
+      trialProgress: { day: 14, total: 14 },
+    };
+    try {
+      await mounted(undefined, undefined, lang);
+      expect(screen.getAllByText(ended).length).toBeGreaterThan(0);
+      expect(screen.getByText(day)).toBeTruthy();
+      expect(screen.queryByText("14 of 14")).toBeNull();
+    } finally {
+      setActiveFormatZone(null);
+    }
+  });
+
   it("shows the offered plan prices and carries the chosen plan to checkout", async () => {
     access = { ...open(NEAR), trialProgress: { day: 6, total: 14 } };
     server.answer(MINT, json({ url: PAGE }));
@@ -285,7 +315,7 @@ describe("the standing, from the access answer the shell holds", () => {
     const { standingOf } = await import("../../app/(product)/mailbox/subscription-door");
     const { dayStamp } = await import("../../app/shell/format");
     const day = "2026-11-18T12:00:00.000Z";
-    expect(standingOf(lifecycle({ state: "trialing", trialEndsAt: day }))).toEqual({ state: "trial", ends: dayStamp(day) });
+    expect(standingOf(lifecycle({ state: "trialing", trialEndsAt: day }), undefined, Date.parse("2026-11-17"))).toEqual({ state: "trial", ends: dayStamp(day) });
     expect(standingOf(lifecycle({ state: "trialing", trialEndsAt: "soon" }))).toEqual({ state: "trial", ends: null });
     expect(standingOf(lifecycle({ state: "grace", graceUntil: day }))).toEqual({ state: "grace", until: dayStamp(day) });
     expect(standingOf(lifecycle({ state: "past_due", graceUntil: null }))).toEqual({ state: "overdue", until: null });

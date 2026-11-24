@@ -11,6 +11,7 @@ import { Frame } from "@ohmail/app/frame";
 import { NONE } from "@ohmail/app/host";
 import { ScreenerAbove, screenerPlace, type ScreenerBeside } from "@ohmail/app/screener";
 import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
+import { TestConsent } from "../../../packages/app/test/screener/screener-world.js";
 import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
 import { fakeAddress, fakeWindow } from "../../../packages/app/test/support/fake-window.js";
 import { NextIntlClientProvider } from "next-intl";
@@ -111,7 +112,10 @@ async function mount(mail: EngineMessage[], suggestions?: SuggestionOverlay, aut
     useEffect(() => engine.subscribe(() => setVersion((v) => v + 1)), []);
     const state = useScreenerState(engine, "acct", version, () => {}, useScreenerWords(), suggestions, undefined, autoUnsubscribe);
     live = state;
-    return h(ScreenerAbove, { model: state, beside, children: h(Frame, { host: frame }) });
+    return h(TestConsent, {
+      scope: "acct", transport: "none",
+      children: h(ScreenerAbove, { model: state, beside, children: h(Frame, { host: frame }) }),
+    });
   }
 
   mounted = render(h(NextIntlClientProvider, {

@@ -3,7 +3,7 @@ import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { accountSettings, changeLog, contacts, mailboxFolders, rules } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import {
-  makeDeps, seedSession, seedMailbox, seedMessage, seedBody, seedRule, req, FIXED_NOW,
+  makeDeps, seedSession, seedSessionFor, seedMailbox, seedMessage, seedBody, seedRule, req, FIXED_NOW,
 } from "./helpers.js";
 
 const app = createApp(apiRoutes);
@@ -1034,6 +1034,31 @@ describe("the onboarding-consent routes", () => {
     }
     expect(await db.select().from(accountSettings)
       .where(eq(accountSettings.accountId, s.accountId))).toHaveLength(0);
+  });
+
+  it("keeps each Screener acknowledgement across sessions of only the signed-in account", async () => {
+    const { db, deps } = await makeDeps();
+    const a = await seedSession(db, { now: FIXED_NOW });
+    const secondDevice = await seedSessionFor(db, { ...a, token: undefined, now: FIXED_NOW });
+    const other = await seedSession(db, { now: FIXED_NOW });
+    const read = async (bearer: string) =>
+      (await H(req("GET", "/consent", { bearer }), deps)).json();
+    const acknowledge = (bearer: string, acknowledgeScreener: unknown) =>
+      H(req("PATCH", "/consent/settings", { bearer, body: JSON.stringify({ acknowledgeScreener }) }), deps);
+
+    expect((await read(a.token)).screenerAcknowledgements).toBe(0);
+    expect((await acknowledge(a.token, "unknown")).status).toBe(400);
+    const first = await acknowledge(a.token, "spamUnsubscribe");
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ screenerAcknowledgements: 1 });
+    const second = await acknowledge(secondDevice.token, "applySuggestions");
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({ screenerAcknowledgements: 5 });
+    expect((await acknowledge(a.token, "spamUnsubscribe")).status).toBe(200);
+    expect((await read(secondDevice.token)).screenerAcknowledgements).toBe(5);
+    expect((await read(other.token)).screenerAcknowledgements).toBe(0);
+    const feed = await (await H(req("GET", "/sync?since=0&types=settings", { bearer: a.token }), deps)).json();
+    expect([...feed.changes.creates, ...feed.changes.updates].at(-1)?.entity.screenerAcknowledgements).toBe(5);
   });
 
   it("stores the draft reply choice for its account and sends it on the settings feed", async () => {

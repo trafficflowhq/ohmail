@@ -45,7 +45,7 @@ describe("the one notice slot", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((el) => el.textContent),
-    ).toEqual(["Trial ends Wed 18 Nov", "1.0.12 ready"]);
+    ).toEqual(["Trial ends Wed 18 Nov", "1.0.12 ready", "Show fewer"]);
     fireEvent.click(within(menu).getByRole("menuitem", { name: /Trial ends/ }));
     expect(shown()).toEqual(["Trial ends Wed 18 Nov"]);
 
@@ -53,6 +53,25 @@ describe("the one notice slot", () => {
     expect(shown()).toEqual(["Offline"]);
     act(() => store.post("billing", [trial, update]));
     expect(shown()).toEqual(["Offline"]);
+  });
+
+  it.each([
+    ["en", "1 more notice", "Show fewer"],
+    ["de", "1 weiterer Hinweis", "Weniger anzeigen"],
+  ] as const)("folds the other notices back in %s", (locale, more, fewer) => {
+    const store = slot(locale);
+    act(() => store.post("connection", [offline]));
+    act(() => store.post("billing", [trial]));
+    const trigger = screen.getByRole("button", { name: more, expanded: false });
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("menu");
+    fireEvent.keyDown(within(menu).getByRole("menuitem", { name: trial.title }), { key: "End" });
+    const collapse = within(menu).getByRole("menuitem", { name: fewer });
+    expect(document.activeElement).toBe(collapse);
+    fireEvent.click(collapse);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(shown()).toEqual(["Offline"]);
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("stands empty when nothing is true, and a feed that posts nothing takes its notices away", () => {

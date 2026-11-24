@@ -8,7 +8,7 @@ import { segmentOf, ScreenerAbove, screenerPlace } from "../../src/screener/inde
 import { ScreenerPrimer } from "../../src/screener/Primer.js";
 import { fakeHost, SEAM_AT_REST } from "../support/fake-host.js";
 import { fakeAddress } from "../support/fake-window.js";
-import { BESIDE, inWords, modelOf, screenerEngine, sender } from "./screener-world.js";
+import { BESIDE, TestConsent, inWords, modelOf, screenerEngine, sender } from "./screener-world.js";
 
 function correspondent(id: string, subject: string) {
   return sender(id, "Held correspondent", {
@@ -45,7 +45,13 @@ function mount(at: string) {
     scope: "acct-1",
     service: "self",
   });
-  render(inWords(<Frame host={host} />));
+  render(
+    inWords(
+      <TestConsent scope="acct-1" transport="none">
+        <Frame host={host} />
+      </TestConsent>,
+    ),
+  );
   return { address, asked };
 }
 

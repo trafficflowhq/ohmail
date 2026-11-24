@@ -78,7 +78,7 @@ function useScreenerList({ route, plan, keysHere }: PaneProps) {
   const model = useScreener();
   const beside = useScreenerBeside();
   const above = useScreenerAbove();
-  const { commands, host } = useFrame();
+  const { commands } = useFrame();
   const words = useKeyWords();
   const t = useText("screener");
   const phoneWindow = useRef<SenderWindow | null>(null);
@@ -108,7 +108,6 @@ function useScreenerList({ route, plan, keysHere }: PaneProps) {
   }, [junkOn, spam.length]);
   const view = useScreenerView({
     state,
-    disclosureOwner: host.session.mirrorAccount ?? host.session.account,
     segment,
     selected: above.selected(segment),
     select,

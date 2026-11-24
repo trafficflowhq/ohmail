@@ -8,15 +8,17 @@
  * census refuses a disarm that drops the handler, and it is driven against a fixture that does.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
 /* @reads: apps/mobile/src/ui/base.tsx
    Read by a path built at runtime, so no landing pass selects this file when that source
    moves — the shape `reads-list.mjs` exists for. */
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const DIRS = [`${ROOT}/src`, `${ROOT}/app`];
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const DIRS = [`${ROOT}src`, `${ROOT}app`];
 
 /**
  * The one exception, named: `Button` ITSELF implements `disabled` by withholding the handler,
@@ -34,11 +36,29 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** `onPress={<anything> ? undefined : …}` or `… : undefined}` — a handler withheld by state. */
-const DROPPED = /onPress=\{[^}]*\?[^}]*\bundefined\b[^}]*\}/g;
+function omitsHandler(expression: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(expression)) return omitsHandler(expression.expression);
+  if (ts.isConditionalExpression(expression)) {
+    return omitsHandler(expression.whenTrue) || omitsHandler(expression.whenFalse);
+  }
+  return ts.isIdentifier(expression) && expression.text === "undefined";
+}
 
-function droppedIn(src: string): { line: number; text: string }[] {
-  return [...src.matchAll(DROPPED)].map((m) => ({ line: lineOf(src, m.index ?? 0), text: m[0] }));
+function droppedIn(src: string): number[] {
+  const file = ts.createSourceFile("screen.tsx", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const lines: number[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxAttribute(node) && node.name.getText(file) === "onPress"
+      && node.initializer && ts.isJsxExpression(node.initializer)) {
+      const { expression } = node.initializer;
+      if (expression && omitsHandler(expression)) {
+        lines.push(file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return lines;
 }
 
 describe("a disarmed verb is disabled, not handler-less", () => {
@@ -52,10 +72,10 @@ describe("a disarmed verb is disabled, not handler-less", () => {
   it("no screen disarms a verb by dropping its press handler", () => {
     const found: string[] = [];
     for (const f of files) {
-      const rel = f.slice(ROOT.length + 1);
+      const rel = f.slice(ROOT.length);
       if (ALLOWED.includes(rel)) continue;
-      for (const hit of droppedIn(withoutComments(readFileSync(f, "utf8")))) {
-        found.push(`${rel}:${hit.line}`);
+      for (const line of droppedIn(readFileSync(f, "utf8"))) {
+        found.push(`${rel}:${line}`);
       }
     }
     expect(found).toEqual([]);
@@ -63,13 +83,13 @@ describe("a disarmed verb is disabled, not handler-less", () => {
 
   it("the two allowed files are real and still hold the shape — the exception is not stale", () => {
     for (const rel of ALLOWED) {
-      expect(droppedIn(withoutComments(readFileSync(`${ROOT}/${rel}`, "utf8"))).length, rel)
+      expect(droppedIn(readFileSync(`${ROOT}${rel}`, "utf8")).length, rel)
         .toBeGreaterThan(0);
     }
   });
 
   it("Button keeps the face and states the disabled case to a screen reader", () => {
-    const base = withoutComments(readFileSync(`${ROOT}/src/ui/base.tsx`, "utf8"));
+    const base = withoutComments(readFileSync(`${ROOT}src/ui/base.tsx`, "utf8"));
     expect(base).toContain('accessibilityRole="button"');
     expect(base).toContain("accessibilityState={{ disabled: disabled === true }}");
   });
@@ -77,6 +97,11 @@ describe("a disarmed verb is disabled, not handler-less", () => {
   it("the census catches the shape — driven, not assumed", () => {
     expect(droppedIn("<Button onPress={busy ? undefined : go} />")).toHaveLength(1);
     expect(droppedIn("<Button onPress={ready ? go : undefined} />")).toHaveLength(1);
+    expect(droppedIn("<Button onPress={busy ? undefined : () => apply(start ?? undefined)} />")).toHaveLength(1);
     expect(droppedIn("<Button disabled={busy} onPress={go} />")).toHaveLength(0);
+  });
+
+  it("keeps a handler that passes an optional argument", () => {
+    expect(droppedIn("<Button onPress={() => apply(start ?? undefined)} />")).toHaveLength(0);
   });
 });

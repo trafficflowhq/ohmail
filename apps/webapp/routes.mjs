@@ -167,6 +167,7 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   // `/subscribed` is where the payment page returns a person (`app/(product)/subscribed`): public,
   // no credential in it, matched for the canonical-host redirect like the marketing pages.
   { path: "/subscribed", edge: true },
+  { path: "/microsoft-approval", edge: true },
   // `/account/delete` deletes the account from a page of its own (`app/(product)/account/delete`); a second factor and
   // the address are typed there, so middleware serves it as a credential page. The website's `/delete-account` is another.
   { path: "/account/delete", edge: true },

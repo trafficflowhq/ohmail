@@ -78,6 +78,19 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.1" date="2026-11-24">
+      <description>
+        <ul>
+          <li>Google and Microsoft calendar sign-in finishes on the web</li>
+          <li>The phone composer shows when signature removal is unavailable</li>
+          <li>Quieter Screener prompts</li>
+          <li>Screener suggestion sizes and progress</li>
+          <li>Screener suggests for the whole waiting queue</li>
+          <li>Events on writable shared calendars can be edited</li>
+          <li>Trial dates, account notices and Microsoft approval</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.0" date="2026-11-24">
       <description>
         <ul>
@@ -395,13 +408,6 @@
       <description>
         <ul>
           <li>The phone opens a second mailbox only once the first one is removed</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.10" date="2026-11-11">
-      <description>
-        <ul>
-          <li>Cloud asks the billing service again after a brief refusal in front of it</li>
         </ul>
       </description>
     </release>
